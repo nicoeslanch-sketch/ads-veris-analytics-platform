@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ─── Node / Frontend ───────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+.vercel/
+*.tsbuildinfo
+npm-debug.log*
+
+# ─── Editor / OS ───────────────────────────────────
+.DS_Store
+.idea/
+.vscode/

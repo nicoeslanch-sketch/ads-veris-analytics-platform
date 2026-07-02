@@ -1,0 +1,24 @@
+@import 'tailwindcss';
+
+@theme {
+  /* ── Tokens de marca ADS Veris (SPEC §3) ── */
+  --color-navy: #1a3a52;
+  --color-navy-deep: #12283a;
+  --color-teal: #00a8a8;
+  --color-gold: #d4af37;
+  --color-green: #2fae7d;
+  --color-coral: #e8785a;
+  --color-work: #f7f9fa;
+
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-work font-sans text-navy antialiased;
+}
