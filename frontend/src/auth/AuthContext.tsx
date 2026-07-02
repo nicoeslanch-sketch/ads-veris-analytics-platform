@@ -13,6 +13,8 @@ interface RegisterData {
   password: string
   fullName: string
   company: string
+  country: string
+  phone: string
 }
 
 interface AuthContextValue {
@@ -71,6 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password,
     fullName,
     company,
+    country,
+    phone,
   }) => {
     if (!supabase) return { error: 'Supabase no está configurado.' }
     const { error } = await supabase.auth.signUp({
@@ -78,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: {
         // El trigger handle_new_user copia estos campos a public.profiles
-        data: { full_name: fullName, company },
+        data: { full_name: fullName, company, country, phone },
       },
     })
     return { error: error ? translateAuthError(error.message) : null }

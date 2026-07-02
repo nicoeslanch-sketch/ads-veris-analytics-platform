@@ -8,6 +8,8 @@ create table public.profiles (
   id          uuid primary key references auth.users (id) on delete cascade,
   full_name   text,
   company     text,
+  country     text,
+  phone       text,
   rut         text,
   plan        text        not null default 'basico'
               constraint profiles_plan_check check (plan in ('basico', 'gold')),
@@ -23,7 +25,7 @@ create table public.profiles (
 );
 
 comment on table public.profiles is
-  'Perfil de cada usuario: empresa, RUT, plan (basico|gold) y preferencias de datos (es-CL).';
+  'Perfil de cada usuario: empresa, pais, telefono, RUT, plan (basico|gold) y preferencias de datos (es-CL).';
 
 -- ── Row Level Security: cada usuario solo ve y edita su propio perfil ──
 alter table public.profiles enable row level security;
@@ -47,11 +49,13 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, full_name, company)
+  insert into public.profiles (id, full_name, company, country, phone)
   values (
     new.id,
     new.raw_user_meta_data ->> 'full_name',
-    new.raw_user_meta_data ->> 'company'
+    new.raw_user_meta_data ->> 'company',
+    new.raw_user_meta_data ->> 'country',
+    new.raw_user_meta_data ->> 'phone'
   );
   return new;
 end;

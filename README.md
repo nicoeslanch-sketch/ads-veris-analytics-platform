@@ -36,6 +36,7 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    - `supabase/migrations/0001_profiles.sql` (perfiles con RLS + trigger de registro)
    - `supabase/migrations/0002_datasets_pipeline.sql` (datasets, limpieza, historial y
      bucket privado `datasets` en Storage)
+   - `supabase/migrations/0003_profile_contact_fields.sql` (pais y telefono en registro)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend

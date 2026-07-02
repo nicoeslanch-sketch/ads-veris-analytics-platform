@@ -18,6 +18,8 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
   const [company, setCompany] = useState('')
+  const [country, setCountry] = useState('Chile')
+  const [phone, setPhone] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -35,7 +37,14 @@ export default function Login() {
         if (err) setError(err)
         else navigate('/')
       } else {
-        const { error: err } = await register({ email, password, fullName, company })
+        const { error: err } = await register({
+          email,
+          password,
+          fullName,
+          company,
+          country,
+          phone,
+        })
         if (err) {
           setError(err)
         } else {
@@ -136,6 +145,33 @@ export default function Login() {
                     placeholder="Ej: Comercial del Sur SpA"
                     className={inputClass}
                   />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-navy">
+                      Pais
+                    </label>
+                    <input
+                      required
+                      value={country}
+                      onChange={(e) => setCountry(e.target.value)}
+                      placeholder="Ej: Chile"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-navy">
+                      Telefono
+                    </label>
+                    <input
+                      required
+                      type="tel"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="Ej: +56 9 1234 5678"
+                      className={inputClass}
+                    />
+                  </div>
                 </div>
               </>
             )}
