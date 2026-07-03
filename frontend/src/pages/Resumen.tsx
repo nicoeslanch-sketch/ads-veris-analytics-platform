@@ -107,7 +107,7 @@ function ChartTooltip({
 
 export default function Resumen() {
   const { user } = useAuth()
-  const { file, cleaning, period, setPeriod, setMonthsAvailable } = useDataset()
+  const { file, cleaning, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics } = useDataset()
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -131,6 +131,7 @@ export default function Resumen() {
     apiPost<MetricsResult>('/metrics', buildFileForm(file, fields))
       .then((result) => {
         setMetrics(result)
+        setContextMetrics(result)
         const months = result.periodo.meses_disponibles
         setMonthsAvailable(months)
         // Al entrar por primera vez, seleccionar el último mes con datos

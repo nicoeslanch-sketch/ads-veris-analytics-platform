@@ -79,3 +79,90 @@ export function buildFileForm(
   for (const [key, value] of Object.entries(fields)) form.append(key, value)
   return form
 }
+
+/** POST con body JSON (para los endpoints /ai/*). */
+export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
+  const token = await getAccessToken()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const fullUrl = `${API_BASE_URL}${path}`
+  let response: Response
+  try {
+    response = await fetch(fullUrl, { method: 'POST', headers, body: JSON.stringify(body) })
+  } catch {
+    throw new ApiError(0, 'No se pudo contactar al servidor.')
+  }
+  const rawBody = await response.text()
+  if (!response.ok) {
+    let detail = `Error ${response.status} del servidor.`
+    try {
+      const parsed = JSON.parse(rawBody)
+      if (typeof parsed.detail === 'string') detail = parsed.detail
+    } catch { }
+    throw new ApiError(response.status, detail)
+  }
+  try {
+    return JSON.parse(rawBody) as T
+  } catch {
+    throw new ApiError(response.status, 'Respuesta inesperada del servidor.')
+  }
+}
+
+/**
+ * POST con body JSON y lectura de SSE (para /ai/chat).
+ * Llama `onChunk` por cada fragmento de texto recibido.
+ * Resuelve la promesa cuando el stream termina o rechaza en caso de error.
+ */
+export async function apiStream(
+  path: string,
+  body: unknown,
+  onChunk: (text: string) => void,
+): Promise<void> {
+  const token = await getAccessToken()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const fullUrl = `${API_BASE_URL}${path}`
+  let response: Response
+  try {
+    response = await fetch(fullUrl, { method: 'POST', headers, body: JSON.stringify(body) })
+  } catch {
+    throw new ApiError(0, 'No se pudo contactar al servidor.')
+  }
+  if (!response.ok) {
+    let detail = `Error ${response.status} del servidor.`
+    try {
+      const text = await response.text()
+      const parsed = JSON.parse(text)
+      if (typeof parsed.detail === 'string') detail = parsed.detail
+    } catch { }
+    throw new ApiError(response.status, detail)
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) throw new ApiError(0, 'No se pudo leer el stream del servidor.')
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const data = line.slice(6).trim()
+      if (data === '[DONE]') return
+      try {
+        const parsed = JSON.parse(data)
+        if (parsed.error) throw new ApiError(500, parsed.error as string)
+        if (typeof parsed.chunk === 'string') onChunk(parsed.chunk)
+      } catch (e) {
+        if (e instanceof ApiError) throw e
+      }
+    }
+  }
+}

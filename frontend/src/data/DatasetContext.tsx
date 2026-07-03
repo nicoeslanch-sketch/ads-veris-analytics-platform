@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { CleanResult, StandardizeResult } from '../lib/types'
+import type { CleanResult, MetricsResult, StandardizeResult } from '../lib/types'
 
 /** Rango de fechas activo del topbar; null = todo el periodo. */
 export interface Period {
@@ -43,12 +43,14 @@ interface DatasetState {
   storagePath: string | null
   standardization: StandardizeResult | null
   cleaning: CleanResult | null
+  metrics: MetricsResult | null
   uploadedAt: Date | null
   period: Period
   monthsAvailable: string[]
   setUploaded: (file: File, datasetId: string | null, storagePath: string | null) => void
   setStandardization: (result: StandardizeResult) => void
   setCleaning: (result: CleanResult) => void
+  setMetrics: (result: MetricsResult) => void
   setPeriod: (period: Period) => void
   setMonthsAvailable: (months: string[]) => void
   reset: () => void
@@ -62,6 +64,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [storagePath, setStoragePath] = useState<string | null>(null)
   const [standardization, setStandardizationState] = useState<StandardizeResult | null>(null)
   const [cleaning, setCleaningState] = useState<CleanResult | null>(null)
+  const [metrics, setMetricsState] = useState<MetricsResult | null>(null)
   const [uploadedAt, setUploadedAt] = useState<Date | null>(null)
   const [period, setPeriod] = useState<Period>(ALL_PERIOD)
   const [monthsAvailable, setMonthsAvailable] = useState<string[]>([])
@@ -73,6 +76,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setStoragePath(newStoragePath)
       setStandardizationState(null)
       setCleaningState(null)
+      setMetricsState(null)
       setUploadedAt(new Date())
       setPeriod(ALL_PERIOD)
       setMonthsAvailable([])
@@ -86,6 +90,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setStoragePath(null)
     setStandardizationState(null)
     setCleaningState(null)
+    setMetricsState(null)
     setUploadedAt(null)
     setPeriod(ALL_PERIOD)
     setMonthsAvailable([])
@@ -98,12 +103,14 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       storagePath,
       standardization,
       cleaning,
+      metrics,
       uploadedAt,
       period,
       monthsAvailable,
       setUploaded,
       setStandardization: setStandardizationState,
       setCleaning: setCleaningState,
+      setMetrics: setMetricsState,
       setPeriod,
       setMonthsAvailable,
       reset,
@@ -114,6 +121,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       storagePath,
       standardization,
       cleaning,
+      metrics,
       uploadedAt,
       period,
       monthsAvailable,

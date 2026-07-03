@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import AuthenticatedUser, get_current_user
 from .config import get_settings
+from .routes.ai import router as ai_router
 from .routes.pipeline import router as pipeline_router
 
 settings = get_settings()
@@ -41,6 +42,7 @@ def me(user: AuthenticatedUser = Depends(get_current_user)) -> dict:
 
 
 app.include_router(pipeline_router)
+app.include_router(ai_router)
 
 
 @app.on_event("startup")
