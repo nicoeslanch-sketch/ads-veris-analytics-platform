@@ -17,6 +17,7 @@ def strip_accents_lower(value: str) -> str:
 ROLE_KEYWORDS: list[tuple[str, list[str]]] = [
     ("fecha", ["fecha", "date", "periodo", "emision"]),
     ("monto", ["venta", "monto", "total", "importe", "ingreso", "facturacion", "valor", "precio"]),
+    ("costo", ["costo", "cost", "compra", "gasto"]),
     ("cantidad", ["cantidad", "unidades", "qty", "cant."]),
     ("producto", ["producto", "servicio", "articulo", "item", "sku"]),
     ("categoria", ["categoria", "rubro", "linea", "familia", "tipo de producto"]),

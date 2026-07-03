@@ -41,13 +41,14 @@ def test_standardize_normaliza_texto_fechas_y_numeros(client, auth_headers, samp
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["filas"] == 33
+    assert body["filas"] == 92
     assert body["cambios"]["textos_normalizados"] > 0
     assert body["cambios"]["fechas_estandarizadas"] > 0
     assert body["cambios"]["numeros_estandarizados"] > 0
     # Mapeo automático de columnas al esquema del negocio
     assert body["mapeo"]["fecha"] == "Fecha"
     assert body["mapeo"]["monto"] == "Ventas"
+    assert body["mapeo"]["costo"] == "Costo"
     assert body["mapeo"]["categoria"] == "Categoría"
     # Fila 2 ("1/5/26", "santiago limitada", "1.200.000") queda unificada
     despues = body["preview"]["despues"][1]
@@ -109,7 +110,7 @@ def test_clean_respeta_reglas_desactivadas(client, auth_headers, sample_csv):
     assert resumen["columnas_despues"] == resumen["columnas_antes"]
 
 
-def test_metrics_calcula_indicadores(client, auth_headers, sample_csv):
+def test_metrics_calcula_kpis_y_evolucion(client, auth_headers, sample_csv):
     name, content = sample_csv
     response = client.post(
         "/metrics",
@@ -118,13 +119,52 @@ def test_metrics_calcula_indicadores(client, auth_headers, sample_csv):
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["ingresos_totales"] > 0
-    assert body["transacciones"] > 0
-    assert len(body["evolucion_mensual"]) >= 1
-    assert body["evolucion_mensual"][0]["mes"] == "2026-05"
+    kpis = body["kpis"]
+    assert kpis["ingresos_totales"]["valor"] > 0
+    assert kpis["transacciones"] > 0
+    # Con columna de costo: gastos, utilidad, margen y flujo de caja disponibles
+    assert kpis["gastos_totales"]["valor"] > 0
+    assert kpis["ganancia_neta"]["valor"] > 0
+    assert 0 < kpis["margen_utilidad_pct"]["valor"] < 100
+    # Sin rango seleccionado no hay periodo anterior comparable
+    assert kpis["ingresos_totales"]["variacion_pct"] is None
+    # Evolución abril → mayo → junio con las tres series
+    meses = [m["mes"] for m in body["evolucion_mensual"]]
+    assert meses == ["2026-04", "2026-05", "2026-06"]
+    assert all("gastos" in m and "utilidad" in m for m in body["evolucion_mensual"])
     categorias = {c["nombre"] for c in body["por_categoria"]}
     assert "Servicios" in categorias
+    assert all("margen_pct" in c for c in body["por_categoria"])
     assert len(body["top_productos"]) <= 5
+    assert body["agrupado_por_canal"] == "sucursal"
+    # Proyección a 3 meses a partir de la evolución
+    assert len(body["proyeccion"]["meses"]) == 3
+    assert body["proyeccion"]["meses"][0]["mes"] == "2026-07"
+    # Ratios de balance declarados pero no disponibles todavía
+    assert body["indicadores_financieros"]["disponible"] is False
+    assert "roa" in body["indicadores_financieros"]["items"]
+
+
+def test_metrics_filtra_por_periodo(client, auth_headers, sample_csv):
+    name, content = sample_csv
+    response = client.post(
+        "/metrics",
+        files={"file": (name, content, "text/csv")},
+        data={"date_from": "2026-05-01", "date_to": "2026-05-31"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    total = client.post(
+        "/metrics", files={"file": (name, content, "text/csv")}, headers=auth_headers
+    ).json()
+    # El periodo filtrado tiene menos transacciones que el total
+    assert body["kpis"]["transacciones"] < total["kpis"]["transacciones"]
+    # Variación calculada contra el periodo anterior equivalente (abril)
+    assert body["kpis"]["ingresos_totales"]["variacion_pct"] is not None
+    # La evolución mensual sigue mostrando el periodo completo (contexto del gráfico)
+    assert len(body["evolucion_mensual"]) == 3
+    assert body["periodo"]["desde"] == "2026-05-01"
 
 
 def test_archivo_invalido_devuelve_400(client, auth_headers):

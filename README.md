@@ -120,7 +120,9 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
 - [x] **Fase 1 — Pipeline de datos**: `/standardize`, `/clean`, `/metrics` con pandas;
   módulos de Estandarización y Limpieza funcionales; migración de datasets/limpieza/historial;
   lectura desde Supabase Storage; tests con datos de ejemplo.
-- [ ] **Fase 2 — Resumen (dashboard)**: KPIs, ratios e indicadores con Recharts.
+- [x] **Fase 2 — Resumen (dashboard)**: KPIs con variación y sparklines, evolución de
+  ingresos/gastos/utilidad, análisis por categoría, ventas por canal, top productos,
+  proyección a 3 meses y filtro de periodo funcional en el topbar.
 - [ ] **Fase 3 — Asistente IA**: resumen automático + chat anclado a los datos + gating.
 - [ ] **Fase 4 — Explorar datos**: análisis guiados, hallazgos, recomendación.
 - [ ] **Fase 5 — Alertas, Historial, Conectores, Reportes, Configuración avanzada y planes.**

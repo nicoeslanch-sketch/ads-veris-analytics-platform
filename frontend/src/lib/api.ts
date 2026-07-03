@@ -1,49 +1,68 @@
+/** Cliente del motor de datos FastAPI.
+
+Adjunta el JWT de la sesión Supabase en Authorization: Bearer.
+Las claves secretas jamás viven aquí: el frontend solo conoce la URL pública
+de la API (VITE_API_BASE_URL) y el token del usuario autenticado.
+*/
+
 import { supabase } from './supabase'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
+const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
 
 export class ApiError extends Error {
   constructor(
+    public status: number,
     message: string,
-    public readonly status?: number,
   ) {
     super(message)
-    this.name = 'ApiError'
   }
 }
 
-export function buildFileForm(file: File, fields: Record<string, string> = {}): FormData {
-  const form = new FormData()
-  form.append('file', file)
-  for (const [key, value] of Object.entries(fields)) {
-    form.append(key, value)
-  }
-  return form
+async function getAccessToken(): Promise<string | null> {
+  if (!supabase) return null
+  const { data } = await supabase.auth.getSession()
+  return data.session?.access_token ?? null
 }
 
-export async function apiPost<T>(path: string, body: FormData): Promise<T> {
-  const session = supabase ? (await supabase.auth.getSession()).data.session : null
-  const headers = new Headers()
-  if (session?.access_token) {
-    headers.set('Authorization', `Bearer ${session.access_token}`)
-  }
+export async function apiPost<T>(path: string, form: FormData): Promise<T> {
+  const token = await getAccessToken()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: 'POST',
-    headers,
-    body,
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers,
+      body: form,
+    })
+  } catch {
+    throw new ApiError(
+      0,
+      'No se pudo contactar al motor de datos. ¿Está corriendo la API? (VITE_API_BASE_URL)',
+    )
+  }
 
   if (!response.ok) {
-    let message = `Error ${response.status}`
+    let detail = `Error ${response.status} del motor de datos.`
     try {
-      const payload = (await response.json()) as { detail?: string }
-      message = payload.detail ?? message
+      const body = await response.json()
+      if (typeof body.detail === 'string') detail = body.detail
     } catch {
-      message = response.statusText || message
+      // sin cuerpo JSON: se mantiene el mensaje genérico
     }
-    throw new ApiError(message, response.status)
+    throw new ApiError(response.status, detail)
   }
+  return (await response.json()) as T
+}
 
-  return response.json() as Promise<T>
+export function buildFileForm(
+  file: File,
+  fields: Record<string, string> = {},
+): FormData {
+  const form = new FormData()
+  form.append('file', file, file.name)
+  for (const [key, value] of Object.entries(fields)) form.append(key, value)
+  return form
 }

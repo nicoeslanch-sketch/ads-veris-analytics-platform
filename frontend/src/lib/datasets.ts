@@ -1,44 +1,49 @@
+/** Persistencia del pipeline en Supabase (Storage + tablas de la migración 0002).
+
+Todas las funciones son "best-effort": si Supabase no está configurado o no hay
+sesión, no hacen nada y devuelven null. El pipeline funciona igual en memoria;
+la persistencia agrega historial y permite retomar archivos después.
+*/
+
 import { supabase } from './supabase'
 import type { CleanResult, CleaningRules, StandardizeResult } from './types'
 
-const STORAGE_BUCKET = 'datasets'
+const BUCKET = 'datasets'
 
-export async function uploadToStorage(file: File): Promise<string | null> {
+async function getUserId(): Promise<string | null> {
   if (!supabase) return null
-
-  const { data: userData } = await supabase.auth.getUser()
-  const userId = userData.user?.id
-  if (!userId) return null
-
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-  const storagePath = `${userId}/${crypto.randomUUID()}-${safeName}`
-  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(storagePath, file, {
-    upsert: false,
-  })
-  if (error) return null
-  return storagePath
+  const { data } = await supabase.auth.getSession()
+  return data.session?.user.id ?? null
 }
 
-export async function insertDataset(file: File, storagePath: string | null): Promise<string | null> {
-  if (!supabase) return null
+/** Sube el archivo a Storage bajo {user_id}/... y devuelve el storage_path. */
+export async function uploadToStorage(file: File): Promise<string | null> {
+  const userId = await getUserId()
+  if (!supabase || !userId) return null
+  const path = `${userId}/${Date.now()}_${file.name.replace(/[^\w.\-]+/g, '_')}`
+  const { error } = await supabase.storage.from(BUCKET).upload(path, file)
+  return error ? null : path
+}
 
-  const { data: userData } = await supabase.auth.getUser()
-  const userId = userData.user?.id
-  if (!userId) return null
-
+export async function insertDataset(
+  file: File,
+  storagePath: string | null,
+): Promise<string | null> {
+  const userId = await getUserId()
+  if (!supabase || !userId) return null
   const { data, error } = await supabase
     .from('datasets')
     .insert({
       user_id: userId,
       name: file.name,
-      storage_path: storagePath,
       source: 'excel_csv',
+      storage_path: storagePath,
       status: 'cargado',
     })
     .select('id')
     .single()
-
   if (error) return null
+  await logActivity('carga', `Archivo cargado: ${file.name}`, data.id)
   return data.id as string
 }
 
@@ -47,15 +52,24 @@ export async function markStandardized(
   result: StandardizeResult,
 ): Promise<void> {
   if (!supabase || !datasetId) return
-
   await supabase
     .from('datasets')
-    .update({
-      rows: result.filas,
-      columns: result.columnas,
-      status: 'estandarizado',
-    })
+    .update({ rows: result.filas, columns: result.columnas, status: 'estandarizado' })
     .eq('id', datasetId)
+  const columns = result.preview.columnas.map((name) => ({
+    dataset_id: datasetId,
+    original_name: name,
+    normalized_name: name,
+    detected_type: result.column_types[name] ?? 'texto',
+    mapped_role:
+      Object.entries(result.mapeo).find(([, col]) => col === name)?.[0] ?? null,
+  }))
+  if (columns.length > 0) await supabase.from('dataset_columns').insert(columns)
+  await logActivity(
+    'estandarizacion',
+    `Estandarización aplicada: ${result.archivo}`,
+    datasetId,
+  )
 }
 
 export async function saveCleaningJob(
@@ -63,12 +77,8 @@ export async function saveCleaningJob(
   rules: CleaningRules,
   result: CleanResult,
 ): Promise<void> {
-  if (!supabase || !datasetId) return
-
-  const { data: userData } = await supabase.auth.getUser()
-  const userId = userData.user?.id
-  if (!userId) return
-
+  const userId = await getUserId()
+  if (!supabase || !userId || !datasetId) return
   await supabase.from('cleaning_jobs').insert({
     dataset_id: datasetId,
     user_id: userId,
@@ -81,14 +91,29 @@ export async function saveCleaningJob(
     quality_after: result.resumen.calidad_despues,
     status: 'completado',
   })
-
   await supabase
     .from('datasets')
     .update({
+      status: 'limpio',
+      quality: result.resumen.calidad_despues,
       rows: result.resumen.filas_despues,
       columns: result.resumen.columnas_despues,
-      quality: result.resumen.calidad_despues,
-      status: 'limpio',
     })
     .eq('id', datasetId)
+  await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
+}
+
+export async function logActivity(
+  type: 'carga' | 'estandarizacion' | 'limpieza' | 'analisis' | 'chat' | 'recomendacion',
+  description: string,
+  datasetId: string | null = null,
+): Promise<void> {
+  const userId = await getUserId()
+  if (!supabase || !userId) return
+  await supabase.from('activity_log').insert({
+    user_id: userId,
+    dataset_id: datasetId,
+    activity_type: type,
+    description,
+  })
 }

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, Calendar, ChevronDown, LogOut, Settings, User } from 'lucide-react'
+import { Bell, Calendar, Check, ChevronDown, LogOut, Settings, User } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
+import { ALL_PERIOD, monthPeriod, useDataset } from '../../data/DatasetContext'
+import { formatMonthShort } from '../../lib/charts'
 
 /** Rango por defecto: el mes actual, formateado es-CL (ej. "01 jun 2026 - 30 jun 2026"). */
 function currentMonthRange(): string {
@@ -15,14 +17,20 @@ function currentMonthRange(): string {
 
 export default function Topbar() {
   const { user, logout } = useAuth()
+  const { period, setPeriod, monthsAvailable } = useDataset()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [periodOpen, setPeriodOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const periodRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false)
+      }
+      if (periodRef.current && !periodRef.current.contains(e.target as Node)) {
+        setPeriodOpen(false)
       }
     }
     document.addEventListener('mousedown', onClickOutside)
@@ -39,15 +47,47 @@ export default function Topbar() {
 
   return (
     <header className="flex h-16 shrink-0 items-center justify-end gap-4 border-b border-white/10 bg-navy px-6 text-white">
-      {/* Selector de rango de fechas — filtrará toda la pantalla (funcional desde Fase 2) */}
-      <button
-        className="flex items-center gap-2 rounded-lg border border-white/20 px-3.5 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10"
-        title="El filtro de fechas se habilita cuando cargas datos"
-      >
-        <Calendar className="h-4 w-4" />
-        {currentMonthRange()}
-        <ChevronDown className="h-4 w-4 text-white/60" />
-      </button>
+      {/* Selector de rango de fechas — filtra el dashboard (Fase 2) */}
+      <div className="relative" ref={periodRef}>
+        <button
+          onClick={() => monthsAvailable.length > 0 && setPeriodOpen((v) => !v)}
+          disabled={monthsAvailable.length === 0}
+          className="flex items-center gap-2 rounded-lg border border-white/20 px-3.5 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+          title={
+            monthsAvailable.length === 0
+              ? 'El filtro de fechas se habilita cuando cargas datos'
+              : 'Filtrar por periodo'
+          }
+        >
+          <Calendar className="h-4 w-4" />
+          {monthsAvailable.length > 0 ? period.label : currentMonthRange()}
+          <ChevronDown className="h-4 w-4 text-white/60" />
+        </button>
+
+        {periodOpen && (
+          <div className="absolute right-0 top-12 z-20 w-56 overflow-hidden rounded-xl border border-navy/10 bg-white text-navy shadow-lg">
+            {[ALL_PERIOD, ...monthsAvailable.map(monthPeriod)].map((option, index) => {
+              const monthKey = index === 0 ? null : monthsAvailable[index - 1]
+              const selected = option.label === period.label
+              return (
+                <button
+                  key={option.label}
+                  onClick={() => {
+                    setPeriod(option)
+                    setPeriodOpen(false)
+                  }}
+                  className={`flex w-full items-center justify-between px-4 py-2.5 text-sm hover:bg-navy/5 ${
+                    selected ? 'font-semibold text-teal' : ''
+                  }`}
+                >
+                  {monthKey ? formatMonthShort(monthKey) : option.label}
+                  {selected && <Check className="h-4 w-4" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Notificaciones */}
       <button

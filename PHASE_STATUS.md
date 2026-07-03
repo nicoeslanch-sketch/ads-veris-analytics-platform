@@ -1,5 +1,7 @@
 # Estado del proyecto por fases — ADS Veris
 
+**Estado actual: Fases 0, 1 y 2 completas.** Próxima: Fase 3 (Asistente IA).
+
 > Referencia rápida de qué está construido y qué viene. La especificación
 > completa vive en [`SPEC.md`](./SPEC.md).
 
@@ -37,9 +39,22 @@
 - Persistencia best-effort en Supabase (Storage + `datasets` + `cleaning_jobs` + `activity_log`); si Supabase no está configurado, el pipeline funciona igual en memoria.
 - "Fuentes conectadas" del sidebar refleja el archivo cargado (punto dorado = pendiente, verde = limpio).
 
-## ⏳ Pendiente — Fase 2 y posteriores
+## ✅ Fase 2 — Resumen / dashboard (completa)
 
-- **Fase 2 — Resumen (dashboard)**: KPIs (Ingresos, Ganancia Neta, Margen, Flujo de Caja), gráficos Recharts (evolución, donut por canal), indicadores clave (ROA, ROE, liquidez, prueba ácida), análisis por categoría, estado financiero, proyección. Consumirá `/metrics`.
+**API** (`api/app/engine/metrics.py`):
+- `POST /metrics` ampliado: KPIs con **variación vs el periodo anterior equivalente** (Ingresos, Gastos, Ganancia Neta, Margen, Flujo de Caja operacional — estos últimos solo si el archivo trae columna de costo), evolución mensual de ingresos/gastos/utilidad, análisis por categoría con utilidad y margen, ventas por canal/sucursal, top 5 productos y **proyección a 3 meses** (crecimiento promedio mensual acotado).
+- Filtro de periodo con `date_from`/`date_to`; la evolución mensual siempre muestra el periodo completo como contexto.
+- Ratios de balance (ROA, ROE, liquidez corriente, prueba ácida, rotación de inventario, días de cobro/pago) **declarados pero sin valor**: requieren datos de balance que se conectarán en fases posteriores — la UI los muestra con "—" y la nota explicativa.
+- CSV de ejemplo ampliado a 3 meses (abril–junio) con columna `Costo`.
+
+**Frontend** (`frontend/src/pages/Resumen.tsx`):
+- Dashboard según maqueta: 4 tarjetas KPI con variación y sparkline, gráfico "Evolución de Ingresos, Gastos y Utilidad" (Recharts), Indicadores Clave, tabla "Análisis por Categoría" con barras de margen, "Estado Financiero" con semáforo de Salud Financiera (según margen), donut "Ventas por Canal/Sucursal" con total al centro, "Top Productos / Servicios" y "Proyección (Próximos 3 meses)".
+- **Selector de rango de fechas del topbar funcional**: filtra todo el dashboard ("Todo el periodo" + cada mes con datos); al entrar se auto-selecciona el último mes.
+- Paleta de series validada (contraste ≥3:1, separación para daltonismo): pasos de las rampas de marca; el navy queda para texto/UI.
+- La regla no negociable se mantiene: sin dataset limpio, el Resumen muestra el estado vacío con CTA a Estandarización.
+
+## ⏳ Pendiente — Fase 3 y posteriores
+
 - **Fase 3 — Asistente IA**: resumen automático + chat anclado a los datos (Anthropic API desde el backend, `ANTHROPIC_MODEL` configurable) + gating por plan.
 - **Fase 4 — Explorar datos**: análisis guiados, hallazgos, recomendación inteligente.
 - **Fase 5**: Alertas, Historial (UI), Conectores (Google Sheets/SQL), Reportes PDF/Excel, Configuración avanzada y planes.

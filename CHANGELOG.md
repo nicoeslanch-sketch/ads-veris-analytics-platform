@@ -2,6 +2,35 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.3.0] — 2026-07-03 — Fase 2: Resumen (dashboard)
+
+### Agregado
+- **Dashboard Resumen** completo (Recharts): 4 tarjetas KPI con variación vs mes anterior
+  y sparklines (Ingresos, Ganancia Neta, Margen de Utilidad, Flujo de Caja), gráfico de
+  evolución de ingresos/gastos/utilidad, Indicadores Clave, análisis por categoría con
+  barras de margen, Estado Financiero con semáforo de Salud Financiera, donut de ventas
+  por canal/sucursal, top 5 productos y proyección a 3 meses.
+- **Selector de periodo funcional en el topbar**: "Todo el periodo" + cada mes con datos;
+  filtra todo el dashboard y al entrar se auto-selecciona el último mes.
+- **`/metrics` ampliado**: KPIs con variación vs el periodo anterior equivalente,
+  gastos/utilidad/margen/flujo (si el archivo trae columna de costo), proyección a 3
+  meses por crecimiento promedio acotado, filtro `date_from`/`date_to`, y ratios de
+  balance declarados como no disponibles hasta conectar datos financieros.
+- Rol `costo` en el mapeo automático de columnas.
+- Paleta de series de gráficos validada (contraste, daltonismo) sobre las rampas de marca
+  (`frontend/src/lib/charts.ts`).
+- CSV de ejemplo ampliado a 3 meses (abril–junio 2026) con columna `Costo` (92 filas).
+
+### Cambiado
+- `frontend`: nueva dependencia `recharts`.
+- Módulos `frontend/src/lib/` unificados con las versiones verificadas end-to-end
+  (tras el fix de Vercel del `.gitignore` que excluía `lib/`).
+- Tests de la API: 11 pruebas (nuevo shape de métricas + filtro de periodo).
+
+### Corregido
+- Variaciones de KPI ya no se calculan contra periodos no comparables: sin rango
+  seleccionado quedan en null y la UI muestra "—".
+
 ## [0.2.0] — 2026-07-02 — Fase 1: Pipeline de datos
 
 ### Agregado

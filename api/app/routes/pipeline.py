@@ -114,6 +114,8 @@ async def metrics(
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
     mapping: str | None = Form(None),
+    date_from: str | None = Form(None),
+    date_to: str | None = Form(None),
 ) -> dict:
     filename, content = await _read_input(file, storage_path)
     df_original = _load_or_400(filename, content)
@@ -121,7 +123,7 @@ async def metrics(
     result = analyze_and_clean(df_original, rules=None, apply=True)
     df_clean = result["_df_limpio"]
     mapping_dict = _parse_json_field(mapping, "mapping") or None
-    computed = compute_metrics(df_clean, mapping_dict)
+    computed = compute_metrics(df_clean, mapping_dict, date_from=date_from, date_to=date_to)
     computed["archivo"] = filename
     computed["calidad_datos"] = result["resumen"]["calidad_despues"]
     return computed
