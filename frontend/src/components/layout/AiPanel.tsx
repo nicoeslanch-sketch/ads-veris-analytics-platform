@@ -3,14 +3,16 @@
  *
  * Estados:
  *  BLOQUEADO  — cleaning === null  → muestra candado, pide cargar datos
- *  CARGANDO   — cleaning activo, resumen pendiente → spinner + llama /ai/summary
+ *  CARGANDO   — cleaning activo, obtiene métricas + resumen → spinner
+ *  ERROR      → mensaje de error con opción de reintentar
  *  ACTIVO     → resumen auto, preguntas sugeridas, historial de chat, input
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Loader2, Lock, Sparkles, Star, TriangleAlert } from 'lucide-react'
+import { ArrowUp, Loader2, Lock, RefreshCw, Sparkles, Star, TriangleAlert } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
-import { ApiError, apiPostJson, apiStream } from '../../lib/api'
+import { ApiError, apiPost, apiPostJson, apiStream, buildFileForm } from '../../lib/api'
+import type { MetricsResult } from '../../lib/types'
 
 // ── Tipos locales ─────────────────────────────────────────────────────────────
 
@@ -28,12 +30,13 @@ interface Summary {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function AiPanel() {
-  const { cleaning, metrics, file } = useDataset()
+  const { cleaning, metrics: contextMetrics, file, setMetrics: setContextMetrics } = useDataset()
   const active = Boolean(cleaning && file)
 
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [summaryLoading, setSummaryLoading] = useState(false)
-  const [summaryError, setSummaryError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [loadingLabel, setLoadingLabel] = useState('Analizando tu negocio…')
+  const [error, setError] = useState<string | null>(null)
 
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -42,19 +45,46 @@ export default function AiPanel() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fetchedForFile = useRef<string | null>(null)
+  // Métricas locales al panel (pueden venir del contexto o fetchearse aquí)
+  const localMetrics = useRef<MetricsResult | null>(null)
 
   // Auto-scroll al fondo cuando llegan mensajes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Disparar resumen automático: una vez por archivo, cuando datos + métricas estén listos
+  const runActivation = async (fileObj: File, metricsArg: MetricsResult | null) => {
+    setLoading(true)
+    setError(null)
+    try {
+      let m = metricsArg
+      if (!m) {
+        setLoadingLabel('Calculando indicadores…')
+        m = await apiPost<MetricsResult>('/metrics', buildFileForm(fileObj))
+        localMetrics.current = m
+        setContextMetrics(m)
+      } else {
+        localMetrics.current = m
+      }
+      setLoadingLabel('Generando resumen con IA…')
+      const res = await apiPostJson<Summary>('/ai/summary', { metrics: m })
+      setSummary(res)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo iniciar el asistente.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Disparar activación: una vez por archivo cuando cleaning esté listo
   useEffect(() => {
-    if (!active || !metrics || !file) {
+    if (!active || !file) {
       if (!active) {
         setSummary(null)
-        setSummaryError(null)
+        setError(null)
         setMessages([])
+        setLoading(false)
+        localMetrics.current = null
         fetchedForFile.current = null
       }
       return
@@ -62,26 +92,23 @@ export default function AiPanel() {
     const fileKey = file.name
     if (fetchedForFile.current === fileKey) return
     fetchedForFile.current = fileKey
+    void runActivation(file, contextMetrics)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, file])
 
-    setSummaryLoading(true)
-    setSummaryError(null)
-    apiPostJson<Summary>('/ai/summary', { metrics })
-      .then((res) => setSummary(res))
-      .catch((err) =>
-        setSummaryError(err instanceof ApiError ? err.message : 'No se pudo generar el resumen.'),
-      )
-      .finally(() => setSummaryLoading(false))
-  }, [active, metrics, file])
+  // Si las métricas llegan al contexto después (usuario visitó Resumen),
+  // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.
+  useEffect(() => {
+    if (contextMetrics && active) localMetrics.current = contextMetrics
+  }, [contextMetrics, active])
 
   const sendMessage = async (text: string) => {
-    if (!text.trim() || streaming || !metrics) return
+    const m = localMetrics.current
+    if (!text.trim() || streaming || !m) return
     const question = text.trim()
     setInput('')
 
-    const userMsg: Message = { role: 'user', content: question }
-    setMessages((prev) => [...prev, userMsg])
-
-    // Mensaje de asistente vacío con flag streaming=true
+    setMessages((prev) => [...prev, { role: 'user', content: question }])
     setMessages((prev) => [...prev, { role: 'assistant', content: '', streaming: true }])
     setStreaming(true)
 
@@ -90,10 +117,10 @@ export default function AiPanel() {
         '/ai/chat',
         {
           pregunta: question,
-          metrics,
-          historial: messages.filter((m) => !m.streaming).map((m) => ({
-            role: m.role,
-            content: m.content,
+          metrics: m,
+          historial: messages.filter((msg) => !msg.streaming).map((msg) => ({
+            role: msg.role,
+            content: msg.content,
           })),
         },
         (chunk) => {
@@ -101,10 +128,7 @@ export default function AiPanel() {
             const updated = [...prev]
             const last = updated[updated.length - 1]
             if (last?.streaming) {
-              updated[updated.length - 1] = {
-                ...last,
-                content: last.content + chunk,
-              }
+              updated[updated.length - 1] = { ...last, content: last.content + chunk }
             }
             return updated
           })
@@ -121,13 +145,10 @@ export default function AiPanel() {
         return updated
       })
     } finally {
-      // Marcar el último mensaje como completo (quitar flag streaming)
       setMessages((prev) => {
         const updated = [...prev]
         const last = updated[updated.length - 1]
-        if (last?.streaming) {
-          updated[updated.length - 1] = { ...last, streaming: false }
-        }
+        if (last?.streaming) updated[updated.length - 1] = { ...last, streaming: false }
         return updated
       })
       setStreaming(false)
@@ -166,14 +187,44 @@ export default function AiPanel() {
     )
   }
 
-  // ── Render: CARGANDO resumen ─────────────────────────────────────────────
-  if (summaryLoading || (!summary && !summaryError)) {
+  // ── Render: CARGANDO ─────────────────────────────────────────────────────
+  if (loading) {
     return (
       <aside className="hidden h-full w-80 shrink-0 flex-col bg-navy-deep text-white xl:flex">
         <PanelHeader />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <Loader2 className="h-7 w-7 animate-spin text-teal" />
-          <p className="text-xs text-white/50">Analizando tu negocio…</p>
+          <p className="text-xs text-white/50">{loadingLabel}</p>
+        </div>
+        <DisabledInput />
+      </aside>
+    )
+  }
+
+  // ── Render: ERROR ────────────────────────────────────────────────────────
+  if (error) {
+    return (
+      <aside className="hidden h-full w-80 shrink-0 flex-col bg-navy-deep text-white xl:flex">
+        <PanelHeader />
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-coral/10">
+            <TriangleAlert className="h-6 w-6 text-coral" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white/90">Error al iniciar el asistente</p>
+            <p className="mt-2 text-xs leading-relaxed text-coral/80">{error}</p>
+          </div>
+          <button
+            onClick={() => {
+              if (file) {
+                fetchedForFile.current = null
+                void runActivation(file, contextMetrics)
+              }
+            }}
+            className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-xs font-semibold text-white/80 transition-colors hover:bg-white/15"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Reintentar
+          </button>
         </div>
         <DisabledInput />
       </aside>
@@ -189,12 +240,7 @@ export default function AiPanel() {
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
 
         {/* Resumen automático */}
-        {summaryError ? (
-          <div className="flex items-start gap-2 rounded-lg bg-coral/10 p-3 text-xs text-coral">
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            {summaryError}
-          </div>
-        ) : summary ? (
+        {summary && (
           <div className="rounded-xl bg-white/5 p-3">
             <div className="mb-2 flex items-center gap-1.5">
               <Sparkles className="h-3.5 w-3.5 text-gold" />
@@ -204,7 +250,7 @@ export default function AiPanel() {
             </div>
             <p className="text-xs leading-relaxed text-white/80">{summary.resumen}</p>
           </div>
-        ) : null}
+        )}
 
         {/* Preguntas sugeridas (solo si no hay historial) */}
         {summary && messages.length === 0 && (
@@ -302,9 +348,7 @@ function ChatBubble({ msg }: { msg: Message }) {
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
         className={`max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
-          isUser
-            ? 'bg-teal/20 text-white'
-            : 'bg-white/5 text-white/85'
+          isUser ? 'bg-teal/20 text-white' : 'bg-white/5 text-white/85'
         }`}
       >
         {msg.content}
