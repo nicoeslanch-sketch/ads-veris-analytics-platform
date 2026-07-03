@@ -43,7 +43,7 @@ export async function insertDataset(
     .select('id')
     .single()
   if (error) return null
-  await logActivity('carga', `Archivo cargado: ${file.name}`, data.id)
+  try { await logActivity('carga', `Archivo cargado: ${file.name}`, data.id) } catch { /* best-effort */ }
   return data.id as string
 }
 
@@ -52,24 +52,24 @@ export async function markStandardized(
   result: StandardizeResult,
 ): Promise<void> {
   if (!supabase || !datasetId) return
-  await supabase
-    .from('datasets')
-    .update({ rows: result.filas, columns: result.columnas, status: 'estandarizado' })
-    .eq('id', datasetId)
-  const columns = result.preview.columnas.map((name) => ({
-    dataset_id: datasetId,
-    original_name: name,
-    normalized_name: name,
-    detected_type: result.column_types[name] ?? 'texto',
-    mapped_role:
-      Object.entries(result.mapeo).find(([, col]) => col === name)?.[0] ?? null,
-  }))
-  if (columns.length > 0) await supabase.from('dataset_columns').insert(columns)
-  await logActivity(
-    'estandarizacion',
-    `Estandarización aplicada: ${result.archivo}`,
-    datasetId,
-  )
+  try {
+    await supabase
+      .from('datasets')
+      .update({ rows: result.filas, columns: result.columnas, status: 'estandarizado' })
+      .eq('id', datasetId)
+    const columns = result.preview.columnas.map((name) => ({
+      dataset_id: datasetId,
+      original_name: name,
+      normalized_name: name,
+      detected_type: result.column_types[name] ?? 'texto',
+      mapped_role:
+        Object.entries(result.mapeo).find(([, col]) => col === name)?.[0] ?? null,
+    }))
+    if (columns.length > 0) await supabase.from('dataset_columns').insert(columns)
+    await logActivity('estandarizacion', `Estandarización aplicada: ${result.archivo}`, datasetId)
+  } catch {
+    // best-effort: fallo en persistencia no bloquea el pipeline
+  }
 }
 
 export async function saveCleaningJob(

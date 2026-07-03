@@ -54,7 +54,11 @@ export async function apiPost<T>(path: string, form: FormData): Promise<T> {
     }
     throw new ApiError(response.status, detail)
   }
-  return (await response.json()) as T
+  try {
+    return (await response.json()) as T
+  } catch {
+    throw new ApiError(response.status, 'Respuesta inesperada del servidor (no es JSON válido).')
+  }
 }
 
 export function buildFileForm(
