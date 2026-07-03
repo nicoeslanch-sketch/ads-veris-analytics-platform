@@ -2,6 +2,60 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.5.0] — 2026-07-03 — Fase 4: Explorar datos + estabilidad multiusuario
+
+### Agregado
+- **Página Explorar datos completa** (Fase 4): "¿Qué quieres descubrir hoy?" con 4 análisis
+  predefinidos, "Define tu análisis" (rango, agrupar por categoría/producto/canal/mes,
+  métrica ingresos/utilidad), gráfico principal (barras horizontales o tendencia),
+  **Hallazgos principales** calculados automáticamente sin costo de IA (variación del último
+  mes, mejor/peor mes, concentración de producto, márgenes por categoría, canal dominante,
+  proyección), tabla **Profundiza** y **Recomendación inteligente** con plan de acción.
+- **`POST /ai/recommendation`**: recomendación + plan de 3 pasos anclados al análisis activo.
+  Se genera **solo a pedido del usuario** (botón) — control de costo de IA.
+- **Migración `0004_analyses.sql`**: tabla `analyses` (análisis guardados) con RLS por usuario;
+  botón "Guardar análisis" con persistencia best-effort.
+- Tests de la API: 18 pruebas (7 nuevas de seguridad, CORS e IA).
+
+### Seguridad
+- **`storage_path` ahora valida propiedad**: la API descarga de Storage con la service_role
+  key (salta RLS), por lo que `/standardize`, `/clean` y `/metrics` exigen que la ruta
+  empiece con la carpeta del usuario autenticado (`{user_id}/...`); si no, responde **403**.
+
+### Corregido
+- **`DatasetContext` se resetea al cerrar sesión o cambiar de usuario** en el mismo
+  navegador: el archivo, métricas y panel IA del usuario anterior ya no quedan vivos
+  (causa probable del problema reportado con más de un usuario).
+- Claves de recálculo de métricas y del panel IA ahora incluyen `uploadedAt`: subir otro
+  archivo con el mismo nombre vuelve a calcular métricas y resumen.
+- `VITE_API_BASE_URL` sin configurar ya no cae silenciosamente a localhost en producción:
+  muestra "Falta configurar VITE_API_BASE_URL en el entorno de despliegue (Vercel)".
+- Se retiró la instrumentación de diagnóstico del 404 (logs del navegador que exponían
+  contenido de datos y `print` de rutas en el arranque de la API).
+
+### Cambiado
+- Log seguro de CORS en la API: si llega un `Origin` que no está en `ALLOWED_ORIGINS`
+  se registra origen y ruta (nunca tokens) para diagnosticar despliegues sin adivinar.
+
+## [0.4.0] — 2026-07-03 — Fase 3: Asistente IA
+
+### Agregado
+- **`POST /ai/summary`**: resumen ejecutivo automático del negocio + 4 preguntas sugeridas,
+  generado desde las métricas del dashboard (Anthropic API **solo desde el backend**;
+  modelo configurable con `ANTHROPIC_MODEL`).
+- **`POST /ai/chat`**: chat anclado a los datos del negocio con respuesta en streaming (SSE).
+- **Panel Asistente IA activo**: estados bloqueado → cargando → activo, resumen del periodo,
+  preguntas sugeridas clickeables, historial de conversación e input con streaming.
+- Cliente frontend `apiPostJson` + `apiStream` (lectura de SSE).
+
+### Corregido
+- **JWT de Supabase con firma ECC/P-256**: la API valida ES256/RS256 vía JWKS
+  (`/auth/v1/.well-known/jwks.json`, claves cacheadas 5 min) además del HS256 legacy.
+- Errores del servicio de IA ya no pierden los headers CORS: todo `/ai/summary` va envuelto
+  en manejo de errores que devuelve HTTPException con detalle claro (503/4xx/500).
+- Build de Render: se eliminó el pin explícito de `cryptography`.
+- Persistencia best-effort del pipeline realmente best-effort (no bloquea si Supabase falla).
+
 ## [0.3.0] — 2026-07-03 — Fase 2: Resumen (dashboard)
 
 ### Agregado

@@ -31,7 +31,7 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import { useAuth } from '../auth/AuthContext'
 import { monthPeriod, useDataset } from '../data/DatasetContext'
-import { apiPost, buildFileForm, ApiError } from '../lib/api'
+import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
 import { formatCLP, formatNumber } from '../lib/format'
 import type { MetricsResult } from '../lib/types'
@@ -107,7 +107,7 @@ function ChartTooltip({
 
 export default function Resumen() {
   const { user } = useAuth()
-  const { file, cleaning, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics } = useDataset()
+  const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics } = useDataset()
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -120,7 +120,9 @@ export default function Resumen() {
 
   useEffect(() => {
     if (!file || !cleaning) return
-    const key = `${file.name}|${period.from}|${period.to}`
+    // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
+    const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
+    const key = `${datasetKey}|${period.from}|${period.to}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     setLoading(true)
@@ -128,7 +130,7 @@ export default function Resumen() {
     const fields: Record<string, string> = {}
     if (period.from) fields.date_from = period.from
     if (period.to) fields.date_to = period.to
-    apiPost<MetricsResult>('/metrics', buildFileForm(file, fields))
+    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
       .then((result) => {
         setMetrics(result)
         setContextMetrics(result)
@@ -145,7 +147,7 @@ export default function Resumen() {
         setError(err instanceof ApiError ? err.message : 'No se pudieron calcular las métricas.'),
       )
       .finally(() => setLoading(false))
-  }, [file, cleaning, period, setMonthsAvailable, setPeriod])
+  }, [file, datasetId, storagePath, cleaning, uploadedAt, period, setMonthsAvailable, setPeriod])
 
   if (!ready) {
     return (

@@ -1,6 +1,7 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0, 1 y 2 completas.** Próxima: Fase 3 (Asistente IA).
+**Estado actual: Fases 0, 1, 2, 3 y 4 completas** (+ pasada de estabilidad multiusuario).
+Próxima: Fase 5 (Alertas, Historial, Conectores, Reportes, Configuración avanzada y planes).
 
 > Referencia rápida de qué está construido y qué viene. La especificación
 > completa vive en [`SPEC.md`](./SPEC.md).
@@ -53,11 +54,61 @@
 - Paleta de series validada (contraste ≥3:1, separación para daltonismo): pasos de las rampas de marca; el navy queda para texto/UI.
 - La regla no negociable se mantiene: sin dataset limpio, el Resumen muestra el estado vacío con CTA a Estandarización.
 
-## ⏳ Pendiente — Fase 3 y posteriores
+## ✅ Fase 3 — Asistente IA (completa)
 
-- **Fase 3 — Asistente IA**: resumen automático + chat anclado a los datos (Anthropic API desde el backend, `ANTHROPIC_MODEL` configurable) + gating por plan.
-- **Fase 4 — Explorar datos**: análisis guiados, hallazgos, recomendación inteligente.
-- **Fase 5**: Alertas, Historial (UI), Conectores (Google Sheets/SQL), Reportes PDF/Excel, Configuración avanzada y planes.
+**API** (`api/app/routes/ai.py`):
+- `POST /ai/summary` — resumen ejecutivo automático + 4 preguntas sugeridas a partir de las
+  métricas del dashboard. `POST /ai/chat` — chat anclado a los datos con streaming (SSE).
+- Las llamadas a la **Anthropic API ocurren solo en el backend** (`ANTHROPIC_API_KEY` vive en
+  Render); modelo configurable con `ANTHROPIC_MODEL`. Sin key configurada responde **503 con
+  mensaje claro** (nunca un 500 opaco).
+- **JWT de Supabase moderno**: además del HS256 legacy, la API valida tokens ES256/RS256 vía
+  JWKS (`/auth/v1/.well-known/jwks.json`), con caché de claves de 5 minutos.
+
+**Frontend** (`frontend/src/components/layout/AiPanel.tsx`):
+- Panel derecho activo: bloqueado sin datos → cargando (métricas + resumen) → activo con
+  resumen del periodo, preguntas sugeridas clickeables, historial de chat e input con
+  respuesta en streaming. Botón de reintento ante errores.
+- Pendiente para Fase 5: gating por plan y contador de consultas (SPEC §9).
+
+## ✅ Fase 4 — Explorar datos (completa, MVP básico)
+
+**Frontend** (`frontend/src/pages/Explorar.tsx`):
+- **"¿Qué quieres descubrir hoy?"**: 4 análisis predefinidos (Tendencia de ventas, Productos
+  estrella, Categorías rentables, Canales y sucursales) que configuran el análisis con un clic.
+- **"Define tu análisis"**: rango (todo el periodo o mes), agrupar por (mes/categoría/
+  producto/canal-sucursal) y métrica (ingresos o utilidad si el archivo trae costos).
+- **Hallazgos principales** calculados en el momento y **sin costo de IA**: variación del
+  último mes, mejor/peor mes, concentración del producto top, categoría más/menos rentable,
+  canal dominante, proyección y advertencias del motor.
+- **Gráfico principal** (barras horizontales por agrupación o línea de tendencia) +
+  **"Profundiza"** (tabla con ingresos, % del total, utilidad y margen).
+- **Recomendación inteligente**: `POST /ai/recommendation` entrega recomendación + plan de
+  acción de 3 pasos. **Solo a pedido del usuario** (botón) — control de costo de IA.
+- **"Guardar análisis"**: persistencia best-effort en la tabla `analyses`.
+
+**Base de datos** (`supabase/migrations/0004_analyses.sql`):
+- Tabla `analyses` (configuración + hallazgos + recomendación) con RLS por usuario.
+
+## ✅ Pasada de estabilidad multiusuario (2026-07-03)
+
+- **Seguridad**: `storage_path` valida propiedad contra el `user_id` del JWT (la descarga usa
+  la service_role key que salta RLS) → 403 si la ruta no empieza con `{user_id}/`.
+- **Cambio de usuario en el mismo navegador**: `DatasetContext` se resetea al hacer logout o
+  cambiar de cuenta — el archivo/métricas/panel IA del usuario anterior no quedan vivos.
+- Claves de recálculo con `uploadedAt` (dos archivos con igual nombre ya no se confunden).
+- `VITE_API_BASE_URL` obligatoria en producción (error claro en vez de fallback a localhost).
+- Log seguro de CORS (Origin + ruta, jamás tokens) para diagnosticar despliegues.
+- Tests: **18 pruebas** (nuevas: storage_path ajeno → 403, preflight CORS, `/ai/*` protegidos
+  y con 503 claro sin `ANTHROPIC_API_KEY`).
+
+## ⏳ Pendiente — Fase 5
+
+- **Fase 5**: Alertas, Historial (UI), Conectores (Google Sheets/SQL), Reportes PDF/Excel,
+  Configuración avanzada y planes (gating básico/gold + cupo de consultas IA).
+- Deuda técnica priorizada: usar `storage_path`/`dataset_id` como transporte principal
+  (hoy el archivo viaja por multipart ≤15 MB en cada llamada) y retomar datasets después
+  de refrescar la página (persistencia ya existe; falta re-hidratar el contexto).
 
 ## Comandos para correr el proyecto
 
@@ -84,6 +135,8 @@ python -m pytest tests/ -v
 # SQL Editor → ejecutar en orden:
 #   supabase/migrations/0001_profiles.sql
 #   supabase/migrations/0002_datasets_pipeline.sql
+#   supabase/migrations/0003_profile_contact_fields.sql
+#   supabase/migrations/0004_analyses.sql
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

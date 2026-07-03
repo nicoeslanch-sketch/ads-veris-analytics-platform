@@ -103,6 +103,30 @@ export async function saveCleaningJob(
   await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
 }
 
+/** Guarda un análisis de Explorar datos (migración 0004). Best-effort. */
+export async function saveAnalysis(
+  datasetId: string | null,
+  name: string,
+  config: Record<string, unknown>,
+  findings: string[],
+  recommendation: Record<string, unknown> | null,
+): Promise<boolean> {
+  const userId = await getUserId()
+  if (!supabase || !userId) return false
+  const { error } = await supabase.from('analyses').insert({
+    user_id: userId,
+    dataset_id: datasetId,
+    name,
+    config,
+    findings,
+    recommendation,
+  })
+  if (!error) {
+    try { await logActivity('analisis', `Análisis guardado: ${name}`, datasetId) } catch { /* best-effort */ }
+  }
+  return !error
+}
+
 export async function logActivity(
   type: 'carga' | 'estandarizacion' | 'limpieza' | 'analisis' | 'chat' | 'recomendacion',
   description: string,

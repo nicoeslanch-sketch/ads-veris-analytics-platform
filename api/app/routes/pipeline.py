@@ -11,7 +11,7 @@ import os
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from ..auth import get_current_user
+from ..auth import AuthenticatedUser, get_current_user
 from ..engine.clean import analyze_and_clean
 from ..engine.loader import UnsupportedFileError, load_dataframe
 from ..engine.mapping import detect_column_roles
@@ -19,13 +19,28 @@ from ..engine.metrics import compute_metrics
 from ..engine.standardize import standardize_dataframe
 from ..storage import download_from_storage
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter()
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # multipart es solo para archivos pequeños
 PREVIEW_ROWS = 5
 
 
-async def _read_input(file: UploadFile | None, storage_path: str | None) -> tuple[str, bytes]:
+def _check_storage_ownership(storage_path: str, user: AuthenticatedUser) -> None:
+    """El bucket organiza los archivos por carpeta {user_id}/...; la API descarga
+    con la service_role key (salta RLS), así que la propiedad se valida aquí."""
+    normalized = storage_path.lstrip("/")
+    if not normalized.startswith(f"{user.id}/"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes acceso a ese archivo.",
+        )
+
+
+async def _read_input(
+    file: UploadFile | None,
+    storage_path: str | None,
+    user: AuthenticatedUser,
+) -> tuple[str, bytes]:
     if file is not None:
         content = await file.read()
         if len(content) > MAX_UPLOAD_BYTES:
@@ -35,6 +50,7 @@ async def _read_input(file: UploadFile | None, storage_path: str | None) -> tupl
             )
         return file.filename or "archivo.csv", content
     if storage_path:
+        _check_storage_ownership(storage_path, user)
         return os.path.basename(storage_path), download_from_storage(storage_path)
     raise HTTPException(
         status_code=422,
@@ -71,9 +87,9 @@ def _parse_json_field(raw: str | None, field: str) -> dict:
 async def standardize(
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict:
-    print(">>> Entró a /standardize")
-    filename, content = await _read_input(file, storage_path)
+    filename, content = await _read_input(file, storage_path, user)
     df_original = _load_or_400(filename, content)
     df_std, report = standardize_dataframe(df_original)
 
@@ -101,8 +117,9 @@ async def clean(
     storage_path: str | None = Form(None),
     rules: str | None = Form(None),
     apply: bool = Form(False),
+    user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict:
-    filename, content = await _read_input(file, storage_path)
+    filename, content = await _read_input(file, storage_path, user)
     df_original = _load_or_400(filename, content)
     result = analyze_and_clean(df_original, _parse_json_field(rules, "rules"), apply)
     result.pop("_df_limpio", None)
@@ -117,8 +134,9 @@ async def metrics(
     mapping: str | None = Form(None),
     date_from: str | None = Form(None),
     date_to: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict:
-    filename, content = await _read_input(file, storage_path)
+    filename, content = await _read_input(file, storage_path, user)
     df_original = _load_or_400(filename, content)
     # Las métricas siempre se calculan sobre datos estandarizados y limpios.
     result = analyze_and_clean(df_original, rules=None, apply=True)

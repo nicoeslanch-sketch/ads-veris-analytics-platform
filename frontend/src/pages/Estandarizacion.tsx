@@ -16,7 +16,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
-import { apiPost, buildFileForm, ApiError } from '../lib/api'
+import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { insertDataset, markStandardized, uploadToStorage } from '../lib/datasets'
 import { formatDateTime, formatNumber } from '../lib/format'
 import type { StandardizeResult } from '../lib/types'
@@ -74,7 +74,7 @@ export default function Estandarizacion() {
 
       const result = await apiPost<StandardizeResult>(
         '/standardize',
-        buildFileForm(selected),
+        buildDatasetForm(selected, storagePath),
       )
       setStandardization(result)
       await markStandardized(datasetId, result)

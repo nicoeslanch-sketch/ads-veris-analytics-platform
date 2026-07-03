@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, Loader2, Lock, RefreshCw, Sparkles, Star, TriangleAlert } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
-import { ApiError, apiPost, apiPostJson, apiStream, buildFileForm } from '../../lib/api'
+import { ApiError, apiPost, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
 import type { MetricsResult } from '../../lib/types'
 
 // ── Tipos locales ─────────────────────────────────────────────────────────────
@@ -30,7 +30,15 @@ interface Summary {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function AiPanel() {
-  const { cleaning, metrics: contextMetrics, file, setMetrics: setContextMetrics } = useDataset()
+  const {
+    cleaning,
+    metrics: contextMetrics,
+    file,
+    datasetId,
+    storagePath,
+    uploadedAt,
+    setMetrics: setContextMetrics,
+  } = useDataset()
   const active = Boolean(cleaning && file)
 
   const [summary, setSummary] = useState<Summary | null>(null)
@@ -53,14 +61,18 @@ export default function AiPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const runActivation = async (fileObj: File, metricsArg: MetricsResult | null) => {
+  const runActivation = async (
+    fileObj: File,
+    storagePathArg: string | null,
+    metricsArg: MetricsResult | null,
+  ) => {
     setLoading(true)
     setError(null)
     try {
       let m = metricsArg
       if (!m) {
         setLoadingLabel('Calculando indicadores…')
-        m = await apiPost<MetricsResult>('/metrics', buildFileForm(fileObj))
+        m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg))
         localMetrics.current = m
         setContextMetrics(m)
       } else {
@@ -89,12 +101,13 @@ export default function AiPanel() {
       }
       return
     }
-    const fileKey = file.name
+    // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
+    const fileKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     if (fetchedForFile.current === fileKey) return
     fetchedForFile.current = fileKey
-    void runActivation(file, contextMetrics)
+    void runActivation(file, storagePath, contextMetrics)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, file])
+  }, [active, file, datasetId, storagePath, uploadedAt])
 
   // Si las métricas llegan al contexto después (usuario visitó Resumen),
   // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.
@@ -218,7 +231,7 @@ export default function AiPanel() {
             onClick={() => {
               if (file) {
                 fetchedForFile.current = null
-                void runActivation(file, contextMetrics)
+                void runActivation(file, storagePath, contextMetrics)
               }
             }}
             className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-xs font-semibold text-white/80 transition-colors hover:bg-white/15"

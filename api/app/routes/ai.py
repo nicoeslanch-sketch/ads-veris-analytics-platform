@@ -145,6 +145,12 @@ class ChatRequest(BaseModel):
     historial: list[ChatMessage] = []
 
 
+class RecommendationRequest(BaseModel):
+    metrics: dict
+    hallazgos: list[str] = []
+    analisis: str = ""  # descripción del análisis activo (ej: "ingresos por categoría, mayo")
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
@@ -209,6 +215,64 @@ async def ai_summary(
         ]
 
     return {"resumen": resumen, "sugerencias": sugerencias}
+
+
+@router.post("/recommendation")
+async def ai_recommendation(
+    body: RecommendationRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Recomendación inteligente de Explorar datos (SPEC §7): lectura del
+    análisis activo + plan de acción concreto. Se genera solo a pedido del
+    usuario (botón), nunca automáticamente — control de costo de IA."""
+    try:
+        ctx = _metrics_context(body.metrics)
+        hallazgos_txt = "\n".join(f"- {h}" for h in body.hallazgos[:8])
+        prompt = (
+            f"Aquí están los datos del negocio:\n\n{ctx}\n\n"
+            + (f"Análisis que el usuario está mirando: {body.analisis}\n\n" if body.analisis else "")
+            + (f"Hallazgos ya detectados:\n{hallazgos_txt}\n\n" if hallazgos_txt else "")
+            + "Entrega UNA recomendación principal para el negocio (2-3 frases, "
+            "directa y accionable, no repitas los hallazgos: interprétalos). "
+            "Luego, en una línea separada que empiece exactamente con 'PLAN:', "
+            "lista 3 pasos concretos de acción separados por '|'. "
+            "Ejemplo: PLAN: Renegocia el precio de X|Concentra promoción en el canal Y|Revisa el stock de Z"
+        )
+        client = _client(settings)
+        response = await client.messages.create(
+            model=_model(settings),
+            max_tokens=1024,
+            system=_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except HTTPException:
+        raise
+    except APIConnectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"No se pudo conectar con el servicio de IA: {exc}",
+        ) from exc
+    except APIStatusError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=f"Error del servicio de IA ({exc.status_code}): {exc.message}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno del asistente: {exc}",
+        ) from exc
+
+    full_text: str = response.content[0].text  # type: ignore[index]
+
+    recomendacion = full_text
+    plan: list[str] = []
+    if "PLAN:" in full_text:
+        parts = full_text.split("PLAN:", 1)
+        recomendacion = parts[0].strip()
+        plan = [p.strip() for p in parts[1].strip().split("|") if p.strip()][:3]
+
+    return {"recomendacion": recomendacion, "plan": plan}
 
 
 @router.post("/chat")

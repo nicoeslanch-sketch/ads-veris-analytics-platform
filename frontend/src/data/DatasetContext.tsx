@@ -2,10 +2,13 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
+import { useAuth } from '../auth/AuthContext'
 import type { CleanResult, MetricsResult, StandardizeResult } from '../lib/types'
 
 /** Rango de fechas activo del topbar; null = todo el periodo. */
@@ -95,6 +98,18 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setPeriod(ALL_PERIOD)
     setMonthsAvailable([])
   }, [])
+
+  // Al cerrar sesión o cambiar de usuario en el mismo navegador, el dataset
+  // de la sesión anterior no debe seguir vivo (archivos, métricas ni panel IA).
+  const { user } = useAuth()
+  const userId = user?.id ?? null
+  const lastUserId = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    if (lastUserId.current !== undefined && lastUserId.current !== userId) {
+      reset()
+    }
+    lastUserId.current = userId
+  }, [userId, reset])
 
   const value = useMemo(
     () => ({

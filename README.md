@@ -37,6 +37,7 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    - `supabase/migrations/0002_datasets_pipeline.sql` (datasets, limpieza, historial y
      bucket privado `datasets` en Storage)
    - `supabase/migrations/0003_profile_contact_fields.sql` (pais y telefono en registro)
+   - `supabase/migrations/0004_analyses.sql` (análisis guardados de Explorar datos)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend
@@ -123,8 +124,12 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
 - [x] **Fase 2 — Resumen (dashboard)**: KPIs con variación y sparklines, evolución de
   ingresos/gastos/utilidad, análisis por categoría, ventas por canal, top productos,
   proyección a 3 meses y filtro de periodo funcional en el topbar.
-- [ ] **Fase 3 — Asistente IA**: resumen automático + chat anclado a los datos + gating.
-- [ ] **Fase 4 — Explorar datos**: análisis guiados, hallazgos, recomendación.
+- [x] **Fase 3 — Asistente IA**: resumen automático + preguntas sugeridas + chat con
+  streaming anclado a los datos (Anthropic API solo en el backend, JWKS para tokens
+  ES256 de Supabase). Gating por plan queda para la Fase 5.
+- [x] **Fase 4 — Explorar datos**: análisis predefinidos y personalizados (rango, agrupar
+  por, métrica), hallazgos automáticos, tabla "Profundiza", recomendación inteligente con
+  plan de acción (a pedido) y guardar análisis (migración `0004`).
 - [ ] **Fase 5 — Alertas, Historial, Conectores, Reportes, Configuración avanzada y planes.**
 
 ## Regla de flujo no negociable

@@ -29,6 +29,16 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _warn_denied_origin(request, call_next):
+    """Log seguro para diagnosticar CORS en producción: solo Origin + ruta, jamás tokens."""
+    origin = request.headers.get("origin")
+    if origin and origin not in settings.cors_origins:
+        print(f"[CORS] Origen NO permitido: {origin} → {request.method} {request.url.path} "
+              f"(ALLOWED_ORIGINS tiene {len(settings.cors_origins)} orígenes)")
+    return await call_next(request)
+
+
 @app.get("/health")
 def health() -> dict:
     """Único endpoint público: verificación de vida para Render/Railway."""
@@ -43,11 +53,3 @@ def me(user: AuthenticatedUser = Depends(get_current_user)) -> dict:
 
 app.include_router(pipeline_router)
 app.include_router(ai_router)
-
-
-@app.on_event("startup")
-async def _log_routes() -> None:
-    for route in app.routes:
-        path = getattr(route, "path", "<router>")
-        methods = getattr(route, "methods", None)
-        print(f"  {str(methods or '---'):30s}  {path}")

@@ -24,7 +24,7 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import { useDataset } from '../data/DatasetContext'
-import { apiPost, buildFileForm, ApiError } from '../lib/api'
+import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { saveCleaningJob } from '../lib/datasets'
 import { formatNumber } from '../lib/format'
 import { DEFAULT_RULES, type CleanResult, type CleaningRules } from '../lib/types'
@@ -88,7 +88,7 @@ function QualityRing({ quality }: { quality: number }) {
 }
 
 export default function Limpieza() {
-  const { file, datasetId, standardization, cleaning, setCleaning } = useDataset()
+  const { file, datasetId, storagePath, standardization, cleaning, setCleaning } = useDataset()
   const [detection, setDetection] = useState<CleanResult | null>(null)
   const [rules, setRules] = useState<CleaningRules>(DEFAULT_RULES)
   const [detecting, setDetecting] = useState(false)
@@ -101,13 +101,13 @@ export default function Limpieza() {
     detectStartedFor.current = file
     setDetecting(true)
     setError(null)
-    apiPost<CleanResult>('/clean', buildFileForm(file, { apply: 'false' }))
+    apiPost<CleanResult>('/clean', buildDatasetForm(file, storagePath, { apply: 'false' }))
       .then(setDetection)
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : 'No se pudo analizar el archivo.'),
       )
       .finally(() => setDetecting(false))
-  }, [file, cleaning])
+  }, [file, storagePath, cleaning])
 
   if (!file || !standardization) {
     return (
@@ -169,7 +169,7 @@ export default function Limpieza() {
     try {
       const response = await apiPost<CleanResult>(
         '/clean',
-        buildFileForm(file, { apply: 'true', rules: JSON.stringify(rules) }),
+        buildDatasetForm(file, storagePath, { apply: 'true', rules: JSON.stringify(rules) }),
       )
       setCleaning(response)
       await saveCleaningJob(datasetId, rules, response)

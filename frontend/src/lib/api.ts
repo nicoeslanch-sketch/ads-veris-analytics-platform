@@ -7,8 +7,11 @@ de la API (VITE_API_BASE_URL) y el token del usuario autenticado.
 
 import { supabase } from './supabase'
 
+// En desarrollo cae a localhost; en producción la variable es obligatoria
+// (sin fallback silencioso: un error claro evita horas de diagnóstico).
 const API_BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, '') ??
+  (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 export class ApiError extends Error {
   constructor(
@@ -17,6 +20,16 @@ export class ApiError extends Error {
   ) {
     super(message)
   }
+}
+
+function requireBase(): string {
+  if (!API_BASE_URL) {
+    throw new ApiError(
+      0,
+      'Falta configurar VITE_API_BASE_URL en el entorno de despliegue (Vercel).',
+    )
+  }
+  return API_BASE_URL
 }
 
 async function getAccessToken(): Promise<string | null> {
@@ -30,29 +43,18 @@ export async function apiPost<T>(path: string, form: FormData): Promise<T> {
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const fullUrl = `${API_BASE_URL}${path}`
-  console.log('[ADS] ▶ fetch', { API_BASE_URL, path, fullUrl, hasToken: !!token })
-
+  const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
     response = await fetch(fullUrl, { method: 'POST', headers, body: form })
-  } catch (err) {
-    console.error('[ADS] ✗ fetch error de red', err)
+  } catch {
     throw new ApiError(
       0,
       'No se pudo contactar al motor de datos. ¿Está corriendo la API? (VITE_API_BASE_URL)',
     )
   }
 
-  console.log('[ADS] ◀ response', {
-    url: response.url,
-    status: response.status,
-    redirected: response.redirected,
-    contentType: response.headers.get('content-type'),
-  })
   const rawBody = await response.text()
-  console.log('[ADS] body (raw):', rawBody.slice(0, 500))
-
   if (!response.ok) {
     let detail = `Error ${response.status} del motor de datos.`
     try {
@@ -80,13 +82,28 @@ export function buildFileForm(
   return form
 }
 
+export function buildDatasetForm(
+  file: File,
+  storagePath: string | null,
+  fields: Record<string, string> = {},
+): FormData {
+  const form = new FormData()
+  if (storagePath) {
+    form.append('storage_path', storagePath)
+  } else {
+    form.append('file', file, file.name)
+  }
+  for (const [key, value] of Object.entries(fields)) form.append(key, value)
+  return form
+}
+
 /** POST con body JSON (para los endpoints /ai/*). */
 export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
   const token = await getAccessToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const fullUrl = `${API_BASE_URL}${path}`
+  const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
     response = await fetch(fullUrl, { method: 'POST', headers, body: JSON.stringify(body) })
@@ -123,7 +140,7 @@ export async function apiStream(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const fullUrl = `${API_BASE_URL}${path}`
+  const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
     response = await fetch(fullUrl, { method: 'POST', headers, body: JSON.stringify(body) })

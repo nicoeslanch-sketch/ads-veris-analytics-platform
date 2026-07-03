@@ -179,3 +179,84 @@ def test_archivo_invalido_devuelve_400(client, auth_headers):
 def test_sin_archivo_ni_storage_path_devuelve_422(client, auth_headers):
     response = client.post("/standardize", headers=auth_headers)
     assert response.status_code == 422
+
+
+# ── Seguridad multiusuario: storage_path ajeno se rechaza ──
+
+
+def test_storage_path_de_otro_usuario_devuelve_403(client, auth_headers):
+    """La API descarga de Storage con service_role (salta RLS): la propiedad
+    del archivo se valida contra el user_id del JWT antes de descargar."""
+    for path in ("/standardize", "/clean", "/metrics"):
+        response = client.post(
+            path,
+            data={"storage_path": "otro-usuario-999/archivo.csv"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 403, path
+
+
+def test_storage_path_propio_pasa_validacion_de_propiedad(client, auth_headers):
+    # El path pertenece al usuario del token (user-test-123). Sin Supabase
+    # configurado en tests, el siguiente paso (descarga) responde 503 — lo que
+    # prueba que la validación de propiedad se superó (no 403).
+    response = client.post(
+        "/standardize",
+        data={"storage_path": "user-test-123/ventas.csv"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 503
+
+
+# ── CORS: preflight del navegador ──
+
+
+def test_cors_preflight_origen_permitido(client):
+    response = client.options(
+        "/standardize",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_cors_preflight_origen_no_permitido_sin_header_cors(client):
+    response = client.options(
+        "/standardize",
+        headers={
+            "Origin": "https://sitio-malicioso.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert "access-control-allow-origin" not in response.headers
+
+
+# ── Asistente IA: protección y configuración ──
+
+
+def test_ai_summary_requiere_token(client):
+    response = client.post("/ai/summary", json={"metrics": {}})
+    assert response.status_code == 401
+
+
+def test_ai_summary_sin_api_key_devuelve_503(client, auth_headers):
+    # En tests no hay ANTHROPIC_API_KEY: el endpoint debe fallar con un
+    # mensaje claro, nunca con un 500 opaco.
+    response = client.post("/ai/summary", json={"metrics": {}}, headers=auth_headers)
+    assert response.status_code == 503
+    assert "ANTHROPIC_API_KEY" in response.json()["detail"]
+
+
+def test_ai_recommendation_requiere_token_y_api_key(client, auth_headers):
+    assert client.post("/ai/recommendation", json={"metrics": {}}).status_code == 401
+    response = client.post(
+        "/ai/recommendation",
+        json={"metrics": {}, "hallazgos": ["Ingresos subieron 12%"], "analisis": "prueba"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 503
+    assert "ANTHROPIC_API_KEY" in response.json()["detail"]
