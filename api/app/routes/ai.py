@@ -13,7 +13,7 @@ frontend. La API key vive solo en la variable de entorno ANTHROPIC_API_KEY.
 
 import json
 
-from anthropic import AsyncAnthropic
+from anthropic import APIConnectionError, APIStatusError, AsyncAnthropic
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -165,12 +165,28 @@ async def ai_summary(
     )
 
     client = _client(settings)
-    response = await client.messages.create(
-        model=_model(settings),
-        max_tokens=1024,
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        response = await client.messages.create(
+            model=_model(settings),
+            max_tokens=1024,
+            system=_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except APIConnectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"No se pudo conectar con el servicio de IA: {exc}",
+        ) from exc
+    except APIStatusError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=f"Error del servicio de IA ({exc.status_code}): {exc.message}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno del asistente: {exc}",
+        ) from exc
 
     full_text: str = response.content[0].text  # type: ignore[index]
 
