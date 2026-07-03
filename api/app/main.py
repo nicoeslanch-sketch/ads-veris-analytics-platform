@@ -41,3 +41,11 @@ def me(user: AuthenticatedUser = Depends(get_current_user)) -> dict:
 
 
 app.include_router(pipeline_router)
+
+
+@app.on_event("startup")
+async def _log_routes() -> None:
+    for route in app.routes:
+        path = getattr(route, "path", "<router>")
+        methods = getattr(route, "methods", None)
+        print(f"  {str(methods or '---'):30s}  {path}")
