@@ -72,6 +72,7 @@ async def standardize(
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
 ) -> dict:
+    print(">>> Entró a /standardize")
     filename, content = await _read_input(file, storage_path)
     df_original = _load_or_400(filename, content)
     df_std, report = standardize_dataframe(df_original)

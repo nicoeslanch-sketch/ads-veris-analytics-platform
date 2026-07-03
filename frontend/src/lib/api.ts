@@ -30,24 +30,33 @@ export async function apiPost<T>(path: string, form: FormData): Promise<T> {
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
 
+  const fullUrl = `${API_BASE_URL}${path}`
+  console.log('[ADS] ▶ fetch', { API_BASE_URL, path, fullUrl, hasToken: !!token })
+
   let response: Response
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      method: 'POST',
-      headers,
-      body: form,
-    })
-  } catch {
+    response = await fetch(fullUrl, { method: 'POST', headers, body: form })
+  } catch (err) {
+    console.error('[ADS] ✗ fetch error de red', err)
     throw new ApiError(
       0,
       'No se pudo contactar al motor de datos. ¿Está corriendo la API? (VITE_API_BASE_URL)',
     )
   }
 
+  console.log('[ADS] ◀ response', {
+    url: response.url,
+    status: response.status,
+    redirected: response.redirected,
+    contentType: response.headers.get('content-type'),
+  })
+  const rawBody = await response.text()
+  console.log('[ADS] body (raw):', rawBody.slice(0, 500))
+
   if (!response.ok) {
     let detail = `Error ${response.status} del motor de datos.`
     try {
-      const body = await response.json()
+      const body = JSON.parse(rawBody)
       if (typeof body.detail === 'string') detail = body.detail
     } catch {
       // sin cuerpo JSON: se mantiene el mensaje genérico
@@ -55,7 +64,7 @@ export async function apiPost<T>(path: string, form: FormData): Promise<T> {
     throw new ApiError(response.status, detail)
   }
   try {
-    return (await response.json()) as T
+    return JSON.parse(rawBody) as T
   } catch {
     throw new ApiError(response.status, 'Respuesta inesperada del servidor (no es JSON válido).')
   }
