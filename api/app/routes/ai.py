@@ -154,24 +154,25 @@ async def ai_summary(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Genera resumen automático del negocio + preguntas sugeridas."""
-    ctx = _metrics_context(body.metrics)
-    prompt = (
-        f"Aquí están los datos del negocio:\n\n{ctx}\n\n"
-        "Redacta un resumen ejecutivo del periodo: qué pasó, qué es destacable "
-        "(positivo o negativo) y cuál es la recomendación principal. "
-        "Luego, en una línea separada que empiece exactamente con 'SUGERENCIAS:', "
-        "lista 4 preguntas cortas que el dueño podría querer hacerte, separadas por '|'. "
-        "Ejemplo: SUGERENCIAS: ¿Cuál es el mes más fuerte?|¿Qué producto debo potenciar?|..."
-    )
-
-    client = _client(settings)
     try:
+        ctx = _metrics_context(body.metrics)
+        prompt = (
+            f"Aquí están los datos del negocio:\n\n{ctx}\n\n"
+            "Redacta un resumen ejecutivo del periodo: qué pasó, qué es destacable "
+            "(positivo o negativo) y cuál es la recomendación principal. "
+            "Luego, en una línea separada que empiece exactamente con 'SUGERENCIAS:', "
+            "lista 4 preguntas cortas que el dueño podría querer hacerte, separadas por '|'. "
+            "Ejemplo: SUGERENCIAS: ¿Cuál es el mes más fuerte?|¿Qué producto debo potenciar?|..."
+        )
+        client = _client(settings)
         response = await client.messages.create(
             model=_model(settings),
             max_tokens=1024,
             system=_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
         )
+    except HTTPException:
+        raise
     except APIConnectionError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
