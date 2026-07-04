@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = ""
 
+    # Cuotas mensuales de consultas IA por plan (SPEC §9)
+    ai_monthly_limit_basico: int = 20
+    ai_monthly_limit_gold: int = 200
+
     # SOLO desarrollo local sin Supabase: acepta requests sin JWT.
     # Jamás activar en producción.
     dev_auth_bypass: bool = False

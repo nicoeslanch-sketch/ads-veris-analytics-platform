@@ -1,7 +1,7 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0, 1, 2, 3 y 4 completas** (+ pasada de estabilidad multiusuario).
-Próxima: Fase 5 (Alertas, Historial, Conectores, Reportes, Configuración avanzada y planes).
+**Estado actual: Fases 0 a 5 completas** (Fase 5: Alertas, Historial, Reportes,
+Configuración y planes/cuotas IA — solo **Conectores** queda pendiente).
 
 > Referencia rápida de qué está construido y qué viene. La especificación
 > completa vive en [`SPEC.md`](./SPEC.md).
@@ -102,13 +102,48 @@ Próxima: Fase 5 (Alertas, Historial, Conectores, Reportes, Configuración avanz
 - Tests: **18 pruebas** (nuevas: storage_path ajeno → 403, preflight CORS, `/ai/*` protegidos
   y con 503 claro sin `ANTHROPIC_API_KEY`).
 
-## ⏳ Pendiente — Fase 5
+## ✅ Fase 5 — Alertas, Historial, Reportes, Configuración y planes (completa salvo Conectores)
 
-- **Fase 5**: Alertas, Historial (UI), Conectores (Google Sheets/SQL), Reportes PDF/Excel,
-  Configuración avanzada y planes (gating básico/gold + cupo de consultas IA).
-- Deuda técnica priorizada: usar `storage_path`/`dataset_id` como transporte principal
-  (hoy el archivo viaja por multipart ≤15 MB en cada llamada) y retomar datasets después
-  de refrescar la página (persistencia ya existe; falta re-hidratar el contexto).
+**Alertas** (`frontend/src/pages/Alertas.tsx`):
+- Reglas configurables con umbral y toggle (caída de ingresos m/m, margen bajo,
+  concentración de producto, concentración de canal, advertencias del motor), guardadas
+  en el navegador. Cada alerta: qué pasó, severidad (crítica/media/baja), área afectada
+  y recomendación. Panel derecho: resumen por severidad y por área. "Marcar revisada".
+
+**Historial** (`frontend/src/pages/Historial.tsx` + `lib/history.ts`):
+- Archivos cargados (fecha, filas, calidad %, estado) y actividad completa desde Supabase.
+- **Retomar**: descarga el archivo desde Storage (RLS de carpeta propia), re-estandariza y
+  rehidrata el `DatasetContext` → continuar en Limpieza tras refrescar el navegador.
+
+**Reportes** (`frontend/src/pages/Reportes.tsx` + `lib/report.ts`):
+- **Reporte ejecutivo PDF**: vista imprimible con la marca (KPIs, evolución, categorías,
+  canales, top productos, proyección) → "Guardar como PDF". **Excel/CSV es-CL**
+  (separador `;`, BOM UTF-8) con todas las tablas. Sin dependencias nuevas.
+
+**Configuración** (`frontend/src/pages/Configuracion.tsx` + `lib/profile.ts`):
+- Perfil editable (nombre, empresa, RUT, país, teléfono → tabla `profiles`), preferencias
+  de datos es-CL, plan de la cuenta y consultas IA usadas/límite del mes (`GET /ai/usage`).
+
+**Planes y cuotas IA** (`api/app/quota.py`, SPEC §9):
+- Cada consulta IA (resumen, chat, recomendación) descuenta del cupo mensual del plan
+  (`profiles.plan`): básico 20, gold 200 (configurables con `AI_MONTHLY_LIMIT_*`).
+- Cupo agotado → **429** con mensaje claro y CTA a Gold. Registro en `ai_usage`
+  (migración `0006`). Sin Supabase (dev) el gating se desactiva limpio.
+
+**Hardening multiusuario (backend)**:
+- Descarga desde Storage con **límite de 15 MB** (Content-Length + corte en streaming).
+- pandas y la descarga corren en el **threadpool**: el event loop queda libre y varios
+  usuarios pueden procesar archivos a la vez (antes se bloqueaban entre ellos).
+- Migración `0005`: RLS valida que `dataset_id` pertenezca al usuario en
+  `cleaning_jobs`, `activity_log` y `analyses`.
+- Tests: **22 pruebas** (incluye 413 de Storage, 429 de cuota y ES256/JWKS real).
+
+## ⏳ Pendiente
+
+- **Conectores** (Google Sheets / SQL) — único módulo de la Fase 5 sin construir.
+- Vigilancia continua de Alertas (correo/notificaciones) — llega con Conectores.
+- Checkout/upgrade de plan Gold (hoy el plan se cambia en la tabla `profiles`).
+- Deuda técnica: transporte por `dataset_id` (hoy `storage_path` validado por prefijo).
 
 ## Comandos para correr el proyecto
 
@@ -137,6 +172,8 @@ python -m pytest tests/ -v
 #   supabase/migrations/0002_datasets_pipeline.sql
 #   supabase/migrations/0003_profile_contact_fields.sql
 #   supabase/migrations/0004_analyses.sql
+#   supabase/migrations/0005_rls_dataset_ownership.sql
+#   supabase/migrations/0006_ai_usage.sql
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

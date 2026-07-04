@@ -15,10 +15,12 @@ import json
 
 from anthropic import APIConnectionError, APIStatusError, AsyncAnthropic
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..auth import get_current_user
+from .. import quota
+from ..auth import AuthenticatedUser, get_current_user
 from ..config import Settings, get_settings
 
 router = APIRouter(prefix="/ai", dependencies=[Depends(get_current_user)])
@@ -154,12 +156,23 @@ class RecommendationRequest(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
+@router.get("/usage")
+async def ai_usage(
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Cupo de consultas IA del mes: plan, usadas y límite (para Configuración)."""
+    return await run_in_threadpool(quota.usage_info, user.id, settings)
+
+
 @router.post("/summary")
 async def ai_summary(
     body: SummaryRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Genera resumen automático del negocio + preguntas sugeridas."""
+    await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
         ctx = _metrics_context(body.metrics)
         prompt = (
@@ -214,17 +227,20 @@ async def ai_summary(
             "¿Qué debería priorizar el próximo mes?",
         ]
 
+    await run_in_threadpool(quota.record_usage, user.id, "summary", settings)
     return {"resumen": resumen, "sugerencias": sugerencias}
 
 
 @router.post("/recommendation")
 async def ai_recommendation(
     body: RecommendationRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Recomendación inteligente de Explorar datos (SPEC §7): lectura del
     análisis activo + plan de acción concreto. Se genera solo a pedido del
     usuario (botón), nunca automáticamente — control de costo de IA."""
+    await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
         ctx = _metrics_context(body.metrics)
         hallazgos_txt = "\n".join(f"- {h}" for h in body.hallazgos[:8])
@@ -272,15 +288,18 @@ async def ai_recommendation(
         recomendacion = parts[0].strip()
         plan = [p.strip() for p in parts[1].strip().split("|") if p.strip()][:3]
 
+    await run_in_threadpool(quota.record_usage, user.id, "recommendation", settings)
     return {"recomendacion": recomendacion, "plan": plan}
 
 
 @router.post("/chat")
 async def ai_chat(
     body: ChatRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Chat libre anclado a los datos del negocio. Devuelve SSE."""
+    await run_in_threadpool(quota.check_quota, user.id, settings)
     ctx = _metrics_context(body.metrics)
 
     messages: list[dict] = []
@@ -314,6 +333,7 @@ async def ai_chat(
             ) as stream:
                 async for text in stream.text_stream:
                     yield f"data: {json.dumps({'chunk': text})}\n\n"
+            await run_in_threadpool(quota.record_usage, user.id, "chat", settings)
             yield "data: [DONE]\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"

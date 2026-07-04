@@ -18,6 +18,7 @@ import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { insertDataset, markStandardized, uploadToStorage } from '../lib/datasets'
+import { supabaseConfigured } from '../lib/supabase'
 import { formatDateTime, formatNumber } from '../lib/format'
 import type { StandardizeResult } from '../lib/types'
 
@@ -58,9 +59,11 @@ export default function Estandarizacion() {
   const [processing, setProcessing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [persistWarning, setPersistWarning] = useState<string | null>(null)
 
   const handleFile = async (selected: File) => {
     setError(null)
+    setPersistWarning(null)
     if (!/\.(csv|xlsx|xls)$/i.test(selected.name)) {
       setError('Formato no soportado. Sube un archivo Excel (.xlsx) o CSV (.csv).')
       return
@@ -70,6 +73,13 @@ export default function Estandarizacion() {
       // Persistencia best-effort: Storage + fila en datasets (si hay Supabase)
       const storagePath = await uploadToStorage(selected)
       const datasetId = await insertDataset(selected, storagePath)
+      if (supabaseConfigured && (!storagePath || !datasetId)) {
+        // No bloquea el pipeline, pero el usuario debe saber que no quedó guardado
+        setPersistWarning(
+          'Tu archivo se procesará igual, pero no se pudo guardar en el historial ' +
+            '(revisa el bucket y las políticas RLS en Supabase).',
+        )
+      }
       setUploaded(selected, datasetId, storagePath)
 
       const result = await apiPost<StandardizeResult>(
@@ -162,6 +172,12 @@ export default function Estandarizacion() {
             <div className="flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-left text-sm text-coral">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <p>{error}</p>
+            </div>
+          )}
+          {persistWarning && (
+            <div className="flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 text-left text-sm text-navy/80">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+              <p>{persistWarning}</p>
             </div>
           )}
         </div>

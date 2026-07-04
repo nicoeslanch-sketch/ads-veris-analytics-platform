@@ -97,6 +97,35 @@ export function buildDatasetForm(
   return form
 }
 
+/** GET con JWT (para endpoints de estado como /ai/usage). */
+export async function apiGet<T>(path: string): Promise<T> {
+  const token = await getAccessToken()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const fullUrl = `${requireBase()}${path}`
+  let response: Response
+  try {
+    response = await fetch(fullUrl, { headers })
+  } catch {
+    throw new ApiError(0, 'No se pudo contactar al servidor.')
+  }
+  const rawBody = await response.text()
+  if (!response.ok) {
+    let detail = `Error ${response.status} del servidor.`
+    try {
+      const parsed = JSON.parse(rawBody)
+      if (typeof parsed.detail === 'string') detail = parsed.detail
+    } catch { }
+    throw new ApiError(response.status, detail)
+  }
+  try {
+    return JSON.parse(rawBody) as T
+  } catch {
+    throw new ApiError(response.status, 'Respuesta inesperada del servidor.')
+  }
+}
+
 /** POST con body JSON (para los endpoints /ai/*). */
 export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
   const token = await getAccessToken()

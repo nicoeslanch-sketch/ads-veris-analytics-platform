@@ -38,6 +38,8 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      bucket privado `datasets` en Storage)
    - `supabase/migrations/0003_profile_contact_fields.sql` (pais y telefono en registro)
    - `supabase/migrations/0004_analyses.sql` (análisis guardados de Explorar datos)
+   - `supabase/migrations/0005_rls_dataset_ownership.sql` (RLS estricta sobre dataset_id)
+   - `supabase/migrations/0006_ai_usage.sql` (consumo IA para cuotas por plan)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend
@@ -88,7 +90,9 @@ python -m pytest tests/ -v
 | `SUPABASE_JWT_SECRET` | Secreto para validar los JWT de los usuarios |
 | `SUPABASE_STORAGE_BUCKET` | Bucket de Storage para archivos (default: `datasets`) |
 | `ANTHROPIC_API_KEY` | API key de Anthropic (Claude) — se usa desde la Fase 3 |
-| `ANTHROPIC_MODEL` | Modelo configurable (ej: `claude-opus-4-8`) |
+| `ANTHROPIC_MODEL` | Modelo configurable (ej: `claude-haiku-4-5-20251001`) |
+| `AI_MONTHLY_LIMIT_BASICO` | Cupo mensual de consultas IA del plan básico (default: 20) |
+| `AI_MONTHLY_LIMIT_GOLD` | Cupo mensual de consultas IA del plan Gold (default: 200) |
 | `ALLOWED_ORIGINS` | Orígenes CORS permitidos, separados por coma |
 | `DEV_AUTH_BYPASS` | Solo desarrollo local sin Supabase (default: `false`) |
 
@@ -111,6 +115,7 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
 
 - Comando de inicio: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Directorio raíz: `api/`
+- Versión de Python fijada en `api/.python-version` (3.11.9) para builds reproducibles.
 - Configura ahí las variables secretas del backend.
 - Health check: `GET /health`.
 
@@ -130,7 +135,11 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
 - [x] **Fase 4 — Explorar datos**: análisis predefinidos y personalizados (rango, agrupar
   por, métrica), hallazgos automáticos, tabla "Profundiza", recomendación inteligente con
   plan de acción (a pedido) y guardar análisis (migración `0004`).
-- [ ] **Fase 5 — Alertas, Historial, Conectores, Reportes, Configuración avanzada y planes.**
+- [x] **Fase 5 — Alertas, Historial, Reportes, Configuración y planes**: alertas con
+  reglas configurables (severidad, área, recomendación), Historial con "Retomar" desde
+  Storage, reportes PDF/Excel, Configuración con perfil editable y contador de consultas
+  IA, cuotas mensuales por plan (básico/gold) con 429 al agotarse. **Pendiente: Conectores**
+  (Google Sheets/SQL) y checkout del plan Gold.
 
 ## Regla de flujo no negociable
 

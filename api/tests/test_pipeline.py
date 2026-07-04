@@ -260,3 +260,115 @@ def test_ai_recommendation_requiere_token_y_api_key(client, auth_headers):
     )
     assert response.status_code == 503
     assert "ANTHROPIC_API_KEY" in response.json()["detail"]
+
+
+# ── Límite de tamaño también para archivos que vienen de Storage ──
+
+
+def test_storage_descarga_grande_devuelve_413(client, auth_headers, monkeypatch):
+    """La API descarga de Storage sin límite del navegador: el tope de 15 MB
+    debe aplicarse igual que en multipart para proteger la memoria del server."""
+    from app import storage as storage_module
+    from app.routes import pipeline as pipeline_module
+
+    def fake_download(storage_path: str) -> bytes:
+        raise storage_module._too_large()
+
+    monkeypatch.setattr(pipeline_module, "download_from_storage", fake_download)
+    response = client.post(
+        "/standardize",
+        data={"storage_path": "user-test-123/enorme.xlsx"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 413
+    assert "15 MB" in response.json()["detail"]
+
+
+# ── Cuotas de IA por plan (SPEC §9) ──
+
+
+def test_cuota_ia_agotada_devuelve_429(monkeypatch):
+    from fastapi import HTTPException
+
+    from app import quota
+    from app.config import Settings
+
+    settings = Settings(
+        supabase_url="https://proyecto-test.supabase.co",
+        supabase_service_role_key="service-key-de-prueba",
+        ai_monthly_limit_basico=5,
+    )
+    monkeypatch.setattr(quota, "get_plan", lambda user_id, s: "basico")
+    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s: 5)
+    try:
+        quota.check_quota("user-x", settings)
+        raise AssertionError("Debió lanzar 429")
+    except HTTPException as exc:
+        assert exc.status_code == 429
+        assert "límite mensual" in exc.detail
+
+    # Con cupo disponible devuelve el estado
+    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s: 4)
+    info = quota.check_quota("user-x", settings)
+    assert info == {"plan": "basico", "usadas": 4, "limite": 5}
+
+
+def test_cuota_ia_sin_supabase_no_bloquea(client, auth_headers):
+    # En dev sin Supabase el gating se desactiva y /ai/usage lo declara.
+    response = client.get("/ai/usage", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["disponible"] is False
+    assert client.get("/ai/usage").status_code == 401
+
+
+# ── JWT ES256 (Supabase moderno) validado vía JWKS ──
+
+
+def test_jwt_es256_valido_via_jwks(client, sample_csv, monkeypatch):
+    """Simula el flujo real de Supabase con claves ECC/P-256: se firma un token
+    con una clave EC y se sirve la pública por un JWKS client falso."""
+    import time
+
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from app import auth as auth_module
+    from app.config import get_settings
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+
+    class FakeSigningKey:
+        key = public_key
+
+    class FakeJWKSClient:
+        def get_signing_key_from_jwt(self, token):
+            return FakeSigningKey()
+
+    monkeypatch.setattr(auth_module, "_jwks_client", lambda url: FakeJWKSClient())
+    # El modo JWKS exige SUPABASE_URL configurada (Settings está cacheado)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "supabase_url", "https://proyecto-test.supabase.co")
+
+    token = pyjwt.encode(
+        {
+            "sub": "user-es256",
+            "email": "es256@adsveris.cl",
+            "aud": "authenticated",
+            "exp": int(time.time()) + 3600,
+        },
+        private_key,
+        algorithm="ES256",
+    )
+    response = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["id"] == "user-es256"
+
+    # Un token ES256 firmado con OTRA clave debe rechazarse
+    other_key = ec.generate_private_key(ec.SECP256R1())
+    bad_token = pyjwt.encode(
+        {"sub": "x", "aud": "authenticated", "exp": int(time.time()) + 3600},
+        other_key,
+        algorithm="ES256",
+    )
+    assert client.get("/me", headers={"Authorization": f"Bearer {bad_token}"}).status_code == 401

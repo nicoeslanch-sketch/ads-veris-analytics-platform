@@ -22,7 +22,12 @@ export async function uploadToStorage(file: File): Promise<string | null> {
   if (!supabase || !userId) return null
   const path = `${userId}/${Date.now()}_${file.name.replace(/[^\w.\-]+/g, '_')}`
   const { error } = await supabase.storage.from(BUCKET).upload(path, file)
-  return error ? null : path
+  if (error) {
+    // Best-effort, pero el motivo debe ser visible para diagnosticar (RLS, bucket, red)
+    console.warn('[persistencia] Falló la subida a Storage:', error.message)
+    return null
+  }
+  return path
 }
 
 export async function insertDataset(
@@ -42,7 +47,10 @@ export async function insertDataset(
     })
     .select('id')
     .single()
-  if (error) return null
+  if (error) {
+    console.warn('[persistencia] Falló el insert en datasets:', error.message)
+    return null
+  }
   try { await logActivity('carga', `Archivo cargado: ${file.name}`, data.id) } catch { /* best-effort */ }
   return data.id as string
 }

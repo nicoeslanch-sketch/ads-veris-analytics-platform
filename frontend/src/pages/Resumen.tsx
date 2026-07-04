@@ -113,6 +113,7 @@ export default function Resumen() {
   const [error, setError] = useState<string | null>(null)
   const defaultPeriodSet = useRef(false)
   const lastFetchKey = useRef<string | null>(null)
+  const lastDatasetKey = useRef<string | null>(null)
 
   const firstName =
     ((user?.user_metadata?.full_name as string | undefined) ?? '').trim().split(' ')[0] || null
@@ -122,6 +123,11 @@ export default function Resumen() {
     if (!file || !cleaning) return
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
+    // Con un dataset nuevo, el auto-mes por defecto debe volver a aplicarse
+    if (lastDatasetKey.current !== datasetKey) {
+      lastDatasetKey.current = datasetKey
+      defaultPeriodSet.current = false
+    }
     const key = `${datasetKey}|${period.from}|${period.to}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key

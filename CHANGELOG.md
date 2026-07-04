@@ -2,6 +2,49 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.6.0] — 2026-07-03 — Fase 5: Alertas, Historial, Reportes, Configuración y planes
+
+### Agregado
+- **Alertas (MVP)**: reglas configurables (caída de ingresos m/m, margen bajo,
+  concentración de producto y de canal, advertencias del motor) evaluadas sobre el dataset
+  de la sesión; cada alerta trae severidad, área y recomendación; resumen por severidad y
+  por área; "Marcar revisada"; reglas persistidas en el navegador.
+- **Historial funcional**: archivos cargados (estado, calidad, filas) + actividad completa
+  desde Supabase, y **"Retomar"**: descarga el archivo desde Storage, re-estandariza y
+  rehidrata la sesión (resuelve "si refresco pierdo el flujo").
+- **Reportes (MVP)**: reporte ejecutivo en **PDF** (vista imprimible con marca) y export
+  **Excel/CSV es-CL** (separador `;` + BOM) con todas las tablas del dashboard. Sin
+  dependencias nuevas.
+- **Configuración**: edición de perfil y empresa (tabla `profiles`), preferencias de datos
+  es-CL, plan de la cuenta y **contador de consultas IA del mes** con barra de uso.
+- **Cuotas y gating de IA por plan (SPEC §9)**: `ai_usage` (migración `0006`) registra cada
+  consulta; `/ai/summary`, `/ai/chat` y `/ai/recommendation` validan el cupo mensual del
+  plan (`AI_MONTHLY_LIMIT_BASICO=20`, `AI_MONTHLY_LIMIT_GOLD=200`, configurables) y
+  responden **429 con mensaje claro** al agotarse; nuevo `GET /ai/usage`.
+- Tests de la API: **22 pruebas** (límite de Storage 413, cuota 429, JWKS ES256 real
+  firmado/rechazado, /ai/usage).
+
+### Seguridad
+- **Migración `0005`**: las políticas RLS de `cleaning_jobs`, `activity_log` y `analyses`
+  ahora validan que el `dataset_id` referenciado pertenezca al usuario (antes solo
+  validaban `user_id`).
+
+### Corregido
+- **Descarga desde Storage con límite de 15 MB** (Content-Length + corte en streaming):
+  el límite del multipart ahora aplica también al flujo `storage_path` — protege la
+  memoria de Render.
+- **El trabajo pesado (pandas + descarga) salió del event loop** (`run_in_threadpool`):
+  antes, una descarga síncrona dentro de endpoints async bloqueaba el servidor con
+  usuarios concurrentes — causa probable de "con más de un usuario no deja cargar".
+- Fallos de persistencia ya no son invisibles: se registran en consola y Estandarización
+  muestra un aviso suave ("se procesará igual, pero no se pudo guardar en el historial").
+- El auto-mes por defecto del Resumen se vuelve a aplicar al cargar un dataset nuevo.
+
+### Cambiado
+- `api/.python-version` fija Python 3.11.9 para Render.
+- `.env.example` recomienda `claude-haiku-4-5-20251001` (Opus queda como alternativa
+  comentada) y documenta las variables de cuota.
+
 ## [0.5.0] — 2026-07-03 — Fase 4: Explorar datos + estabilidad multiusuario
 
 ### Agregado
