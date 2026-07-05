@@ -240,3 +240,4 @@ npm-debug.log*
 .vercel/
 .env
 .env.local
+supabase/.temp/
