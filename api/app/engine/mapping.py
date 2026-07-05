@@ -1,7 +1,7 @@
-"""Mapeo automático de columnas al esquema normalizado del negocio (SPEC §5).
+"""Mapeo automatico de columnas al esquema normalizado del negocio (SPEC §5).
 
-Detecta por nombre de encabezado qué columna cumple cada rol
-(fecha, cliente, producto, categoría, monto, cantidad, canal, sucursal, vendedor).
+Detecta por nombre de encabezado que columna cumple cada rol
+(fecha, cliente, producto, categoria, monto, cantidad, canal, sucursal, vendedor).
 """
 
 import re
@@ -14,11 +14,27 @@ def strip_accents_lower(value: str) -> str:
 
 
 def norm_key(value: str) -> str:
-    """Clave de comparación agresiva: solo letras y dígitos, sin acentos, minúsculas.
-    Unifica variantes que difieren en mayúsculas, tildes o puntuación de formato
-    (puntos de miles en RUT, guiones, espacios, etc.).
-    Ej: '76.123.456-7' == '76123456-7',  'Ana López' == 'ANA LOPEZ'."""
+    """Clave de comparacion agresiva: solo letras y digitos, sin acentos, minusculas."""
     return re.sub(r"[^a-z0-9]", "", strip_accents_lower(str(value)))
+
+
+# Abreviaciones societarias chilenas: mapeo DESPUES de norm_key.
+_ENTITY_ABBREVS: tuple[tuple[str, str], ...] = (
+    ("limitada", "ltda"),
+    ("sociedadanonima", "sa"),
+    ("socanon", "sa"),
+    ("sociedadporacciones", "spa"),
+    ("empresaindividual", "eirl"),
+)
+
+
+def dedup_norm_key(value: str) -> str:
+    """norm_key + normalizacion de abreviaciones societarias chilenas.
+    Hace que 'Santiago Limitada' y 'SANTIAGO LTDA' produzcan la misma clave."""
+    key = norm_key(value)
+    for full, abbrev in _ENTITY_ABBREVS:
+        key = key.replace(full, abbrev)
+    return key
 
 
 # El orden importa: el primer rol que matchea se queda con la columna.

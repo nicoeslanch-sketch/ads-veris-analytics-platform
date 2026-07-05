@@ -126,20 +126,87 @@ def _clean_sync(filename: str, content: bytes, rules: dict, apply: bool) -> dict
 
 
 def _clean_download_sync(filename: str, content: bytes, rules: dict, fmt: str) -> tuple[bytes, str, str]:
+    from ..engine.standardize import is_missing
+
     result = analyze_and_clean(_load_or_400(filename, content), rules, apply=True)
-    df = result["_df_limpio"]
+    df = result["_df_limpio"].copy()
+    column_types: dict = result["column_types"]
+    col_role = {col_name: role for role, col_name in result["mapeo"].items()}
     stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
+
+    _ROLE_MSG: dict[str, str] = {
+        "fecha": "SIN FECHA",
+        "monto": "SIN MONTO",
+        "costo": "SIN COSTO",
+        "cantidad": "SIN CANTIDAD",
+        "cliente": "SIN CLIENTE",
+        "producto": "SIN PRODUCTO",
+        "categoria": "SIN CATEGORIA",
+        "canal": "SIN CANAL",
+        "sucursal": "SIN SUCURSAL",
+        "vendedor": "SIN VENDEDOR",
+    }
+    DATE_MARKER = "FECHA INVALIDA - REVISAR"
+    total = max(len(df), 1)
+
+    yellow: dict[tuple[int, str], str] = {}
+    red: dict[tuple[int, str], str] = {}
+
+    for col in df.columns:
+        ctype = column_types.get(col, "texto")
+        role = col_role.get(col)
+        vals = list(df[col])
+        fill_rate = sum(1 for v in vals if not is_missing(str(v))) / total
+
+        for row_idx, val in enumerate(vals):
+            if not is_missing(str(val)):
+                continue
+            if ctype == "fecha":
+                yellow[(row_idx, col)] = DATE_MARKER
+            elif fill_rate >= 0.7:
+                msg = _ROLE_MSG.get(role) if role else None
+                red[(row_idx, col)] = msg or "VACIO - " + col.upper()
+
+    for (r, c), msg in yellow.items():
+        df.at[r, c] = msg
+    for (r, c), msg in red.items():
+        df.at[r, c] = msg
+
     if fmt == "csv":
-        csv_bytes = df.to_csv(index=False, sep=";").encode("utf-8-sig")
-        return csv_bytes, f"{stem}_limpio.csv", "text/csv; charset=utf-8"
+        return (
+            df.to_csv(index=False, sep=";").encode("utf-8-sig"),
+            f"{stem}_limpio.csv",
+            "text/csv; charset=utf-8",
+        )
+
+    import openpyxl
+    from openpyxl.styles import PatternFill
+
     buf = io.BytesIO()
     df.to_excel(buf, index=False, engine="openpyxl")
     buf.seek(0)
+
+    wb = openpyxl.load_workbook(buf)
+    ws = wb.active
+    col_list = list(df.columns)
+    YELLOW_FILL = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
+    RED_FILL = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
+
+    for (r, c) in yellow:
+        ws.cell(row=r + 2, column=col_list.index(c) + 1).fill = YELLOW_FILL
+    for (r, c) in red:
+        ws.cell(row=r + 2, column=col_list.index(c) + 1).fill = RED_FILL
+
+    buf2 = io.BytesIO()
+    wb.save(buf2)
+    buf2.seek(0)
     return (
-        buf.getvalue(),
+        buf2.getvalue(),
         f"{stem}_limpio.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
 
 
 def _metrics_sync(

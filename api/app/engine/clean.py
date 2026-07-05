@@ -9,7 +9,7 @@ solo reporta (vista previa de "antes de la limpieza").
 import pandas as pd
 
 from .mapping import detect_column_roles
-from .mapping import norm_key
+from .mapping import dedup_norm_key
 from .standardize import is_missing, parse_date, parse_number, standardize_dataframe
 
 PREVIEW_ROWS = 8
@@ -35,7 +35,7 @@ def _dedup_mask(df: pd.DataFrame) -> pd.Series:
     """Máscara de filas duplicadas usando comparación normalizada (sin mayúsculas ni puntuación).
     Detecta duplicados aunque difieran en formato: '76.123.456-7' == '76123456-7',
     'Santiago Centro' == 'SANTIAGO CENTRO', etc."""
-    comparison = df.map(lambda v: norm_key(str(v)))
+    comparison = df.map(lambda v: dedup_norm_key(str(v)))
     return comparison.duplicated(keep="first")
 
 
