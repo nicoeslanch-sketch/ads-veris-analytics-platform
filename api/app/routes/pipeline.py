@@ -10,11 +10,14 @@ threadpool (`run_in_threadpool`): así el event loop queda libre y varios
 usuarios pueden procesar archivos a la vez sin bloquearse entre ellos.
 """
 
+import io
 import json
 import os
+import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
 
 from ..auth import AuthenticatedUser, get_current_user
 from ..engine.clean import analyze_and_clean
@@ -122,6 +125,23 @@ def _clean_sync(filename: str, content: bytes, rules: dict, apply: bool) -> dict
     return result
 
 
+def _clean_download_sync(filename: str, content: bytes, rules: dict, fmt: str) -> tuple[bytes, str, str]:
+    result = analyze_and_clean(_load_or_400(filename, content), rules, apply=True)
+    df = result["_df_limpio"]
+    stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
+    if fmt == "csv":
+        csv_bytes = df.to_csv(index=False, sep=";").encode("utf-8-sig")
+        return csv_bytes, f"{stem}_limpio.csv", "text/csv; charset=utf-8"
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, engine="openpyxl")
+    buf.seek(0)
+    return (
+        buf.getvalue(),
+        f"{stem}_limpio.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 def _metrics_sync(
     filename: str,
     content: bytes,
@@ -163,6 +183,29 @@ async def clean(
     filename, content = await _read_input(file, storage_path, user)
     rules_dict = _parse_json_field(rules, "rules")
     return await run_in_threadpool(_clean_sync, filename, content, rules_dict, apply)
+
+
+@router.post("/clean/download")
+async def clean_download(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    rules: str | None = Form(None),
+    fmt: str = Form("xlsx"),
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> StreamingResponse:
+    """Devuelve el dataset con la limpieza aplicada como archivo descargable (xlsx o csv)."""
+    if fmt not in ("xlsx", "csv"):
+        fmt = "xlsx"
+    filename, content = await _read_input(file, storage_path, user)
+    rules_dict = _parse_json_field(rules, "rules")
+    file_bytes, out_name, media_type = await run_in_threadpool(
+        _clean_download_sync, filename, content, rules_dict, fmt
+    )
+    return StreamingResponse(
+        iter([file_bytes]),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
+    )
 
 
 @router.post("/metrics")

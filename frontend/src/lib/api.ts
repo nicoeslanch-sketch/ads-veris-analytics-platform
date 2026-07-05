@@ -97,6 +97,42 @@ export function buildDatasetForm(
   return form
 }
 
+/** POST multipart que devuelve un archivo descargable (binario). Dispara el diálogo del navegador. */
+export async function apiDownload(path: string, form: FormData, fallbackFilename: string): Promise<void> {
+  const token = await getAccessToken()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const fullUrl = `${requireBase()}${path}`
+  let response: Response
+  try {
+    response = await fetch(fullUrl, { method: 'POST', headers, body: form })
+  } catch {
+    throw new ApiError(0, 'No se pudo contactar al servidor.')
+  }
+  if (!response.ok) {
+    let detail = `Error ${response.status} del servidor.`
+    try {
+      const text = await response.text()
+      const parsed = JSON.parse(text)
+      if (typeof parsed.detail === 'string') detail = parsed.detail
+    } catch { }
+    throw new ApiError(response.status, detail)
+  }
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const match = disposition.match(/filename="([^"]+)"/)
+  const filename = match ? match[1] : fallbackFilename
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 /** GET con JWT (para endpoints de estado como /ai/usage). */
 export async function apiGet<T>(path: string): Promise<T> {
   const token = await getAccessToken()

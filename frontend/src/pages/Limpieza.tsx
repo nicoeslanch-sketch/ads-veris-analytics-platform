@@ -9,6 +9,7 @@ import {
   Columns3,
   Copy,
   Crown,
+  Download,
   Eraser,
   FileSpreadsheet,
   FileWarning,
@@ -24,7 +25,7 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import { useDataset } from '../data/DatasetContext'
-import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
+import { apiPost, apiDownload, buildDatasetForm, ApiError } from '../lib/api'
 import { saveCleaningJob } from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
@@ -94,6 +95,7 @@ export default function Limpieza() {
   const [rules, setRules] = useState<CleaningRules>(DEFAULT_RULES)
   const [detecting, setDetecting] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [downloading, setDownloading] = useState<'xlsx' | 'csv' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
   const detectStartedFor = useRef<File | null>(null)
@@ -162,6 +164,24 @@ export default function Limpieza() {
   if (result && !applied) {
     for (const issue of result.preview.issues) {
       issueMap.set(`${issue.fila}:${issue.columna}`, issue.tipo)
+    }
+  }
+
+  const handleDownload = async (fmt: 'xlsx' | 'csv') => {
+    if (!file) return
+    setDownloading(fmt)
+    setError(null)
+    try {
+      const stem = file.name.replace(/\.[^.]+$/, '')
+      await apiDownload(
+        '/clean/download',
+        buildDatasetForm(file, storagePath, { rules: JSON.stringify(rules), fmt }),
+        `${stem}_limpio.${fmt}`,
+      )
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo descargar el archivo.')
+    } finally {
+      setDownloading(null)
     }
   }
 
@@ -366,9 +386,24 @@ export default function Limpieza() {
                     {formatNumber(result.resumen.columnas_antes)} →{' '}
                     {formatNumber(result.resumen.columnas_despues)}.
                   </p>
-                  <p className="mt-2 text-xs text-navy/50">
-                    El dashboard con estos datos (Resumen con KPIs y ratios) llega en la Fase 2.
-                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void handleDownload('xlsx')}
+                      disabled={downloading !== null}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-teal/10 px-3 py-1.5 text-xs font-semibold text-teal transition-colors hover:bg-teal/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {downloading === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                      Descargar Excel
+                    </button>
+                    <button
+                      onClick={() => void handleDownload('csv')}
+                      disabled={downloading !== null}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-navy/5 px-3 py-1.5 text-xs font-semibold text-navy/70 transition-colors hover:bg-navy/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {downloading === 'csv' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                      Descargar CSV
+                    </button>
+                  </div>
                 </div>
               </div>
             </Card>
