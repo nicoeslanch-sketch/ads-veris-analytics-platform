@@ -224,6 +224,20 @@ def test_cors_preflight_origen_permitido(client):
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
+def test_cors_preflight_deployment_vercel_permitido(client):
+    origin = "https://ads-veris-analytics-platform-bbk6xfq20.vercel.app"
+    response = client.options(
+        "/standardize",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+
 def test_cors_preflight_origen_no_permitido_sin_header_cors(client):
     response = client.options(
         "/standardize",

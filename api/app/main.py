@@ -24,6 +24,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,7 +35,7 @@ app.add_middleware(
 async def _warn_denied_origin(request, call_next):
     """Log seguro para diagnosticar CORS en producción: solo Origin + ruta, jamás tokens."""
     origin = request.headers.get("origin")
-    if origin and origin not in settings.cors_origins:
+    if origin and not settings.is_cors_origin_allowed(origin):
         print(f"[CORS] Origen NO permitido: {origin} → {request.method} {request.url.path} "
               f"(ALLOWED_ORIGINS tiene {len(settings.cors_origins)} orígenes)")
     return await call_next(request)

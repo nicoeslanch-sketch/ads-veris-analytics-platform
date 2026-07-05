@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,10 +26,22 @@ class Settings(BaseSettings):
     dev_auth_bypass: bool = False
 
     allowed_origins: str = "http://localhost:5173,http://localhost:4173"
+    allowed_origin_regex: str = (
+        r"https://("
+        r"ads-veris-analytics-platform(-[a-z0-9]+|-nicoeslanch-sketchs-projects)?"
+        r"|ads-veris-analytics-pla-git-[a-z0-9]+-nicoeslanch-sketchs-projects"
+        r")\.vercel\.app"
+    )
 
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    def is_cors_origin_allowed(self, origin: str) -> bool:
+        return origin in self.cors_origins or bool(
+            self.allowed_origin_regex
+            and re.fullmatch(self.allowed_origin_regex, origin)
+        )
 
 
 @lru_cache
