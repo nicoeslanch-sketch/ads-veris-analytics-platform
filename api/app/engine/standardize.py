@@ -10,7 +10,7 @@ import warnings
 
 import pandas as pd
 
-from .mapping import strip_accents_lower
+from .mapping import norm_key, strip_accents_lower
 
 # Valores que se consideran "sin dato" además del string vacío.
 MISSING_TOKENS = {"", "-", "--", "n/a", "na", "null", "none", "s/i", "sin dato"}
@@ -120,7 +120,9 @@ def _normalize_text_column(series: pd.Series) -> tuple[pd.Series, int]:
     for value in stripped:
         if not value:
             continue
-        key = strip_accents_lower(value)
+        # norm_key agrupa variantes que solo difieren en mayúsculas, tildes
+        # o puntuación de formato (ej: "76.123.456-7" y "76123456-7").
+        key = norm_key(value)
         bucket = frequencies.setdefault(key, {})
         bucket[value] = bucket.get(value, 0) + 1
 
@@ -129,7 +131,7 @@ def _normalize_text_column(series: pd.Series) -> tuple[pd.Series, int]:
         return max(variants.items(), key=lambda kv: (kv[1], kv[0][:1].isupper(), kv[0]))[0]
 
     canonical = {key: _pick_canonical(variants) for key, variants in frequencies.items()}
-    unified = stripped.map(lambda v: canonical[strip_accents_lower(v)] if v else v)
+    unified = stripped.map(lambda v: canonical[norm_key(v)] if v else v)
     changes += int((unified != stripped).sum())
     return unified, changes
 

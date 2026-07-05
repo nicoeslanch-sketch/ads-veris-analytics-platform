@@ -13,6 +13,14 @@ def strip_accents_lower(value: str) -> str:
     return "".join(c for c in normalized if not unicodedata.combining(c)).lower().strip()
 
 
+def norm_key(value: str) -> str:
+    """Clave de comparación agresiva: solo letras y dígitos, sin acentos, minúsculas.
+    Unifica variantes que difieren en mayúsculas, tildes o puntuación de formato
+    (puntos de miles en RUT, guiones, espacios, etc.).
+    Ej: '76.123.456-7' == '76123456-7',  'Ana López' == 'ANA LOPEZ'."""
+    return re.sub(r"[^a-z0-9]", "", strip_accents_lower(str(value)))
+
+
 # El orden importa: el primer rol que matchea se queda con la columna.
 ROLE_KEYWORDS: list[tuple[str, list[str]]] = [
     ("fecha", ["fecha", "date", "periodo", "emision"]),

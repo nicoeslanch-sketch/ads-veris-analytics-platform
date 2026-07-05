@@ -9,6 +9,7 @@ solo reporta (vista previa de "antes de la limpieza").
 import pandas as pd
 
 from .mapping import detect_column_roles
+from .mapping import norm_key
 from .standardize import is_missing, parse_date, parse_number, standardize_dataframe
 
 PREVIEW_ROWS = 8
@@ -30,9 +31,17 @@ def _quality(problem_cells: int, total_cells: int) -> float:
     return round(max(0.0, 1 - problem_cells / total_cells) * 100, 1)
 
 
+def _dedup_mask(df: pd.DataFrame) -> pd.Series:
+    """Máscara de filas duplicadas usando comparación normalizada (sin mayúsculas ni puntuación).
+    Detecta duplicados aunque difieran en formato: '76.123.456-7' == '76123456-7',
+    'Santiago Centro' == 'SANTIAGO CENTRO', etc."""
+    comparison = df.map(lambda v: norm_key(str(v)))
+    return comparison.duplicated(keep="first")
+
+
 def _detect_problems(df: pd.DataFrame, column_types: dict[str, str], text_changes: int) -> dict:
     empty_columns = [col for col in df.columns if all(is_missing(v) for v in df[col])]
-    duplicated_mask = df.duplicated(keep="first")
+    duplicated_mask = _dedup_mask(df)
 
     nulls = 0
     invalid_dates = 0
@@ -78,7 +87,7 @@ def _detect_problems(df: pd.DataFrame, column_types: dict[str, str], text_change
 def _preview_with_issues(df: pd.DataFrame, column_types: dict[str, str]) -> dict:
     """Primeras filas + coordenadas de celdas problemáticas para resaltarlas."""
     preview = df.head(PREVIEW_ROWS)
-    duplicated_mask = df.duplicated(keep="first")
+    duplicated_mask = _dedup_mask(df)
     issues: list[dict] = []
     for row_index in range(len(preview)):
         if bool(duplicated_mask.iloc[row_index]):
