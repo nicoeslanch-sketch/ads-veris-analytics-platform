@@ -386,24 +386,6 @@ export default function Limpieza() {
                     {formatNumber(result.resumen.columnas_antes)} →{' '}
                     {formatNumber(result.resumen.columnas_despues)}.
                   </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      onClick={() => void handleDownload('xlsx')}
-                      disabled={downloading !== null}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-teal/10 px-3 py-1.5 text-xs font-semibold text-teal transition-colors hover:bg-teal/20 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {downloading === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                      Descargar Excel
-                    </button>
-                    <button
-                      onClick={() => void handleDownload('csv')}
-                      disabled={downloading !== null}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-navy/5 px-3 py-1.5 text-xs font-semibold text-navy/70 transition-colors hover:bg-navy/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {downloading === 'csv' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                      Descargar CSV
-                    </button>
-                  </div>
                 </div>
               </div>
             </Card>
@@ -564,12 +546,32 @@ export default function Limpieza() {
                   : 'La limpieza aún no ha sido aplicada.'}
               </p>
               {applied ? (
-                <Link
-                  to="/explorar"
-                  className="inline-flex items-center gap-2 rounded-lg bg-navy px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-deep"
-                >
-                  Continuar <ArrowRight className="h-4 w-4" />
-                </Link>
+                <div className="flex flex-col items-end gap-2">
+                  <Link
+                    to="/explorar"
+                    className="inline-flex items-center gap-2 rounded-lg bg-navy px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-deep"
+                  >
+                    Continuar <ArrowRight className="h-4 w-4" />
+                  </Link>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => void handleDownload('xlsx')}
+                      disabled={downloading !== null}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-teal/40 px-3 py-1.5 text-xs font-semibold text-teal transition-colors hover:bg-teal/5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {downloading === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                      Descargar base actualizada
+                    </button>
+                    <button
+                      onClick={() => void handleDownload('csv')}
+                      disabled={downloading !== null}
+                      className="text-xs text-navy/40 hover:text-navy/70 disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Descargar como CSV"
+                    >
+                      CSV
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <button
                   onClick={() => void handleApply()}
