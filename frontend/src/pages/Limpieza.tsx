@@ -26,6 +26,7 @@ import Toggle from '../components/ui/Toggle'
 import { useDataset } from '../data/DatasetContext'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { saveCleaningJob } from '../lib/datasets'
+import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
 import { DEFAULT_RULES, type CleanResult, type CleaningRules } from '../lib/types'
 
@@ -94,6 +95,7 @@ export default function Limpieza() {
   const [detecting, setDetecting] = useState(false)
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [persistWarning, setPersistWarning] = useState<string | null>(null)
   const detectStartedFor = useRef<File | null>(null)
 
   useEffect(() => {
@@ -166,13 +168,21 @@ export default function Limpieza() {
   const handleApply = async () => {
     setApplying(true)
     setError(null)
+    setPersistWarning(null)
     try {
       const response = await apiPost<CleanResult>(
         '/clean',
         buildDatasetForm(file, storagePath, { apply: 'true', rules: JSON.stringify(rules) }),
       )
       setCleaning(response)
-      await saveCleaningJob(datasetId, rules, response)
+      // Best-effort: si falla el guardado, la limpieza IGUAL quedó aplicada —
+      // jamás mostrarlo como error de limpieza (solo aviso de historial).
+      const saved = await saveCleaningJob(datasetId, rules, response)
+      if (!saved && supabaseConfigured && datasetId) {
+        setPersistWarning(
+          'La limpieza se aplicó correctamente, pero no se pudo guardar en el historial.',
+        )
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo aplicar la limpieza.')
     } finally {
@@ -327,6 +337,12 @@ export default function Limpieza() {
             <div className="flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <p>{error}</p>
+            </div>
+          )}
+          {persistWarning && (
+            <div className="flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 text-sm text-navy/80">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+              <p>{persistWarning}</p>
             </div>
           )}
 

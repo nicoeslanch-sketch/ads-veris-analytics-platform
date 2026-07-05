@@ -138,8 +138,12 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
 - [x] **Fase 5 — Alertas, Historial, Reportes, Configuración y planes**: alertas con
   reglas configurables (severidad, área, recomendación), Historial con "Retomar" desde
   Storage, reportes PDF/Excel, Configuración con perfil editable y contador de consultas
-  IA, cuotas mensuales por plan (básico/gold) con 429 al agotarse. **Pendiente: Conectores**
-  (Google Sheets/SQL) y checkout del plan Gold.
+  IA, cuotas mensuales por plan (básico/gold) con 429 al agotarse.
+- [x] **Fase 6 — Conectores + endurecimiento**: importación desde **Google Sheets**
+  (hoja pública/compartida por enlace, sin OAuth) al mismo pipeline; escape de HTML y
+  anti formula-injection en reportes; persistencia best-effort con avisos visibles.
+  Pendiente (operación comercial): checkout Gold, conector SQL, alertas continuas y
+  reportes generados en backend.
 
 ## Regla de flujo no negociable
 

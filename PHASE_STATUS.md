@@ -1,7 +1,8 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 5 completas** (Fase 5: Alertas, Historial, Reportes,
-Configuración y planes/cuotas IA — solo **Conectores** queda pendiente).
+**Estado actual: Fases 0 a 6 completas — todo el roadmap del SPEC está construido.**
+La Fase 6 cierra Conectores (Google Sheets funcional) y endurece reportes y persistencia.
+Lo que resta es una fase opcional de operación comercial (ver "Pendiente").
 
 > Referencia rápida de qué está construido y qué viene. La especificación
 > completa vive en [`SPEC.md`](./SPEC.md).
@@ -138,11 +139,36 @@ Configuración y planes/cuotas IA — solo **Conectores** queda pendiente).
   `cleaning_jobs`, `activity_log` y `analyses`.
 - Tests: **22 pruebas** (incluye 413 de Storage, 429 de cuota y ES256/JWKS real).
 
-## ⏳ Pendiente
+## ✅ Fase 6 — Conectores + endurecimiento (completa)
 
-- **Conectores** (Google Sheets / SQL) — único módulo de la Fase 5 sin construir.
-- Vigilancia continua de Alertas (correo/notificaciones) — llega con Conectores.
-- Checkout/upgrade de plan Gold (hoy el plan se cambia en la tabla `profiles`).
+**Conectores** (`frontend/src/pages/Conectores.tsx` + `api/app/routes/connectors.py`):
+- **Google Sheets funcional sin OAuth**: se pega el enlace de una hoja pública o
+  compartida por enlace; la API extrae el ID, arma ella la URL oficial de export CSV
+  (sin SSRF), descarga con tope de 15 MB y detecta hojas privadas con instrucción clara.
+  El archivo entra al mismo pipeline que un Excel subido.
+- Tarjetas Excel/CSV (disponible), Base de datos SQL y otras integraciones (próximamente).
+- **Hook `useFileImport` compartido** entre Estandarización y Conectores (un solo flujo).
+
+**Endurecimiento** (tras revisión crítica externa + propia):
+- `saveCleaningJob` best-effort real: un fallo de Supabase ya no se muestra como error de
+  limpieza; la UI avisa suave y el error queda en consola.
+- Reporte PDF con **escape de HTML** en todos los datos del usuario; CSV con
+  **neutralización de formula injection** (`=`, `+`, `-`, `@`).
+- Historial distingue **error de Supabase vs historial vacío**; Retomar de un dataset
+  `limpio` re-aplica la limpieza y deja el Resumen operativo de inmediato.
+- Reglas de alertas guardadas **por usuario** (no globales por navegador).
+- `/ai/*` rechaza contextos de métricas > 200 KB (413); `record_usage` loguea respuestas
+  de error de `ai_usage` (típico: migración 0006 sin ejecutar).
+- Tests: **27 pruebas**.
+
+## ⏳ Pendiente (fase opcional de operación comercial)
+
+- Checkout/upgrade real de plan Gold (hoy el plan se cambia en la tabla `profiles`).
+- Vigilancia continua de Alertas (evaluación programada + correo/notificaciones).
+- Conector SQL / integraciones POS-facturación (Bsale, Defontana, Jumpseller, Shopify).
+- Reportes generados en backend (.xlsx real y PDF descargable).
+- Cuota IA con control atómico en BD (hoy check-then-record: una ráfaga simultánea
+  justo en el límite puede excederlo por unas pocas consultas).
 - Deuda técnica: transporte por `dataset_id` (hoy `storage_path` validado por prefijo).
 
 ## Comandos para correr el proyecto

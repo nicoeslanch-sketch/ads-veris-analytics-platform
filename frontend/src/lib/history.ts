@@ -41,7 +41,11 @@ async function hasSession(): Promise<boolean> {
   return Boolean(data.session)
 }
 
-export async function fetchActivity(limit = 60): Promise<ActivityRow[] | null> {
+/** 'error' ≠ "sin datos": la UI debe distinguir un fallo de Supabase (RLS,
+ * migración faltante, red) de un historial legítimamente vacío. */
+export type FetchOutcome<T> = T[] | null | 'error'
+
+export async function fetchActivity(limit = 60): Promise<FetchOutcome<ActivityRow>> {
   if (!supabase || !(await hasSession())) return null
   const { data, error } = await supabase
     .from('activity_log')
@@ -50,12 +54,12 @@ export async function fetchActivity(limit = 60): Promise<ActivityRow[] | null> {
     .limit(limit)
   if (error) {
     console.warn('[historial] No se pudo leer activity_log:', error.message)
-    return null
+    return 'error'
   }
   return data as ActivityRow[]
 }
 
-export async function fetchDatasets(limit = 20): Promise<DatasetRow[] | null> {
+export async function fetchDatasets(limit = 20): Promise<FetchOutcome<DatasetRow>> {
   if (!supabase || !(await hasSession())) return null
   const { data, error } = await supabase
     .from('datasets')
@@ -64,7 +68,7 @@ export async function fetchDatasets(limit = 20): Promise<DatasetRow[] | null> {
     .limit(limit)
   if (error) {
     console.warn('[historial] No se pudo leer datasets:', error.message)
-    return null
+    return 'error'
   }
   return data as DatasetRow[]
 }

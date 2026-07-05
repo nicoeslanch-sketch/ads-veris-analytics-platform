@@ -38,7 +38,7 @@ import {
 } from '../lib/history'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatDateTime, formatNumber } from '../lib/format'
-import type { StandardizeResult } from '../lib/types'
+import { DEFAULT_RULES, type CleanResult, type StandardizeResult } from '../lib/types'
 
 const ACTIVITY_META: Record<ActivityType, { label: string; icon: LucideIcon; tone: string }> = {
   carga: { label: 'Carga', icon: Upload, tone: 'bg-teal/10 text-teal' },
@@ -57,11 +57,12 @@ const STATUS_BADGE: Record<DatasetRow['status'], { label: string; tone: 'teal' |
 }
 
 export default function Historial() {
-  const { setUploaded, setStandardization } = useDataset()
+  const { setUploaded, setStandardization, setCleaning } = useDataset()
   const navigate = useNavigate()
 
   const [datasets, setDatasets] = useState<DatasetRow[] | null>(null)
   const [activity, setActivity] = useState<ActivityRow[] | null>(null)
+  const [loadError, setLoadError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [resuming, setResuming] = useState<string | null>(null)
   const [resumeError, setResumeError] = useState<string | null>(null)
@@ -70,8 +71,10 @@ export default function Historial() {
     let cancelled = false
     Promise.all([fetchDatasets(), fetchActivity()]).then(([ds, act]) => {
       if (cancelled) return
-      setDatasets(ds)
-      setActivity(act)
+      // 'error' ≠ vacío: un fallo de Supabase no debe verse como "sin actividad"
+      setLoadError(ds === 'error' || act === 'error')
+      setDatasets(ds === 'error' ? [] : ds)
+      setActivity(act === 'error' ? [] : act)
       setLoading(false)
     })
     return () => {
@@ -79,8 +82,9 @@ export default function Historial() {
     }
   }, [])
 
-  /** Rehidrata la sesión: descarga el archivo de Storage, re-estandariza y
-   * deja al usuario en Limpieza para continuar donde quedó. */
+  /** Rehidrata la sesión: descarga el archivo de Storage y re-estandariza.
+   * Si el dataset ya estaba limpio, re-aplica la limpieza para dejar el
+   * dashboard y el asistente operativos de inmediato. */
   const handleResume = async (dataset: DatasetRow) => {
     if (!dataset.storage_path) return
     setResuming(dataset.id)
@@ -97,7 +101,20 @@ export default function Historial() {
         buildDatasetForm(file, dataset.storage_path),
       )
       setStandardization(result)
-      navigate('/limpieza')
+      if (dataset.status === 'limpio') {
+        // Continuar donde quedó de verdad: dataset limpio → directo al Resumen
+        const cleaned = await apiPost<CleanResult>(
+          '/clean',
+          buildDatasetForm(file, dataset.storage_path, {
+            apply: 'true',
+            rules: JSON.stringify(DEFAULT_RULES),
+          }),
+        )
+        setCleaning(cleaned)
+        navigate('/')
+      } else {
+        navigate('/limpieza')
+      }
     } catch (err) {
       setResumeError(
         err instanceof ApiError ? err.message : 'No se pudo retomar el dataset.',
@@ -135,6 +152,29 @@ export default function Historial() {
   }
 
   const hasData = (datasets?.length ?? 0) > 0 || (activity?.length ?? 0) > 0
+
+  if (loadError && !hasData) {
+    return (
+      <>
+        <PageHeader
+          title="Historial"
+          subtitle="Revisa todo lo que has hecho en la plataforma: cargas, limpieza, estandarización, análisis y recomendaciones."
+        />
+        <Card className="max-w-2xl border-coral/40 bg-coral/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-coral" />
+            <div>
+              <p className="text-sm font-semibold text-navy">No se pudo cargar el historial</p>
+              <p className="mt-1 text-xs leading-relaxed text-navy/60">
+                Supabase respondió con error (no es que no haya actividad). Revisa que las
+                migraciones estén ejecutadas y las políticas RLS activas, y vuelve a intentar.
+              </p>
+            </div>
+          </div>
+        </Card>
+      </>
+    )
+  }
 
   if (!hasData) {
     return (

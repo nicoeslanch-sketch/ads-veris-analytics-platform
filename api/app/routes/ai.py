@@ -43,6 +43,19 @@ _SYSTEM = (
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+_MAX_METRICS_BYTES = 200_000  # el frontend manda ~5-15 KB; esto solo frena abuso directo
+
+
+def _check_metrics_size(metrics: dict) -> None:
+    """El prompt ya está acotado por _metrics_context (solo campos conocidos),
+    pero un payload gigante igual cuesta parsearlo: se rechaza temprano."""
+    if len(json.dumps(metrics)) > _MAX_METRICS_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="El contexto de métricas es demasiado grande.",
+        )
+
+
 def _client(settings: Settings) -> AsyncAnthropic:
     if not settings.anthropic_api_key:
         raise HTTPException(
@@ -172,6 +185,7 @@ async def ai_summary(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Genera resumen automático del negocio + preguntas sugeridas."""
+    _check_metrics_size(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
         ctx = _metrics_context(body.metrics)
@@ -240,6 +254,7 @@ async def ai_recommendation(
     """Recomendación inteligente de Explorar datos (SPEC §7): lectura del
     análisis activo + plan de acción concreto. Se genera solo a pedido del
     usuario (botón), nunca automáticamente — control de costo de IA."""
+    _check_metrics_size(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
         ctx = _metrics_context(body.metrics)
@@ -299,6 +314,7 @@ async def ai_chat(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Chat libre anclado a los datos del negocio. Devuelve SSE."""
+    _check_metrics_size(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     ctx = _metrics_context(body.metrics)
 

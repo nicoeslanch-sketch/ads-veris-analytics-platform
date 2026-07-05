@@ -27,6 +27,7 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
+import { useAuth } from '../auth/AuthContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
 import { formatCLP, formatNumber } from '../lib/format'
 import { formatMonthShort } from '../lib/charts'
@@ -50,11 +51,15 @@ const DEFAULT_RULES: AlertRules = {
   advertencias_motor: { activa: true },
 }
 
-const RULES_KEY = 'ads-veris-alert-rules'
+/** Key por usuario: en un computador compartido, las reglas de una cuenta
+ * no deben heredarse a la siguiente que inicie sesión. */
+function rulesKey(userId: string | null): string {
+  return `ads-veris-alert-rules:${userId ?? 'anon'}`
+}
 
-function loadRules(): AlertRules {
+function loadRules(userId: string | null): AlertRules {
   try {
-    const raw = localStorage.getItem(RULES_KEY)
+    const raw = localStorage.getItem(rulesKey(userId))
     if (!raw) return DEFAULT_RULES
     return { ...DEFAULT_RULES, ...(JSON.parse(raw) as AlertRules) }
   } catch {
@@ -189,17 +194,24 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
 // ── Componente ────────────────────────────────────────────────────────────────
 
 export default function Alertas() {
+  const { user } = useAuth()
+  const userId = user?.id ?? null
   const { ready, metrics, loading, error } = useSessionMetrics()
-  const [rules, setRules] = useState<AlertRules>(loadRules)
+  const [rules, setRules] = useState<AlertRules>(() => loadRules(userId))
   const [resolved, setResolved] = useState<string[]>([])
+
+  // Si cambia la cuenta en el mismo navegador, cargar las reglas de ESA cuenta
+  useEffect(() => {
+    setRules(loadRules(userId))
+  }, [userId])
 
   useEffect(() => {
     try {
-      localStorage.setItem(RULES_KEY, JSON.stringify(rules))
+      localStorage.setItem(rulesKey(userId), JSON.stringify(rules))
     } catch {
       // sin localStorage (modo privado): las reglas viven solo en la sesión
     }
-  }, [rules])
+  }, [rules, userId])
 
   const allAlerts = useMemo(
     () => (metrics ? computeAlerts(metrics, rules) : []),

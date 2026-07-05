@@ -251,6 +251,71 @@ def test_ai_summary_sin_api_key_devuelve_503(client, auth_headers):
     assert "ANTHROPIC_API_KEY" in response.json()["detail"]
 
 
+# ── Conector Google Sheets (Fase 6) ──
+
+
+def test_connector_sheets_requiere_token(client):
+    response = client.post("/connectors/sheets", json={"url": "https://docs.google.com/spreadsheets/d/abc"})
+    assert response.status_code == 401
+
+
+def test_connector_sheets_rechaza_url_que_no_es_google_sheets(client, auth_headers):
+    for url in ("https://ejemplo.com/archivo.csv", "http://localhost/interno", "no-es-url"):
+        response = client.post("/connectors/sheets", json={"url": url}, headers=auth_headers)
+        assert response.status_code == 400, url
+        assert "Google Sheets" in response.json()["detail"]
+
+
+def test_connector_sheets_importa_csv(client, auth_headers, monkeypatch):
+    from app.routes import connectors as connectors_module
+
+    def fake_download(sheet_id: str, gid: str) -> tuple[str, bytes]:
+        assert sheet_id == "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd"
+        assert gid == "42"
+        return "Ventas 2026 - Hoja1.csv", "Fecha;Ventas\n01/05/2026;1000\n".encode("utf-8")
+
+    monkeypatch.setattr(connectors_module, "_download_sheet_csv", fake_download)
+    response = client.post(
+        "/connectors/sheets",
+        json={
+            "url": "https://docs.google.com/spreadsheets/d/"
+            "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd/edit#gid=42"
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["filename"].endswith(".csv")
+    assert "Fecha;Ventas" in body["csv"]
+
+
+def test_connector_sheets_hoja_privada_da_400(client, auth_headers, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes import connectors as connectors_module
+
+    def fake_download(sheet_id: str, gid: str):
+        raise HTTPException(status_code=400, detail="La hoja no es pública. ...")
+
+    monkeypatch.setattr(connectors_module, "_download_sheet_csv", fake_download)
+    response = client.post(
+        "/connectors/sheets",
+        json={"url": "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz01234567/edit"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+    assert "pública" in response.json()["detail"]
+
+
+# ── Guard de tamaño del contexto de métricas en /ai/* ──
+
+
+def test_ai_metrics_gigante_devuelve_413(client, auth_headers):
+    gigante = {"basura": ["x" * 1000] * 300}  # ~300 KB
+    response = client.post("/ai/summary", json={"metrics": gigante}, headers=auth_headers)
+    assert response.status_code == 413
+
+
 def test_ai_recommendation_requiere_token_y_api_key(client, auth_headers):
     assert client.post("/ai/recommendation", json={"metrics": {}}).status_code == 401
     response = client.post(

@@ -117,12 +117,18 @@ def record_usage(user_id: str, kind: str, settings: Settings) -> None:
     if not settings.supabase_url or not settings.supabase_service_role_key:
         return
     try:
-        httpx.post(
+        response = httpx.post(
             _rest(settings, "ai_usage"),
             json={"user_id": user_id, "kind": kind},
             headers={**_headers(settings), "Prefer": "return=minimal"},
             timeout=_TIMEOUT,
         )
+        if response.status_code >= 400:
+            # Típico: migración 0006 sin ejecutar → PostgREST responde 404
+            print(
+                f"[quota] ai_usage respondió {response.status_code} al registrar consumo "
+                "(¿está ejecutada la migración 0006?)."
+            )
     except httpx.HTTPError as exc:
         print(f"[quota] No se pudo registrar el consumo de IA ({exc.__class__.__name__}).")
 

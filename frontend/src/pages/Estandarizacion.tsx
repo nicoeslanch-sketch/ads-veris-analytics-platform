@@ -16,11 +16,8 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
-import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
-import { insertDataset, markStandardized, uploadToStorage } from '../lib/datasets'
-import { supabaseConfigured } from '../lib/supabase'
+import { useFileImport } from '../data/useFileImport'
 import { formatDateTime, formatNumber } from '../lib/format'
-import type { StandardizeResult } from '../lib/types'
 
 const BENEFITS = [
   'Unifica nombres y textos duplicados',
@@ -54,45 +51,14 @@ const STEPS = [
 ]
 
 export default function Estandarizacion() {
-  const { file, standardization, uploadedAt, setUploaded, setStandardization } = useDataset()
+  const { file, standardization, uploadedAt } = useDataset()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [processing, setProcessing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [persistWarning, setPersistWarning] = useState<string | null>(null)
+  // Flujo compartido con Conectores: Storage + datasets + /standardize
+  const { importing: processing, error, persistWarning, importFile } = useFileImport()
 
   const handleFile = async (selected: File) => {
-    setError(null)
-    setPersistWarning(null)
-    if (!/\.(csv|xlsx|xls)$/i.test(selected.name)) {
-      setError('Formato no soportado. Sube un archivo Excel (.xlsx) o CSV (.csv).')
-      return
-    }
-    setProcessing(true)
-    try {
-      // Persistencia best-effort: Storage + fila en datasets (si hay Supabase)
-      const storagePath = await uploadToStorage(selected)
-      const datasetId = await insertDataset(selected, storagePath)
-      if (supabaseConfigured && (!storagePath || !datasetId)) {
-        // No bloquea el pipeline, pero el usuario debe saber que no quedó guardado
-        setPersistWarning(
-          'Tu archivo se procesará igual, pero no se pudo guardar en el historial ' +
-            '(revisa el bucket y las políticas RLS en Supabase).',
-        )
-      }
-      setUploaded(selected, datasetId, storagePath)
-
-      const result = await apiPost<StandardizeResult>(
-        '/standardize',
-        buildDatasetForm(selected, storagePath),
-      )
-      setStandardization(result)
-      await markStandardized(datasetId, result)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Ocurrió un error al estandarizar.')
-    } finally {
-      setProcessing(false)
-    }
+    await importFile(selected)
   }
 
   const totalChanges = standardization
@@ -109,9 +75,12 @@ export default function Estandarizacion() {
           title="Estandarización ✨"
           subtitle="Prepara tus datos unificando formatos, nombres y valores para que la limpieza funcione de mejor manera."
         />
-        <button className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5">
+        <Link
+          to="/historial"
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5"
+        >
           <History className="h-4 w-4" /> Historial de estandarizaciones
-        </button>
+        </Link>
       </div>
 
       {/* Zona de carga + qué hace */}

@@ -2,6 +2,45 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.7.0] — 2026-07-05 — Fase 6: Conectores + endurecimiento de reportes y persistencia
+
+### Agregado
+- **Conector Google Sheets (funcional)**: el usuario pega el enlace de una hoja pública o
+  compartida por enlace y entra al mismo pipeline que un archivo subido. Nuevo
+  `POST /connectors/sheets`: la API extrae el ID del documento y arma ella la URL oficial
+  de export (nunca descarga la URL cruda — sin SSRF), tope de 15 MB, detección de hoja
+  privada con instrucción clara ("Compartir → Cualquier persona con el enlace") y nombre
+  real del archivo desde Content-Disposition.
+- **Página Conectores completa**: Google Sheets (disponible), Excel/CSV (enlace a
+  Estandarización), base de datos SQL y otras integraciones (próximamente).
+- **Hook compartido `useFileImport`**: Estandarización y Conectores usan el mismo flujo
+  (Storage + datasets + /standardize) sin lógica duplicada.
+- Tests de la API: **27 pruebas** (conector: URL inválida, hoja privada, import feliz,
+  requiere token; guard de tamaño de métricas 413).
+
+### Seguridad
+- **Reporte PDF**: todo valor que viene de los datos del usuario (productos, categorías,
+  canales, empresa, archivo) se escapa como HTML antes de entrar a la vista imprimible.
+- **Export CSV**: celdas que empiezan con `=`, `+`, `-` o `@` se neutralizan con `'`
+  (formula injection de Excel).
+- **`/ai/*` rechaza contextos de métricas gigantes** (413 sobre 200 KB): el prompt ya
+  estaba acotado por campos conocidos, esto frena el abuso directo del endpoint.
+
+### Corregido
+- **`saveCleaningJob` es best-effort de verdad**: sus errores (RLS, migración faltante,
+  red) ya no pueden mostrarse como "No se pudo aplicar la limpieza" — la limpieza queda
+  aplicada y la UI avisa suave "no se pudo guardar en el historial". Además ahora sí
+  revisa los errores que devuelve supabase-js (antes se ignoraban en silencio).
+- **Historial distingue error de vacío**: un fallo de Supabase muestra "No se pudo cargar
+  el historial" en vez de "Todavía no hay actividad".
+- **Retomar restaura el estado limpio**: si el dataset estaba `limpio`, re-aplica la
+  limpieza y te deja directo en el Resumen (antes obligaba a rehacer el flujo).
+- **Reglas de alertas por usuario** (`localStorage` con key por `user.id`): en un
+  computador compartido ya no se heredan los umbrales de otra cuenta.
+- `record_usage` registra el status HTTP cuando `ai_usage` responde error (típico:
+  migración 0006 sin ejecutar) — antes fallaba en silencio.
+- El botón "Historial de estandarizaciones" ahora navega a Historial (estaba muerto).
+
 ## [0.6.0] — 2026-07-03 — Fase 5: Alertas, Historial, Reportes, Configuración y planes
 
 ### Agregado

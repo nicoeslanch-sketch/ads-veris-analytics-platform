@@ -80,35 +80,52 @@ export async function markStandardized(
   }
 }
 
+/** Best-effort: la limpieza YA se aplicó en la API; un fallo aquí solo significa
+ * que no quedó en el historial — jamás debe mostrarse como error de limpieza.
+ * Devuelve false si algo no se pudo guardar (la UI puede avisar suave). */
 export async function saveCleaningJob(
   datasetId: string | null,
   rules: CleaningRules,
   result: CleanResult,
-): Promise<void> {
+): Promise<boolean> {
   const userId = await getUserId()
-  if (!supabase || !userId || !datasetId) return
-  await supabase.from('cleaning_jobs').insert({
-    dataset_id: datasetId,
-    user_id: userId,
-    rules,
-    problems_detected: result.problemas,
-    problems_fixed: result.correcciones,
-    rows_before: result.resumen.filas_antes,
-    rows_after: result.resumen.filas_despues,
-    quality_before: result.resumen.calidad_antes,
-    quality_after: result.resumen.calidad_despues,
-    status: 'completado',
-  })
-  await supabase
-    .from('datasets')
-    .update({
-      status: 'limpio',
-      quality: result.resumen.calidad_despues,
-      rows: result.resumen.filas_despues,
-      columns: result.resumen.columnas_despues,
+  if (!supabase || !userId || !datasetId) return false
+  try {
+    const { error: jobError } = await supabase.from('cleaning_jobs').insert({
+      dataset_id: datasetId,
+      user_id: userId,
+      rules,
+      problems_detected: result.problemas,
+      problems_fixed: result.correcciones,
+      rows_before: result.resumen.filas_antes,
+      rows_after: result.resumen.filas_despues,
+      quality_before: result.resumen.calidad_antes,
+      quality_after: result.resumen.calidad_despues,
+      status: 'completado',
     })
-    .eq('id', datasetId)
-  await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
+    if (jobError) {
+      console.warn('[persistencia] Falló el insert en cleaning_jobs:', jobError.message)
+      return false
+    }
+    const { error: dsError } = await supabase
+      .from('datasets')
+      .update({
+        status: 'limpio',
+        quality: result.resumen.calidad_despues,
+        rows: result.resumen.filas_despues,
+        columns: result.resumen.columnas_despues,
+      })
+      .eq('id', datasetId)
+    if (dsError) {
+      console.warn('[persistencia] Falló el update de datasets:', dsError.message)
+      return false
+    }
+    await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
+    return true
+  } catch (err) {
+    console.warn('[persistencia] Error de red guardando la limpieza:', err)
+    return false
+  }
 }
 
 /** Guarda un análisis de Explorar datos (migración 0004). Best-effort. */

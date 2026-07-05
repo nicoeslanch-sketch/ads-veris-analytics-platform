@@ -13,7 +13,9 @@ function csvNumber(value: number | null | undefined): string {
 }
 
 function csvCell(value: string): string {
-  return /[;"\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+  // Neutraliza formula injection: Excel interpreta =, +, -, @ al inicio como fórmula
+  const safe = /^[=+\-@]/.test(value) ? `'${value}` : value
+  return /[;"\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
 }
 
 /** Arma el CSV completo del reporte (todas las secciones del dashboard). */
@@ -91,13 +93,23 @@ const clp = (v: number | null | undefined) =>
 const pct = (v: number | null | undefined) =>
   v == null ? '—' : `${v.toLocaleString('es-CL', { maximumFractionDigits: 1 })}%`
 
+/** Todo valor que venga de los datos del usuario se escapa antes de entrar al HTML. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function tableHtml(
   headers: string[],
   rows: Array<Array<string>>,
 ): string {
   return `<table>
-    <thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
-    <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
+    <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>
   </table>`
 }
 
@@ -126,7 +138,7 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Reporte ADS Veris — ${m.archivo}</title>
+<title>Reporte ADS Veris — ${escapeHtml(m.archivo)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1a3a52; padding: 32px; font-size: 13px; }
@@ -153,9 +165,9 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
 <header>
   <div class="brand">ADS <span>Veris</span></div>
   <div class="meta">
-    ${empresa ? `<div><strong>${empresa}</strong></div>` : ''}
-    <div>Archivo: ${m.archivo}</div>
-    <div>Periodo: ${m.periodo.desde ?? 'inicio'} — ${m.periodo.hasta ?? 'fin'}</div>
+    ${empresa ? `<div><strong>${escapeHtml(empresa)}</strong></div>` : ''}
+    <div>Archivo: ${escapeHtml(m.archivo)}</div>
+    <div>Periodo: ${escapeHtml(m.periodo.desde ?? 'inicio')} — ${escapeHtml(m.periodo.hasta ?? 'fin')}</div>
     <div>Generado: ${new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' })}</div>
   </div>
 </header>
