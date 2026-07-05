@@ -2,6 +2,8 @@
 
 **Estado actual: Fases 0 a 6 completas — todo el roadmap del SPEC está construido.**
 La Fase 6 cierra Conectores (Google Sheets funcional) y endurece reportes y persistencia.
+La microfase 6.1 suma estabilidad: persistencia visible, origen Google Sheets, retomar con
+reglas reales de limpieza y controles de entrada del conector.
 Lo que resta es una fase opcional de operación comercial (ver "Pendiente").
 
 > Referencia rápida de qué está construido y qué viene. La especificación

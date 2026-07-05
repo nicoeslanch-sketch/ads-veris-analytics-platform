@@ -6,7 +6,12 @@
 
 import { useState } from 'react'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
-import { insertDataset, markStandardized, uploadToStorage } from '../lib/datasets'
+import {
+  insertDataset,
+  markStandardized,
+  uploadToStorage,
+  type DatasetSource,
+} from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
 import type { StandardizeResult } from '../lib/types'
 import { useDataset } from './DatasetContext'
@@ -17,7 +22,10 @@ export function useFileImport() {
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
 
-  const importFile = async (selected: File): Promise<boolean> => {
+  const importFile = async (
+    selected: File,
+    options: { source?: DatasetSource } = {},
+  ): Promise<boolean> => {
     setError(null)
     setPersistWarning(null)
     if (!/\.(csv|xlsx|xls)$/i.test(selected.name)) {
@@ -28,7 +36,7 @@ export function useFileImport() {
     try {
       // Persistencia best-effort: Storage + fila en datasets (si hay Supabase)
       const storagePath = await uploadToStorage(selected)
-      const datasetId = await insertDataset(selected, storagePath)
+      const datasetId = await insertDataset(selected, storagePath, options.source ?? 'excel_csv')
       if (supabaseConfigured && (!storagePath || !datasetId)) {
         // No bloquea el pipeline, pero el usuario debe saber que no quedó guardado
         setPersistWarning(
@@ -43,7 +51,12 @@ export function useFileImport() {
         buildDatasetForm(selected, storagePath),
       )
       setStandardization(result)
-      await markStandardized(datasetId, result)
+      const marked = await markStandardized(datasetId, result)
+      if (!marked && supabaseConfigured && datasetId) {
+        setPersistWarning(
+          'El archivo se estandarizó correctamente, pero no se pudo guardar todo el detalle en el historial.',
+        )
+      }
       return true
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Ocurrió un error al estandarizar.')

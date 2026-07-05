@@ -2,6 +2,20 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.7.1] - 2026-07-04 - Microfase 6.1: estabilidad de Conectores e Historial
+
+### Corregido
+- "Historial de cargas" en Limpieza ahora navega a `/historial`.
+- `markStandardized()` revisa errores de Supabase y avisa suavemente si no pudo guardar
+  todo el detalle de historial/columnas.
+- Importaciones desde Google Sheets quedan registradas con `source = 'google_sheets'`.
+- Retomar un dataset limpio usa las reglas reales del ultimo `cleaning_job` cuando existen.
+
+### Seguridad y robustez
+- `POST /connectors/sheets` limita la URL a 2000 caracteres.
+- El nombre de archivo devuelto por Google Sheets se sanitiza y recorta antes de llegar al
+  navegador.
+
 ## [0.7.0] — 2026-07-05 — Fase 6: Conectores + endurecimiento de reportes y persistencia
 
 ### Agregado

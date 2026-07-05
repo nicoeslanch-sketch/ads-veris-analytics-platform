@@ -210,9 +210,12 @@ export default function Limpieza() {
           title="Limpieza de datos ✨"
           subtitle="Revisa, ajusta y limpia tus datos para que estén listos para el análisis."
         />
-        <button className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5">
+        <Link
+          to="/historial"
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5"
+        >
           <CalendarClock className="h-4 w-4" /> Historial de cargas
-        </button>
+        </Link>
       </div>
 
       {/* Encabezado: archivo, filas, columnas, calidad, estado */}

@@ -266,6 +266,15 @@ def test_connector_sheets_rechaza_url_que_no_es_google_sheets(client, auth_heade
         assert "Google Sheets" in response.json()["detail"]
 
 
+def test_connector_sheets_rechaza_url_demasiado_larga(client, auth_headers):
+    response = client.post(
+        "/connectors/sheets",
+        json={"url": "https://docs.google.com/spreadsheets/d/" + "a" * 2500},
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
 def test_connector_sheets_importa_csv(client, auth_headers, monkeypatch):
     from app.routes import connectors as connectors_module
 
@@ -287,6 +296,26 @@ def test_connector_sheets_importa_csv(client, auth_headers, monkeypatch):
     body = response.json()
     assert body["filename"].endswith(".csv")
     assert "Fecha;Ventas" in body["csv"]
+
+
+def test_connector_sheets_sanitiza_filename(client, auth_headers, monkeypatch):
+    from app.routes import connectors as connectors_module
+
+    def fake_download(sheet_id: str, gid: str) -> tuple[str, bytes]:
+        return "../Ventas<script>2026</script>" + ("x" * 120) + ".csv", b"Fecha,Ventas\n01/05/2026,1000\n"
+
+    monkeypatch.setattr(connectors_module, "_download_sheet_csv", fake_download)
+    response = client.post(
+        "/connectors/sheets",
+        json={"url": "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz01234567/edit"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    filename = response.json()["filename"]
+    assert filename.endswith(".csv")
+    assert "/" not in filename
+    assert "<" not in filename
+    assert len(filename) <= 84
 
 
 def test_connector_sheets_hoja_privada_da_400(client, auth_headers, monkeypatch):

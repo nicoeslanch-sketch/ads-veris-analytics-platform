@@ -9,6 +9,7 @@ import { supabase } from './supabase'
 import type { CleanResult, CleaningRules, StandardizeResult } from './types'
 
 const BUCKET = 'datasets'
+export type DatasetSource = 'excel_csv' | 'google_sheets'
 
 async function getUserId(): Promise<string | null> {
   if (!supabase) return null
@@ -33,6 +34,7 @@ export async function uploadToStorage(file: File): Promise<string | null> {
 export async function insertDataset(
   file: File,
   storagePath: string | null,
+  source: DatasetSource = 'excel_csv',
 ): Promise<string | null> {
   const userId = await getUserId()
   if (!supabase || !userId) return null
@@ -41,7 +43,7 @@ export async function insertDataset(
     .insert({
       user_id: userId,
       name: file.name,
-      source: 'excel_csv',
+      source,
       storage_path: storagePath,
       status: 'cargado',
     })
@@ -58,13 +60,17 @@ export async function insertDataset(
 export async function markStandardized(
   datasetId: string | null,
   result: StandardizeResult,
-): Promise<void> {
-  if (!supabase || !datasetId) return
+): Promise<boolean> {
+  if (!supabase || !datasetId) return false
   try {
-    await supabase
+    const { error: datasetError } = await supabase
       .from('datasets')
       .update({ rows: result.filas, columns: result.columnas, status: 'estandarizado' })
       .eq('id', datasetId)
+    if (datasetError) {
+      console.warn('[persistencia] Falló el update de datasets:', datasetError.message)
+      return false
+    }
     const columns = result.preview.columnas.map((name) => ({
       dataset_id: datasetId,
       original_name: name,
@@ -73,10 +79,19 @@ export async function markStandardized(
       mapped_role:
         Object.entries(result.mapeo).find(([, col]) => col === name)?.[0] ?? null,
     }))
-    if (columns.length > 0) await supabase.from('dataset_columns').insert(columns)
+    if (columns.length > 0) {
+      const { error: columnsError } = await supabase.from('dataset_columns').insert(columns)
+      if (columnsError) {
+        console.warn('[persistencia] Falló el insert en dataset_columns:', columnsError.message)
+        return false
+      }
+    }
     await logActivity('estandarizacion', `Estandarización aplicada: ${result.archivo}`, datasetId)
-  } catch {
+    return true
+  } catch (err) {
     // best-effort: fallo en persistencia no bloquea el pipeline
+    console.warn('[persistencia] Error de red guardando la estandarización:', err)
+    return false
   }
 }
 

@@ -32,6 +32,7 @@ import {
   downloadDatasetFile,
   fetchActivity,
   fetchDatasets,
+  fetchLatestCleaningRules,
   type ActivityRow,
   type ActivityType,
   type DatasetRow,
@@ -102,12 +103,13 @@ export default function Historial() {
       )
       setStandardization(result)
       if (dataset.status === 'limpio') {
-        // Continuar donde quedó de verdad: dataset limpio → directo al Resumen
+        // Continuar con las reglas reales del último cleaning_job cuando existan.
+        const savedRules = await fetchLatestCleaningRules(dataset.id)
         const cleaned = await apiPost<CleanResult>(
           '/clean',
           buildDatasetForm(file, dataset.storage_path, {
             apply: 'true',
-            rules: JSON.stringify(DEFAULT_RULES),
+            rules: JSON.stringify(savedRules ?? DEFAULT_RULES),
           }),
         )
         setCleaning(cleaned)

@@ -53,7 +53,7 @@ export default function Conectores() {
       // La API valida la URL, extrae el ID y descarga el CSV oficial (≤15 MB)
       const result = await apiPostJson<SheetsImportResponse>('/connectors/sheets', { url })
       const sheetFile = new File([result.csv], result.filename, { type: 'text/csv' })
-      const ok = await importFile(sheetFile)
+      const ok = await importFile(sheetFile, { source: 'google_sheets' })
       if (ok) navigate('/estandarizacion')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo importar la hoja.')

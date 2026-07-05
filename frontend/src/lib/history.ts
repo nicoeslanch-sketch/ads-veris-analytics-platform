@@ -5,6 +5,7 @@ muestra el estado explicativo. RLS garantiza que cada usuario ve solo lo suyo.
 */
 
 import { supabase } from './supabase'
+import type { CleaningRules } from './types'
 
 const BUCKET = 'datasets'
 
@@ -33,6 +34,10 @@ export interface DatasetRow {
   status: 'cargado' | 'estandarizado' | 'limpio' | 'error'
   quality: number | null
   created_at: string
+}
+
+export interface CleaningJobRow {
+  rules: CleaningRules | null
 }
 
 async function hasSession(): Promise<boolean> {
@@ -85,4 +90,20 @@ export async function downloadDatasetFile(
     return null
   }
   return new File([data], name, { type: data.type })
+}
+
+export async function fetchLatestCleaningRules(datasetId: string): Promise<CleaningRules | null> {
+  if (!supabase || !(await hasSession())) return null
+  const { data, error } = await supabase
+    .from('cleaning_jobs')
+    .select('rules')
+    .eq('dataset_id', datasetId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    console.warn('[historial] No se pudieron leer reglas de limpieza:', error.message)
+    return null
+  }
+  return (data as CleaningJobRow | null)?.rules ?? null
 }

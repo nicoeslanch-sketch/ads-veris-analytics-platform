@@ -9,11 +9,12 @@ navegador lo procese igual que un archivo subido (Storage + /standardize).
 """
 
 import re
+from urllib.parse import unquote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..storage import MAX_DOWNLOAD_BYTES
@@ -23,10 +24,23 @@ router = APIRouter(prefix="/connectors", dependencies=[Depends(get_current_user)
 _SHEET_ID_RE = re.compile(r"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]{20,})")
 _GID_RE = re.compile(r"[#?&]gid=(\d+)")
 _FILENAME_RE = re.compile(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', re.IGNORECASE)
+_SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._ -]+")
 
 
 class SheetsImportRequest(BaseModel):
-    url: str
+    url: str = Field(..., min_length=1, max_length=2000)
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Normaliza nombres de Google antes de devolverlos al navegador."""
+    decoded = unquote(filename).replace("\\", "/").split("/")[-1]
+    decoded = _SAFE_FILENAME_RE.sub("_", decoded).strip(" ._-")
+    if not decoded:
+        decoded = "google-sheets"
+    if decoded.lower().endswith(".csv"):
+        decoded = decoded[:-4]
+    decoded = decoded[:80].strip(" ._-") or "google-sheets"
+    return f"{decoded}.csv"
 
 
 def _parse_sheet_url(url: str) -> tuple[str, str]:
@@ -90,9 +104,7 @@ def _download_sheet_csv(sheet_id: str, gid: str) -> tuple[str, bytes]:
             disposition = response.headers.get("content-disposition", "")
             name_match = _FILENAME_RE.search(disposition)
             filename = name_match.group(1) if name_match else f"google-sheets-{sheet_id[:8]}.csv"
-            if not filename.lower().endswith(".csv"):
-                filename += ".csv"
-            return filename, b"".join(chunks)
+            return _sanitize_filename(filename), b"".join(chunks)
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -114,4 +126,4 @@ async def import_google_sheet(body: SheetsImportRequest) -> dict:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La hoja está vacía.",
         )
-    return {"filename": filename, "csv": csv_text}
+    return {"filename": _sanitize_filename(filename), "csv": csv_text}
