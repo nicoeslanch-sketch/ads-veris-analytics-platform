@@ -3,7 +3,9 @@
 **Estado actual: Fases 0 a 6 completas — todo el roadmap del SPEC está construido.**
 La Fase 6 cierra Conectores (Google Sheets funcional) y endurece reportes y persistencia.
 La microfase 6.1 suma estabilidad: persistencia visible, origen Google Sheets, retomar con
-reglas reales de limpieza y controles de entrada del conector.
+reglas reales de limpieza y controles de entrada del conector. La microfase 6.2 prepara
+el modelo comercial: capabilities por plan, descarga limpia solo para Analista y export
+seguro contra formula injection.
 Lo que resta es una fase opcional de operación comercial (ver "Pendiente").
 
 > Referencia rápida de qué está construido y qué viene. La especificación
@@ -165,7 +167,7 @@ Lo que resta es una fase opcional de operación comercial (ver "Pendiente").
 
 ## ⏳ Pendiente (fase opcional de operación comercial)
 
-- Checkout/upgrade real de plan Gold (hoy el plan se cambia en la tabla `profiles`).
+- Checkout/upgrade real de plan Analista (hoy internamente equivale a `profiles.plan = gold`).
 - Vigilancia continua de Alertas (evaluación programada + correo/notificaciones).
 - Conector SQL / integraciones POS-facturación (Bsale, Defontana, Jumpseller, Shopify).
 - Reportes generados en backend (.xlsx real y PDF descargable).
@@ -202,6 +204,7 @@ python -m pytest tests/ -v
 #   supabase/migrations/0004_analyses.sql
 #   supabase/migrations/0005_rls_dataset_ownership.sql
 #   supabase/migrations/0006_ai_usage.sql
+#   supabase/migrations/0007_public_table_grants.sql
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

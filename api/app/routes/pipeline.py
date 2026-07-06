@@ -20,7 +20,10 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from ..auth import AuthenticatedUser, get_current_user
+from ..capabilities import Capability, require_capability_for_user
+from ..config import Settings, get_settings
 from ..engine.clean import analyze_and_clean
+from ..engine.export import safe_export_dataframe
 from ..engine.loader import UnsupportedFileError, load_dataframe
 from ..engine.mapping import detect_column_roles
 from ..engine.metrics import compute_metrics
@@ -172,9 +175,11 @@ def _clean_download_sync(filename: str, content: bytes, rules: dict, fmt: str) -
     for (r, c), msg in red.items():
         df.at[r, c] = msg
 
+    df_export = safe_export_dataframe(df)
+
     if fmt == "csv":
         return (
-            df.to_csv(index=False, sep=";").encode("utf-8-sig"),
+            df_export.to_csv(index=False, sep=";").encode("utf-8-sig"),
             f"{stem}_limpio.csv",
             "text/csv; charset=utf-8",
         )
@@ -183,7 +188,7 @@ def _clean_download_sync(filename: str, content: bytes, rules: dict, fmt: str) -
     from openpyxl.styles import PatternFill
 
     buf = io.BytesIO()
-    df.to_excel(buf, index=False, engine="openpyxl")
+    df_export.to_excel(buf, index=False, engine="openpyxl")
     buf.seek(0)
 
     wb = openpyxl.load_workbook(buf)
@@ -205,8 +210,6 @@ def _clean_download_sync(filename: str, content: bytes, rules: dict, fmt: str) -
         f"{stem}_limpio.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-
-
 
 
 def _metrics_sync(
@@ -258,15 +261,26 @@ async def clean_download(
     storage_path: str | None = Form(None),
     rules: str | None = Form(None),
     fmt: str = Form("xlsx"),
+    format: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Devuelve el dataset con la limpieza aplicada como archivo descargable (xlsx o csv)."""
-    if fmt not in ("xlsx", "csv"):
-        fmt = "xlsx"
+    require_capability_for_user(
+        user.id,
+        Capability.DOWNLOAD_CLEAN_DATASET,
+        settings,
+    )
+    export_format = (format or fmt).strip().lower()
+    if export_format not in {"csv", "xlsx"}:
+        raise HTTPException(
+            status_code=422,
+            detail="El campo 'fmt' debe ser 'csv' o 'xlsx'.",
+        )
     filename, content = await _read_input(file, storage_path, user)
     rules_dict = _parse_json_field(rules, "rules")
     file_bytes, out_name, media_type = await run_in_threadpool(
-        _clean_download_sync, filename, content, rules_dict, fmt
+        _clean_download_sync, filename, content, rules_dict, export_format
     )
     return StreamingResponse(
         iter([file_bytes]),

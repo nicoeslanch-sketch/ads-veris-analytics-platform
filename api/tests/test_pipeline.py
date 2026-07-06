@@ -17,7 +17,7 @@ def test_health_es_publico(client):
 
 def test_endpoints_protegidos_rechazan_sin_token(client, sample_csv):
     name, content = sample_csv
-    for path in ("/standardize", "/clean", "/metrics"):
+    for path in ("/standardize", "/clean", "/clean/download", "/metrics"):
         response = client.post(path, files={"file": (name, content, "text/csv")})
         assert response.status_code == 401, path
 
@@ -108,6 +108,37 @@ def test_clean_respeta_reglas_desactivadas(client, auth_headers, sample_csv):
     resumen = response.json()["resumen"]
     assert resumen["filas_despues"] == resumen["filas_antes"]
     assert resumen["columnas_despues"] == resumen["columnas_antes"]
+
+
+def test_clean_download_basico_devuelve_403(client, auth_headers, sample_csv):
+    name, content = sample_csv
+    response = client.post(
+        "/clean/download",
+        files={"file": (name, content, "text/csv")},
+        headers=auth_headers,
+    )
+    assert response.status_code == 403
+    assert "Plan Analista" in response.json()["detail"]
+
+
+def test_clean_download_analista_exporta_csv_seguro(client, auth_headers, monkeypatch):
+    from app.routes import pipeline as pipeline_module
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "require_capability_for_user",
+        lambda user_id, capability, settings: "gold",
+    )
+    content = "Fecha;Cliente;Ventas\n01/05/2026;=2+2;1000\n".encode("utf-8")
+    response = client.post(
+        "/clean/download",
+        files={"file": ("formulas.csv", content, "text/csv")},
+        data={"format": "csv"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.headers["content-disposition"].endswith('filename="formulas_limpio.csv"')
+    assert b"'=2+2" in response.content
 
 
 def test_metrics_calcula_kpis_y_evolucion(client, auth_headers, sample_csv):
@@ -393,6 +424,17 @@ def test_storage_descarga_grande_devuelve_413(client, auth_headers, monkeypatch)
 
 
 # ── Cuotas de IA por plan (SPEC §9) ──
+
+
+def test_capabilities_basico_vs_analista():
+    from app.capabilities import Capability, normalize_plan, plan_allows
+
+    assert normalize_plan("gold") == "analista"
+    assert normalize_plan("analista") == "analista"
+    assert plan_allows("basico", Capability.ASK_DATA_AI) is True
+    assert plan_allows("basico", Capability.DOWNLOAD_CLEAN_DATASET) is False
+    assert plan_allows("gold", Capability.DOWNLOAD_CLEAN_DATASET) is True
+    assert plan_allows("analista", Capability.CUSTOM_CLEANING_VARIABLES) is True
 
 
 def test_cuota_ia_agotada_devuelve_429(monkeypatch):

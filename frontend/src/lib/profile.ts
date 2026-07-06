@@ -1,6 +1,7 @@
 /** Perfil del usuario (tabla profiles, migración 0001) — Fase 5 Configuración. */
 
 import { supabase } from './supabase'
+import type { PlanCode } from './plans'
 
 export interface Profile {
   full_name: string | null
@@ -8,7 +9,7 @@ export interface Profile {
   rut: string | null
   country: string | null
   phone: string | null
-  plan: 'basico' | 'gold'
+  plan: PlanCode
   preferences: Record<string, unknown>
 }
 

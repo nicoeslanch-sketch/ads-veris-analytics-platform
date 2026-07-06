@@ -16,10 +16,11 @@ import { apiGet } from '../lib/api'
 import { fetchProfile, updateProfile } from '../lib/profile'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
+import { isAnalystPlan, planLabel, type PlanCode } from '../lib/plans'
 
 interface AiUsage {
   disponible: boolean
-  plan: 'basico' | 'gold'
+  plan: PlanCode
   usadas: number
   limite: number
   periodo?: string
@@ -64,7 +65,7 @@ export default function Configuracion() {
   const meta = (user?.user_metadata ?? {}) as Record<string, string | undefined>
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
-  const [plan, setPlan] = useState<'basico' | 'gold'>('basico')
+  const [plan, setPlan] = useState<PlanCode>('basico')
   const [preferences, setPreferences] = useState<Record<string, unknown>>({})
   const [loading, setLoading] = useState(true)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'fail'>('idle')
@@ -110,7 +111,7 @@ export default function Configuracion() {
     setSaveState(ok ? 'ok' : 'fail')
   }
 
-  const isGold = plan === 'gold'
+  const isAnalyst = isAnalystPlan(plan)
   const usagePct =
     usage?.disponible && usage.limite > 0
       ? Math.min(100, (usage.usadas / usage.limite) * 100)
@@ -131,8 +132,8 @@ export default function Configuracion() {
         <Card className="h-fit">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-base font-semibold text-navy">Perfil y cuenta</h2>
-            <Badge tone={isGold ? 'gold' : 'teal'}>
-              {isGold ? 'Plan Gold' : 'Plan Básico'}
+            <Badge tone={isAnalyst ? 'gold' : 'teal'}>
+              {planLabel(plan)}
             </Badge>
           </div>
 
@@ -234,11 +235,11 @@ export default function Configuracion() {
           </Card>
 
           {/* Plan */}
-          {!isGold && (
+          {!isAnalyst && (
             <Card className="border-gold/30 bg-gold/5">
               <div className="flex items-center gap-2">
                 <Crown className="h-4.5 w-4.5 text-gold" />
-                <h2 className="text-base font-semibold text-navy">Mejora a Gold</h2>
+                <h2 className="text-base font-semibold text-navy">Mejora a Analista</h2>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-navy/60">
                 Muchas más consultas IA al mes y limpieza personalizada con instrucciones

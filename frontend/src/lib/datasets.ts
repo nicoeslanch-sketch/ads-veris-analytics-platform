@@ -86,7 +86,11 @@ export async function markStandardized(
         return false
       }
     }
-    await logActivity('estandarizacion', `Estandarización aplicada: ${result.archivo}`, datasetId)
+    try {
+      await logActivity('estandarizacion', `Estandarización aplicada: ${result.archivo}`, datasetId)
+    } catch (err) {
+      console.warn('[persistencia] No se pudo registrar actividad de estandarizacion:', err)
+    }
     return true
   } catch (err) {
     // best-effort: fallo en persistencia no bloquea el pipeline
@@ -135,7 +139,11 @@ export async function saveCleaningJob(
       console.warn('[persistencia] Falló el update de datasets:', dsError.message)
       return false
     }
-    await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
+    try {
+      await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
+    } catch (err) {
+      console.warn('[persistencia] No se pudo registrar actividad de limpieza:', err)
+    }
     return true
   } catch (err) {
     console.warn('[persistencia] Error de red guardando la limpieza:', err)
@@ -171,13 +179,18 @@ export async function logActivity(
   type: 'carga' | 'estandarizacion' | 'limpieza' | 'analisis' | 'chat' | 'recomendacion',
   description: string,
   datasetId: string | null = null,
-): Promise<void> {
+): Promise<boolean> {
   const userId = await getUserId()
-  if (!supabase || !userId) return
-  await supabase.from('activity_log').insert({
+  if (!supabase || !userId) return false
+  const { error } = await supabase.from('activity_log').insert({
     user_id: userId,
     dataset_id: datasetId,
     activity_type: type,
     description,
   })
+  if (error) {
+    console.warn('[persistencia] Fallo el insert en activity_log:', error.message)
+    return false
+  }
+  return true
 }

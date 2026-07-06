@@ -6,6 +6,7 @@
  * - Datos completos en Excel/CSV (separador ';' + BOM, listo para Excel es-CL).
  */
 
+import { useEffect, useState } from 'react'
 import { FileSpreadsheet, FileText, Loader2, Printer } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
@@ -14,10 +15,22 @@ import { useAuth } from '../auth/AuthContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
 import { downloadReportCsv, openPrintableReport } from '../lib/report'
 import { formatCLP } from '../lib/format'
+import { fetchProfile } from '../lib/profile'
 
 export default function Reportes() {
   const { user } = useAuth()
   const { ready, metrics, loading, error } = useSessionMetrics()
+  const [profileCompany, setProfileCompany] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchProfile().then((profile) => {
+      if (!cancelled) setProfileCompany(profile?.company ?? null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
 
   if (!ready) {
     return (
@@ -48,7 +61,10 @@ export default function Reportes() {
     )
   }
 
-  const empresa = ((user?.user_metadata ?? {}) as Record<string, string | undefined>).company ?? null
+  const empresa =
+    profileCompany ??
+    ((user?.user_metadata ?? {}) as Record<string, string | undefined>).company ??
+    null
 
   return (
     <>

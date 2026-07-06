@@ -2,6 +2,24 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.7.2] - 2026-07-05 - Microfase 6.2: preparacion comercial
+
+### Agregado
+- Matriz de capabilities por plan: Basico mantiene carga, limpieza, dashboard e IA; Analista
+  habilita descarga de base limpia, limpieza avanzada, variables custom y reportes avanzados.
+- Nuevo `POST /clean/download`: aplica limpieza y devuelve CSV/XLSX solo si el usuario tiene
+  capability `download_clean_dataset` (Plan Analista). El bloqueo vive en backend.
+- Export de base limpia neutraliza formula injection (`=`, `+`, `-`, `@`) solo en la copia
+  descargable; el dataset interno no se modifica.
+
+### Cambiado
+- La UI muestra el plan comercial como "Analista" sin migrar todavia el valor interno `gold`.
+- Historial muestra la fuente de cada dataset (`Excel / CSV` o `Google Sheets`).
+- Reportes leen `profiles.company` como fuente principal de empresa.
+
+### Corregido
+- Fallos de `activity_log` ya no hacen fallar `markStandardized()` ni `saveCleaningJob()`.
+
 ## [0.7.1] - 2026-07-04 - Microfase 6.1: estabilidad de Conectores e Historial
 
 ### Corregido

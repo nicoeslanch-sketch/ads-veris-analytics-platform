@@ -40,6 +40,7 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    - `supabase/migrations/0004_analyses.sql` (análisis guardados de Explorar datos)
    - `supabase/migrations/0005_rls_dataset_ownership.sql` (RLS estricta sobre dataset_id)
    - `supabase/migrations/0006_ai_usage.sql` (consumo IA para cuotas por plan)
+   - `supabase/migrations/0007_public_table_grants.sql` (permisos PostgREST para tablas con RLS)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend
@@ -138,11 +139,13 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
 - [x] **Fase 5 — Alertas, Historial, Reportes, Configuración y planes**: alertas con
   reglas configurables (severidad, área, recomendación), Historial con "Retomar" desde
   Storage, reportes PDF/Excel, Configuración con perfil editable y contador de consultas
-  IA, cuotas mensuales por plan (básico/gold) con 429 al agotarse.
+  IA, cuotas mensuales por plan (Básico/Analista; `gold` interno) con 429 al agotarse.
 - [x] **Fase 6 — Conectores + endurecimiento**: importación desde **Google Sheets**
   (hoja pública/compartida por enlace, sin OAuth) al mismo pipeline; escape de HTML y
   anti formula-injection en reportes; persistencia best-effort con avisos visibles.
-  Pendiente (operación comercial): checkout Gold, conector SQL, alertas continuas y
+- [x] **Microfase 6.2 — preparación comercial**: capabilities por plan, descarga de base
+  limpia solo para Plan Analista y export seguro contra formula injection.
+  Pendiente (operación comercial): checkout Analista, conector SQL, alertas continuas y
   reportes generados en backend.
 
 ## Regla de flujo no negociable

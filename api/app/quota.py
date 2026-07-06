@@ -1,8 +1,9 @@
 """Cuotas de IA por plan (SPEC §9 — planes y feature gating).
 
 Cada consulta a /ai/* descuenta del cupo mensual del usuario según su plan
-(`profiles.plan`: basico|gold). El consumo vive en `ai_usage` (migración 0006)
-y se consulta/escribe vía PostgREST con la service_role key (solo backend).
+(`profiles.plan`: basico|gold interno; Gold se muestra como Analista). El
+consumo vive en `ai_usage` (migración 0006) y se consulta/escribe vía PostgREST
+con la service_role key (solo backend).
 
 Comportamiento:
 - Supabase sin configurar (desarrollo local) → sin gating, devuelve None.
@@ -18,6 +19,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import HTTPException, status
 
+from .capabilities import display_plan, get_plan, normalize_plan
 from .config import Settings
 
 _TIMEOUT = 10
@@ -37,20 +39,6 @@ def _rest(settings: Settings, table: str) -> str:
 def _month_start_iso() -> str:
     now = datetime.now(timezone.utc)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-
-
-def get_plan(user_id: str, settings: Settings) -> str:
-    """Plan del usuario desde profiles; 'basico' si no hay fila."""
-    response = httpx.get(
-        _rest(settings, "profiles"),
-        params={"id": f"eq.{user_id}", "select": "plan"},
-        headers=_headers(settings),
-        timeout=_TIMEOUT,
-    )
-    response.raise_for_status()
-    rows = response.json()
-    plan = rows[0].get("plan") if rows else None
-    return plan if plan in ("basico", "gold") else "basico"
 
 
 def count_month_usage(user_id: str, settings: Settings) -> int:
@@ -75,7 +63,7 @@ def count_month_usage(user_id: str, settings: Settings) -> int:
 def limit_for(plan: str, settings: Settings) -> int:
     return (
         settings.ai_monthly_limit_gold
-        if plan == "gold"
+        if normalize_plan(plan) == "analista"
         else settings.ai_monthly_limit_basico
     )
 
@@ -101,10 +89,10 @@ def check_quota(user_id: str, settings: Settings) -> dict | None:
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
                 f"Alcanzaste el límite mensual de consultas IA de tu plan "
-                f"{plan} ({limite}). "
+                f"{display_plan(plan)} ({limite}). "
                 + (
-                    "Mejora a Gold para ampliar tu cupo."
-                    if plan == "basico"
+                    "Mejora a Analista para ampliar tu cupo."
+                    if normalize_plan(plan) == "basico"
                     else "El cupo se renueva el próximo mes."
                 )
             ),

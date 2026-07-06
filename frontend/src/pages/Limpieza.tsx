@@ -343,7 +343,7 @@ export default function Limpieza() {
             </div>
             <p className="mt-2 text-xs leading-relaxed text-navy/60">
               Aplica reglas y variables personalizadas para una limpieza a tu medida, con
-              instrucciones en lenguaje natural. Disponible en el plan Gold (Fase 3).
+              instrucciones en lenguaje natural. Disponible en el plan Analista.
             </p>
             <button
               disabled

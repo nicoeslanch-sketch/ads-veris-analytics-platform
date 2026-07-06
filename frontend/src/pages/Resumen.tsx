@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -107,6 +107,7 @@ function ChartTooltip({
 
 export default function Resumen() {
   const { user } = useAuth()
+  const location = useLocation()
   const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics } = useDataset()
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -118,6 +119,10 @@ export default function Resumen() {
   const firstName =
     ((user?.user_metadata?.full_name as string | undefined) ?? '').trim().split(' ')[0] || null
   const ready = Boolean(file && cleaning)
+  const resumeWarning =
+    typeof (location.state as { resumeWarning?: unknown } | null)?.resumeWarning === 'string'
+      ? ((location.state as { resumeWarning: string }).resumeWarning)
+      : null
 
   useEffect(() => {
     if (!file || !cleaning) return
@@ -272,6 +277,13 @@ export default function Resumen() {
         <div className="mb-6 flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>{error}</p>
+        </div>
+      )}
+
+      {resumeWarning && (
+        <div className="mb-6 flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 text-sm text-navy/80">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+          <p>{resumeWarning}</p>
         </div>
       )}
 
