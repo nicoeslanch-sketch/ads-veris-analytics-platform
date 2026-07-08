@@ -20,6 +20,7 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -36,15 +37,54 @@ import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMont
 import { formatCLP, formatNumber } from '../lib/format'
 import type { MetricsResult } from '../lib/types'
 
-const RATIO_LABELS: Array<{ key: string; label: string }> = [
-  { key: 'roa', label: 'ROA (Retorno sobre activos)' },
-  { key: 'roe', label: 'ROE (Retorno sobre patrimonio)' },
-  { key: 'liquidez_corriente', label: 'Ratio de Liquidez Corriente' },
-  { key: 'prueba_acida', label: 'Prueba ácida' },
-  { key: 'rotacion_inventario', label: 'Rotación de Inventario' },
-  { key: 'dias_cobro', label: 'Días de Cobro Promedio' },
-  { key: 'dias_pago', label: 'Días de Pago Promedio' },
-]
+/** Indicadores operativos del negocio, calculados de los datos reales del
+ * archivo (los ratios de balance —ROA, ROE, liquidez— requieren conectar
+ * datos de balance y quedan como nota hasta entonces). */
+function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; value: string; hint?: string }> {
+  const kpis = m.kpis
+  const evo = m.evolucion_mensual
+  const items: Array<{ label: string; value: string; hint?: string }> = []
+
+  items.push({ label: 'Ticket promedio', value: formatCLP(kpis.ticket_promedio), hint: 'por venta' })
+  items.push({ label: 'Transacciones', value: formatNumber(kpis.transacciones), hint: 'en el periodo' })
+  if (kpis.unidades_totales != null) {
+    items.push({ label: 'Unidades vendidas', value: formatNumber(kpis.unidades_totales) })
+  }
+  if (evo.length >= 2) {
+    const best = evo.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
+    items.push({
+      label: 'Mejor mes',
+      value: formatMonthShort(best.mes),
+      hint: formatCLP(best.ingresos),
+    })
+    const first = evo[0]
+    if (first.ingresos > 0) {
+      const totalGrowth = ((evo[evo.length - 1].ingresos - first.ingresos) / first.ingresos) * 100
+      items.push({
+        label: 'Crecimiento del periodo',
+        value: `${totalGrowth >= 0 ? '+' : ''}${formatNumber(Math.round(totalGrowth * 10) / 10)}%`,
+        hint: `${formatMonthShort(first.mes)} → ${formatMonthShort(evo[evo.length - 1].mes)}`,
+      })
+    }
+  }
+  if (m.proyeccion) {
+    const g = m.proyeccion.crecimiento_pct
+    items.push({
+      label: 'Tendencia mensual',
+      value: `${g >= 0 ? '+' : ''}${formatNumber(Math.round(g * 10) / 10)}%`,
+      hint: 'crecimiento promedio',
+    })
+  }
+  const margen = kpis.margen_utilidad_pct?.valor
+  if (margen != null) {
+    items.push({
+      label: 'Margen del periodo',
+      value: `${formatNumber(Math.round(margen * 10) / 10)}%`,
+      hint: 'utilidad / ingresos',
+    })
+  }
+  return items.slice(0, 7)
+}
 
 function Variation({
   pct,
@@ -341,6 +381,20 @@ export default function Resumen() {
                       width={60}
                     />
                     <Tooltip content={<ChartTooltip />} />
+                    {evolution.length >= 2 && (
+                      <ReferenceLine
+                        y={evolution.reduce((s, m) => s + m.ingresos, 0) / evolution.length}
+                        stroke={AXIS_INK}
+                        strokeDasharray="6 4"
+                        strokeOpacity={0.55}
+                        label={{
+                          value: 'promedio',
+                          position: 'insideTopRight',
+                          fill: AXIS_INK,
+                          fontSize: 10,
+                        }}
+                      />
+                    )}
                     <Line
                       type="monotone"
                       dataKey="ingresos"
@@ -393,21 +447,21 @@ export default function Resumen() {
 
             <Card>
               <h2 className="text-base font-semibold text-navy">Indicadores Clave</h2>
-              <ul className="mt-4 divide-y divide-navy/5">
-                {RATIO_LABELS.map(({ key, label }) => {
-                  const value = metrics.indicadores_financieros.items[key]
-                  return (
-                    <li key={key} className="flex items-center justify-between gap-2 py-2.5 text-sm">
-                      <span className="text-navy/70">{label}</span>
-                      <span className="font-semibold text-navy/35">
-                        {value !== null && value !== undefined ? formatNumber(value) : '—'}
-                      </span>
-                    </li>
-                  )
-                })}
+              <p className="mt-0.5 text-xs text-navy/50">Calculados de tus datos reales.</p>
+              <ul className="mt-3 divide-y divide-navy/5">
+                {buildOperationalIndicators(metrics).map(({ label, value, hint }) => (
+                  <li key={label} className="flex items-center justify-between gap-2 py-2.5 text-sm">
+                    <span className="text-navy/70">{label}</span>
+                    <span className="text-right">
+                      <span className="font-semibold text-navy">{value}</span>
+                      {hint && <span className="block text-[10px] text-navy/40">{hint}</span>}
+                    </span>
+                  </li>
+                ))}
               </ul>
-              <p className="mt-3 text-[11px] leading-relaxed text-navy/45">
-                {metrics.indicadores_financieros.nota}
+              <p className="mt-3 rounded-lg bg-navy/[0.04] px-3 py-2 text-[11px] leading-relaxed text-navy/50">
+                ROA, ROE, liquidez y prueba ácida se habilitarán cuando conectes los datos
+                de balance de tu negocio.
               </p>
             </Card>
           </div>

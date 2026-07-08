@@ -2,6 +2,30 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.8.1] - 2026-07-08 - Examen de calidad post-Fase 7
+
+### Corregido
+- **Caché del pipeline redimensionado para Render free (512 MB)**: de 4 entradas ×
+  1,5M celdas (podía superar la RAM del plan) a 3 × 600k celdas (~150 MB peor caso).
+
+### Agregado
+- **Indicadores Clave del Resumen ahora son operativos y reales**: Ticket promedio,
+  Transacciones, Unidades vendidas, Mejor mes, Crecimiento del periodo, Tendencia
+  mensual y Margen — calculados de los datos del archivo (la pared de "—" de ROA/ROE
+  pasó a una nota compacta hasta conectar datos de balance).
+- **Línea de promedio de ingresos** en el gráfico de evolución (lectura instantánea:
+  sobre/bajo el promedio del periodo).
+- **Reporte de calidad con muestras de valores problemáticos** (hasta 3 por columna,
+  fechas inválidas y tipos incorrectos): el insumo exacto que necesitará el refinado
+  IA para "terminar el 20%" sin re-leer el archivo.
+
+### Verificado (examen de calidad)
+- 57 tests de la API en verde, build de producción OK y E2E Playwright completo:
+  pipeline, limpieza dirigida por variables (aplicada de verdad), descarga de base
+  limpia .xlsx con celdas marcadas, página Planes y dashboard.
+- `/metrics` maneja correctamente los nulos preservados (dropna en todos los
+  agregados) — el cambio de no-imputación es seguro para los KPIs.
+
 ## [0.8.0] - 2026-07-07 - Fase 7: Planes, limpieza dirigida y motor profesional
 
 ### Agregado

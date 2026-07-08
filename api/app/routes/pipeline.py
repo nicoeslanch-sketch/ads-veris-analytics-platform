@@ -121,8 +121,10 @@ def _parse_json_field(raw: str | None, field: str) -> dict:
 
 _CACHE_LOCK = threading.Lock()
 _CLEAN_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
-_CACHE_MAX_ENTRIES = 4
-_CACHE_MAX_CELLS = 1_500_000
+# Dimensionado para Render free (512 MB): cada entrada guarda un DataFrame de
+# strings (~60–100 bytes/celda). 3 × 600k celdas ≈ 150 MB en el peor caso.
+_CACHE_MAX_ENTRIES = 3
+_CACHE_MAX_CELLS = 600_000
 
 
 def _cache_key(content: bytes, rules: dict | None, apply: bool, mapping: dict | None, scope: dict | None) -> tuple:

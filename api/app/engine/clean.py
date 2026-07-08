@@ -172,14 +172,21 @@ def _detect_problems(
         info["nulos_pct"] = round(col_nulls / max(len(df), 1) * 100, 1)
         ctype = column_types.get(col, "texto")
         if ctype == "fecha":
-            invalid = int((~miss & date_cache[col].isna()).sum())
+            invalid_mask = ~miss & date_cache[col].isna()
+            invalid = int(invalid_mask.sum())
             invalid_dates += invalid
             info["fechas_invalidas"] = invalid
+            if invalid:
+                # Muestras para el refinado IA (§5.13): qué valores no se pudieron reparar.
+                info["ejemplos_invalidos"] = [str(v) for v in df[col][invalid_mask].head(3)]
         elif ctype == "numero":
             parsed = num_cache[col]
-            wrong = int((~miss & parsed.isna()).sum())
+            wrong_mask = ~miss & parsed.isna()
+            wrong = int(wrong_mask.sum())
             wrong_types += wrong
             info["tipos_incorrectos"] = wrong
+            if wrong:
+                info["ejemplos_invalidos"] = [str(v) for v in df[col][wrong_mask].head(3)]
             # Outliers SOLO en roles métricos (§5.3): jamás IDs, RUT o años.
             role = roles_by_col.get(col)
             if role in METRIC_ROLES and not _is_id_like(col):
