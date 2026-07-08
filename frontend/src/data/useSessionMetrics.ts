@@ -13,7 +13,8 @@ export function useSessionMetrics(): {
   loading: boolean
   error: string | null
 } {
-  const { file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics } = useDataset()
+  const { file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics, mappingOverride } =
+    useDataset()
   const ready = Boolean(file && cleaning)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,12 +27,16 @@ export function useSessionMetrics(): {
     fetchedFor.current = key
     setLoading(true)
     setError(null)
-    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath))
+    const fields: Record<string, string> = mappingOverride
+      ? { mapping: JSON.stringify(mappingOverride) }
+      : {}
+    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
       .then(setMetrics)
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : 'No se pudieron calcular las métricas.'),
       )
       .finally(() => setLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics])
 
   return { ready, metrics, loading, error }

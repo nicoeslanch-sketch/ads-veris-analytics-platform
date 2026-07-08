@@ -2,6 +2,93 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.8.0] - 2026-07-07 - Fase 7: Planes, limpieza dirigida y motor profesional
+
+### Agregado
+- **Modelo de tres planes** (`basico | analista | gold`): migración `0008` renombra los
+  `gold` legacy a `analista`; Gold pasa a ser el tercer plan "en construcción" (conexión
+  a bases SQL + comunidad). Matriz única de capacidades en `api/app/capabilities.py`,
+  espejada en `frontend/src/lib/plans.ts`.
+- **Interruptor global `PLAN_ENFORCEMENT`** (backend) + `VITE_PLAN_ENFORCEMENT`
+  (frontend), **apagado en Fase 7**: todo accesible para probar, con cada puerta ya
+  instalada (403/candados listos para encender sin tocar componentes).
+- **Página Planes** (`/planes`, nuevo ítem del sidebar): 3 tarjetas con sus features
+  desde la matriz única, Gold con badge "En construcción" (SQL + comunidad), y sección
+  **"Tokens de limpieza dirigida (addons)"** con el cupo del mes, el saldo de tokens y
+  el botón **"Solicitar más"** (`POST /addons/request` → tabla `addon_requests`; ADS
+  Veris contacta al usuario).
+- **Limpieza dirigida por variables** (`POST /clean/assisted`, planes Analista/Gold):
+  chat horizontal en la parte inferior de Limpieza — el usuario escribe qué columnas y
+  reglas quiere ("limpia Fecha y Ventas, no toques Cliente") y un segundo botón
+  **"Limpiar con mis variables"** corre el motor dirigido. **2 intentos base al mes**
+  (`AI_CLEANING_MONTHLY_LIMIT`) + **tokens addon** (ledger `plan_addons`, migración
+  `0009`): advertencia visible de intentos, 429 con CTA a Planes al agotarse, y 422
+  SIN consumir el intento si las instrucciones no se reconocen.
+- **Costuras IA preparadas y APAGADAS** (un solo `# TODO IA` cada una):
+  `interpret_cleaning_instructions` (hoy determinista: columnas + catálogo acotado de
+  reglas) y `refine_with_ai` (paso final opcional del pipeline, flag
+  `AI_REFINE_ENABLED=false`). Activar la IA será reemplazar el cuerpo, no el pipeline.
+- **`POST /admin/grant-credits`** (solo `profiles.is_admin`, migración `0008`): otorga
+  tokens a mano insertando en el ledger `plan_addons` (alternativa por SQL documentada
+  en el README). **`GET /plans/usage`**: cupos de insights + limpieza + addons.
+- **Mapeo de columnas editable** (§5.10): tarjeta en Limpieza para corregir el rol de
+  cada columna; lo respetan `/clean`, `/clean/assisted`, `/clean/download` y `/metrics`
+  (en toda la app vía `DatasetContext`), con persistencia best-effort en
+  `dataset_columns` (policy de update en `0008`).
+- Tests de la API: **57 pruebas** (24 nuevas: matriz y enforcement on/off, cupo de
+  limpieza 429/addons, `/clean/assisted` dirigido/422/429, `/plans/usage`,
+  `/addons/request`, `/admin/grant-credits`, y las mejoras del motor).
+
+### Motor de datos — mejoras profesionales (§5)
+- **Los nulos numéricos ya NO se imputan con 0** (§5.1): una venta faltante que se
+  volvía $0 sesgaba sumas, promedios y márgenes. Ahora quedan vacíos (NaN para
+  `/metrics`), catalogados por columna y marcados en la descarga. La calidad
+  post-limpieza mide problemas estructurales pendientes; los nulos preservados por
+  diseño quedan en el reporte de calidad.
+- **Outliers IQR solo en roles métricos** (monto/costo/cantidad, §5.3): nunca sobre
+  IDs, RUT, folios ni años.
+- **Duplicados con criterio explícito** (§5.2): detección por fila completa
+  normalizada + **advertencia** cuando el archivo no trae columna identificadora
+  (dos ventas legítimamente idénticas no se pueden distinguir — se avisa en vez de
+  borrar en silencio; se optó por advertir sobre la clave de negocio del spec porque
+  una clave parcial borraría MÁS ventas legítimas, no menos).
+- **Detección de tipo con muestra aleatoria determinista + confianza por columna**
+  (§5.4): un archivo ordenado ya no misclasifica.
+- **Convención numérica por columna** (§5.5): "850.000" se decide por consistencia de
+  toda la columna (miles es-CL vs decimal), no celda a celda.
+- **Fechas con formato dominante por columna** (§5.6): `dayfirst` detectado (no fijo)
+  y soporte de meses en texto ("01 mayo 2026", "1 de junio de 2026").
+- **Caché del pipeline** (§5.7): cambiar el periodo del dashboard ya no re-estandariza
+  ni re-limpia el archivo (LRU por hash de contenido + reglas + mapeo, con tope de
+  celdas para proteger la memoria de Render).
+- **Fuzzy matching de typos** (§5.11): "Santigo" → "Santiago" con Levenshtein acotado
+  y guardas (frecuencias, longitud, misma inicial) para no fusionar valores legítimos.
+- **Excel multi-hoja y filas de título** (§5.12): se elige la hoja con más datos (con
+  aviso de las omitidas) y se detecta la fila real de encabezados; separador CSV
+  decidido con varias líneas.
+- **Reporte de calidad por columna** (§5.9): rol, tipo + confianza, nulos y %,
+  inválidos, outliers y convención — visible en la respuesta y listo para alimentar
+  el refinado IA.
+- Detección vectorizada de nulos y parseos por columna calculados una sola vez (§5.8).
+
+### Cambiado
+- **El panel Asistente IA solo vive en Resumen y Explorar datos** (Fase 7 §4): salió
+  del `AppShell` global; en el resto de pantallas el contenido usa todo el ancho.
+- Botones de Limpieza según el diseño de Fase 7: **"Limpiar datos"** (reglas por
+  defecto, todos los planes) arriba, y **"Limpiar con mis variables"** junto al chat.
+- La clave `correcciones.valores_nulos_a_reemplazar` pasó a
+  `valores_nulos_normalizados` (los nulos se señalizan, no se reemplazan).
+- Cuota de insights y de limpieza separadas por `kind` en `ai_usage` (los intentos de
+  limpieza no gastan el cupo del asistente y viceversa). Nueva variable
+  `AI_MONTHLY_LIMIT_ANALISTA` (la `_GOLD` queda para el plan Gold).
+- Configuración muestra también el contador de limpieza dirigida + tokens y enlaza a
+  Planes; Reportes gatea sus descargas con `download_reports` (candado + CTA cuando
+  el enforcement esté encendido).
+
+### Corregido
+- `dataset_columns` no aceptaba el rol `costo` (detectado desde la Fase 2): el check
+  se corrige en la migración `0008`.
+
 ## [0.7.2] - 2026-07-05 - Microfase 6.2: preparacion comercial
 
 ### Agregado

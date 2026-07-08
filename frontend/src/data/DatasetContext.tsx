@@ -50,12 +50,16 @@ interface DatasetState {
   uploadedAt: Date | null
   period: Period
   monthsAvailable: string[]
+  /** Roles de negocio corregidos por el usuario en Limpieza (Fase 7 §5.10);
+   * null = usar el mapeo automático. Lo respetan /clean, /metrics y descargas. */
+  mappingOverride: Record<string, string> | null
   setUploaded: (file: File, datasetId: string | null, storagePath: string | null) => void
   setStandardization: (result: StandardizeResult) => void
   setCleaning: (result: CleanResult) => void
   setMetrics: (result: MetricsResult) => void
   setPeriod: (period: Period) => void
   setMonthsAvailable: (months: string[]) => void
+  setMappingOverride: (mapping: Record<string, string> | null) => void
   reset: () => void
 }
 
@@ -71,6 +75,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [uploadedAt, setUploadedAt] = useState<Date | null>(null)
   const [period, setPeriod] = useState<Period>(ALL_PERIOD)
   const [monthsAvailable, setMonthsAvailable] = useState<string[]>([])
+  const [mappingOverride, setMappingOverride] = useState<Record<string, string> | null>(null)
 
   const setUploaded = useCallback(
     (newFile: File, newDatasetId: string | null, newStoragePath: string | null) => {
@@ -83,6 +88,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setUploadedAt(new Date())
       setPeriod(ALL_PERIOD)
       setMonthsAvailable([])
+      setMappingOverride(null)
     },
     [],
   )
@@ -97,6 +103,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setUploadedAt(null)
     setPeriod(ALL_PERIOD)
     setMonthsAvailable([])
+    setMappingOverride(null)
   }, [])
 
   // Al cerrar sesión o cambiar de usuario en el mismo navegador, el dataset
@@ -122,12 +129,14 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       uploadedAt,
       period,
       monthsAvailable,
+      mappingOverride,
       setUploaded,
       setStandardization: setStandardizationState,
       setCleaning: setCleaningState,
       setMetrics: setMetricsState,
       setPeriod,
       setMonthsAvailable,
+      setMappingOverride,
       reset,
     }),
     [
@@ -140,6 +149,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       uploadedAt,
       period,
       monthsAvailable,
+      mappingOverride,
       setUploaded,
       reset,
     ],

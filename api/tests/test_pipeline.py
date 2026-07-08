@@ -110,7 +110,12 @@ def test_clean_respeta_reglas_desactivadas(client, auth_headers, sample_csv):
     assert resumen["columnas_despues"] == resumen["columnas_antes"]
 
 
-def test_clean_download_basico_devuelve_403(client, auth_headers, sample_csv):
+def test_clean_download_basico_devuelve_403(client, auth_headers, sample_csv, monkeypatch):
+    # Fase 7: el gating vive tras PLAN_ENFORCEMENT (apagado por defecto).
+    # Con enforcement encendido y sin Supabase, el plan resuelve a 'basico'.
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "plan_enforcement", True)
     name, content = sample_csv
     response = client.post(
         "/clean/download",
@@ -429,12 +434,20 @@ def test_storage_descarga_grande_devuelve_413(client, auth_headers, monkeypatch)
 def test_capabilities_basico_vs_analista():
     from app.capabilities import Capability, normalize_plan, plan_allows
 
-    assert normalize_plan("gold") == "analista"
+    # Fase 7: 'gold' ya es el tercer plan; el ex-gold vive migrado a 'analista'.
     assert normalize_plan("analista") == "analista"
+    assert normalize_plan("gold") == "gold"
+    assert normalize_plan(None) == "basico"
     assert plan_allows("basico", Capability.ASK_DATA_AI) is True
     assert plan_allows("basico", Capability.DOWNLOAD_CLEAN_DATASET) is False
-    assert plan_allows("gold", Capability.DOWNLOAD_CLEAN_DATASET) is True
-    assert plan_allows("analista", Capability.CUSTOM_CLEANING_VARIABLES) is True
+    assert plan_allows("basico", Capability.AI_CLEANING) is False
+    assert plan_allows("analista", Capability.DOWNLOAD_CLEAN_DATASET) is True
+    assert plan_allows("analista", Capability.AI_CLEANING) is True
+    assert plan_allows("analista", Capability.CONNECT_SQL) is False
+    # Gold hereda todo Analista + lo en construcción
+    assert plan_allows("gold", Capability.AI_CLEANING) is True
+    assert plan_allows("gold", Capability.CONNECT_SQL) is True
+    assert plan_allows("gold", Capability.COMMUNITY_ACCESS) is True
 
 
 def test_cuota_ia_agotada_devuelve_429(monkeypatch):
@@ -449,7 +462,7 @@ def test_cuota_ia_agotada_devuelve_429(monkeypatch):
         ai_monthly_limit_basico=5,
     )
     monkeypatch.setattr(quota, "get_plan", lambda user_id, s: "basico")
-    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s: 5)
+    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 5)
     try:
         quota.check_quota("user-x", settings)
         raise AssertionError("Debió lanzar 429")
@@ -458,7 +471,7 @@ def test_cuota_ia_agotada_devuelve_429(monkeypatch):
         assert "límite mensual" in exc.detail
 
     # Con cupo disponible devuelve el estado
-    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s: 4)
+    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 4)
     info = quota.check_quota("user-x", settings)
     assert info == {"plan": "basico", "usadas": 4, "limite": 5}
 

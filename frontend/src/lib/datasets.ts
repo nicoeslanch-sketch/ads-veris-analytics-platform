@@ -151,8 +151,44 @@ export async function saveCleaningJob(
   }
 }
 
-/** Guarda un análisis de Explorar datos (migración 0004). Best-effort. */
-export async function saveAnalysis(
+/** Fase 7 §5.10: persiste el mapeo de roles corregido por el usuario en
+ * dataset_columns (requiere la migración 0008: policy + grant de update).
+ * Best-effort: la corrección aplica igual en la sesión aunque esto falle. */
+export async function saveColumnMapping(
+  datasetId: string | null,
+  mapping: Record<string, string>,
+): Promise<boolean> {
+  if (!supabase || !datasetId) return false
+  try {
+    // Limpiar roles anteriores y asignar los nuevos, columna por columna.
+    const { error: clearError } = await supabase
+      .from('dataset_columns')
+      .update({ mapped_role: null })
+      .eq('dataset_id', datasetId)
+    if (clearError) {
+      console.warn('[persistencia] No se pudo limpiar el mapeo previo:', clearError.message)
+      return false
+    }
+    for (const [role, column] of Object.entries(mapping)) {
+      if (!column) continue
+      const { error } = await supabase
+        .from('dataset_columns')
+        .update({ mapped_role: role })
+        .eq('dataset_id', datasetId)
+        .eq('original_name', column)
+      if (error) {
+        console.warn(`[persistencia] No se pudo guardar el rol ${role}:`, error.message)
+        return false
+      }
+    }
+    return true
+  } catch (err) {
+    console.warn('[persistencia] Error de red guardando el mapeo:', err)
+    return false
+  }
+}
+
+/** Guarda un análisis de Explorar datos (migración 0004). Best-effort. */export async function saveAnalysis(
   datasetId: string | null,
   name: string,
   config: Record<string, unknown>,

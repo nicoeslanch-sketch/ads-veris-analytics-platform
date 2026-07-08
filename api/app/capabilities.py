@@ -1,8 +1,20 @@
-"""Plan capabilities for commercial gating.
+"""Planes y capacidades comerciales — fuente única de verdad (Fase 7).
 
-The database still stores the legacy value ``gold``. Product copy calls that
-same tier "Analista"; keeping the mapping here avoids scattering ``plan ==
-"gold"`` checks across the codebase.
+Tres planes: ``basico`` → ``analista`` → ``gold`` (en construcción).
+La matriz PLAN_CAPABILITIES se replica en el frontend
+(``frontend/src/lib/plans.ts``); si cambias algo aquí, cámbialo allá.
+
+Interruptor global ``PLAN_ENFORCEMENT`` (Settings.plan_enforcement, default
+False en Fase 7): con enforcement apagado TODO queda accesible para probar,
+pero cada puerta ya tiene su cerradura instalada. Encenderlo en el futuro no
+requiere tocar componentes: solo el flag (backend) y VITE_PLAN_ENFORCEMENT
+(frontend).
+
+Historia: hasta la migración 0008, la base guardaba ``gold`` para el plan que
+la UI mostraba como "Analista". La 0008 migra esas filas a ``analista`` y
+``gold`` pasa a ser el tercer plan (SQL + comunidad). Si el backend nuevo corre
+contra una base sin migrar, los ``gold`` legacy reciben el set Gold — que es un
+superconjunto de Analista, así que nadie pierde capacidades.
 """
 
 from enum import StrEnum
@@ -20,52 +32,60 @@ class Capability(StrEnum):
     CLEAN = "clean"
     VIEW_DASHBOARD = "view_dashboard"
     ASK_DATA_AI = "ask_data_ai"
+    # ── Analista ──
     DOWNLOAD_CLEAN_DATASET = "download_clean_dataset"
-    ADVANCED_CLEANING_CHAT = "advanced_cleaning_chat"
-    CUSTOM_CLEANING_VARIABLES = "custom_cleaning_variables"
-    ADVANCED_REPORTS = "advanced_reports"
+    DOWNLOAD_REPORTS = "download_reports"
+    AI_CLEANING = "ai_cleaning"  # chat de limpieza dirigida por variables (2/mes + addons)
+    # ── Gold (en construcción) ──
+    CONNECT_SQL = "connect_sql"
+    COMMUNITY_ACCESS = "community_access"
 
 
-_BASICO_CAPABILITIES = {
+_BASICO = {
     Capability.STANDARDIZE,
     Capability.CLEAN,
     Capability.VIEW_DASHBOARD,
     Capability.ASK_DATA_AI,
 }
 
-_ANALISTA_CAPABILITIES = {
-    *_BASICO_CAPABILITIES,
+_ANALISTA = {
+    *_BASICO,
     Capability.DOWNLOAD_CLEAN_DATASET,
-    Capability.ADVANCED_CLEANING_CHAT,
-    Capability.CUSTOM_CLEANING_VARIABLES,
-    Capability.ADVANCED_REPORTS,
+    Capability.DOWNLOAD_REPORTS,
+    Capability.AI_CLEANING,
 }
+
+_GOLD = {
+    *_ANALISTA,
+    Capability.CONNECT_SQL,
+    Capability.COMMUNITY_ACCESS,
+}
+
+PLAN_CAPABILITIES: dict[str, set[Capability]] = {
+    "basico": _BASICO,
+    "analista": _ANALISTA,
+    "gold": _GOLD,
+}
+
+PLAN_ORDER = ("basico", "analista", "gold")
 
 
 def normalize_plan(plan: str | None) -> str:
     value = (plan or "basico").strip().lower()
-    if value in {"gold", "analista", "analyst"}:
+    if value in {"analista", "analyst"}:
         return "analista"
+    if value == "gold":
+        return "gold"
     return "basico"
 
 
-def storage_plan_value(plan: str | None) -> str:
-    """Plan value currently stored in public.profiles."""
-    return "gold" if normalize_plan(plan) == "analista" else "basico"
-
-
 def display_plan(plan: str | None) -> str:
-    return "Analista" if normalize_plan(plan) == "analista" else "Basico"
+    return {"basico": "Básico", "analista": "Analista", "gold": "Gold"}[normalize_plan(plan)]
 
 
 def plan_allows(plan: str | None, capability: Capability | str) -> bool:
     cap = Capability(capability)
-    allowed = (
-        _ANALISTA_CAPABILITIES
-        if normalize_plan(plan) == "analista"
-        else _BASICO_CAPABILITIES
-    )
-    return cap in allowed
+    return cap in PLAN_CAPABILITIES[normalize_plan(plan)]
 
 
 def _headers(settings: Settings) -> dict[str, str]:
@@ -80,11 +100,7 @@ def _rest(settings: Settings, table: str) -> str:
 
 
 def get_plan(user_id: str, settings: Settings) -> str:
-    """Fetch the user's plan from profiles.
-
-    Returns the storage value (``basico`` or ``gold``) for backward
-    compatibility with existing API responses.
-    """
+    """Plan normalizado del usuario desde profiles (basico|analista|gold)."""
     if not settings.supabase_url or not settings.supabase_service_role_key:
         return "basico"
     response = httpx.get(
@@ -95,8 +111,29 @@ def get_plan(user_id: str, settings: Settings) -> str:
     )
     response.raise_for_status()
     rows = response.json()
-    plan = rows[0].get("plan") if rows else None
-    return storage_plan_value(plan)
+    return normalize_plan(rows[0].get("plan") if rows else None)
+
+
+def get_is_admin(user_id: str, settings: Settings) -> bool:
+    """profiles.is_admin (migración 0008). Sin Supabase → False."""
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        return False
+    response = httpx.get(
+        _rest(settings, "profiles"),
+        params={"id": f"eq.{user_id}", "select": "is_admin"},
+        headers=_headers(settings),
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    rows = response.json()
+    return bool(rows and rows[0].get("is_admin"))
+
+
+def min_plan_for(capability: Capability) -> str:
+    for plan in PLAN_ORDER:
+        if capability in PLAN_CAPABILITIES[plan]:
+            return plan
+    return "gold"
 
 
 def require_capability_for_user(
@@ -104,6 +141,10 @@ def require_capability_for_user(
     capability: Capability,
     settings: Settings,
 ) -> str:
+    """Puerta de capacidad. Con PLAN_ENFORCEMENT apagado (Fase 7) deja pasar
+    todo sin consultar la red; la cerradura queda instalada para el futuro."""
+    if not settings.plan_enforcement:
+        return "sin_enforcement"
     try:
         plan = get_plan(user_id, settings)
     except httpx.HTTPError as exc:
@@ -115,5 +156,6 @@ def require_capability_for_user(
         return plan
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail=f"Esta funcion requiere Plan {display_plan('analista')}.",
+        detail=f"Esta función requiere Plan {display_plan(min_plan_for(capability))}. "
+        "Revisa el detalle en la página Planes.",
     )

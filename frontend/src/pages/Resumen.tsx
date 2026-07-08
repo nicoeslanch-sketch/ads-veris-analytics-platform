@@ -108,7 +108,7 @@ function ChartTooltip({
 export default function Resumen() {
   const { user } = useAuth()
   const location = useLocation()
-  const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics } = useDataset()
+  const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride } = useDataset()
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -139,6 +139,7 @@ export default function Resumen() {
     setLoading(true)
     setError(null)
     const fields: Record<string, string> = {}
+    if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
     if (period.from) fields.date_from = period.from
     if (period.to) fields.date_to = period.to
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))

@@ -6,6 +6,7 @@ import {
   Bookmark,
   CalendarClock,
   CheckCircle2,
+  Coins,
   Columns3,
   Copy,
   Crown,
@@ -14,10 +15,12 @@ import {
   FileSpreadsheet,
   FileWarning,
   Loader2,
+  Lock,
   Rows3,
   Settings2,
   Sparkles,
   Type,
+  Wand2,
 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
@@ -25,18 +28,25 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import { useDataset } from '../data/DatasetContext'
-import { apiPost, apiDownload, buildDatasetForm, ApiError } from '../lib/api'
-import { saveCleaningJob } from '../lib/datasets'
+import { apiGet, apiPost, apiDownload, buildDatasetForm, ApiError } from '../lib/api'
+import { saveCleaningJob, saveColumnMapping } from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
-import { DEFAULT_RULES, type CleanResult, type CleaningRules } from '../lib/types'
+import { useCapability } from '../lib/usePlan'
+import {
+  DEFAULT_RULES,
+  type CleanResult,
+  type CleaningRules,
+  type DirectedInfo,
+  type PlansUsage,
+} from '../lib/types'
 
 const RULE_LABELS: Array<{ key: keyof CleaningRules; label: string }> = [
   { key: 'fechas', label: 'Estándar de formato de fecha' },
   { key: 'textos', label: 'Unificar texto' },
   { key: 'duplicados', label: 'Eliminar duplicados' },
   { key: 'tipos', label: 'Convertir tipos de dato' },
-  { key: 'nulos', label: 'Manejar valores nulos' },
+  { key: 'nulos', label: 'Normalizar y señalizar nulos' },
   { key: 'columnas_vacias', label: 'Eliminar columnas vacías' },
   { key: 'fuera_de_rango', label: 'Validar rangos y outliers' },
 ]
@@ -53,6 +63,20 @@ const PROBLEM_LABELS: Array<{
   { key: 'tipos_incorrectos', label: 'Tipos de datos incorrectos', icon: Settings2 },
   { key: 'columnas_vacias', label: 'Columnas vacías', icon: Columns3 },
   { key: 'valores_fuera_de_rango', label: 'Valores fuera de rango', icon: AlertTriangle },
+]
+
+/** Roles del negocio corregibles desde la UI (Fase 7 §5.10). */
+const MAPPING_ROLES: Array<{ role: string; label: string }> = [
+  { role: 'fecha', label: 'Fecha' },
+  { role: 'monto', label: 'Monto / Ventas' },
+  { role: 'costo', label: 'Costo' },
+  { role: 'cantidad', label: 'Cantidad' },
+  { role: 'producto', label: 'Producto' },
+  { role: 'categoria', label: 'Categoría' },
+  { role: 'cliente', label: 'Cliente' },
+  { role: 'canal', label: 'Canal' },
+  { role: 'sucursal', label: 'Sucursal' },
+  { role: 'vendedor', label: 'Vendedor' },
 ]
 
 function qualityLabel(quality: number): { text: string; tone: 'green' | 'gold' | 'coral' } {
@@ -90,7 +114,16 @@ function QualityRing({ quality }: { quality: number }) {
 }
 
 export default function Limpieza() {
-  const { file, datasetId, storagePath, standardization, cleaning, setCleaning } = useDataset()
+  const {
+    file,
+    datasetId,
+    storagePath,
+    standardization,
+    cleaning,
+    setCleaning,
+    mappingOverride,
+    setMappingOverride,
+  } = useDataset()
   const [detection, setDetection] = useState<CleanResult | null>(null)
   const [rules, setRules] = useState<CleaningRules>(DEFAULT_RULES)
   const [detecting, setDetecting] = useState(false)
@@ -99,6 +132,24 @@ export default function Limpieza() {
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
   const detectStartedFor = useRef<File | null>(null)
+
+  // ── Fase 7: limpieza dirigida por variables (Analista/Gold, 2/mes + tokens) ──
+  const aiCleaning = useCapability('ai_cleaning')
+  const [instructions, setInstructions] = useState('')
+  const [assistedRunning, setAssistedRunning] = useState(false)
+  const [assistedError, setAssistedError] = useState<string | null>(null)
+  const [directed, setDirected] = useState<DirectedInfo | null>(null)
+  const [usage, setUsage] = useState<PlansUsage | null>(null)
+
+  const refreshUsage = () => {
+    apiGet<PlansUsage>('/plans/usage')
+      .then(setUsage)
+      .catch(() => setUsage(null))
+  }
+
+  useEffect(() => {
+    refreshUsage()
+  }, [])
 
   useEffect(() => {
     if (!file || cleaning || detectStartedFor.current === file) return
@@ -142,11 +193,20 @@ export default function Limpieza() {
       : result.resumen.calidad_antes
     : null
 
+  const effectiveMapping: Record<string, string> = {
+    ...(result?.mapeo ?? standardization.mapeo),
+    ...(mappingOverride ?? {}),
+  }
+  const availableColumns = result?.preview.columnas ?? standardization.preview.columnas
+
+  const mappingFields = (): Record<string, string> =>
+    mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}
+
   // Qué se corregirá según los toggles activos (mismo cálculo que hace la API).
   const planned = result
     ? [
         { label: 'Filas duplicadas a eliminar', value: rules.duplicados ? result.problemas.duplicados : 0 },
-        { label: 'Valores nulos a reemplazar', value: rules.nulos ? result.problemas.valores_nulos : 0 },
+        { label: 'Valores nulos normalizados y señalizados', value: rules.nulos ? result.problemas.valores_nulos : 0 },
         {
           label: 'Fechas a estandarizar',
           value:
@@ -167,17 +227,39 @@ export default function Limpieza() {
     }
   }
 
+  const handleMappingChange = (role: string, column: string) => {
+    const next: Record<string, string> = { ...effectiveMapping }
+    if (column) {
+      // Un mismo nombre de columna no puede cumplir dos roles.
+      for (const [otherRole, otherCol] of Object.entries(next)) {
+        if (otherCol === column && otherRole !== role) delete next[otherRole]
+      }
+      next[role] = column
+    } else {
+      delete next[role]
+    }
+    setMappingOverride(next)
+    void saveColumnMapping(datasetId, next) // best-effort (migración 0008)
+  }
+
   const handleDownload = async (fmt: 'xlsx' | 'csv') => {
     if (!file) return
     setDownloading(fmt)
     setError(null)
     try {
       const stem = file.name.replace(/\.[^.]+$/, '')
-      await apiDownload(
-        '/clean/download',
-        buildDatasetForm(file, storagePath, { rules: JSON.stringify(rules), fmt }),
-        `${stem}_limpio.${fmt}`,
-      )
+      const extra: Record<string, string> = {
+        rules: JSON.stringify(rules),
+        fmt,
+        ...mappingFields(),
+      }
+      if (directed) {
+        extra.scope = JSON.stringify({
+          incluir: directed.columnas_incluir,
+          excluir: directed.columnas_excluir,
+        })
+      }
+      await apiDownload('/clean/download', buildDatasetForm(file, storagePath, extra), `${stem}_limpio.${fmt}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo descargar el archivo.')
     } finally {
@@ -185,30 +267,79 @@ export default function Limpieza() {
     }
   }
 
+  const finishApply = async (response: CleanResult) => {
+    setCleaning(response)
+    // Best-effort: si falla el guardado, la limpieza IGUAL quedó aplicada —
+    // jamás mostrarlo como error de limpieza (solo aviso de historial).
+    const saved = await saveCleaningJob(datasetId, rules, response)
+    if (!saved && supabaseConfigured && datasetId) {
+      setPersistWarning(
+        'La limpieza se aplicó correctamente, pero no se pudo guardar en el historial.',
+      )
+    }
+  }
+
+  /** Botón superior: reglas por defecto, para TODOS los planes. */
   const handleApply = async () => {
     setApplying(true)
     setError(null)
     setPersistWarning(null)
+    setDirected(null)
     try {
       const response = await apiPost<CleanResult>(
         '/clean',
-        buildDatasetForm(file, storagePath, { apply: 'true', rules: JSON.stringify(rules) }),
+        buildDatasetForm(file, storagePath, {
+          apply: 'true',
+          rules: JSON.stringify(rules),
+          ...mappingFields(),
+        }),
       )
-      setCleaning(response)
-      // Best-effort: si falla el guardado, la limpieza IGUAL quedó aplicada —
-      // jamás mostrarlo como error de limpieza (solo aviso de historial).
-      const saved = await saveCleaningJob(datasetId, rules, response)
-      if (!saved && supabaseConfigured && datasetId) {
-        setPersistWarning(
-          'La limpieza se aplicó correctamente, pero no se pudo guardar en el historial.',
-        )
-      }
+      await finishApply(response)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo aplicar la limpieza.')
     } finally {
       setApplying(false)
     }
   }
+
+  /** Botón del chat: limpieza dirigida con las variables escritas (2/mes + tokens). */
+  const handleAssisted = async () => {
+    if (!instructions.trim()) {
+      setAssistedError('Escribe qué variables o columnas quieres limpiar.')
+      return
+    }
+    setAssistedRunning(true)
+    setAssistedError(null)
+    setPersistWarning(null)
+    try {
+      const response = await apiPost<CleanResult>(
+        '/clean/assisted',
+        buildDatasetForm(file, storagePath, {
+          instructions: instructions.trim(),
+          rules: JSON.stringify(rules),
+          ...mappingFields(),
+        }),
+      )
+      setDirected(response.dirigida ?? null)
+      await finishApply(response)
+      refreshUsage()
+    } catch (err) {
+      setAssistedError(
+        err instanceof ApiError ? err.message : 'No se pudo ejecutar la limpieza dirigida.',
+      )
+    } finally {
+      setAssistedRunning(false)
+    }
+  }
+
+  const limpiezaUsage = usage?.disponible ? usage.limpieza : null
+  const baseRestantes = limpiezaUsage
+    ? Math.max(limpiezaUsage.base - limpiezaUsage.usadas_mes, 0)
+    : null
+  const totalRestantes =
+    limpiezaUsage && baseRestantes !== null ? baseRestantes + limpiezaUsage.addons : null
+  const sinIntentos = totalRestantes !== null && totalRestantes <= 0
+  const assistedLocked = aiCleaning.enforced && !aiCleaning.hasByPlan
 
   const steps = [
     { title: 'Cargar datos', text: 'Archivo cargado correctamente', done: true },
@@ -308,7 +439,7 @@ export default function Limpieza() {
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[260px_minmax(0,1fr)]">
-        {/* Columna izquierda: pasos + premium */}
+        {/* Columna izquierda: pasos + mapeo + planes */}
         <div className="space-y-6">
           <Card>
             <h2 className="text-sm font-semibold text-navy">Pasos de limpieza</h2>
@@ -335,22 +466,54 @@ export default function Limpieza() {
             </ol>
           </Card>
 
+          {/* Fase 7 §5.10: mapeo de columnas corregible */}
+          <Card>
+            <div className="flex items-center gap-2">
+              <Settings2 className="h-4.5 w-4.5 text-teal" />
+              <h2 className="text-sm font-semibold text-navy">Mapeo de columnas</h2>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-navy/55">
+              Revisa qué columna cumple cada rol del negocio. Corregirlo mejora los
+              indicadores y la limpieza.
+            </p>
+            <div className="mt-3 space-y-2.5">
+              {MAPPING_ROLES.map(({ role, label }) => (
+                <label key={role} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-medium text-navy/70">{label}</span>
+                  <select
+                    value={effectiveMapping[role] ?? ''}
+                    onChange={(e) => handleMappingChange(role, e.target.value)}
+                    className="max-w-[130px] rounded-md border border-navy/20 bg-white px-2 py-1 text-xs text-navy outline-none focus:border-teal"
+                  >
+                    <option value="">Sin asignar</option>
+                    {availableColumns.map((col) => (
+                      <option key={col} value={col}>
+                        {col}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          </Card>
+
           <Card className="border-gold/40 bg-gold/5">
             <div className="flex items-center gap-2">
               <Crown className="h-4.5 w-4.5 text-gold" />
-              <h2 className="text-sm font-semibold text-navy">Limpieza personalizada</h2>
-              <Badge tone="gold">Premium</Badge>
+              <h2 className="text-sm font-semibold text-navy">Limpieza dirigida</h2>
+              <Badge tone="gold">Analista</Badge>
             </div>
             <p className="mt-2 text-xs leading-relaxed text-navy/60">
-              Aplica reglas y variables personalizadas para una limpieza a tu medida, con
-              instrucciones en lenguaje natural. Disponible en el plan Analista.
+              Escribe tus propias variables en el chat de abajo y la plataforma dirige la
+              limpieza según tus instrucciones. Incluida desde el Plan Analista, con 2
+              intentos al mes ampliables con tokens.
             </p>
-            <button
-              disabled
-              className="mt-3 w-full cursor-not-allowed rounded-lg bg-gold/80 px-4 py-2 text-sm font-semibold text-navy-deep opacity-70"
+            <Link
+              to="/planes"
+              className="mt-3 block w-full rounded-lg bg-gold px-4 py-2 text-center text-sm font-semibold text-navy-deep transition-colors hover:bg-gold/90"
             >
-              Extender mi plan
-            </button>
+              Ver planes y tokens
+            </Link>
           </Card>
         </div>
 
@@ -370,25 +533,54 @@ export default function Limpieza() {
           )}
 
           {applied && result ? (
-            <Card className="border-green/30 bg-green/5">
-              <div className="flex items-start gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-green/15">
-                  <CheckCircle2 className="h-6 w-6 text-green" />
+            <>
+              <Card className="border-green/30 bg-green/5">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-green/15">
+                    <CheckCircle2 className="h-6 w-6 text-green" />
+                  </div>
+                  <div className="flex-1">
+                    <h2 className="text-base font-semibold text-navy">
+                      {directed ? 'Limpieza dirigida aplicada ✅' : 'Limpieza aplicada ✅'}
+                    </h2>
+                    <p className="mt-1 text-sm text-navy/70">
+                      Tu dataset quedó limpio y cargado para el resto de los módulos. La calidad
+                      subió de <strong>{result.resumen.calidad_antes}%</strong> a{' '}
+                      <strong>{result.resumen.calidad_despues}%</strong>. Filas:{' '}
+                      {formatNumber(result.resumen.filas_antes)} →{' '}
+                      {formatNumber(result.resumen.filas_despues)} · Columnas:{' '}
+                      {formatNumber(result.resumen.columnas_antes)} →{' '}
+                      {formatNumber(result.resumen.columnas_despues)}.
+                    </p>
+                    {directed && directed.columnas_incluir.length > 0 && (
+                      <p className="mt-2 text-sm text-navy/70">
+                        <Wand2 className="mr-1 inline h-4 w-4 text-teal" />
+                        Reglas por columna aplicadas a:{' '}
+                        <strong>{directed.columnas_incluir.join(', ')}</strong>
+                        {directed.columnas_excluir.length > 0 && (
+                          <> · sin tocar: {directed.columnas_excluir.join(', ')}</>
+                        )}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <h2 className="text-base font-semibold text-navy">Limpieza aplicada ✅</h2>
-                  <p className="mt-1 text-sm text-navy/70">
-                    Tu dataset quedó limpio y cargado para el resto de los módulos. La calidad
-                    subió de <strong>{result.resumen.calidad_antes}%</strong> a{' '}
-                    <strong>{result.resumen.calidad_despues}%</strong>. Filas:{' '}
-                    {formatNumber(result.resumen.filas_antes)} →{' '}
-                    {formatNumber(result.resumen.filas_despues)} · Columnas:{' '}
-                    {formatNumber(result.resumen.columnas_antes)} →{' '}
-                    {formatNumber(result.resumen.columnas_despues)}.
+              </Card>
+              {result.avisos && result.avisos.length > 0 && (
+                <Card className="!p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-navy/50">
+                    Avisos del motor
                   </p>
-                </div>
-              </div>
-            </Card>
+                  <ul className="mt-2 space-y-1.5">
+                    {result.avisos.map((aviso) => (
+                      <li key={aviso} className="flex items-start gap-2 text-xs text-navy/65">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+                        {aviso}
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              )}
+            </>
           ) : (
             <>
               {/* Vista previa con errores resaltados */}
@@ -459,6 +651,16 @@ export default function Limpieza() {
                         datos que puedes revisar y corregir antes de continuar.
                       </p>
                     </div>
+                    {result.avisos && result.avisos.length > 0 && (
+                      <ul className="mt-3 space-y-1.5">
+                        {result.avisos.map((aviso) => (
+                          <li key={aviso} className="flex items-start gap-2 text-xs text-navy/60">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+                            {aviso}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </>
                 )}
               </Card>
@@ -506,6 +708,10 @@ export default function Limpieza() {
                         </li>
                       ))}
                     </ul>
+                    <p className="mt-3 text-xs text-navy/45">
+                      Los montos faltantes nunca se rellenan con 0: quedan señalizados para
+                      no sesgar tus indicadores.
+                    </p>
                   </Card>
 
                   <Card>
@@ -531,7 +737,7 @@ export default function Limpieza() {
             </>
           )}
 
-          {/* Barra de acción */}
+          {/* Barra de acción: botón superior "Limpiar datos" (todos los planes) */}
           <Card className="!p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <button
@@ -543,7 +749,7 @@ export default function Limpieza() {
               <p className="text-sm text-navy/55">
                 {applied
                   ? 'La limpieza fue aplicada. Tus datos están listos.'
-                  : 'La limpieza aún no ha sido aplicada.'}
+                  : 'Limpieza con reglas por defecto, disponible en todos los planes.'}
               </p>
               {applied ? (
                 <div className="flex flex-col items-end gap-2">
@@ -575,22 +781,125 @@ export default function Limpieza() {
               ) : (
                 <button
                   onClick={() => void handleApply()}
-                  disabled={applying || detecting || !result}
+                  disabled={applying || assistedRunning || detecting || !result}
                   className="inline-flex items-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50"
                 >
                   {applying ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Aplicando...
+                      <Loader2 className="h-4 w-4 animate-spin" /> Limpiando...
                     </>
                   ) : (
                     <>
-                      Aplicar limpieza y continuar <ArrowRight className="h-4 w-4" />
+                      Limpiar datos <ArrowRight className="h-4 w-4" />
                     </>
                   )}
                 </button>
               )}
             </div>
           </Card>
+
+          {/* ── Fase 7: chat horizontal de limpieza dirigida (Analista/Gold) ── */}
+          {!applied && (
+            <Card className="border-navy/15 !p-5">
+              <div className="flex items-center gap-2">
+                <Wand2 className="h-5 w-5 text-teal" />
+                <h2 className="text-base font-semibold text-navy">
+                  Limpieza dirigida con tus variables
+                </h2>
+                <Badge tone="gold">Analista / Gold</Badge>
+              </div>
+              <p className="mt-1.5 text-sm text-navy/60">
+                O escribe tú qué limpiar: menciona las columnas y reglas (ej:{' '}
+                <em>"limpia Fecha y Ventas, elimina duplicados, no toques Cliente"</em>) y la
+                plataforma dirige la limpieza con tus instrucciones.
+              </p>
+
+              {assistedLocked ? (
+                <div className="mt-4 flex flex-col items-center gap-3 rounded-xl border border-dashed border-navy/20 bg-navy/[0.03] px-6 py-8 text-center">
+                  <Lock className="h-6 w-6 text-navy/40" />
+                  <p className="text-sm font-medium text-navy/70">
+                    Disponible desde el Plan Analista
+                  </p>
+                  <Link
+                    to="/planes"
+                    className="rounded-lg bg-gold px-5 py-2 text-sm font-semibold text-navy-deep transition-colors hover:bg-gold/90"
+                  >
+                    Ver planes
+                  </Link>
+                </div>
+              ) : (
+                <>
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <textarea
+                      value={instructions}
+                      onChange={(e) => {
+                        setInstructions(e.target.value)
+                        setAssistedError(null)
+                      }}
+                      disabled={assistedRunning || sinIntentos}
+                      rows={2}
+                      maxLength={2000}
+                      placeholder="Escribe las variables o columnas que quieres limpiar…"
+                      className="min-h-[3.25rem] flex-1 resize-y rounded-lg border border-navy/20 bg-white px-3.5 py-2.5 text-sm text-navy outline-none transition-colors placeholder:text-navy/35 focus:border-teal disabled:cursor-not-allowed disabled:bg-navy/5"
+                    />
+                    <button
+                      onClick={() => void handleAssisted()}
+                      disabled={
+                        assistedRunning || applying || detecting || !result || sinIntentos || !instructions.trim()
+                      }
+                      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-navy px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-deep disabled:cursor-not-allowed disabled:bg-navy/40"
+                    >
+                      {assistedRunning ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" /> Limpiando...
+                        </>
+                      ) : (
+                        <>
+                          <Wand2 className="h-4 w-4" /> Limpiar con mis variables
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Advertencia de intentos (Fase 7 §4) */}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="flex items-start gap-1.5 text-xs text-navy/55">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+                      <span>
+                        Tienes <strong>{limpiezaUsage ? limpiezaUsage.base : 2} intentos al mes</strong>
+                        {limpiezaUsage && (
+                          <>
+                            {' '}
+                            (quedan {baseRestantes}
+                            {limpiezaUsage.addons > 0 && ` + ${limpiezaUsage.addons} tokens`})
+                          </>
+                        )}
+                        . Sé claro y específico con las columnas y reglas. Para más intentos,{' '}
+                        <Link to="/planes" className="font-semibold text-teal hover:underline">
+                          agrega tokens en Planes
+                        </Link>
+                        .
+                      </span>
+                    </p>
+                    {sinIntentos && (
+                      <Link
+                        to="/planes"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-gold px-3.5 py-1.5 text-xs font-semibold text-navy-deep transition-colors hover:bg-gold/90"
+                      >
+                        <Coins className="h-3.5 w-3.5" /> Agregar tokens
+                      </Link>
+                    )}
+                  </div>
+
+                  {assistedError && (
+                    <p className="mt-3 rounded-lg border border-coral/40 bg-coral/5 px-4 py-2.5 text-sm text-coral">
+                      {assistedError}
+                    </p>
+                  )}
+                </>
+              )}
+            </Card>
+          )}
         </div>
       </div>
     </>

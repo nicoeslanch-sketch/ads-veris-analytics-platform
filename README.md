@@ -41,6 +41,10 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    - `supabase/migrations/0005_rls_dataset_ownership.sql` (RLS estricta sobre dataset_id)
    - `supabase/migrations/0006_ai_usage.sql` (consumo IA para cuotas por plan)
    - `supabase/migrations/0007_public_table_grants.sql` (permisos PostgREST para tablas con RLS)
+   - `supabase/migrations/0008_plans.sql` (Fase 7: planes basico|analista|gold,
+     `is_admin`, rol `costo` y mapeo editable)
+   - `supabase/migrations/0009_cleaning_credits.sql` (Fase 7: `kind = cleaning`,
+     ledger `plan_addons` y `addon_requests`)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend
@@ -152,3 +156,32 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
 
 Si el usuario no ha cargado y limpiado datos, la plataforma no muestra dashboard.
 **Todo parte de los datos.**
+
+## Planes, tokens y administración (Fase 7)
+
+- **Interruptor de planes**: el gating vive tras `PLAN_ENFORCEMENT` (backend) y
+  `VITE_PLAN_ENFORCEMENT` (frontend). En Fase 7 ambos van en `false`: todo queda
+  accesible para probar y las puertas ya están instaladas. Para activar el modelo
+  comercial basta poner ambos en `true` y redeployar — sin tocar código.
+- **Limpieza dirigida**: 2 intentos base al mes (`AI_CLEANING_MONTHLY_LIMIT`).
+  Los intentos extra se venden como **tokens addon**: el usuario los pide desde la
+  página Planes (botón "Solicitar más" → tabla `addon_requests`) y ADS Veris los
+  otorga a mano.
+- **Otorgar tokens** (dos caminos equivalentes):
+  1. **Endpoint admin** (recomendado): marca tu usuario como admin una vez
+     (`update public.profiles set is_admin = true where id = '<TU-UUID>';`) y llama
+     `POST /admin/grant-credits` con `{"user_id": "<uuid-del-cliente>", "credits": 5,
+     "note": "Compra 5 tokens"}` (con tu JWT).
+  2. **SQL directo en Supabase**:
+     ```sql
+     insert into public.plan_addons (user_id, credits, granted_by, note)
+     values ('<uuid-del-cliente>', 5, 'manual', 'Compra 5 tokens');
+     ```
+  El saldo del usuario es `sum(credits)` de su ledger; los consumos quedan como filas
+  negativas insertadas por el sistema (auditable).
+- **Solicitudes pendientes**: `select * from public.addon_requests where status = 'pendiente';`
+  y márcalas atendidas con `update ... set status = 'atendida'`.
+- **Costuras IA del motor** (apagadas): `AI_REFINE_ENABLED=false` controla el refinado
+  final (`api/app/engine/ai_refine.py`); la interpretación de instrucciones vive en
+  `api/app/engine/directed.py`. Cada una tiene un único `# TODO IA` con interfaz
+  estable: activarlas es reemplazar el cuerpo por la llamada a Anthropic.

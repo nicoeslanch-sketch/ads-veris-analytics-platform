@@ -1,12 +1,13 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 6 completas — todo el roadmap del SPEC está construido.**
-La Fase 6 cierra Conectores (Google Sheets funcional) y endurece reportes y persistencia.
-La microfase 6.1 suma estabilidad: persistencia visible, origen Google Sheets, retomar con
-reglas reales de limpieza y controles de entrada del conector. La microfase 6.2 prepara
-el modelo comercial: capabilities por plan, descarga limpia solo para Analista y export
-seguro contra formula injection.
-Lo que resta es una fase opcional de operación comercial (ver "Pendiente").
+**Estado actual: Fases 0 a 7 completas.**
+La Fase 7 construye el modelo comercial completo (3 planes, página Planes, tokens
+addon), el chat de limpieza dirigida por variables (2/mes + tokens), y profesionaliza
+el motor de datos (nulos nunca imputados con 0, outliers por rol, caché del pipeline,
+fuzzy matching, Excel multi-hoja, reporte de calidad por columna). Todo el gating queda
+cableado tras el interruptor `PLAN_ENFORCEMENT` (apagado: todo accesible para probar).
+Las costuras de IA generativa del motor quedan preparadas y APAGADAS (un prompt las
+activa). Ver [`FASE_7_SPEC.md`](./FASE_7_SPEC.md) para el detalle y las decisiones.
 
 > Referencia rápida de qué está construido y qué viene. La especificación
 > completa vive en [`SPEC.md`](./SPEC.md).
@@ -165,14 +166,72 @@ Lo que resta es una fase opcional de operación comercial (ver "Pendiente").
   de error de `ai_usage` (típico: migración 0006 sin ejecutar).
 - Tests: **27 pruebas**.
 
+
+## ✅ Fase 7 — Planes, limpieza dirigida y motor profesional (completa)
+
+**Planes y capacidades** (`api/app/capabilities.py` + `frontend/src/lib/plans.ts`):
+- Tres planes: **Básico → Analista → Gold (en construcción: SQL + comunidad)**.
+  Migración `0008` renombra los `gold` legacy a `analista`. Matriz única de
+  capacidades consumida por backend y frontend.
+- **`PLAN_ENFORCEMENT` / `VITE_PLAN_ENFORCEMENT` en `false`**: todas las funciones
+  desbloqueadas para probar; cada puerta (403 del backend, candados de la UI) ya está
+  instalada — encender el flag no requiere tocar componentes.
+- **Página Planes** (`/planes`, ítem nuevo del sidebar): 3 tarjetas desde la matriz,
+  Gold con badge "En construcción", sección de **tokens addon** con cupo del mes,
+  saldo y botón "Solicitar más" (queda en `addon_requests`; se atiende a mano).
+- Básico limpia y estandariza igual que todos, pero (con enforcement) **no descarga**
+  la base limpia ni los reportes.
+
+**Limpieza dirigida por variables** (`POST /clean/assisted`):
+- Chat horizontal al pie de Limpieza (Analista/Gold): el usuario escribe qué columnas
+  y reglas quiere y el botón **"Limpiar con mis variables"** corre el motor dirigido.
+  El botón superior **"Limpiar datos"** (reglas por defecto) sigue para todos.
+- **2 intentos base/mes** (`AI_CLEANING_MONTHLY_LIMIT`) + **tokens addon** (ledger
+  `plan_addons`, migración `0009`; saldo = suma; consumos = filas negativas del
+  sistema, auditable). Advertencia visible de intentos; 429 con CTA a Planes al
+  agotarse; instrucciones no reconocidas → 422 **sin consumir** el intento.
+- Cupos separados por `kind` en `ai_usage`: la limpieza no gasta el cupo de insights.
+- `POST /admin/grant-credits` (solo `profiles.is_admin`) otorga tokens a mano
+  (alternativa por SQL en el README). `GET /plans/usage` alimenta Planes y Configuración.
+
+**Costuras IA (preparadas, APAGADAS)**:
+- `engine/directed.py` → `interpret_cleaning_instructions` (hoy determinista:
+  columnas mencionadas + catálogo acotado de reglas; un solo `# TODO IA`).
+- `engine/ai_refine.py` → `refine_with_ai` (paso final opcional del pipeline, flag
+  `AI_REFINE_ENABLED=false`): la IA "termina el último 10–20%" cuando se active.
+
+**Motor profesional** (`api/app/engine/`):
+- Nulos numéricos **nunca imputados con 0** (quedan NaN para métricas, catalogados y
+  marcados en la descarga); outliers IQR **solo en roles métricos**; duplicados con
+  criterio explícito + advertencia sin columna ID; tipo por **muestra aleatoria
+  determinista con confianza**; convención numérica **por columna** ("850.000");
+  fechas con **dayfirst dominante** y meses en texto; **fuzzy matching** de typos;
+  **Excel multi-hoja** + detección de fila de encabezados; **caché del pipeline**
+  (cambiar el periodo no re-limpia); **reporte de calidad por columna**.
+- **Mapeo de columnas editable** en Limpieza (respetado por /clean, /metrics y
+  descargas en toda la app; persistencia best-effort en `dataset_columns`).
+
+**Layout**: el panel Asistente IA vive **solo en Resumen y Explorar datos**; el resto
+de pantallas usa todo el ancho.
+
+**Tests**: **57 pruebas** de la API (24 nuevas de la Fase 7), `npm run build` verde.
+
 ## ⏳ Pendiente (fase opcional de operación comercial)
 
-- Checkout/upgrade real de plan Analista (hoy internamente equivale a `profiles.plan = gold`).
+- Encender `PLAN_ENFORCEMENT` (+ `VITE_PLAN_ENFORCEMENT`) cuando el modelo comercial
+  esté listo — no requiere tocar código.
+- Activar las costuras IA del motor: `interpret_cleaning_instructions` (interpretación
+  libre por IA) y `refine_with_ai` (`AI_REFINE_ENABLED`) — un prompt cada una.
+- Checkout/upgrade real de planes (hoy: solicitud por `addon_requests` + cambio manual
+  de `profiles.plan`).
+- E2E Playwright del flujo de planes/limpieza dirigida (la Fase 7 se verificó con
+  57 tests de API + build; el repo aún no tiene infraestructura Playwright).
 - Vigilancia continua de Alertas (evaluación programada + correo/notificaciones).
 - Conector SQL / integraciones POS-facturación (Bsale, Defontana, Jumpseller, Shopify).
 - Reportes generados en backend (.xlsx real y PDF descargable).
 - Cuota IA con control atómico en BD (hoy check-then-record: una ráfaga simultánea
-  justo en el límite puede excederlo por unas pocas consultas).
+  justo en el límite puede excederlo por unas pocas consultas). Aplica también al
+  nuevo cupo de limpieza dirigida.
 - Deuda técnica: transporte por `dataset_id` (hoy `storage_path` validado por prefijo).
 
 ## Comandos para correr el proyecto
@@ -205,6 +264,8 @@ python -m pytest tests/ -v
 #   supabase/migrations/0005_rls_dataset_ownership.sql
 #   supabase/migrations/0006_ai_usage.sql
 #   supabase/migrations/0007_public_table_grants.sql
+#   supabase/migrations/0008_plans.sql          (Fase 7: 3 planes + is_admin)
+#   supabase/migrations/0009_cleaning_credits.sql (Fase 7: tokens y solicitudes)
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

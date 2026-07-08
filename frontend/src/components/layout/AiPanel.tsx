@@ -37,6 +37,7 @@ export default function AiPanel() {
     datasetId,
     storagePath,
     uploadedAt,
+    mappingOverride,
     setMetrics: setContextMetrics,
   } = useDataset()
   const active = Boolean(cleaning && file)
@@ -72,7 +73,10 @@ export default function AiPanel() {
       let m = metricsArg
       if (!m) {
         setLoadingLabel('Calculando indicadores…')
-        m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg))
+        const fields: Record<string, string> = mappingOverride
+          ? { mapping: JSON.stringify(mappingOverride) }
+          : {}
+        m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg, fields))
         localMetrics.current = m
         setContextMetrics(m)
       } else {

@@ -7,6 +7,7 @@ import {
   History,
   Plug,
   Bell,
+  CreditCard,
   FileText,
   FileSpreadsheet,
   Settings,
@@ -30,6 +31,7 @@ const navItems: NavItem[] = [
   { to: '/conectores', label: 'Conectores', icon: Plug },
   { to: '/alertas', label: 'Alertas', icon: Bell },
   { to: '/reportes', label: 'Reportes', icon: FileText },
+  { to: '/planes', label: 'Planes', icon: CreditCard },
   { to: '/configuracion', label: 'Configuración', icon: Settings },
 ]
 

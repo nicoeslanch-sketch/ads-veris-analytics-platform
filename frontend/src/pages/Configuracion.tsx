@@ -7,7 +7,8 @@
  */
 
 import { useEffect, useState } from 'react'
-import { BadgeCheck, Crown, Loader2, Save, Sparkles } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { BadgeCheck, Crown, Loader2, Save, Sparkles, Wand2 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
@@ -17,6 +18,7 @@ import { fetchProfile, updateProfile } from '../lib/profile'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
 import { isAnalystPlan, planLabel, type PlanCode } from '../lib/plans'
+import type { PlansUsage } from '../lib/types'
 
 interface AiUsage {
   disponible: boolean
@@ -70,6 +72,7 @@ export default function Configuracion() {
   const [loading, setLoading] = useState(true)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'fail'>('idle')
   const [usage, setUsage] = useState<AiUsage | null>(null)
+  const [plansUsage, setPlansUsage] = useState<PlansUsage | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -92,6 +95,13 @@ export default function Configuracion() {
       })
       .catch(() => {
         if (!cancelled) setUsage(null)
+      })
+    apiGet<PlansUsage>('/plans/usage')
+      .then((info) => {
+        if (!cancelled) setPlansUsage(info)
+      })
+      .catch(() => {
+        if (!cancelled) setPlansUsage(null)
       })
     return () => {
       cancelled = true
@@ -234,6 +244,57 @@ export default function Configuracion() {
             )}
           </Card>
 
+          {/* Fase 7: limpieza dirigida IA + tokens addon */}
+          <Card>
+            <div className="flex items-center gap-2">
+              <Wand2 className="h-4.5 w-4.5 text-teal" />
+              <h2 className="text-base font-semibold text-navy">Limpieza dirigida IA del mes</h2>
+            </div>
+            {plansUsage?.disponible ? (
+              <>
+                <p className="mt-3 text-2xl font-bold text-navy">
+                  {formatNumber(plansUsage.limpieza.usadas_mes)}
+                  <span className="text-base font-medium text-navy/50">
+                    {' '}
+                    / {formatNumber(plansUsage.limpieza.base)}
+                  </span>
+                </p>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-navy/10">
+                  <div
+                    className={`h-full rounded-full ${
+                      plansUsage.limpieza.usadas_mes >= plansUsage.limpieza.base
+                        ? 'bg-coral'
+                        : 'bg-teal'
+                    }`}
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        (plansUsage.limpieza.usadas_mes / Math.max(plansUsage.limpieza.base, 1)) * 100,
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-2 flex items-center justify-between text-xs text-navy/55">
+                  <span>Tokens adicionales</span>
+                  <span className="font-bold text-gold">
+                    {formatNumber(plansUsage.limpieza.addons)}
+                  </span>
+                </p>
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-navy/50">
+                El contador se activa en producción (requiere Supabase y las migraciones
+                0008 y 0009).
+              </p>
+            )}
+            <Link
+              to="/planes"
+              className="mt-3 block text-xs font-semibold text-teal hover:underline"
+            >
+              Ver planes y solicitar tokens →
+            </Link>
+          </Card>
+
           {/* Plan */}
           {!isAnalyst && (
             <Card className="border-gold/30 bg-gold/5">
@@ -242,9 +303,15 @@ export default function Configuracion() {
                 <h2 className="text-base font-semibold text-navy">Mejora a Analista</h2>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-navy/60">
-                Muchas más consultas IA al mes y limpieza personalizada con instrucciones
-                propias. Disponible próximamente.
+                Descarga tu base limpia y tus reportes, y dirige la limpieza con tus
+                propias variables (2 intentos al mes + tokens).
               </p>
+              <Link
+                to="/planes"
+                className="mt-3 block w-full rounded-lg bg-gold px-4 py-2 text-center text-sm font-semibold text-navy-deep transition-colors hover:bg-gold/90"
+              >
+                Ver planes
+              </Link>
             </Card>
           )}
 

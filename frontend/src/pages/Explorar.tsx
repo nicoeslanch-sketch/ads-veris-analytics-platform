@@ -246,7 +246,7 @@ function ChartTooltip({ active, payload, label }: {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function Explorar() {
-  const { file, cleaning, datasetId, storagePath, uploadedAt, monthsAvailable, setMonthsAvailable } = useDataset()
+  const { file, cleaning, datasetId, storagePath, uploadedAt, monthsAvailable, setMonthsAvailable, mappingOverride } = useDataset()
   const ready = Boolean(file && cleaning)
 
   const [rango, setRango] = useState<Period>(ALL_PERIOD)
@@ -274,6 +274,7 @@ export default function Explorar() {
     setLoading(true)
     setError(null)
     const fields: Record<string, string> = {}
+    if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
     if (rango.from) fields.date_from = rango.from
     if (rango.to) fields.date_to = rango.to
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))

@@ -17,9 +17,23 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = ""
 
-    # Cuotas mensuales de consultas IA por plan (SPEC §9)
+    # Cuotas mensuales de consultas IA (insights) por plan (SPEC §9)
     ai_monthly_limit_basico: int = 20
+    ai_monthly_limit_analista: int = 200
     ai_monthly_limit_gold: int = 200
+
+    # ── Fase 7: planes y limpieza dirigida ──
+    # Interruptor global de gating por plan. En Fase 7 queda APAGADO: todo es
+    # accesible, pero cada puerta ya tiene su cerradura instalada. Encenderlo
+    # no requiere tocar código: PLAN_ENFORCEMENT=true (+ VITE_PLAN_ENFORCEMENT
+    # en el frontend).
+    plan_enforcement: bool = False
+    # Intentos base de limpieza dirigida con IA por mes (se suman los créditos
+    # addon de plan_addons, migración 0009).
+    ai_cleaning_monthly_limit: int = 2
+    # Costura IA del motor (§5.13): refinado final del dataset con IA.
+    # Preparado pero APAGADO hasta perfeccionar el motor determinista.
+    ai_refine_enabled: bool = False
 
     # SOLO desarrollo local sin Supabase: acepta requests sin JWT.
     # Jamás activar en producción.
