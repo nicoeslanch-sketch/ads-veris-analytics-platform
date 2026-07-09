@@ -45,6 +45,10 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      `is_admin`, rol `costo` y mapeo editable)
    - `supabase/migrations/0009_cleaning_credits.sql` (Fase 7: `kind = cleaning`,
      ledger `plan_addons` y `addon_requests`)
+   - `supabase/migrations/0010_admin_support.sql` (Fase 8: cuenta administradora
+     `servicios@adsveris.com`, `support_requests` del botón de ayuda y auditoría
+     `admin_audit`. Si esa cuenta se crea DESPUÉS de correr la migración, repite el
+     UPDATE del paso 1 del archivo)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend

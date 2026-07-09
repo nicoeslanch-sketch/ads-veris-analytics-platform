@@ -98,7 +98,9 @@ export default function Estandarizacion() {
             if (dropped && !processing) void handleFile(dropped)
           }}
           className={`flex flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed p-10 text-center transition-colors ${
-            dragOver ? 'border-teal bg-teal/5' : 'border-navy/20 bg-white'
+            dragOver
+              ? 'border-teal bg-teal/5'
+              : 'border-navy/20 bg-gradient-to-b from-teal/[0.04] to-white'
           }`}
         >
           <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-teal/10">
@@ -151,7 +153,7 @@ export default function Estandarizacion() {
           )}
         </div>
 
-        <Card className="h-fit">
+        <Card className="h-fit bg-gradient-to-br from-gold/[0.06] to-transparent">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gold/15">
               <Sparkles className="h-4.5 w-4.5 text-gold" />
@@ -176,8 +178,13 @@ export default function Estandarizacion() {
           Un proceso simple en 3 pasos para dejar tus datos listos.
         </p>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          {STEPS.map(({ n, title, text, icon: Icon, tone }) => (
-            <Card key={n} className="relative">
+          {STEPS.map(({ n, title, text, icon: Icon, tone }, index) => (
+            <Card
+              key={n}
+              className={`relative bg-gradient-to-br to-transparent ${
+                index === 0 ? 'from-green/[0.05]' : index === 1 ? 'from-teal/[0.05]' : 'from-gold/[0.06]'
+              }`}
+            >
               <div className="flex items-center gap-3">
                 <div className={`flex h-10 w-10 items-center justify-center rounded-full ${tone}`}>
                   <Icon className="h-5 w-5" />

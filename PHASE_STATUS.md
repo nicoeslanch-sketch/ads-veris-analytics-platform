@@ -1,13 +1,15 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 7 completas.**
-La Fase 7 construye el modelo comercial completo (3 planes, página Planes, tokens
-addon), el chat de limpieza dirigida por variables (2/mes + tokens), y profesionaliza
-el motor de datos (nulos nunca imputados con 0, outliers por rol, caché del pipeline,
-fuzzy matching, Excel multi-hoja, reporte de calidad por columna). Todo el gating queda
-cableado tras el interruptor `PLAN_ENFORCEMENT` (apagado: todo accesible para probar).
-Las costuras de IA generativa del motor quedan preparadas y APAGADAS (un prompt las
-activa). Ver [`FASE_7_SPEC.md`](./FASE_7_SPEC.md) para el detalle y las decisiones.
+**Estado actual: Fases 0 a 8 completas.**
+La Fase 8 enciende el modelo comercial (`PLAN_ENFORCEMENT` ON: base limpia y limpieza
+dirigida = Analista+, con aviso "Necesitas el Plan X → Ir a comprar el plan"), agrega el
+**panel Administrar cuentas** para la cuenta administradora (`servicios@adsveris.com`):
+todas las cuentas con semáforo de solicitudes, activación manual de planes (costura
+lista para la pasarela de pago) y bandeja de soporte del botón "¿Necesitas ayuda?".
+Además: retención de archivos por plan en Storage, cupos de limpieza dirigida 10/25 por
+mes, Explorar/Resumen adaptativos a las columnas reales del archivo, motor con monedas/
+porcentajes/negativos contables y filas de totales excluidas, y una capa de color suave
+en toda la UI. Las costuras de IA generativa siguen preparadas y APAGADAS.
 
 > Referencia rápida de qué está construido y qué viene. La especificación
 > completa vive en [`SPEC.md`](./SPEC.md).
@@ -216,23 +218,63 @@ de pantallas usa todo el ancho.
 
 **Tests**: **57 pruebas** de la API (24 nuevas de la Fase 7), `npm run build` verde.
 
-## ⏳ Pendiente (fase opcional de operación comercial)
+## ✅ Fase 8 — Administración, soporte, gating comercial y adaptividad (completa)
 
-- Encender `PLAN_ENFORCEMENT` (+ `VITE_PLAN_ENFORCEMENT`) cuando el modelo comercial
-  esté listo — no requiere tocar código.
+**Administración** (`/admin` + `api/app/routes/admin.py`, migración `0010`):
+- Cuenta administradora `servicios@adsveris.com` (`profiles.is_admin`): acceso a TODO
+  sin depender de planes (capacidades y cupos ilimitados).
+- Página **Administrar cuentas**: todas las cuentas con semáforo (🔴 solicitudes
+  pendientes / 🟢 al día), detalle con datos visibles (nunca contraseñas), **activación
+  manual de planes** y otorgamiento de tokens. Bandeja unificada de soporte + addons
+  con "marcar atendida". Todo cambio manual queda auditado en `admin_audit`.
+- **Costura de pasarela de pago**: `set_user_plan()` (backend) y `startCheckout()`
+  (frontend) son los únicos puntos a tocar cuando exista el checkout.
+
+**Soporte** (`api/app/routes/support.py`): el botón "¿Necesitas ayuda?" abre un modal
+que registra la solicitud (`support_requests`); responde una persona del equipo.
+
+**Gating comercial encendido** (`PLAN_ENFORCEMENT=true` por defecto):
+- Base limpia (Excel/CSV) y limpieza dirigida → Plan Analista+; el reporte PDF del
+  negocio es para TODOS los planes. Función bloqueada → aviso `PlanUpsell` con
+  "Ir a comprar el plan". Sin Supabase (dev) → fail-open.
+- Cupo de limpieza dirigida por plan: **10/mes Analista, 25/mes Gold** + tokens addon.
+
+**Retención de Storage** (`POST /storage/retention`, tras cada subida): tope por plan
+(10/25/50 archivos), purga de no usados > 60 días, los 5 más recientes intocables;
+datasets purgados quedan en el historial con `storage_path` null.
+
+**Adaptividad**: `/metrics` expone `dimensiones`; Explorar oculta análisis imposibles
+(sin canal → sin recuadro de canales) y Resumen muestra KPIs reales de ingresos cuando
+no hay costos (nada de tarjetas en "—"), con tarjetas de canal/categoría/productos solo
+si existen esas columnas.
+
+**Motor §5.14**: monedas ("$", "CLP", "US$", "€"), porcentajes, negativos contables
+"(1.500)" y filas de totales al final excluidas con aviso.
+
+**UI**: Limpieza rediseñada (pasos horizontales, mapeo a lo ancho, sin espacio muerto),
+botón "Descargar base actualizada" con tarjeta y botón primario propios, tonos suaves
+en Resumen/Limpieza/Estandarización/Admin.
+
+**Tests**: **80 pruebas** de la API (18 nuevas de Fase 8), build verde y 2 E2E
+Playwright (pipeline completo + adaptividad con archivo mínimo).
+
+## ⏳ Pendiente (Fase 9 sugerida — operación comercial)
+
+- **Pasarela de pago** (Webpay/Flow/MercadoPago): reemplazar `startCheckout()` y
+  llamar `set_user_plan(source="pasarela")` desde el webhook. La activación manual
+  del admin queda como respaldo.
 - Activar las costuras IA del motor: `interpret_cleaning_instructions` (interpretación
   libre por IA) y `refine_with_ai` (`AI_REFINE_ENABLED`) — un prompt cada una.
-- Checkout/upgrade real de planes (hoy: solicitud por `addon_requests` + cambio manual
-  de `profiles.plan`).
-- E2E Playwright del flujo de planes/limpieza dirigida (la Fase 7 se verificó con
-  57 tests de API + build; el repo aún no tiene infraestructura Playwright).
+- Notificación por correo al admin cuando llega una solicitud de soporte (hoy: semáforo
+  en Administrar cuentas).
 - Vigilancia continua de Alertas (evaluación programada + correo/notificaciones).
 - Conector SQL / integraciones POS-facturación (Bsale, Defontana, Jumpseller, Shopify).
 - Reportes generados en backend (.xlsx real y PDF descargable).
 - Cuota IA con control atómico en BD (hoy check-then-record: una ráfaga simultánea
   justo en el límite puede excederlo por unas pocas consultas). Aplica también al
-  nuevo cupo de limpieza dirigida.
-- Deuda técnica: transporte por `dataset_id` (hoy `storage_path` validado por prefijo).
+  cupo de limpieza dirigida.
+- Deuda técnica: transporte por `dataset_id` (hoy `storage_path` validado por prefijo);
+  purga de Storage programada en el servidor (hoy: opportunista al subir).
 
 ## Comandos para correr el proyecto
 
@@ -266,6 +308,7 @@ python -m pytest tests/ -v
 #   supabase/migrations/0007_public_table_grants.sql
 #   supabase/migrations/0008_plans.sql          (Fase 7: 3 planes + is_admin)
 #   supabase/migrations/0009_cleaning_credits.sql (Fase 7: tokens y solicitudes)
+#   supabase/migrations/0010_admin_support.sql  (Fase 8: admin, soporte y auditoría)
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

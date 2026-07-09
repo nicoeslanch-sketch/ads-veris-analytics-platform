@@ -235,9 +235,27 @@ def compute_metrics(
         kpis["flujo_caja"] = None
 
     # ── Agrupaciones sobre la selección ──
+    def _has_data(role: str) -> bool:
+        col = roles.get(role)
+        return bool(col is not None and df[col].map(lambda v: not is_missing(v)).any())
+
     result: dict = {
         "moneda": "CLP",
         "mapeo": roles,
+        # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
+        # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
+        "dimensiones": {
+            "fecha": bool(has_dates),
+            "monto": _has_data("monto"),
+            "costo": bool(has_costs),
+            "cantidad": _has_data("cantidad"),
+            "categoria": _has_data("categoria"),
+            "producto": _has_data("producto"),
+            "canal": _has_data("canal"),
+            "sucursal": _has_data("sucursal"),
+            "cliente": _has_data("cliente"),
+            "vendedor": _has_data("vendedor"),
+        },
         "periodo": {
             "desde": date_from,
             "hasta": date_to,

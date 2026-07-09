@@ -111,11 +111,18 @@ def test_clean_respeta_reglas_desactivadas(client, auth_headers, sample_csv):
 
 
 def test_clean_download_basico_devuelve_403(client, auth_headers, sample_csv, monkeypatch):
-    # Fase 7: el gating vive tras PLAN_ENFORCEMENT (apagado por defecto).
-    # Con enforcement encendido y sin Supabase, el plan resuelve a 'basico'.
+    # Fase 8: enforcement encendido por defecto. Con Supabase configurado y
+    # plan básico (sin is_admin), descargar la base limpia responde 403 con
+    # CTA a Planes. Sin Supabase la puerta hace fail-open (dev local).
+    from app import capabilities
     from app.config import get_settings
 
-    monkeypatch.setattr(get_settings(), "plan_enforcement", True)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "supabase_url", "https://proyecto-test.supabase.co")
+    monkeypatch.setattr(settings, "supabase_service_role_key", "service-key")
+    monkeypatch.setattr(
+        capabilities, "get_profile_flags", lambda user_id, s: ("basico", False)
+    )
     name, content = sample_csv
     response = client.post(
         "/clean/download",

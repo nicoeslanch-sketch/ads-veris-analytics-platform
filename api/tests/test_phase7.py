@@ -23,15 +23,25 @@ def test_enforcement_apagado_no_consulta_la_red(monkeypatch):
     assert result == "sin_enforcement"
 
 
+def _enforced_settings():
+    from app.config import Settings
+
+    # Con Supabase "configurado": sin credenciales la puerta hace fail-open (dev).
+    return Settings(
+        plan_enforcement=True,
+        supabase_url="https://proyecto-test.supabase.co",
+        supabase_service_role_key="service-key-de-prueba",
+    )
+
+
 def test_enforcement_encendido_bloquea_basico(monkeypatch):
     from fastapi import HTTPException
 
     from app import capabilities
     from app.capabilities import Capability, require_capability_for_user
-    from app.config import Settings
 
-    settings = Settings(plan_enforcement=True)
-    monkeypatch.setattr(capabilities, "get_plan", lambda user_id, s: "basico")
+    settings = _enforced_settings()
+    monkeypatch.setattr(capabilities, "get_profile_flags", lambda user_id, s: ("basico", False))
     try:
         require_capability_for_user("user-x", Capability.AI_CLEANING, settings)
         raise AssertionError("Debió lanzar 403")
@@ -39,11 +49,42 @@ def test_enforcement_encendido_bloquea_basico(monkeypatch):
         assert exc.status_code == 403
         assert "Planes" in exc.detail
 
-    monkeypatch.setattr(capabilities, "get_plan", lambda user_id, s: "analista")
+    monkeypatch.setattr(capabilities, "get_profile_flags", lambda user_id, s: ("analista", False))
     assert require_capability_for_user("user-x", Capability.AI_CLEANING, settings) == "analista"
 
 
-# ── Cuota de limpieza dirigida (2/mes + addons) ──────────────────────────────
+def test_enforcement_sin_supabase_fail_open():
+    """Sin Supabase configurado (dev local) la puerta no bloquea a nadie."""
+    from app.capabilities import Capability, require_capability_for_user
+    from app.config import Settings
+
+    settings = Settings(plan_enforcement=True)
+    result = require_capability_for_user("user-x", Capability.AI_CLEANING, settings)
+    assert result == "sin_supabase"
+
+
+def test_admin_pasa_todas_las_puertas(monkeypatch):
+    """Fase 8: la cuenta administradora accede a todo sin depender del plan."""
+    from app import capabilities
+    from app.capabilities import Capability, require_capability_for_user
+
+    settings = _enforced_settings()
+    monkeypatch.setattr(capabilities, "get_profile_flags", lambda user_id, s: ("basico", True))
+    plan = require_capability_for_user("admin-x", Capability.DOWNLOAD_CLEAN_DATASET, settings)
+    assert plan == "basico"  # el plan no importa: is_admin manda
+
+
+def test_reportes_disponibles_para_basico():
+    """Fase 8: el reporte PDF del negocio es para todos los planes; lo que
+    exige Analista es descargar la base LIMPIA."""
+    from app.capabilities import Capability, plan_allows
+
+    assert plan_allows("basico", Capability.DOWNLOAD_REPORTS) is True
+    assert plan_allows("basico", Capability.DOWNLOAD_CLEAN_DATASET) is False
+    assert plan_allows("analista", Capability.DOWNLOAD_CLEAN_DATASET) is True
+
+
+# ── Cuota de limpieza dirigida (10 Analista / 25 Gold + addons) ─────────────
 
 
 def _quota_settings():
@@ -52,7 +93,8 @@ def _quota_settings():
     return Settings(
         supabase_url="https://proyecto-test.supabase.co",
         supabase_service_role_key="service-key-de-prueba",
-        ai_cleaning_monthly_limit=2,
+        ai_cleaning_monthly_limit=10,
+        ai_cleaning_monthly_limit_gold=25,
     )
 
 
@@ -62,8 +104,8 @@ def test_cuota_limpieza_agotada_sin_addons_429(monkeypatch):
     from app import quota
 
     settings = _quota_settings()
-    monkeypatch.setattr(quota, "get_plan", lambda user_id, s: "analista")
-    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 2)
+    monkeypatch.setattr(quota, "get_profile_flags", lambda user_id, s: ("analista", False))
+    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 10)
     monkeypatch.setattr(quota, "addons_balance", lambda user_id, s: 0)
     try:
         quota.check_cleaning_quota("user-x", settings)
@@ -77,8 +119,8 @@ def test_cuota_limpieza_agotada_con_addons_consume_token(monkeypatch):
     from app import quota
 
     settings = _quota_settings()
-    monkeypatch.setattr(quota, "get_plan", lambda user_id, s: "analista")
-    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 2)
+    monkeypatch.setattr(quota, "get_profile_flags", lambda user_id, s: ("analista", False))
+    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 10)
     monkeypatch.setattr(quota, "addons_balance", lambda user_id, s: 3)
     info = quota.check_cleaning_quota("user-x", settings)
     assert info["consume_addon"] is True
@@ -89,12 +131,37 @@ def test_cuota_limpieza_con_base_disponible_no_consume_addon(monkeypatch):
     from app import quota
 
     settings = _quota_settings()
-    monkeypatch.setattr(quota, "get_plan", lambda user_id, s: "basico")
+    monkeypatch.setattr(quota, "get_profile_flags", lambda user_id, s: ("basico", False))
     monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 1)
     monkeypatch.setattr(quota, "addons_balance", lambda user_id, s: 0)
     info = quota.check_cleaning_quota("user-x", settings)
     assert info["consume_addon"] is False
-    assert info["usadas_mes"] == 1 and info["base"] == 2
+    assert info["usadas_mes"] == 1 and info["base"] == 10
+
+
+def test_cuota_limpieza_gold_tiene_base_mayor(monkeypatch):
+    """Fase 8: la base mensual depende del plan (10 Analista / 25 Gold)."""
+    from app import quota
+
+    settings = _quota_settings()
+    monkeypatch.setattr(quota, "get_profile_flags", lambda user_id, s: ("gold", False))
+    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 12)
+    monkeypatch.setattr(quota, "addons_balance", lambda user_id, s: 0)
+    info = quota.check_cleaning_quota("user-x", settings)
+    assert info["base"] == 25
+    assert info["consume_addon"] is False  # 12 < 25: aún dentro de la base
+
+
+def test_cuota_limpieza_admin_nunca_se_agota(monkeypatch):
+    """Fase 8: el administrador no consume addons ni recibe 429."""
+    from app import quota
+
+    settings = _quota_settings()
+    monkeypatch.setattr(quota, "get_profile_flags", lambda user_id, s: ("basico", True))
+    monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 999)
+    monkeypatch.setattr(quota, "addons_balance", lambda user_id, s: 0)
+    info = quota.check_cleaning_quota("admin-x", settings)
+    assert info["consume_addon"] is False
 
 
 def test_cuota_insights_no_cuenta_limpieza(monkeypatch):
@@ -213,8 +280,8 @@ def test_plans_usage_sin_supabase(client, auth_headers):
     assert response.status_code == 200
     body = response.json()
     assert body["disponible"] is False
-    assert body["limpieza"]["base"] == 2
-    assert body["enforcement"] is False
+    assert body["limpieza"]["base"] == 10  # Fase 8: base Analista
+    assert body["enforcement"] is True  # Fase 8: gating encendido por defecto
 
 
 def test_addons_request_sin_supabase_503(client, auth_headers):

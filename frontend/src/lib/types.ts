@@ -158,11 +158,26 @@ export interface GroupRow {
   margen_pct?: number | null
 }
 
+/** Fase 8: qué dimensiones reales trae el dataset (adapta Explorar/Resumen). */
+export interface DatasetDimensions {
+  fecha: boolean
+  monto: boolean
+  costo: boolean
+  cantidad: boolean
+  categoria: boolean
+  producto: boolean
+  canal: boolean
+  sucursal: boolean
+  cliente: boolean
+  vendedor: boolean
+}
+
 export interface MetricsResult {
   archivo: string
   calidad_datos: number
   moneda: string
   mapeo: Record<string, string>
+  dimensiones?: DatasetDimensions
   agrupado_por_canal: 'canal' | 'sucursal' | null
   periodo: { desde: string | null; hasta: string | null; meses_disponibles: string[] }
   kpis: {

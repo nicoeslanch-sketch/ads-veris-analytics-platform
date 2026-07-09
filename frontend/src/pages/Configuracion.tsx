@@ -303,8 +303,8 @@ export default function Configuracion() {
                 <h2 className="text-base font-semibold text-navy">Mejora a Analista</h2>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-navy/60">
-                Descarga tu base limpia y tus reportes, y dirige la limpieza con tus
-                propias variables (2 intentos al mes + tokens).
+                Descarga tu base limpia y dirige la limpieza con tus propias
+                variables (10 intentos al mes en Analista, 25 en Gold, + tokens).
               </p>
               <Link
                 to="/planes"

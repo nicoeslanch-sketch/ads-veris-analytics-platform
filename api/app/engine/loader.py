@@ -11,17 +11,55 @@ Mejoras profesionales Fase 7:
   fila real de encabezados y se omiten las de arriba, con aviso.
 - CSV: el separador se decide mirando varias líneas (no solo la primera).
 
+Fase 8:
+- Filas de totales al FINAL ("Total", "Subtotal", "Total general", "Suma"):
+  no son datos — duplicarían los ingresos en las métricas. Se omiten con aviso.
+
 `load_dataframe_with_report` devuelve (df, reporte_de_carga);
 `load_dataframe` se mantiene como wrapper compatible.
 """
 
 import io
+import re
+import unicodedata
 
 import pandas as pd
 
 SUPPORTED_EXTENSIONS = (".csv", ".xlsx", ".xls")
 MAX_ROWS = 200_000
 _HEADER_SCAN_ROWS = 10
+
+# Fila-resumen al final de la planilla: su primera celda con texto es una
+# etiqueta de total. Solo se revisan las ÚLTIMAS filas (nunca datos del medio).
+_TOTAL_ROW_RE = re.compile(
+    r"^(sub)?total(es)?( general(es)?)?\b|^suma(s|torias?)?\b|^gran total\b"
+)
+_MAX_TRAILING_TOTAL_ROWS = 3
+
+
+def _strip_accents_lower(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text)
+    return "".join(c for c in normalized if unicodedata.category(c) != "Mn").lower()
+
+
+def _drop_trailing_total_rows(df: pd.DataFrame, report: dict) -> pd.DataFrame:
+    """Omite hasta 3 filas de totales al final del archivo (Fase 8)."""
+    dropped = 0
+    while len(df) > 1 and dropped < _MAX_TRAILING_TOTAL_ROWS:
+        first_text = next(
+            (str(v).strip() for v in df.iloc[-1] if str(v).strip()), ""
+        )
+        if not _TOTAL_ROW_RE.match(_strip_accents_lower(first_text)):
+            break
+        df = df.iloc[:-1]
+        dropped += 1
+    if dropped:
+        report["filas_totales_omitidas"] = dropped
+        report["avisos"].append(
+            f"Se omitieron {dropped} fila(s) de totales al final del archivo: "
+            "son un resumen, no datos, y duplicarían tus indicadores."
+        )
+    return df
 
 
 class UnsupportedFileError(ValueError):
@@ -107,7 +145,13 @@ def _load_excel(content: bytes, report: dict) -> pd.DataFrame:
 
 def load_dataframe_with_report(filename: str, content: bytes) -> tuple[pd.DataFrame, dict]:
     """Carga el archivo y devuelve (df, reporte_de_carga con avisos)."""
-    report: dict = {"avisos": [], "hoja_usada": None, "hojas_disponibles": [], "filas_titulo_omitidas": 0}
+    report: dict = {
+        "avisos": [],
+        "hoja_usada": None,
+        "hojas_disponibles": [],
+        "filas_titulo_omitidas": 0,
+        "filas_totales_omitidas": 0,
+    }
     name = (filename or "").lower()
     if not name.endswith(SUPPORTED_EXTENSIONS):
         raise UnsupportedFileError(
@@ -136,6 +180,9 @@ def load_dataframe_with_report(filename: str, content: bytes) -> tuple[pd.DataFr
     # Filas completamente vacías al final (frecuentes en Excel) no son datos.
     non_empty_mask = df.apply(lambda row: any(str(v).strip() for v in row), axis=1)
     df = df[non_empty_mask].reset_index(drop=True)
+
+    # Filas de totales al final ("Total", "Suma"): resumen, no datos (Fase 8).
+    df = _drop_trailing_total_rows(df, report).reset_index(drop=True)
 
     if df.empty or len(df.columns) == 0:
         raise UnsupportedFileError("El archivo no tiene datos que procesar.")

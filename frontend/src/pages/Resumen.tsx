@@ -5,10 +5,13 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
+  Coins,
   HeartPulse,
+  Info,
   LayoutDashboard,
   Loader2,
   Percent,
+  Receipt,
   TrendingUp,
   Upload,
   Wallet,
@@ -244,53 +247,93 @@ export default function Resumen() {
           : ((m[key] ?? null) as number | null),
     }))
 
+  // Fase 8: los KPIs se adaptan al archivo. Con columna de costos se muestran
+  // ganancia/margen/flujo; sin ella, indicadores REALES de ingresos en vez de
+  // tres tarjetas vacías con "—".
   const kpiCards = kpis
-    ? [
-        {
-          label: 'Ingresos Totales',
-          icon: Wallet,
-          color: CHART.ingresos,
-          value: formatCLP(kpis.ingresos_totales.valor),
-          variation: <Variation pct={kpis.ingresos_totales.variacion_pct} suffix="vs mes anterior" />,
-          spark: sparkOf('ingresos'),
-        },
-        {
-          label: 'Ganancia Neta',
-          icon: BarChart3,
-          color: CHART.gastos,
-          value: kpis.ganancia_neta ? formatCLP(kpis.ganancia_neta.valor) : '—',
-          variation: kpis.ganancia_neta ? (
-            <Variation pct={kpis.ganancia_neta.variacion_pct} suffix="vs mes anterior" />
-          ) : (
-            <p className="text-xs text-navy/40">Requiere columna de costos</p>
-          ),
-          spark: sparkOf('utilidad'),
-        },
-        {
-          label: 'Margen de Utilidad',
-          icon: Percent,
-          color: CHART.utilidad,
-          value: margin !== null ? `${formatNumber(margin)}%` : '—',
-          variation: kpis.margen_utilidad_pct ? (
-            <Variation pct={kpis.margen_utilidad_pct.variacion_puntos} suffix="vs mes anterior" points />
-          ) : (
-            <p className="text-xs text-navy/40">Requiere columna de costos</p>
-          ),
-          spark: sparkOf('margen'),
-        },
-        {
-          label: 'Flujo de Caja',
-          icon: TrendingUp,
-          color: CHART.flujo,
-          value: kpis.flujo_caja ? formatCLP(kpis.flujo_caja.valor) : '—',
-          variation: kpis.flujo_caja ? (
-            <Variation pct={kpis.flujo_caja.variacion_pct} suffix="vs mes anterior" />
-          ) : (
-            <p className="text-xs text-navy/40">Requiere columna de costos</p>
-          ),
-          spark: sparkOf('utilidad'),
-        },
-      ]
+    ? hasCosts
+      ? [
+          {
+            label: 'Ingresos Totales',
+            icon: Wallet,
+            color: CHART.ingresos,
+            value: formatCLP(kpis.ingresos_totales.valor),
+            variation: <Variation pct={kpis.ingresos_totales.variacion_pct} suffix="vs mes anterior" />,
+            spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Ganancia Neta',
+            icon: BarChart3,
+            color: CHART.gastos,
+            value: kpis.ganancia_neta ? formatCLP(kpis.ganancia_neta.valor) : '—',
+            variation: kpis.ganancia_neta ? (
+              <Variation pct={kpis.ganancia_neta.variacion_pct} suffix="vs mes anterior" />
+            ) : (
+              <p className="text-xs text-navy/40">Requiere columna de costos</p>
+            ),
+            spark: sparkOf('utilidad'),
+          },
+          {
+            label: 'Margen de Utilidad',
+            icon: Percent,
+            color: CHART.utilidad,
+            value: margin !== null ? `${formatNumber(margin)}%` : '—',
+            variation: kpis.margen_utilidad_pct ? (
+              <Variation pct={kpis.margen_utilidad_pct.variacion_puntos} suffix="vs mes anterior" points />
+            ) : (
+              <p className="text-xs text-navy/40">Requiere columna de costos</p>
+            ),
+            spark: sparkOf('margen'),
+          },
+          {
+            label: 'Flujo de Caja',
+            icon: TrendingUp,
+            color: CHART.flujo,
+            value: kpis.flujo_caja ? formatCLP(kpis.flujo_caja.valor) : '—',
+            variation: kpis.flujo_caja ? (
+              <Variation pct={kpis.flujo_caja.variacion_pct} suffix="vs mes anterior" />
+            ) : (
+              <p className="text-xs text-navy/40">Requiere columna de costos</p>
+            ),
+            spark: sparkOf('utilidad'),
+          },
+        ]
+      : [
+          {
+            label: 'Ingresos Totales',
+            icon: Wallet,
+            color: CHART.ingresos,
+            value: formatCLP(kpis.ingresos_totales.valor),
+            variation: <Variation pct={kpis.ingresos_totales.variacion_pct} suffix="vs mes anterior" />,
+            spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Ticket Promedio',
+            icon: Coins,
+            color: CHART.utilidad,
+            value: formatCLP(kpis.ticket_promedio),
+            variation: <p className="text-xs text-navy/40">por transacción</p>,
+            spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Transacciones',
+            icon: Receipt,
+            color: CHART.gastos,
+            value: formatNumber(kpis.transacciones),
+            variation: <p className="text-xs text-navy/40">en el periodo</p>,
+            spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Tendencia Mensual',
+            icon: TrendingUp,
+            color: CHART.flujo,
+            value: metrics?.proyeccion
+              ? `${metrics.proyeccion.crecimiento_pct >= 0 ? '+' : ''}${formatNumber(metrics.proyeccion.crecimiento_pct)}%`
+              : '—',
+            variation: <p className="text-xs text-navy/40">crecimiento promedio</p>,
+            spark: sparkOf('ingresos'),
+          },
+        ]
     : []
 
   const canal = metrics?.ventas_por_canal ?? []
@@ -334,10 +377,14 @@ export default function Resumen() {
         </div>
       ) : metrics && kpis ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
-          {/* KPIs */}
+          {/* KPIs (con tono suave del color de cada indicador) */}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {kpiCards.map(({ label, icon: Icon, color, value, variation, spark }) => (
-              <Card key={label} className="!p-4">
+              <Card
+                key={label}
+                className="!p-4"
+                style={{ background: `linear-gradient(135deg, ${color}0d, #ffffff 55%)` }}
+              >
                 <div className="flex items-center gap-2">
                   <span
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
@@ -355,6 +402,16 @@ export default function Resumen() {
               </Card>
             ))}
           </div>
+
+          {!hasCosts && (
+            <div className="mt-4 flex items-start gap-2 rounded-lg border border-teal/25 bg-teal/[0.05] px-4 py-2.5 text-xs text-navy/65">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" />
+              <p>
+                Tu archivo no trae una columna de <strong>costos</strong>: agrégala (o asígnala en
+                el mapeo de Limpieza) para ver ganancia neta, margen y flujo de caja.
+              </p>
+            </div>
+          )}
 
           {/* Evolución + Indicadores clave */}
           <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -466,8 +523,15 @@ export default function Resumen() {
             </Card>
           </div>
 
-          {/* Categorías + Estado financiero */}
-          <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          {/* Categorías + Estado financiero (solo si el archivo trae categorías) */}
+          <div
+            className={`mt-6 grid gap-6 ${
+              (metrics.por_categoria ?? []).length > 0
+                ? 'xl:grid-cols-[minmax(0,1fr)_340px]'
+                : 'xl:grid-cols-2'
+            }`}
+          >
+            {(metrics.por_categoria ?? []).length > 0 && (
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Análisis por Categoría</h2>
               <div className="mt-4 overflow-x-auto">
@@ -521,6 +585,7 @@ export default function Resumen() {
                 </table>
               </div>
             </Card>
+            )}
 
             <Card>
               <h2 className="text-base font-semibold text-navy">Estado Financiero</h2>
@@ -552,8 +617,10 @@ export default function Resumen() {
             </Card>
           </div>
 
-          {/* Canal + Top productos + Proyección */}
+          {/* Canal + Top productos + Proyección — solo las tarjetas con datos
+              reales del archivo (Fase 8: nada de recuadros vacíos) */}
           <div className="mt-6 grid gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+            {canal.length > 0 && (
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
               <div className="mt-2 flex flex-col items-center gap-3">
@@ -605,7 +672,9 @@ export default function Resumen() {
                 </ul>
               </div>
             </Card>
+            )}
 
+            {topProducts.length > 0 && (
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
               <ul className="mt-4 space-y-3">
@@ -633,6 +702,7 @@ export default function Resumen() {
                 ))}
               </ul>
             </Card>
+            )}
 
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Proyección (Próximos 3 meses)</h2>

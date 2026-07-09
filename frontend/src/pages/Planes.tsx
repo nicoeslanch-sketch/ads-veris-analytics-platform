@@ -1,14 +1,14 @@
 /**
- * Planes (Fase 7 §4) — Básico, Analista y Gold (en construcción).
+ * Planes (Fase 8) — Básico, Analista y Gold (en construcción).
  *
  * - Las tarjetas listan sus features desde la matriz única (lib/plans.ts,
  *   espejo de api/app/capabilities.py): una sola fuente de verdad.
- * - Sección "Tokens de limpieza dirigida": muestra los 2 intentos/mes, el
- *   saldo de tokens addon (GET /plans/usage) y el botón "Solicitar más"
- *   (POST /addons/request) — ADS Veris contacta al usuario y otorga los
- *   tokens a mano.
- * - Con PLAN_ENFORCEMENT apagado (Fase 7) se avisa que todo está
- *   desbloqueado para pruebas.
+ * - Sección "Tokens de limpieza dirigida": muestra el cupo mensual por plan
+ *   (10 Analista / 25 Gold), el saldo de tokens addon (GET /plans/usage) y
+ *   el botón "Solicitar más" (POST /addons/request).
+ * - Botón "Contratar": pasa por startCheckout (lib/plans.ts) — la costura de
+ *   la futura pasarela de pago. Hoy registra la solicitud y el administrador
+ *   activa el plan desde Administrar cuentas.
  */
 
 import { useEffect, useState } from 'react'
@@ -35,6 +35,7 @@ import {
   PLAN_CARDS,
   PLAN_ENFORCEMENT,
   PLAN_FEATURE_ROWS,
+  startCheckout,
   type FeatureAvailability,
   type PlanCode,
 } from '../lib/plans'
@@ -87,6 +88,16 @@ export default function Planes() {
       setRequestError(
         err instanceof ApiError ? err.message : 'No se pudo registrar la solicitud.',
       )
+    }
+  }
+
+  /** Botón "Contratar": costura de la pasarela de pago (Fase 9). Hoy el
+   * checkout no redirige, así que la contratación queda como solicitud y el
+   * administrador activa el plan desde Administrar cuentas. */
+  const contratar = (code: PlanCode, nombre: string) => {
+    const checkout = startCheckout(code)
+    if (!checkout.redirected) {
+      void sendRequest(`upgrade_${code}`, `Quiero contratar el Plan ${nombre}.`)
     }
   }
 
@@ -202,25 +213,30 @@ export default function Planes() {
                   </button>
                 ) : upgradeState === 'ok' ? (
                   <div className="rounded-lg border border-green/40 bg-green/5 px-4 py-2.5 text-center text-sm font-medium text-green">
-                    Solicitud enviada: te contactaremos
+                    Solicitud recibida: activamos tu plan y te avisamos
                   </div>
                 ) : (
-                  <button
-                    onClick={() => void sendRequest(upgradeTipo, `Quiero el plan ${nombre}.`)}
-                    disabled={upgradeState === 'sending'}
-                    className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                      destacado
-                        ? 'bg-gold text-navy-deep hover:bg-gold/90'
-                        : 'bg-navy text-white hover:bg-navy-deep'
-                    }`}
-                  >
-                    {upgradeState === 'sending' ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                    Solicitar este plan
-                  </button>
+                  <>
+                    <button
+                      onClick={() => contratar(code, nombre)}
+                      disabled={upgradeState === 'sending'}
+                      className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                        destacado
+                          ? 'bg-gold text-navy-deep hover:bg-gold/90'
+                          : 'bg-navy text-white hover:bg-navy-deep'
+                      }`}
+                    >
+                      {upgradeState === 'sending' ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      Contratar este plan
+                    </button>
+                    <p className="mt-1.5 text-center text-[11px] text-navy/40">
+                      Pago en línea próximamente; hoy coordinamos contigo la activación.
+                    </p>
+                  </>
                 )}
               </div>
             </Card>
@@ -240,9 +256,10 @@ export default function Planes() {
             </div>
             <p className="mt-2 text-sm leading-relaxed text-navy/60">
               La limpieza dirigida con tus propias variables incluye{' '}
-              <strong>{limpieza?.base ?? 2} intentos al mes</strong> (planes Analista y
-              Gold). Si necesitas más, solicita tokens adicionales: se pagan aparte,
-              nosotros los agregamos a tu cuenta y no expiran.
+              <strong>{limpieza ? `${limpieza.base} intentos al mes` : '10 intentos al mes (25 en Gold)'}</strong>{' '}
+              en los planes Analista y Gold. Si necesitas más, solicita tokens
+              adicionales: se pagan aparte, nosotros los agregamos a tu cuenta y no
+              expiran.
             </p>
             {usage && !usage.disponible && (
               <p className="mt-2 text-xs text-navy/45">

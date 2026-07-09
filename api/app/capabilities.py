@@ -32,10 +32,12 @@ class Capability(StrEnum):
     CLEAN = "clean"
     VIEW_DASHBOARD = "view_dashboard"
     ASK_DATA_AI = "ask_data_ai"
+    # Fase 8: el reporte PDF del negocio es para TODOS los planes; lo que se
+    # reserva para Analista es la descarga de la base LIMPIA (Excel/CSV).
+    DOWNLOAD_REPORTS = "download_reports"
     # ── Analista ──
     DOWNLOAD_CLEAN_DATASET = "download_clean_dataset"
-    DOWNLOAD_REPORTS = "download_reports"
-    AI_CLEANING = "ai_cleaning"  # chat de limpieza dirigida por variables (2/mes + addons)
+    AI_CLEANING = "ai_cleaning"  # chat de limpieza dirigida por variables (cupo mensual + addons)
     # ── Gold (en construcción) ──
     CONNECT_SQL = "connect_sql"
     COMMUNITY_ACCESS = "community_access"
@@ -46,12 +48,12 @@ _BASICO = {
     Capability.CLEAN,
     Capability.VIEW_DASHBOARD,
     Capability.ASK_DATA_AI,
+    Capability.DOWNLOAD_REPORTS,
 }
 
 _ANALISTA = {
     *_BASICO,
     Capability.DOWNLOAD_CLEAN_DATASET,
-    Capability.DOWNLOAD_REPORTS,
     Capability.AI_CLEANING,
 }
 
@@ -101,17 +103,24 @@ def _rest(settings: Settings, table: str) -> str:
 
 def get_plan(user_id: str, settings: Settings) -> str:
     """Plan normalizado del usuario desde profiles (basico|analista|gold)."""
+    return get_profile_flags(user_id, settings)[0]
+
+
+def get_profile_flags(user_id: str, settings: Settings) -> tuple[str, bool]:
+    """(plan, is_admin) en UNA consulta a profiles. Sin Supabase → ('basico', False)."""
     if not settings.supabase_url or not settings.supabase_service_role_key:
-        return "basico"
+        return "basico", False
     response = httpx.get(
         _rest(settings, "profiles"),
-        params={"id": f"eq.{user_id}", "select": "plan"},
+        params={"id": f"eq.{user_id}", "select": "plan,is_admin"},
         headers=_headers(settings),
         timeout=_TIMEOUT,
     )
     response.raise_for_status()
     rows = response.json()
-    return normalize_plan(rows[0].get("plan") if rows else None)
+    if not rows:
+        return "basico", False
+    return normalize_plan(rows[0].get("plan")), bool(rows[0].get("is_admin"))
 
 
 def get_is_admin(user_id: str, settings: Settings) -> bool:
@@ -141,21 +150,25 @@ def require_capability_for_user(
     capability: Capability,
     settings: Settings,
 ) -> str:
-    """Puerta de capacidad. Con PLAN_ENFORCEMENT apagado (Fase 7) deja pasar
-    todo sin consultar la red; la cerradura queda instalada para el futuro."""
+    """Puerta de capacidad. Con PLAN_ENFORCEMENT apagado deja pasar todo sin
+    consultar la red. El administrador (profiles.is_admin) pasa siempre.
+    Sin Supabase configurado (desarrollo local) no hay dónde mirar el plan:
+    fail-open, igual que las cuotas."""
     if not settings.plan_enforcement:
         return "sin_enforcement"
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        return "sin_supabase"
     try:
-        plan = get_plan(user_id, settings)
+        plan, is_admin = get_profile_flags(user_id, settings)
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="No se pudo verificar tu plan. Intenta nuevamente en unos minutos.",
         ) from exc
-    if plan_allows(plan, capability):
+    if is_admin or plan_allows(plan, capability):
         return plan
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail=f"Esta función requiere Plan {display_plan(min_plan_for(capability))}. "
-        "Revisa el detalle en la página Planes.",
+        detail=f"Esta función requiere el Plan {display_plan(min_plan_for(capability))}. "
+        "Puedes contratarlo en la página Planes.",
     )

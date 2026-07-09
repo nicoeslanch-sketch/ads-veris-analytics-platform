@@ -30,6 +30,29 @@ DATE_HINTS = ("fecha", "date", "periodo", "emision", "vencimiento")
 _DATE_SHAPE = re.compile(r"^\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\s*$")
 _NUMBER_SHAPE = re.compile(r"^\s*-?\s*\$?\s*-?[\d.,]+\s*$")
 
+# Fase 8 §5.14: símbolos/códigos de moneda y decoraciones frecuentes en
+# planillas reales de Chile/LatAm: "$ 1.200.000", "CLP 850.000", "US$1.500",
+# "1.200 USD", "€200", "12%", y negativos contables "(1.500)".
+_CURRENCY_TOKEN_RE = re.compile(r"(?i)(us\$|s/\.?|clp|usd|eur|ars|pen|cop|mxn|uf|[$€£])")
+_BARE_NUMBER_RE = re.compile(r"^-?[\d.,]+$")
+
+
+def _strip_number_decorations(value: str) -> tuple[str, bool]:
+    """Quita moneda/%/espacios y detecta negativo contable entre paréntesis.
+    Devuelve (texto_limpio, es_negativo_por_parentesis)."""
+    text = str(value).strip().replace("\xa0", " ")
+    negative = False
+    if len(text) > 2 and text.startswith("(") and text.endswith(")"):
+        negative = True
+        text = text[1:-1].strip()
+    text = _CURRENCY_TOKEN_RE.sub("", text)
+    return text.replace("%", "").replace(" ", "").strip(), negative
+
+
+def _looks_like_number(value: str) -> bool:
+    text, _ = _strip_number_decorations(value)
+    return bool(text and _BARE_NUMBER_RE.match(text))
+
 # Fechas con mes en texto: "01 mayo 2026", "1 de mayo de 2026", "3-ene-26".
 _DATE_TEXT_SHAPE = re.compile(
     r"^\s*(\d{1,2})[\s\-/]*(?:de\s+)?([a-z]{3,12})\.?[\s\-/]*(?:de(?:l)?\s+)?(\d{2,4})\s*$"
@@ -99,7 +122,7 @@ def detect_value_type_confidence(series: pd.Series, column_name: str) -> tuple[s
     if not values:
         return "texto", 0.0
     date_like = sum(_looks_like_date(v) for v in values)
-    number_like = sum(bool(_NUMBER_SHAPE.match(v)) for v in values)
+    number_like = sum(_looks_like_number(v) for v in values)
     name = strip_accents_lower(column_name)
     date_ratio = date_like / len(values)
     number_ratio = number_like / len(values)
@@ -198,7 +221,8 @@ def column_dot3_convention(series: pd.Series) -> str:
     - Sin evidencia → 'miles' (convención chilena)."""
     decimal_votes = miles_votes = 0
     for value in _sample_values(series):
-        text = str(value).strip().replace("$", "").replace(" ", "").lstrip("-")
+        text, _ = _strip_number_decorations(value)
+        text = text.lstrip("-")
         if not re.match(r"^[\d.,]+$", text):
             continue
         if "," in text or text.count(".") > 1:
@@ -214,10 +238,10 @@ def column_dot3_convention(series: pd.Series) -> str:
 
 
 def parse_number(value: str, dot3_convention: str = "miles") -> float | None:
-    text = str(value).strip().replace("$", "").replace(" ", "")
-    if not text or not re.match(r"^-?[\d.,]+$", text):
+    text, paren_negative = _strip_number_decorations(value)
+    if not text or not _BARE_NUMBER_RE.match(text):
         return None
-    negative = text.startswith("-")
+    negative = paren_negative or text.startswith("-")
     text = text.lstrip("-")
     if "," in text and "." in text:
         # Formato chileno completo: 1.234.567,89

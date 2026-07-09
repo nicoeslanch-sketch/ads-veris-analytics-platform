@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   Home,
@@ -11,10 +12,13 @@ import {
   FileText,
   FileSpreadsheet,
   Settings,
+  ShieldCheck,
   HelpCircle,
   type LucideIcon,
 } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
+import { usePlan } from '../../lib/usePlan'
+import HelpModal from './HelpModal'
 
 interface NavItem {
   to: string
@@ -35,8 +39,16 @@ const navItems: NavItem[] = [
   { to: '/configuracion', label: 'Configuración', icon: Settings },
 ]
 
+// Fase 8: visible solo para la cuenta administradora (profiles.is_admin).
+const adminItem: NavItem = { to: '/admin', label: 'Administrar cuentas', icon: ShieldCheck }
+
 export default function Sidebar() {
   const { file, cleaning } = useDataset()
+  const { isAdmin } = usePlan()
+  const [helpOpen, setHelpOpen] = useState(false)
+
+  const items = isAdmin ? [...navItems, adminItem] : navItems
+
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col bg-navy text-white">
       {/* Logo */}
@@ -49,7 +61,7 @@ export default function Sidebar() {
       {/* Navegación */}
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="space-y-1">
-          {navItems.map(({ to, label, icon: Icon }) => (
+          {items.map(({ to, label, icon: Icon }) => (
             <li key={to}>
               <NavLink
                 to={to}
@@ -59,10 +71,10 @@ export default function Sidebar() {
                     isActive
                       ? 'bg-white/10 text-white shadow-inner ring-1 ring-teal/60'
                       : 'text-white/70 hover:bg-white/5 hover:text-white'
-                  }`
+                  } ${to === '/admin' ? 'mt-2 border-t border-white/10 pt-3' : ''}`
                 }
               >
-                <Icon className="h-4.5 w-4.5 shrink-0" />
+                <Icon className={`h-4.5 w-4.5 shrink-0 ${to === '/admin' ? 'text-gold' : ''}`} />
                 {label}
               </NavLink>
             </li>
@@ -108,13 +120,18 @@ export default function Sidebar() {
             <p className="text-sm font-semibold">¿Necesitas ayuda?</p>
           </div>
           <p className="mt-1 text-xs text-white/60">
-            Revisa nuestra guía o contáctanos.
+            Escríbenos y te responde una persona del equipo.
           </p>
-          <button className="mt-3 w-full rounded-lg border border-gold/60 px-3 py-2 text-xs font-semibold text-gold transition-colors hover:bg-gold hover:text-navy-deep">
+          <button
+            onClick={() => setHelpOpen(true)}
+            className="mt-3 w-full rounded-lg border border-gold/60 px-3 py-2 text-xs font-semibold text-gold transition-colors hover:bg-gold hover:text-navy-deep"
+          >
             Ir a ayuda
           </button>
         </div>
       </div>
+
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
     </aside>
   )
 }

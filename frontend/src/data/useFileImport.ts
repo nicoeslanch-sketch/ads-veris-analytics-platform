@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react'
-import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
+import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import {
   insertDataset,
   markStandardized,
@@ -45,6 +45,12 @@ export function useFileImport() {
         )
       }
       setUploaded(selected, datasetId, storagePath)
+
+      // Fase 8: retención de Storage (fire-and-forget). Poda archivos viejos
+      // según el plan del usuario; jamás bloquea ni rompe la carga.
+      if (storagePath) {
+        void apiPostJson('/storage/retention', {}).catch(() => undefined)
+      }
 
       const result = await apiPost<StandardizeResult>(
         '/standardize',

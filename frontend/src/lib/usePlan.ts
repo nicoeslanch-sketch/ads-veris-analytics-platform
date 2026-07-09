@@ -1,13 +1,15 @@
-/** Plan del usuario y capacidades — hooks compartidos (Fase 7).
+/** Plan del usuario y capacidades — hooks compartidos (Fase 7/8).
  *
- * `usePlan` lee `profiles.plan` (con caché por usuario para no repetir la
- * consulta en cada página) y `useCapability` combina la matriz de planes con
- * el interruptor PLAN_ENFORCEMENT.
+ * `usePlan` lee `profiles.plan` + `profiles.is_admin` (con caché por usuario
+ * para no repetir la consulta en cada página) y `useCapability` combina la
+ * matriz de planes con el interruptor PLAN_ENFORCEMENT. La cuenta
+ * administradora (Fase 8) tiene todas las capacidades sin depender del plan.
  */
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { fetchProfile } from './profile'
+import { supabaseConfigured } from './supabase'
 import {
   PLAN_ENFORCEMENT,
   capabilityUnlocked,
@@ -17,21 +19,26 @@ import {
   type PlanCode,
 } from './plans'
 
-let cachedUserId: string | null = null
-let cachedPlan: PlanCode | null = null
+interface CachedFlags {
+  plan: PlanCode
+  isAdmin: boolean
+}
 
-export function usePlan(): { plan: PlanCode; loading: boolean } {
+let cachedUserId: string | null = null
+let cachedFlags: CachedFlags | null = null
+
+export function usePlan(): { plan: PlanCode; isAdmin: boolean; loading: boolean } {
   const { user } = useAuth()
   const userId = user?.id ?? null
-  const [plan, setPlan] = useState<PlanCode>(
-    cachedUserId === userId && cachedPlan ? cachedPlan : 'basico',
+  const [flags, setFlags] = useState<CachedFlags>(
+    cachedUserId === userId && cachedFlags ? cachedFlags : { plan: 'basico', isAdmin: false },
   )
-  const [loading, setLoading] = useState(cachedUserId !== userId || cachedPlan === null)
+  const [loading, setLoading] = useState(cachedUserId !== userId || cachedFlags === null)
 
   useEffect(() => {
     let cancelled = false
-    if (cachedUserId === userId && cachedPlan) {
-      setPlan(cachedPlan)
+    if (cachedUserId === userId && cachedFlags) {
+      setFlags(cachedFlags)
       setLoading(false)
       return
     }
@@ -39,10 +46,13 @@ export function usePlan(): { plan: PlanCode; loading: boolean } {
     fetchProfile()
       .then((profile) => {
         if (cancelled) return
-        const normalized = normalizePlan(profile?.plan)
+        const next: CachedFlags = {
+          plan: normalizePlan(profile?.plan),
+          isAdmin: Boolean(profile?.is_admin),
+        }
         cachedUserId = userId
-        cachedPlan = normalized
-        setPlan(normalized)
+        cachedFlags = next
+        setFlags(next)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -52,26 +62,31 @@ export function usePlan(): { plan: PlanCode; loading: boolean } {
     }
   }, [userId])
 
-  return { plan, loading }
+  return { plan: flags.plan, isAdmin: flags.isAdmin, loading }
 }
 
 export interface CapabilityState {
-  /** Desbloqueada ahora (con enforcement apagado, siempre true). */
+  /** Desbloqueada ahora (admin siempre; con enforcement apagado, siempre). */
   allowed: boolean
   /** El plan la incluye según la matriz (para badges informativos). */
   hasByPlan: boolean
   enforced: boolean
   plan: PlanCode
+  isAdmin: boolean
   loading: boolean
 }
 
 export function useCapability(cap: Capability): CapabilityState {
-  const { plan, loading } = usePlan()
+  const { plan, isAdmin, loading } = usePlan()
+  // Sin Supabase (desarrollo local) no hay dónde mirar el plan: fail-open,
+  // igual que el backend (capabilities.require_capability_for_user).
+  const devOpen = !supabaseConfigured
   return {
-    allowed: capabilityUnlocked(plan, cap),
-    hasByPlan: planHasCapability(plan, cap),
+    allowed: devOpen || isAdmin || capabilityUnlocked(plan, cap),
+    hasByPlan: devOpen || isAdmin || planHasCapability(plan, cap),
     enforced: PLAN_ENFORCEMENT,
     plan,
+    isAdmin,
     loading,
   }
 }

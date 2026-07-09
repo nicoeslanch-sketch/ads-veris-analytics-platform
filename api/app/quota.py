@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import HTTPException, status
 
-from .capabilities import display_plan, get_plan, normalize_plan
+from .capabilities import display_plan, get_plan, get_profile_flags, normalize_plan
 from .config import Settings
 
 _TIMEOUT = 10
@@ -175,17 +175,24 @@ def addons_balance(user_id: str, settings: Settings) -> int:
     return sum(int(row.get("credits") or 0) for row in response.json())
 
 
+def cleaning_limit_for(plan: str, settings: Settings) -> int:
+    """Intentos base de limpieza dirigida al mes según el plan (Fase 8)."""
+    if normalize_plan(plan) == "gold":
+        return settings.ai_cleaning_monthly_limit_gold
+    return settings.ai_cleaning_monthly_limit
+
+
 def check_cleaning_quota(user_id: str, settings: Settings) -> dict | None:
     """Valida el cupo de limpieza dirigida ANTES de correr el motor.
 
     Devuelve {"plan", "usadas_mes", "base", "addons", "consume_addon"} o None
     si no hay Supabase (dev). Lanza 429 con CTA a Planes si no quedan intentos
-    base ni créditos addon.
+    base ni créditos addon. El administrador nunca agota cupo (Fase 8).
     """
     if not _configured(settings):
         return None
     try:
-        plan = get_plan(user_id, settings)
+        plan, is_admin = get_profile_flags(user_id, settings)
         usadas = count_month_usage(user_id, settings, kinds=("cleaning",))
         addons = addons_balance(user_id, settings)
     except httpx.HTTPError as exc:
@@ -194,7 +201,15 @@ def check_cleaning_quota(user_id: str, settings: Settings) -> dict | None:
             f"({exc.__class__.__name__}); se permite el intento."
         )
         return None
-    base = settings.ai_cleaning_monthly_limit
+    base = cleaning_limit_for(plan, settings)
+    if is_admin:
+        return {
+            "plan": plan,
+            "usadas_mes": usadas,
+            "base": base,
+            "addons": addons,
+            "consume_addon": False,
+        }
     consume_addon = usadas >= base
     if consume_addon and addons <= 0:
         raise HTTPException(
@@ -247,7 +262,8 @@ def record_cleaning_usage(user_id: str, settings: Settings, consume_addon: bool)
 
 
 def cleaning_usage_info(user_id: str, settings: Settings) -> dict:
-    """Estado del cupo de limpieza dirigida para Planes y Configuración."""
+    """Estado del cupo de limpieza dirigida para Planes y Configuración.
+    La base depende del plan del usuario (Fase 8: 10 Analista / 25 Gold)."""
     if not _configured(settings):
         return {
             "disponible": False,
@@ -256,6 +272,7 @@ def cleaning_usage_info(user_id: str, settings: Settings) -> dict:
             "addons": 0,
         }
     try:
+        plan = get_plan(user_id, settings)
         usadas = count_month_usage(user_id, settings, kinds=("cleaning",))
         addons = addons_balance(user_id, settings)
     except httpx.HTTPError:
@@ -268,6 +285,6 @@ def cleaning_usage_info(user_id: str, settings: Settings) -> dict:
     return {
         "disponible": True,
         "usadas_mes": usadas,
-        "base": settings.ai_cleaning_monthly_limit,
+        "base": cleaning_limit_for(plan, settings),
         "addons": addons,
     }

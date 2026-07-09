@@ -2,6 +2,84 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.9.0] - 2026-07-09 - Fase 8: Panel de administración, soporte, gating comercial y adaptividad
+
+### Agregado
+- **Panel "Administrar cuentas"** (`/admin`, ítem del sidebar visible solo para la
+  cuenta administradora): lista TODAS las cuentas de ADS Veris con semáforo
+  (🔴 solicitudes pendientes / 🟢 al día), detalle por cuenta (datos visibles,
+  registro, último acceso, archivos cargados — nunca contraseñas), **activación
+  manual de planes** (selector Básico/Analista/Gold) y **otorgamiento de tokens**.
+  Backend: `GET /admin/accounts`, `POST /admin/accounts/{id}/plan`,
+  `GET /admin/support`, `POST /admin/support/{id}/attend`,
+  `POST /admin/addon-requests/{id}/attend` — todos exigen `profiles.is_admin`.
+- **Cuenta administradora**: migración `0010` marca `servicios@adsveris.com` como
+  `is_admin`. El admin **pasa todas las puertas de plan** (capacidades y cupos
+  ilimitados) sin depender del plan asignado.
+- **Costura de pasarela de pago**: `set_user_plan()` es la única vía para cambiar
+  planes (auditada en `admin_audit`); cuando exista el checkout (Webpay/Flow/
+  MercadoPago), el webhook de pago llamará esa misma función. En el frontend,
+  `startCheckout()` (lib/plans.ts) es el punto único a reemplazar; el botón de
+  Planes pasó a "Contratar este plan" y hoy registra la solicitud.
+- **Botón "¿Necesitas ayuda?" funcional**: modal de soporte en el sidebar
+  (`POST /support/request`, tabla `support_requests` de la migración `0010`); la
+  solicitud llega a la bandeja del administrador y pone a esa cuenta en rojo.
+  Responde una persona, sin IA.
+- **Retención de archivos en Storage** (`POST /storage/retention`, disparado tras
+  cada subida): tope por plan (10 Básico / 25 Analista / 50 Gold), purga de lo no
+  usado hace más de 60 días, y los **5 más recientes jamás se tocan**. Los datasets
+  purgados conservan su historial con `storage_path` en null.
+- **`/metrics` expone `dimensiones`**: qué columnas reales trae el dataset (fecha,
+  monto, costo, cantidad, categoría, producto, canal, sucursal, cliente, vendedor).
+- **Explorar datos adaptativo**: los análisis se adaptan al archivo — sin columna de
+  canal/sucursal no aparece ese recuadro (ni en presets ni en "Agrupar por"); igual
+  con categoría, producto y fechas.
+- **Resumen adaptativo**: con archivo sin costos, en vez de tres tarjetas en "—"
+  se muestran KPIs reales (Ticket Promedio, Transacciones, Tendencia Mensual) y una
+  nota de cómo habilitar ganancia/margen. Las tarjetas de canal/categoría/productos
+  solo aparecen si el archivo trae esas columnas.
+- **Motor §5.14**: números con símbolo/código de moneda ("$ 1.200.000",
+  "CLP 850.000", "US$1.500", "€200"), porcentajes ("12,5%") y **negativos contables
+  "(1.500)"**; **filas de totales al final** ("Total", "Subtotal", "Suma") se omiten
+  con aviso — ya no duplican los ingresos del dashboard.
+
+### Cambiado
+- **`PLAN_ENFORCEMENT` ENCENDIDO por defecto** (backend + frontend): descargar la
+  base limpia (Excel/CSV) y la limpieza dirigida exigen Plan Analista; al intentar
+  una función bloqueada aparece el aviso "Necesitas el Plan X" con botón directo
+  **"Ir a comprar el plan"** (componente `PlanUpsell`). Sin Supabase configurado
+  (desarrollo local) la puerta hace fail-open, igual que las cuotas.
+- **El reporte PDF del negocio pasa a TODOS los planes** (`download_reports` →
+  Básico): lo que se reserva para Analista es la descarga de la base LIMPIA.
+- **Cupo de limpieza dirigida por plan**: de 2/mes a **10/mes (Analista)** y
+  **25/mes (Gold)** (`AI_CLEANING_MONTHLY_LIMIT`, `AI_CLEANING_MONTHLY_LIMIT_GOLD`),
+  siempre + tokens addon. La interpretación consume pocos tokens por intento; con 10
+  el plan se siente útil sin riesgo de costo.
+- **Limpieza de datos rediseñada, sin espacio muerto**: los pasos pasaron de columna
+  lateral a **barra horizontal compacta**, el mapeo de columnas se extendió a lo
+  ancho (2–5 columnas según pantalla) y la vista previa usa todo el ancho útil.
+- **"Descargar base actualizada" con protagonismo propio**: tarjeta dedicada con
+  botón primario (antes era un botón secundario pequeño), CSV al lado y "Continuar"
+  en la misma fila.
+- **Más color, sin estridencia**: tonos suaves (gradientes al 4–8%) en las tarjetas
+  de Resumen (tinte del color de cada KPI), Limpieza, Estandarización y el panel
+  admin; el blanco sigue mandando.
+
+### Seguridad
+- `admin_audit` (migración `0010`): todo cambio manual del administrador (plan,
+  créditos, soporte atendido) queda registrado con quién, a quién y cuándo.
+- Los endpoints `/admin/*` validan `is_admin` en el backend en cada llamada (la UI
+  solo esconde el ítem del menú; la puerta real está en la API).
+
+### Verificado
+- **80 tests de la API en verde** (18 nuevos de Fase 8: admin 403/503, set-plan con
+  auditoría, soporte, retención con keep-last intocable, dimensiones de /metrics,
+  moneda/porcentaje/negativo contable, fila de totales) + build de producción OK.
+- **E2E Playwright x2**: (1) pipeline completo con limpieza dirigida, descarga xlsx,
+  modal de ayuda y Planes; (2) archivo mínimo sin canal/costos/categoría → Resumen
+  sin tarjetas vacías, Explorar sin presets imposibles y fila "Total" excluida de
+  los ingresos.
+
 ## [0.8.1] - 2026-07-08 - Examen de calidad post-Fase 7
 
 ### Corregido
