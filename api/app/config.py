@@ -17,9 +17,48 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = ""
 
-    # Cuotas mensuales de consultas IA por plan (SPEC §9)
+    # Cuotas mensuales de consultas IA (insights) por plan (SPEC §9)
     ai_monthly_limit_basico: int = 20
+    ai_monthly_limit_analista: int = 200
     ai_monthly_limit_gold: int = 200
+
+    # ── Fase 7/8: planes y limpieza dirigida ──
+    # Interruptor global de gating por plan. Desde la Fase 8 queda ENCENDIDO:
+    # descargar la base limpia y la limpieza dirigida exigen Plan Analista.
+    # El administrador (profiles.is_admin) pasa todas las puertas.
+    # Apagarlo no requiere tocar código: PLAN_ENFORCEMENT=false
+    # (+ VITE_PLAN_ENFORCEMENT en el frontend).
+    plan_enforcement: bool = True
+    # Intentos base de limpieza dirigida por mes, POR PLAN (se suman los
+    # créditos addon de plan_addons, migración 0009). Fase 8: sube de 2 a
+    # 10/25 — la interpretación consume pocos tokens por intento, y con 10
+    # el Plan Analista se siente útil sin riesgo de costo (ver PHASE_STATUS).
+    ai_cleaning_monthly_limit: int = 10        # Plan Analista (y fallback)
+    ai_cleaning_monthly_limit_gold: int = 25   # Plan Gold
+    # Costura IA del motor (§5.13): refinado final del dataset con IA.
+    # Preparado pero APAGADO hasta perfeccionar el motor determinista.
+    ai_refine_enabled: bool = False
+    # Fase 9: clasificador IA de columnas SIN match en el diccionario de
+    # 15.600 palabras clave (engine/ai_classifier.py, [PROMPT B]).
+    # Preparado pero APAGADO — mismo criterio que las costuras de la Fase 7.
+    ai_classifier_enabled: bool = False
+
+    # ── Fase 10: cuenta administradora de respaldo ──
+    # El panel /admin acepta también a este correo aunque profiles.is_admin
+    # no esté marcado todavía (bootstrap robusto: la migración 0010 depende
+    # de que la cuenta exista al ejecutarla). Vacío = solo is_admin.
+    admin_email: str = "servicios@adsveris.com"
+
+    # ── Fase 8: retención de archivos en Storage (por usuario) ──
+    # Tope de archivos guardados por plan; al subir uno nuevo, el frontend
+    # dispara POST /storage/retention y el backend poda: primero el excedente
+    # sobre el tope y luego lo no usado hace más de N días. Los últimos
+    # `storage_keep_last` archivos JAMÁS se borran.
+    storage_max_files_basico: int = 10
+    storage_max_files_analista: int = 25
+    storage_max_files_gold: int = 50
+    storage_retention_days: int = 60
+    storage_keep_last: int = 5
 
     # SOLO desarrollo local sin Supabase: acepta requests sin JWT.
     # Jamás activar en producción.

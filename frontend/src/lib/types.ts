@@ -7,7 +7,11 @@ export interface StandardizeResult {
   filas: number
   columnas: number
   column_types: Record<string, ColumnType>
+  column_confidence?: Record<string, number>
+  avisos?: string[]
+  carga?: LoadInfo
   mapeo: Record<string, string>
+  mapeo_extendido?: Record<string, DictionaryMatch>
   cambios: {
     encabezados_normalizados: number
     textos_normalizados: number
@@ -49,7 +53,7 @@ export interface CleanResult {
   }
   correcciones: {
     filas_duplicadas_a_eliminar: number
-    valores_nulos_a_reemplazar: number
+    valores_nulos_normalizados: number
     fechas_a_estandarizar: number
     textos_a_unificar: number
     tipos_a_corregir: number
@@ -65,6 +69,72 @@ export interface CleanResult {
   estandarizacion: StandardizeResult['cambios']
   column_types: Record<string, ColumnType>
   mapeo: Record<string, string>
+  reporte_calidad?: Record<string, ColumnQuality>
+  avisos?: string[]
+  duplicados_criterio?: string
+  fusiones_texto?: { total: number; ejemplos: string[][] }
+  carga?: LoadInfo
+  dirigida?: DirectedInfo
+}
+
+/* ── Fase 7: reporte de calidad, carga y limpieza dirigida ── */
+
+export interface LoadInfo {
+  hoja_usada: string | null
+  hojas_disponibles: string[]
+  filas_titulo_omitidas: number
+}
+
+export interface DictionaryMatch {
+  rol: string
+  grupo: string
+  tipo_dato: string
+  rol_motor: string | null
+  palabra_clave: string
+  metodo: 'exacto' | 'contencion' | 'prefijo' | 'fuzzy' | 'ia'
+  confianza: number
+}
+
+export interface ColumnQuality {
+  rol: string | null
+  rol_extendido?: string
+  grupo_rol?: string
+  match_diccionario?: { palabra_clave: string; metodo: string; confianza: number }
+  tipo: ColumnType
+  en_alcance: boolean
+  vacia?: boolean
+  nulos?: number
+  nulos_pct?: number
+  fechas_invalidas?: number
+  tipos_incorrectos?: number
+  outliers?: number
+  confianza_tipo?: number | null
+  convencion_numerica?: string
+  politica_nulos?: string
+}
+
+export interface DirectedInfo {
+  instrucciones: string
+  columnas_incluir: string[]
+  columnas_excluir: string[]
+  reglas_forzadas: Partial<CleaningRules>
+  avisos: string[]
+  reconocido: boolean
+  cupo: {
+    disponible: boolean
+    usadas_mes: number
+    base: number
+    addons: number
+    restantes?: number
+  }
+}
+
+export interface PlansUsage {
+  disponible: boolean
+  plan: string
+  enforcement: boolean
+  insights: { usadas: number; limite: number }
+  limpieza: { usadas_mes: number; base: number; addons: number }
 }
 
 export interface CleaningRules {
@@ -102,11 +172,26 @@ export interface GroupRow {
   margen_pct?: number | null
 }
 
+/** Fase 8: qué dimensiones reales trae el dataset (adapta Explorar/Resumen). */
+export interface DatasetDimensions {
+  fecha: boolean
+  monto: boolean
+  costo: boolean
+  cantidad: boolean
+  categoria: boolean
+  producto: boolean
+  canal: boolean
+  sucursal: boolean
+  cliente: boolean
+  vendedor: boolean
+}
+
 export interface MetricsResult {
   archivo: string
   calidad_datos: number
   moneda: string
   mapeo: Record<string, string>
+  dimensiones?: DatasetDimensions
   agrupado_por_canal: 'canal' | 'sucursal' | null
   periodo: { desde: string | null; hasta: string | null; meses_disponibles: string[] }
   kpis: {

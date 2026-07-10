@@ -17,7 +17,9 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
+import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
 import { formatDateTime, formatNumber } from '../lib/format'
+import type { StandardizeResult } from '../lib/types'
 
 const BENEFITS = [
   'Unifica nombres y textos duplicados',
@@ -51,14 +53,41 @@ const STEPS = [
 ]
 
 export default function Estandarizacion() {
-  const { file, standardization, uploadedAt } = useDataset()
+  const { file, standardization, uploadedAt, storagePath, setStandardization, sheet, setSheet } =
+    useDataset()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [changingSheet, setChangingSheet] = useState(false)
+  const [sheetError, setSheetError] = useState<string | null>(null)
   // Flujo compartido con Conectores: Storage + datasets + /standardize
   const { importing: processing, error, persistWarning, importFile } = useFileImport()
 
   const handleFile = async (selected: File) => {
     await importFile(selected)
+  }
+
+  // Fase 10 §8.3: el usuario elige la hoja del Excel y se re-estandariza.
+  const availableSheets = standardization?.carga?.hojas_disponibles ?? []
+  const activeSheet = sheet ?? standardization?.carga?.hoja_usada ?? null
+
+  const changeSheet = async (name: string) => {
+    if (!file || changingSheet || name === activeSheet) return
+    setChangingSheet(true)
+    setSheetError(null)
+    setSheet(name) // invalida limpieza/métricas: la hoja son otros datos
+    try {
+      const result = await apiPost<StandardizeResult>(
+        '/standardize',
+        buildDatasetForm(file, storagePath, { sheet: name }),
+      )
+      setStandardization(result)
+    } catch (err) {
+      setSheetError(
+        err instanceof ApiError ? err.message : 'No se pudo procesar esa hoja.',
+      )
+    } finally {
+      setChangingSheet(false)
+    }
   }
 
   const totalChanges = standardization
@@ -98,7 +127,9 @@ export default function Estandarizacion() {
             if (dropped && !processing) void handleFile(dropped)
           }}
           className={`flex flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed p-10 text-center transition-colors ${
-            dragOver ? 'border-teal bg-teal/5' : 'border-navy/20 bg-white'
+            dragOver
+              ? 'border-teal bg-teal/5'
+              : 'border-navy/20 bg-gradient-to-b from-teal/[0.04] to-white'
           }`}
         >
           <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-teal/10">
@@ -120,7 +151,7 @@ export default function Estandarizacion() {
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,.xlsx,.xls"
+            accept=".csv,.xlsx"
             className="hidden"
             onChange={(e) => {
               const selected = e.target.files?.[0]
@@ -151,7 +182,7 @@ export default function Estandarizacion() {
           )}
         </div>
 
-        <Card className="h-fit">
+        <Card className="h-fit bg-gradient-to-br from-gold/[0.06] to-transparent">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gold/15">
               <Sparkles className="h-4.5 w-4.5 text-gold" />
@@ -176,8 +207,13 @@ export default function Estandarizacion() {
           Un proceso simple en 3 pasos para dejar tus datos listos.
         </p>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          {STEPS.map(({ n, title, text, icon: Icon, tone }) => (
-            <Card key={n} className="relative">
+          {STEPS.map(({ n, title, text, icon: Icon, tone }, index) => (
+            <Card
+              key={n}
+              className={`relative bg-gradient-to-br to-transparent ${
+                index === 0 ? 'from-green/[0.05]' : index === 1 ? 'from-teal/[0.05]' : 'from-gold/[0.06]'
+              }`}
+            >
               <div className="flex items-center gap-3">
                 <div className={`flex h-10 w-10 items-center justify-center rounded-full ${tone}`}>
                   <Icon className="h-5 w-5" />
@@ -192,6 +228,43 @@ export default function Estandarizacion() {
           ))}
         </div>
       </div>
+
+      {/* Selector de hoja (solo Excel con varias hojas) — Fase 10 §8.3 */}
+      {availableSheets.length > 1 && (
+        <Card className="mt-10 bg-gradient-to-r from-teal/[0.04] to-transparent">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-navy">Hojas del archivo</h2>
+              <p className="text-xs text-navy/55">
+                Se eligió automáticamente la hoja con más datos; si tu base vive en otra
+                hoja, selecciónala aquí (la limpieza y el dashboard se recalculan).
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {availableSheets.map((name) => (
+                <button
+                  key={name}
+                  onClick={() => void changeSheet(name)}
+                  disabled={changingSheet}
+                  className={`rounded-lg border px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-60 ${
+                    name === activeSheet
+                      ? 'border-teal bg-teal text-white'
+                      : 'border-navy/20 bg-white text-navy hover:border-teal/60'
+                  }`}
+                >
+                  {name}
+                </button>
+              ))}
+              {changingSheet && <Loader2 className="h-4 w-4 animate-spin text-teal" />}
+            </div>
+          </div>
+          {sheetError && (
+            <p className="mt-3 rounded-lg border border-coral/40 bg-coral/5 px-3 py-2 text-xs text-coral">
+              {sheetError}
+            </p>
+          )}
+        </Card>
+      )}
 
       {/* Archivos recientes + seguridad */}
       <div className="mt-10 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -268,7 +341,10 @@ export default function Estandarizacion() {
             <div>
               <h3 className="text-sm font-semibold text-navy">Tus datos seguros</h3>
               <p className="mt-1 text-xs leading-relaxed text-navy/60">
-                Tus archivos se procesan de forma segura y no se comparten con terceros.
+                Tus archivos se almacenan cifrados en tu cuenta y solo tú puedes verlos.
+                Al asistente IA se le envían únicamente indicadores agregados (totales y
+                resúmenes), nunca tu archivo completo. No vendemos ni compartimos tus
+                datos con fines comerciales.
               </p>
             </div>
           </div>

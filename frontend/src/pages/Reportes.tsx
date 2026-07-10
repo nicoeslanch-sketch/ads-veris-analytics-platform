@@ -6,7 +6,9 @@
  * - Datos completos en Excel/CSV (separador ';' + BOM, listo para Excel es-CL).
  */
 
-import { FileSpreadsheet, FileText, Loader2, Printer } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { FileSpreadsheet, FileText, Loader2, Lock, Printer } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
@@ -14,10 +16,26 @@ import { useAuth } from '../auth/AuthContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
 import { downloadReportCsv, openPrintableReport } from '../lib/report'
 import { formatCLP } from '../lib/format'
+import { fetchProfile } from '../lib/profile'
+import { useCapability } from '../lib/usePlan'
 
 export default function Reportes() {
   const { user } = useAuth()
   const { ready, metrics, loading, error } = useSessionMetrics()
+  // Fase 7: descarga de reportes gated por plan (con enforcement apagado, libre)
+  const reportsCap = useCapability('download_reports')
+  const reportsLocked = reportsCap.enforced && !reportsCap.hasByPlan
+  const [profileCompany, setProfileCompany] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchProfile().then((profile) => {
+      if (!cancelled) setProfileCompany(profile?.company ?? null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
 
   if (!ready) {
     return (
@@ -48,7 +66,10 @@ export default function Reportes() {
     )
   }
 
-  const empresa = ((user?.user_metadata ?? {}) as Record<string, string | undefined>).company ?? null
+  const empresa =
+    profileCompany ??
+    ((user?.user_metadata ?? {}) as Record<string, string | undefined>).company ??
+    null
 
   return (
     <>
@@ -87,12 +108,21 @@ export default function Reportes() {
                 Una página lista para compartir con tu equipo, tu socio o tu contador: KPIs,
                 evolución, categorías y proyección con la marca de la plataforma.
               </p>
-              <button
-                onClick={() => openPrintableReport(metrics, empresa)}
-                className="mt-4 inline-flex w-fit items-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal/90"
-              >
-                <Printer className="h-4 w-4" /> Generar PDF
-              </button>
+              {reportsLocked ? (
+                <Link
+                  to="/planes"
+                  className="mt-4 inline-flex w-fit items-center gap-2 rounded-lg border border-gold/60 px-5 py-2.5 text-sm font-semibold text-gold transition-colors hover:bg-gold hover:text-navy-deep"
+                >
+                  <Lock className="h-4 w-4" /> Mejora a Analista para descargar
+                </Link>
+              ) : (
+                <button
+                  onClick={() => openPrintableReport(metrics, empresa)}
+                  className="mt-4 inline-flex w-fit items-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal/90"
+                >
+                  <Printer className="h-4 w-4" /> Generar PDF
+                </button>
+              )}
               <p className="mt-2 text-xs text-navy/40">
                 Se abre la vista de impresión: elige "Guardar como PDF".
               </p>
@@ -109,12 +139,21 @@ export default function Reportes() {
                 (formato es-CL): indicadores, evolución, categorías, canales, top productos
                 y proyección.
               </p>
-              <button
-                onClick={() => downloadReportCsv(metrics)}
-                className="mt-4 inline-flex w-fit items-center gap-2 rounded-lg border border-green/50 px-5 py-2.5 text-sm font-semibold text-green transition-colors hover:bg-green hover:text-white"
-              >
-                <FileSpreadsheet className="h-4 w-4" /> Descargar Excel (CSV)
-              </button>
+              {reportsLocked ? (
+                <Link
+                  to="/planes"
+                  className="mt-4 inline-flex w-fit items-center gap-2 rounded-lg border border-gold/60 px-5 py-2.5 text-sm font-semibold text-gold transition-colors hover:bg-gold hover:text-navy-deep"
+                >
+                  <Lock className="h-4 w-4" /> Mejora a Analista para descargar
+                </Link>
+              ) : (
+                <button
+                  onClick={() => downloadReportCsv(metrics)}
+                  className="mt-4 inline-flex w-fit items-center gap-2 rounded-lg border border-green/50 px-5 py-2.5 text-sm font-semibold text-green transition-colors hover:bg-green hover:text-white"
+                >
+                  <FileSpreadsheet className="h-4 w-4" /> Descargar Excel (CSV)
+                </button>
+              )}
               <p className="mt-2 text-xs text-navy/40">
                 Separador ';' y codificación UTF-8 con BOM.
               </p>

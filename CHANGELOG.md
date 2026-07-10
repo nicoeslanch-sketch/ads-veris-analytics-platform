@@ -2,6 +2,365 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.11.0] - 2026-07-09 - Fase 10: Endurecimiento comercial — seguridad, exactitud financiera y responsive
+
+Triage crítico del informe de calidad externo: se tomó lo que endurece el
+producto (P0 de seguridad, exactitud financiera, motor más conservador,
+responsive) y se pospuso con registro lo que exige refactors de riesgo
+(cuotas atómicas por RPC, persistencia transaccional, paginación admin).
+
+### Seguridad (P0)
+- **Migración `0011`**: se revoca el UPDATE de `authenticated` sobre profiles y
+  se otorga POR COLUMNA solo sobre los campos de contacto. Antes, cualquier
+  usuario autenticado podía llamar directo a la REST API de Supabase y ponerse
+  `plan='gold'` + `is_admin=true` en su propia fila (la RLS lo permitía porque
+  la fila era suya). **Ejecutar antes de aceptar usuarios externos.**
+- Bootstrap admin robusto: `/admin/*` acepta también al correo `ADMIN_EMAIL`
+  (verificado por Supabase Auth) aunque `is_admin` aún no esté marcado.
+- Validación estricta de `rules`/`mapping`/`scope` (claves y tipos → 422),
+  límites de tamaño en los inputs de IA (pregunta 2000, historial 12×4000,
+  roles solo user/assistant) y errores de IA/stream **sin detalles internos**
+  (código de incidente al cliente, detalle a los logs).
+- Anti-abuso de soporte: máximo 3 solicitudes pendientes por usuario, sin
+  duplicados idénticos pendientes (429/409); solicitudes de tokens/upgrade sin
+  duplicados pendientes del mismo tipo.
+- `/admin/grant-credits` ahora audita en `admin_audit` igual que los cambios
+  de plan.
+
+### Exactitud financiera
+- **Cobertura de costos**: utilidad y margen se calculan SOLO sobre las filas
+  con ingreso Y costo (antes los costos faltantes actuaban como $0 e inflaban
+  la ganancia). `kpis.cobertura_costos` + advertencia visible cuando es parcial.
+- **Nombres honestos**: "Ganancia Neta" → **Utilidad Bruta**, "Flujo de Caja" →
+  **Resultado del Periodo**, "Margen de Utilidad" → **Margen Bruto** (venta −
+  costo directo no es ganancia neta ni caja).
+- **Moneda real**: detección por tokens en los montos CRUDOS (US$, USD, €, CLP);
+  `moneda` deja de estar fija en CLP, y una base con monedas mezcladas recibe
+  advertencia explícita ("los totales suman sin convertir"). La IA recibe la
+  moneda y las advertencias en su contexto.
+- **"vs mes anterior" de verdad**: un mes calendario completo se compara con el
+  mes calendario anterior (mayo vs abril), no con una ventana de 31 días que
+  arrastraba el 31 de marzo.
+- **Fix de contexto**: Alertas y Reportes ya no heredan en silencio el mes que
+  el usuario estaba mirando en el Resumen — el contexto solo cachea métricas
+  del periodo completo.
+
+### Motor más conservador (jamás romper datos)
+- **Fuzzy jamás en identificadores**: SKU/folio/RUT/email/teléfono quedan fuera
+  de la fusión por Levenshtein ("SKU-100I" ya no se fusiona con "SKU-1001");
+  categorías y ciudades siguen corrigiéndose.
+- **Duplicados seguros**: con columna ID se mantiene el criterio normalizado
+  (seguro); SIN columna ID solo se eliminan filas 100% idénticas y las "casi
+  idénticas" quedan como `duplicados_probables` con aviso — nunca se borra una
+  venta real por diferencias de formato.
+- **Scope dirigido estricto**: instrucciones que excluyen todas las columnas →
+  422 sin consumir el intento (antes un alcance vacío se reinterpretaba como
+  "todas las columnas").
+- **Descarga limpia de verdad** (§6.5): el Excel ya no escribe "SIN MONTO" ni
+  "FECHA INVALIDA" DENTRO de los datos — hoja `Datos_limpios` intacta (celdas
+  vacías + colores) + hoja **`Observaciones`** con fila/columna/detalle. El CSV
+  sale limpio, importable en cualquier sistema.
+- **Carga endurecida**: `.xls` antiguo rechazado con mensaje claro (la UI ya no
+  lo promete), y guardia anti ZIP-bomb en `.xlsx` (expansión máxima y ratio de
+  compresión) antes de tocar pandas.
+- **Selector de hoja**: si el Excel trae varias hojas, Estandarización muestra
+  chips para elegirla (parámetro `sheet` en todo el pipeline + caché);
+  cambiarla recalcula limpieza y dashboard.
+- **Diccionario auditado** (§7.1): 60 entradas "numero de boleta/factura/orden/…"
+  reclasificadas de `cantidad` a identificador (un folio jamás se suma como
+  unidades); "numero de ventas" (plural, conteo) sigue siendo cantidad. Test de
+  CI: ningún identificador puede apuntar a monto/costo/cantidad.
+
+### Responsive y UX
+- **Sidebar móvil**: hamburguesa en el topbar + cajón deslizante (< lg).
+- **Asistente IA sin consumo oculto** (§9.1): el panel SOLO se monta cuando es
+  visible — en pantallas chicas vive tras un botón flotante que abre un drawer;
+  el resumen IA se genera al abrirlo (una vez) y jamás gasta cupo escondido.
+- **Recuperar contraseña** en el Login (enlace por correo de Supabase) y mínimo
+  de 8 caracteres al registrarse.
+- ProtectedRoute con guardia de producción: sin variables de Supabase la app
+  muestra "Configuración incompleta" en vez de abrirse sin sesión.
+- El plan del usuario se refresca al volver el foco a la pestaña (si el admin
+  activó un plan, se ve sin recargar).
+- El modal de ayuda muestra **"Mis solicitudes"** con estado y la respuesta del
+  equipo, y el texto ya no promete correo (aún no hay envío transaccional).
+- Copys honestos: privacidad de Estandarización (qué se almacena y qué recibe
+  la IA), Alertas ("se evalúan al abrir la página", no "vigilancia automática").
+
+### Operación
+- `requirements.txt` con **versiones fijadas** (despliegues reproducibles).
+- **CI en GitHub Actions**: pytest (motor + seguridad + auditoría del
+  diccionario) y build del frontend con chequeo de tipos en cada push/PR.
+- Retención: la desvinculación de datasets purgados verifica el status HTTP.
+
+### Verificado
+- **118 tests de la API** (21 nuevos de Fase 10), build de producción OK, y
+  E2E Playwright x2: pipeline completo con nombres honestos + descarga con
+  Observaciones, y recorrido móvil (hamburguesa, drawer IA, sin errores de
+  consola).
+
+### Pendiente registrado (no tomado a propósito)
+- Cuotas atómicas por RPC SQL, persistencia transaccional del pipeline,
+  paginación del panel admin, correo transaccional de soporte, benchmark F1
+  del diccionario, XLSX/PDF de reportes generados en backend, retención por
+  cron: refactors de mayor riesgo que no bloquean la operación inicial y
+  quedan para la Fase 11 (ver PHASE_STATUS).
+
+## [0.10.0] - 2026-07-09 - Fase 9: Mapeo universal — diccionario de roles y biblioteca de prompts IA
+
+### Agregado
+- **Diccionario universal de roles** (`api/app/data/palabras_clave_roles.csv`):
+  ≈15.600 palabras clave normalizadas únicas, **64 roles en 12 grupos** (tiempo,
+  dinero, cantidad, identificadores, entidades, catálogo, ubicación, contacto,
+  clasificación, texto libre, RRHH, bancario), en español chileno e inglés, con
+  abreviaturas reales (fec_emision, cxc, qty), términos locales (RUT, DTE, glosa,
+  comuna, AFP, UF) y compuestos/plurales legítimos. Columnas: palabra_clave, rol,
+  grupo, tipo_dato, idioma, prioridad y `rol_motor_actual` (equivalencia segura
+  con los 10 roles del motor de métricas).
+- **Motor de matching** (`api/app/engine/dictionary.py`): match del encabezado en
+  4 etapas — exacto → contención por TOKENS ("fecha de emision" dentro de "Fecha
+  de Emisión DTE", sin falsos positivos por substring) → prefijo/sufijo
+  ("FechaVenta2026") → fuzzy Levenshtein acotado ("Montto" → monto). Empates por
+  largo de clave y `prioridad`. Carga lazy única + memoización: costo ~0 por request.
+- **`detect_column_roles` en dos pasadas** (`mapping.py`): (1) diccionario —
+  gana la columna con mejor match cuyo rol extendido tiene equivalencia segura
+  con el motor; (2) **compatibilidad legacy** — las palabras clave históricas
+  rellenan los roles que queden vacíos. Resultado: "Total Neto" le gana el rol
+  monto a "Precio Unitario" (que ya no se suma como ingreso), pero un archivo
+  cuyo único campo de dinero es "Precio" sigue funcionando igual que siempre.
+- **Mapeo extendido visible**: `/standardize` devuelve `mapeo_extendido` (rol de
+  64, método y confianza por columna) y el `reporte_calidad` de `/clean` incluye
+  `rol_extendido`, `grupo_rol` y `match_diccionario` por columna — insumo directo
+  del refinado IA (§5.13) y de la tarjeta de mapeo de Limpieza.
+- **Biblioteca de prompts** (`api/app/data/prompts_estandarizacion_por_rol.txt` +
+  `engine/prompt_library.py`): prompt de sistema, clasificador de columnas sin
+  match ([PROMPT B]), 12 prompts de grupo con catálogo acotado por rol (nunca
+  imputar 0 en dinero, nunca fusionar clientes distintos, RUT inválido se marca)
+  y el prompt de refinado global ([PROMPT C] = interfaz de `refine_with_ai`).
+  Parseo lazy por secciones, `prompt_for_role(rol)` resuelve el grupo vía el CSV
+  y `fill()` rellena las variables de plantilla.
+- **Costura IA del clasificador** (`engine/ai_classifier.py`, flag
+  `AI_CLASSIFIER_ENABLED=false`): cuando el diccionario no reconoce un encabezado,
+  la IA lo clasificará dentro de la MISMA taxonomía cerrada usando nombre +
+  muestra de valores. Preparada y APAGADA, con un único `# TODO IA` — mismo
+  criterio que las costuras de la Fase 7.
+- Tests: **97 pruebas** (17 nuevas: carga del diccionario, las 4 etapas de match,
+  falsos positivos por substring, roles extendidos sin motor, dos pasadas de
+  mapeo, compatibilidad histórica, mapeo_extendido en la API, reporte de calidad,
+  parseo de la biblioteca de prompts y flujo /metrics completo).
+
+### Cambiado
+- El mapeo automático de columnas pasa de ~40 palabras clave fijas a un
+  diccionario de datos versionado en el repo: agregar cobertura para un rubro
+  nuevo es editar el CSV, no tocar código.
+
+## [0.9.0] - 2026-07-09 - Fase 8: Panel de administración, soporte, gating comercial y adaptividad
+
+### Agregado
+- **Panel "Administrar cuentas"** (`/admin`, ítem del sidebar visible solo para la
+  cuenta administradora): lista TODAS las cuentas de ADS Veris con semáforo
+  (🔴 solicitudes pendientes / 🟢 al día), detalle por cuenta (datos visibles,
+  registro, último acceso, archivos cargados — nunca contraseñas), **activación
+  manual de planes** (selector Básico/Analista/Gold) y **otorgamiento de tokens**.
+  Backend: `GET /admin/accounts`, `POST /admin/accounts/{id}/plan`,
+  `GET /admin/support`, `POST /admin/support/{id}/attend`,
+  `POST /admin/addon-requests/{id}/attend` — todos exigen `profiles.is_admin`.
+- **Cuenta administradora**: migración `0010` marca `servicios@adsveris.com` como
+  `is_admin`. El admin **pasa todas las puertas de plan** (capacidades y cupos
+  ilimitados) sin depender del plan asignado.
+- **Costura de pasarela de pago**: `set_user_plan()` es la única vía para cambiar
+  planes (auditada en `admin_audit`); cuando exista el checkout (Webpay/Flow/
+  MercadoPago), el webhook de pago llamará esa misma función. En el frontend,
+  `startCheckout()` (lib/plans.ts) es el punto único a reemplazar; el botón de
+  Planes pasó a "Contratar este plan" y hoy registra la solicitud.
+- **Botón "¿Necesitas ayuda?" funcional**: modal de soporte en el sidebar
+  (`POST /support/request`, tabla `support_requests` de la migración `0010`); la
+  solicitud llega a la bandeja del administrador y pone a esa cuenta en rojo.
+  Responde una persona, sin IA.
+- **Retención de archivos en Storage** (`POST /storage/retention`, disparado tras
+  cada subida): tope por plan (10 Básico / 25 Analista / 50 Gold), purga de lo no
+  usado hace más de 60 días, y los **5 más recientes jamás se tocan**. Los datasets
+  purgados conservan su historial con `storage_path` en null.
+- **`/metrics` expone `dimensiones`**: qué columnas reales trae el dataset (fecha,
+  monto, costo, cantidad, categoría, producto, canal, sucursal, cliente, vendedor).
+- **Explorar datos adaptativo**: los análisis se adaptan al archivo — sin columna de
+  canal/sucursal no aparece ese recuadro (ni en presets ni en "Agrupar por"); igual
+  con categoría, producto y fechas.
+- **Resumen adaptativo**: con archivo sin costos, en vez de tres tarjetas en "—"
+  se muestran KPIs reales (Ticket Promedio, Transacciones, Tendencia Mensual) y una
+  nota de cómo habilitar ganancia/margen. Las tarjetas de canal/categoría/productos
+  solo aparecen si el archivo trae esas columnas.
+- **Motor §5.14**: números con símbolo/código de moneda ("$ 1.200.000",
+  "CLP 850.000", "US$1.500", "€200"), porcentajes ("12,5%") y **negativos contables
+  "(1.500)"**; **filas de totales al final** ("Total", "Subtotal", "Suma") se omiten
+  con aviso — ya no duplican los ingresos del dashboard.
+
+### Cambiado
+- **`PLAN_ENFORCEMENT` ENCENDIDO por defecto** (backend + frontend): descargar la
+  base limpia (Excel/CSV) y la limpieza dirigida exigen Plan Analista; al intentar
+  una función bloqueada aparece el aviso "Necesitas el Plan X" con botón directo
+  **"Ir a comprar el plan"** (componente `PlanUpsell`). Sin Supabase configurado
+  (desarrollo local) la puerta hace fail-open, igual que las cuotas.
+- **El reporte PDF del negocio pasa a TODOS los planes** (`download_reports` →
+  Básico): lo que se reserva para Analista es la descarga de la base LIMPIA.
+- **Cupo de limpieza dirigida por plan**: de 2/mes a **10/mes (Analista)** y
+  **25/mes (Gold)** (`AI_CLEANING_MONTHLY_LIMIT`, `AI_CLEANING_MONTHLY_LIMIT_GOLD`),
+  siempre + tokens addon. La interpretación consume pocos tokens por intento; con 10
+  el plan se siente útil sin riesgo de costo.
+- **Limpieza de datos rediseñada, sin espacio muerto**: los pasos pasaron de columna
+  lateral a **barra horizontal compacta**, el mapeo de columnas se extendió a lo
+  ancho (2–5 columnas según pantalla) y la vista previa usa todo el ancho útil.
+- **"Descargar base actualizada" con protagonismo propio**: tarjeta dedicada con
+  botón primario (antes era un botón secundario pequeño), CSV al lado y "Continuar"
+  en la misma fila.
+- **Más color, sin estridencia**: tonos suaves (gradientes al 4–8%) en las tarjetas
+  de Resumen (tinte del color de cada KPI), Limpieza, Estandarización y el panel
+  admin; el blanco sigue mandando.
+
+### Seguridad
+- `admin_audit` (migración `0010`): todo cambio manual del administrador (plan,
+  créditos, soporte atendido) queda registrado con quién, a quién y cuándo.
+- Los endpoints `/admin/*` validan `is_admin` en el backend en cada llamada (la UI
+  solo esconde el ítem del menú; la puerta real está en la API).
+
+### Verificado
+- **80 tests de la API en verde** (18 nuevos de Fase 8: admin 403/503, set-plan con
+  auditoría, soporte, retención con keep-last intocable, dimensiones de /metrics,
+  moneda/porcentaje/negativo contable, fila de totales) + build de producción OK.
+- **E2E Playwright x2**: (1) pipeline completo con limpieza dirigida, descarga xlsx,
+  modal de ayuda y Planes; (2) archivo mínimo sin canal/costos/categoría → Resumen
+  sin tarjetas vacías, Explorar sin presets imposibles y fila "Total" excluida de
+  los ingresos.
+
+## [0.8.1] - 2026-07-08 - Examen de calidad post-Fase 7
+
+### Corregido
+- **Caché del pipeline redimensionado para Render free (512 MB)**: de 4 entradas ×
+  1,5M celdas (podía superar la RAM del plan) a 3 × 600k celdas (~150 MB peor caso).
+
+### Agregado
+- **Indicadores Clave del Resumen ahora son operativos y reales**: Ticket promedio,
+  Transacciones, Unidades vendidas, Mejor mes, Crecimiento del periodo, Tendencia
+  mensual y Margen — calculados de los datos del archivo (la pared de "—" de ROA/ROE
+  pasó a una nota compacta hasta conectar datos de balance).
+- **Línea de promedio de ingresos** en el gráfico de evolución (lectura instantánea:
+  sobre/bajo el promedio del periodo).
+- **Reporte de calidad con muestras de valores problemáticos** (hasta 3 por columna,
+  fechas inválidas y tipos incorrectos): el insumo exacto que necesitará el refinado
+  IA para "terminar el 20%" sin re-leer el archivo.
+
+### Verificado (examen de calidad)
+- 57 tests de la API en verde, build de producción OK y E2E Playwright completo:
+  pipeline, limpieza dirigida por variables (aplicada de verdad), descarga de base
+  limpia .xlsx con celdas marcadas, página Planes y dashboard.
+- `/metrics` maneja correctamente los nulos preservados (dropna en todos los
+  agregados) — el cambio de no-imputación es seguro para los KPIs.
+
+## [0.8.0] - 2026-07-07 - Fase 7: Planes, limpieza dirigida y motor profesional
+
+### Agregado
+- **Modelo de tres planes** (`basico | analista | gold`): migración `0008` renombra los
+  `gold` legacy a `analista`; Gold pasa a ser el tercer plan "en construcción" (conexión
+  a bases SQL + comunidad). Matriz única de capacidades en `api/app/capabilities.py`,
+  espejada en `frontend/src/lib/plans.ts`.
+- **Interruptor global `PLAN_ENFORCEMENT`** (backend) + `VITE_PLAN_ENFORCEMENT`
+  (frontend), **apagado en Fase 7**: todo accesible para probar, con cada puerta ya
+  instalada (403/candados listos para encender sin tocar componentes).
+- **Página Planes** (`/planes`, nuevo ítem del sidebar): 3 tarjetas con sus features
+  desde la matriz única, Gold con badge "En construcción" (SQL + comunidad), y sección
+  **"Tokens de limpieza dirigida (addons)"** con el cupo del mes, el saldo de tokens y
+  el botón **"Solicitar más"** (`POST /addons/request` → tabla `addon_requests`; ADS
+  Veris contacta al usuario).
+- **Limpieza dirigida por variables** (`POST /clean/assisted`, planes Analista/Gold):
+  chat horizontal en la parte inferior de Limpieza — el usuario escribe qué columnas y
+  reglas quiere ("limpia Fecha y Ventas, no toques Cliente") y un segundo botón
+  **"Limpiar con mis variables"** corre el motor dirigido. **2 intentos base al mes**
+  (`AI_CLEANING_MONTHLY_LIMIT`) + **tokens addon** (ledger `plan_addons`, migración
+  `0009`): advertencia visible de intentos, 429 con CTA a Planes al agotarse, y 422
+  SIN consumir el intento si las instrucciones no se reconocen.
+- **Costuras IA preparadas y APAGADAS** (un solo `# TODO IA` cada una):
+  `interpret_cleaning_instructions` (hoy determinista: columnas + catálogo acotado de
+  reglas) y `refine_with_ai` (paso final opcional del pipeline, flag
+  `AI_REFINE_ENABLED=false`). Activar la IA será reemplazar el cuerpo, no el pipeline.
+- **`POST /admin/grant-credits`** (solo `profiles.is_admin`, migración `0008`): otorga
+  tokens a mano insertando en el ledger `plan_addons` (alternativa por SQL documentada
+  en el README). **`GET /plans/usage`**: cupos de insights + limpieza + addons.
+- **Mapeo de columnas editable** (§5.10): tarjeta en Limpieza para corregir el rol de
+  cada columna; lo respetan `/clean`, `/clean/assisted`, `/clean/download` y `/metrics`
+  (en toda la app vía `DatasetContext`), con persistencia best-effort en
+  `dataset_columns` (policy de update en `0008`).
+- Tests de la API: **57 pruebas** (24 nuevas: matriz y enforcement on/off, cupo de
+  limpieza 429/addons, `/clean/assisted` dirigido/422/429, `/plans/usage`,
+  `/addons/request`, `/admin/grant-credits`, y las mejoras del motor).
+
+### Motor de datos — mejoras profesionales (§5)
+- **Los nulos numéricos ya NO se imputan con 0** (§5.1): una venta faltante que se
+  volvía $0 sesgaba sumas, promedios y márgenes. Ahora quedan vacíos (NaN para
+  `/metrics`), catalogados por columna y marcados en la descarga. La calidad
+  post-limpieza mide problemas estructurales pendientes; los nulos preservados por
+  diseño quedan en el reporte de calidad.
+- **Outliers IQR solo en roles métricos** (monto/costo/cantidad, §5.3): nunca sobre
+  IDs, RUT, folios ni años.
+- **Duplicados con criterio explícito** (§5.2): detección por fila completa
+  normalizada + **advertencia** cuando el archivo no trae columna identificadora
+  (dos ventas legítimamente idénticas no se pueden distinguir — se avisa en vez de
+  borrar en silencio; se optó por advertir sobre la clave de negocio del spec porque
+  una clave parcial borraría MÁS ventas legítimas, no menos).
+- **Detección de tipo con muestra aleatoria determinista + confianza por columna**
+  (§5.4): un archivo ordenado ya no misclasifica.
+- **Convención numérica por columna** (§5.5): "850.000" se decide por consistencia de
+  toda la columna (miles es-CL vs decimal), no celda a celda.
+- **Fechas con formato dominante por columna** (§5.6): `dayfirst` detectado (no fijo)
+  y soporte de meses en texto ("01 mayo 2026", "1 de junio de 2026").
+- **Caché del pipeline** (§5.7): cambiar el periodo del dashboard ya no re-estandariza
+  ni re-limpia el archivo (LRU por hash de contenido + reglas + mapeo, con tope de
+  celdas para proteger la memoria de Render).
+- **Fuzzy matching de typos** (§5.11): "Santigo" → "Santiago" con Levenshtein acotado
+  y guardas (frecuencias, longitud, misma inicial) para no fusionar valores legítimos.
+- **Excel multi-hoja y filas de título** (§5.12): se elige la hoja con más datos (con
+  aviso de las omitidas) y se detecta la fila real de encabezados; separador CSV
+  decidido con varias líneas.
+- **Reporte de calidad por columna** (§5.9): rol, tipo + confianza, nulos y %,
+  inválidos, outliers y convención — visible en la respuesta y listo para alimentar
+  el refinado IA.
+- Detección vectorizada de nulos y parseos por columna calculados una sola vez (§5.8).
+
+### Cambiado
+- **El panel Asistente IA solo vive en Resumen y Explorar datos** (Fase 7 §4): salió
+  del `AppShell` global; en el resto de pantallas el contenido usa todo el ancho.
+- Botones de Limpieza según el diseño de Fase 7: **"Limpiar datos"** (reglas por
+  defecto, todos los planes) arriba, y **"Limpiar con mis variables"** junto al chat.
+- La clave `correcciones.valores_nulos_a_reemplazar` pasó a
+  `valores_nulos_normalizados` (los nulos se señalizan, no se reemplazan).
+- Cuota de insights y de limpieza separadas por `kind` en `ai_usage` (los intentos de
+  limpieza no gastan el cupo del asistente y viceversa). Nueva variable
+  `AI_MONTHLY_LIMIT_ANALISTA` (la `_GOLD` queda para el plan Gold).
+- Configuración muestra también el contador de limpieza dirigida + tokens y enlaza a
+  Planes; Reportes gatea sus descargas con `download_reports` (candado + CTA cuando
+  el enforcement esté encendido).
+
+### Corregido
+- `dataset_columns` no aceptaba el rol `costo` (detectado desde la Fase 2): el check
+  se corrige en la migración `0008`.
+
+## [0.7.2] - 2026-07-05 - Microfase 6.2: preparacion comercial
+
+### Agregado
+- Matriz de capabilities por plan: Basico mantiene carga, limpieza, dashboard e IA; Analista
+  habilita descarga de base limpia, limpieza avanzada, variables custom y reportes avanzados.
+- Nuevo `POST /clean/download`: aplica limpieza y devuelve CSV/XLSX solo si el usuario tiene
+  capability `download_clean_dataset` (Plan Analista). El bloqueo vive en backend.
+- Export de base limpia neutraliza formula injection (`=`, `+`, `-`, `@`) solo en la copia
+  descargable; el dataset interno no se modifica.
+
+### Cambiado
+- La UI muestra el plan comercial como "Analista" sin migrar todavia el valor interno `gold`.
+- Historial muestra la fuente de cada dataset (`Excel / CSV` o `Google Sheets`).
+- Reportes leen `profiles.company` como fuente principal de empresa.
+
+### Corregido
+- Fallos de `activity_log` ya no hacen fallar `markStandardized()` ni `saveCleaningJob()`.
+
 ## [0.7.1] - 2026-07-04 - Microfase 6.1: estabilidad de Conectores e Historial
 
 ### Corregido

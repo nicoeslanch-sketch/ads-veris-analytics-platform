@@ -1,10 +1,28 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 6 completas — todo el roadmap del SPEC está construido.**
-La Fase 6 cierra Conectores (Google Sheets funcional) y endurece reportes y persistencia.
-La microfase 6.1 suma estabilidad: persistencia visible, origen Google Sheets, retomar con
-reglas reales de limpieza y controles de entrada del conector.
-Lo que resta es una fase opcional de operación comercial (ver "Pendiente").
+**Estado actual: Fases 0 a 10 completas.**
+La Fase 10 es el endurecimiento comercial tras el triage crítico del informe de
+calidad externo: cierra la **vulnerabilidad P0 de profiles** (migración 0011 —
+un usuario podía auto-asignarse Gold/admin vía REST), corrige la **exactitud
+financiera** (cobertura de costos, Utilidad Bruta/Resultado del Periodo en vez
+de nombres que prometían de más, moneda detectada con advertencia de mezcla,
+"vs mes anterior" calendario real, Alertas/Reportes sin heredar el mes del
+Resumen), hace el **motor más conservador** (fuzzy jamás en identificadores,
+duplicados sin ID solo exactos, scope vacío = 422, export con hoja de
+Observaciones sin contaminar datos, .xls rechazado claro, guardia anti
+ZIP-bomb, selector de hoja, diccionario auditado), y deja la app **responsive**
+(sidebar hamburguesa, asistente IA en drawer móvil sin consumo oculto de cupo,
+recuperar contraseña). Deps fijadas + CI en GitHub Actions.
+
+La Fase 8 enciende el modelo comercial (`PLAN_ENFORCEMENT` ON: base limpia y limpieza
+dirigida = Analista+, con aviso "Necesitas el Plan X → Ir a comprar el plan"), agrega el
+**panel Administrar cuentas** para la cuenta administradora (`servicios@adsveris.com`):
+todas las cuentas con semáforo de solicitudes, activación manual de planes (costura
+lista para la pasarela de pago) y bandeja de soporte del botón "¿Necesitas ayuda?".
+Además: retención de archivos por plan en Storage, cupos de limpieza dirigida 10/25 por
+mes, Explorar/Resumen adaptativos a las columnas reales del archivo, motor con monedas/
+porcentajes/negativos contables y filas de totales excluidas, y una capa de color suave
+en toda la UI. Las costuras de IA generativa siguen preparadas y APAGADAS.
 
 > Referencia rápida de qué está construido y qué viene. La especificación
 > completa vive en [`SPEC.md`](./SPEC.md).
@@ -163,15 +181,175 @@ Lo que resta es una fase opcional de operación comercial (ver "Pendiente").
   de error de `ai_usage` (típico: migración 0006 sin ejecutar).
 - Tests: **27 pruebas**.
 
-## ⏳ Pendiente (fase opcional de operación comercial)
 
-- Checkout/upgrade real de plan Gold (hoy el plan se cambia en la tabla `profiles`).
+## ✅ Fase 7 — Planes, limpieza dirigida y motor profesional (completa)
+
+**Planes y capacidades** (`api/app/capabilities.py` + `frontend/src/lib/plans.ts`):
+- Tres planes: **Básico → Analista → Gold (en construcción: SQL + comunidad)**.
+  Migración `0008` renombra los `gold` legacy a `analista`. Matriz única de
+  capacidades consumida por backend y frontend.
+- **`PLAN_ENFORCEMENT` / `VITE_PLAN_ENFORCEMENT` en `false`**: todas las funciones
+  desbloqueadas para probar; cada puerta (403 del backend, candados de la UI) ya está
+  instalada — encender el flag no requiere tocar componentes.
+- **Página Planes** (`/planes`, ítem nuevo del sidebar): 3 tarjetas desde la matriz,
+  Gold con badge "En construcción", sección de **tokens addon** con cupo del mes,
+  saldo y botón "Solicitar más" (queda en `addon_requests`; se atiende a mano).
+- Básico limpia y estandariza igual que todos, pero (con enforcement) **no descarga**
+  la base limpia ni los reportes.
+
+**Limpieza dirigida por variables** (`POST /clean/assisted`):
+- Chat horizontal al pie de Limpieza (Analista/Gold): el usuario escribe qué columnas
+  y reglas quiere y el botón **"Limpiar con mis variables"** corre el motor dirigido.
+  El botón superior **"Limpiar datos"** (reglas por defecto) sigue para todos.
+- **2 intentos base/mes** (`AI_CLEANING_MONTHLY_LIMIT`) + **tokens addon** (ledger
+  `plan_addons`, migración `0009`; saldo = suma; consumos = filas negativas del
+  sistema, auditable). Advertencia visible de intentos; 429 con CTA a Planes al
+  agotarse; instrucciones no reconocidas → 422 **sin consumir** el intento.
+- Cupos separados por `kind` en `ai_usage`: la limpieza no gasta el cupo de insights.
+- `POST /admin/grant-credits` (solo `profiles.is_admin`) otorga tokens a mano
+  (alternativa por SQL en el README). `GET /plans/usage` alimenta Planes y Configuración.
+
+**Costuras IA (preparadas, APAGADAS)**:
+- `engine/directed.py` → `interpret_cleaning_instructions` (hoy determinista:
+  columnas mencionadas + catálogo acotado de reglas; un solo `# TODO IA`).
+- `engine/ai_refine.py` → `refine_with_ai` (paso final opcional del pipeline, flag
+  `AI_REFINE_ENABLED=false`): la IA "termina el último 10–20%" cuando se active.
+
+**Motor profesional** (`api/app/engine/`):
+- Nulos numéricos **nunca imputados con 0** (quedan NaN para métricas, catalogados y
+  marcados en la descarga); outliers IQR **solo en roles métricos**; duplicados con
+  criterio explícito + advertencia sin columna ID; tipo por **muestra aleatoria
+  determinista con confianza**; convención numérica **por columna** ("850.000");
+  fechas con **dayfirst dominante** y meses en texto; **fuzzy matching** de typos;
+  **Excel multi-hoja** + detección de fila de encabezados; **caché del pipeline**
+  (cambiar el periodo no re-limpia); **reporte de calidad por columna**.
+- **Mapeo de columnas editable** en Limpieza (respetado por /clean, /metrics y
+  descargas en toda la app; persistencia best-effort en `dataset_columns`).
+
+**Layout**: el panel Asistente IA vive **solo en Resumen y Explorar datos**; el resto
+de pantallas usa todo el ancho.
+
+**Tests**: **57 pruebas** de la API (24 nuevas de la Fase 7), `npm run build` verde.
+
+## ✅ Fase 8 — Administración, soporte, gating comercial y adaptividad (completa)
+
+**Administración** (`/admin` + `api/app/routes/admin.py`, migración `0010`):
+- Cuenta administradora `servicios@adsveris.com` (`profiles.is_admin`): acceso a TODO
+  sin depender de planes (capacidades y cupos ilimitados).
+- Página **Administrar cuentas**: todas las cuentas con semáforo (🔴 solicitudes
+  pendientes / 🟢 al día), detalle con datos visibles (nunca contraseñas), **activación
+  manual de planes** y otorgamiento de tokens. Bandeja unificada de soporte + addons
+  con "marcar atendida". Todo cambio manual queda auditado en `admin_audit`.
+- **Costura de pasarela de pago**: `set_user_plan()` (backend) y `startCheckout()`
+  (frontend) son los únicos puntos a tocar cuando exista el checkout.
+
+**Soporte** (`api/app/routes/support.py`): el botón "¿Necesitas ayuda?" abre un modal
+que registra la solicitud (`support_requests`); responde una persona del equipo.
+
+**Gating comercial encendido** (`PLAN_ENFORCEMENT=true` por defecto):
+- Base limpia (Excel/CSV) y limpieza dirigida → Plan Analista+; el reporte PDF del
+  negocio es para TODOS los planes. Función bloqueada → aviso `PlanUpsell` con
+  "Ir a comprar el plan". Sin Supabase (dev) → fail-open.
+- Cupo de limpieza dirigida por plan: **10/mes Analista, 25/mes Gold** + tokens addon.
+
+**Retención de Storage** (`POST /storage/retention`, tras cada subida): tope por plan
+(10/25/50 archivos), purga de no usados > 60 días, los 5 más recientes intocables;
+datasets purgados quedan en el historial con `storage_path` null.
+
+**Adaptividad**: `/metrics` expone `dimensiones`; Explorar oculta análisis imposibles
+(sin canal → sin recuadro de canales) y Resumen muestra KPIs reales de ingresos cuando
+no hay costos (nada de tarjetas en "—"), con tarjetas de canal/categoría/productos solo
+si existen esas columnas.
+
+**Motor §5.14**: monedas ("$", "CLP", "US$", "€"), porcentajes, negativos contables
+"(1.500)" y filas de totales al final excluidas con aviso.
+
+**UI**: Limpieza rediseñada (pasos horizontales, mapeo a lo ancho, sin espacio muerto),
+botón "Descargar base actualizada" con tarjeta y botón primario propios, tonos suaves
+en Resumen/Limpieza/Estandarización/Admin.
+
+**Tests**: **80 pruebas** de la API (18 nuevas de Fase 8), build verde y 2 E2E
+Playwright (pipeline completo + adaptividad con archivo mínimo).
+
+
+## ✅ Fase 9 — Mapeo universal: diccionario de roles y biblioteca de prompts (completa)
+
+**El problema**: el mapeo automático usaba ~40 palabras clave fijas para 10
+roles. Insuficiente para limpiar "cualquier" base de datos PyME.
+
+**La solución** (dos activos de datos + tres módulos):
+- `api/app/data/palabras_clave_roles.csv` — **≈15.600 claves únicas, 64 roles,
+  12 grupos** (es-CL + inglés, abreviaturas, RUT/DTE/UF/AFP, plurales y
+  compuestos reales). La columna `rol_motor_actual` marca la equivalencia
+  segura con los 10 roles del motor: el CSV mejora el mapeo HOY y deja listos
+  54 roles extendidos (rut, email, saldo, precio_unitario, stock, ...) para
+  cuando el motor de métricas los consuma.
+- `engine/dictionary.py` — matching en 4 etapas (exacto → contención por
+  tokens → prefijo → fuzzy Levenshtein), empates por largo y prioridad, carga
+  única + memoización.
+- `mapping.py` en dos pasadas — diccionario primero, **palabras clave legacy
+  como red de compatibilidad** para roles vacíos: cero regresiones (los 80
+  tests previos pasan intactos) y más precisión cuando existe una columna
+  mejor ("Total Neto" gana monto; "Precio Unitario" ya no se suma como ingreso).
+- `api/app/data/prompts_estandarizacion_por_rol.txt` + `engine/prompt_library.py`
+  — biblioteca de prompts por grupo de roles con catálogo acotado (la IA
+  decide/corrige residuos y devuelve JSON validable; el motor transforma).
+  Incluye el clasificador de columnas sin match ([PROMPT B]) y el prompt de
+  refinado global ([PROMPT C], interfaz exacta de `refine_with_ai`).
+- `engine/ai_classifier.py` — costura del clasificador IA, **preparada y
+  APAGADA** (`AI_CLASSIFIER_ENABLED=false`): el fallback que convierte el
+  diccionario finito en cobertura universal cuando se encienda.
+
+**API**: `/standardize` expone `mapeo_extendido` (rol, método, confianza por
+columna); el `reporte_calidad` de `/clean` suma `rol_extendido`, `grupo_rol` y
+`match_diccionario`.
+
+**Tests**: 97 en verde (17 nuevos de la Fase 9).
+
+## ✅ Fase 10 — Endurecimiento comercial (completa)
+
+Ver el detalle en `CHANGELOG.md` [0.11.0]. Resumen: migración **0011** (P0:
+plan/is_admin ya no editables por `authenticated`), cobertura de costos y
+nombres financieros honestos, moneda detectada, comparación mensual calendario,
+fix del contexto de periodo, fuzzy sin identificadores, duplicados seguros sin
+ID, scope estricto, export con hoja Observaciones, guardias de carga (.xls
+fuera, anti ZIP-bomb), selector de hoja end-to-end, 60 entradas del diccionario
+reclasificadas + test de auditoría, responsive completo (hamburguesa + drawer
+IA sin consumo oculto), recuperar contraseña, anti-spam de soporte, créditos
+auditados, deps fijadas y CI. **118 tests + build + 2 E2E.**
+
+## ⏳ Pendiente (Fase 11 sugerida — operación comercial)
+
+- **Pasarela de pago** (Webpay/Flow/MercadoPago): reemplazar `startCheckout()` y
+  llamar `set_user_plan(source="pasarela")` desde el webhook. La activación manual
+  del admin queda como respaldo.
+- Encender el clasificador IA de columnas (`AI_CLASSIFIER_ENABLED`) y conectar
+  los prompts de grupo a los residuos por columna (`ejemplos_invalidos` del
+  reporte de calidad) — la biblioteca de prompts ya está en el repo.
+- Consumir los roles extendidos del diccionario (rut, email, saldo,
+  precio_unitario, stock, ...) en métricas y validaciones específicas por rol.
+- Activar las costuras IA del motor: `interpret_cleaning_instructions` (interpretación
+  libre por IA) y `refine_with_ai` (`AI_REFINE_ENABLED`) — un prompt cada una.
+- Notificación por correo al admin cuando llega una solicitud de soporte (hoy: semáforo
+  en Administrar cuentas).
 - Vigilancia continua de Alertas (evaluación programada + correo/notificaciones).
 - Conector SQL / integraciones POS-facturación (Bsale, Defontana, Jumpseller, Shopify).
 - Reportes generados en backend (.xlsx real y PDF descargable).
 - Cuota IA con control atómico en BD (hoy check-then-record: una ráfaga simultánea
-  justo en el límite puede excederlo por unas pocas consultas).
-- Deuda técnica: transporte por `dataset_id` (hoy `storage_path` validado por prefijo).
+  justo en el límite puede excederlo por unas pocas consultas). Aplica también al
+  cupo de limpieza dirigida.
+- Cuotas atómicas por RPC SQL y persistencia transaccional del pipeline
+  (estandarización/limpieza/mapeo hoy son pasos best-effort encadenados).
+- Paginación y agregaciones SQL del panel Administrar cuentas (hoy tope de
+  200 cuentas leídas por request).
+- Correo transaccional de soporte y de cambio de plan (hoy: bandeja +
+  "Mis solicitudes" en el modal de ayuda).
+- Benchmark del diccionario con precision/recall por rol sobre un corpus real
+  de encabezados PyME etiquetado a mano.
+- Términos y condiciones, política de privacidad formal, eliminación de cuenta
+  y MFA (requisitos legales del lanzamiento amplio).
+- Deuda técnica: transporte por `dataset_id` (hoy `storage_path` validado por prefijo);
+  purga de Storage programada en el servidor (hoy: opportunista al subir).
 
 ## Comandos para correr el proyecto
 
@@ -202,6 +380,11 @@ python -m pytest tests/ -v
 #   supabase/migrations/0004_analyses.sql
 #   supabase/migrations/0005_rls_dataset_ownership.sql
 #   supabase/migrations/0006_ai_usage.sql
+#   supabase/migrations/0007_public_table_grants.sql
+#   supabase/migrations/0008_plans.sql          (Fase 7: 3 planes + is_admin)
+#   supabase/migrations/0009_cleaning_credits.sql (Fase 7: tokens y solicitudes)
+#   supabase/migrations/0010_admin_support.sql  (Fase 8: admin, soporte y auditoría)
+#   supabase/migrations/0011_lock_privileged_columns.sql (Fase 10: P0 — plan/is_admin solo backend)
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

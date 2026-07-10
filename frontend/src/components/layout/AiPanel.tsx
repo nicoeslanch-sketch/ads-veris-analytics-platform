@@ -29,7 +29,15 @@ interface Summary {
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
-export default function AiPanel() {
+export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'drawer' } = {}) {
+  // 'panel': columna fija de escritorio (xl+). 'drawer': cajón móvil.
+  // El montaje lo decide AppShell — si este componente está montado, ES
+  // visible, y solo entonces genera el resumen IA (Fase 10 §9.1: jamás
+  // consumir cupo con el panel oculto).
+  const asideClass =
+    variant === 'drawer'
+      ? 'flex h-full w-full flex-col bg-navy-deep text-white shadow-2xl'
+      : 'flex h-full w-80 shrink-0 flex-col bg-navy-deep text-white'
   const {
     cleaning,
     metrics: contextMetrics,
@@ -37,6 +45,8 @@ export default function AiPanel() {
     datasetId,
     storagePath,
     uploadedAt,
+    mappingOverride,
+    sheet,
     setMetrics: setContextMetrics,
   } = useDataset()
   const active = Boolean(cleaning && file)
@@ -72,7 +82,11 @@ export default function AiPanel() {
       let m = metricsArg
       if (!m) {
         setLoadingLabel('Calculando indicadores…')
-        m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg))
+        const fields: Record<string, string> = {
+          ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
+          ...(sheet ? { sheet } : {}),
+        }
+        m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg, fields))
         localMetrics.current = m
         setContextMetrics(m)
       } else {
@@ -179,7 +193,7 @@ export default function AiPanel() {
   // ── Render: BLOQUEADO ────────────────────────────────────────────────────
   if (!active) {
     return (
-      <aside className="hidden h-full w-80 shrink-0 flex-col bg-navy-deep text-white xl:flex">
+      <aside className={asideClass}>
         <PanelHeader />
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/5">
@@ -203,7 +217,7 @@ export default function AiPanel() {
   // ── Render: CARGANDO ─────────────────────────────────────────────────────
   if (loading) {
     return (
-      <aside className="hidden h-full w-80 shrink-0 flex-col bg-navy-deep text-white xl:flex">
+      <aside className={asideClass}>
         <PanelHeader />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <Loader2 className="h-7 w-7 animate-spin text-teal" />
@@ -217,7 +231,7 @@ export default function AiPanel() {
   // ── Render: ERROR ────────────────────────────────────────────────────────
   if (error) {
     return (
-      <aside className="hidden h-full w-80 shrink-0 flex-col bg-navy-deep text-white xl:flex">
+      <aside className={asideClass}>
         <PanelHeader />
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-coral/10">
@@ -246,7 +260,7 @@ export default function AiPanel() {
 
   // ── Render: ACTIVO ───────────────────────────────────────────────────────
   return (
-    <aside className="hidden h-full w-80 shrink-0 flex-col bg-navy-deep text-white xl:flex">
+    <aside className={asideClass}>
       <PanelHeader />
 
       {/* Cuerpo con scroll */}

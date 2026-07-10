@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
+import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
 
 type Mode = 'login' | 'register'
@@ -25,6 +26,22 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false)
 
   if (session) return <Navigate to="/" replace />
+
+  // Fase 10 §15.3: recuperar contraseña — Supabase envía el enlace por correo.
+  const handleForgotPassword = async () => {
+    setError(null)
+    setNotice(null)
+    if (!email.trim()) {
+      setError('Escribe tu correo arriba y vuelve a presionar "¿Olvidaste tu contraseña?".')
+      return
+    }
+    if (!supabase) return
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: window.location.origin,
+    })
+    if (err) setError(err.message)
+    else setNotice('Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.')
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -191,16 +208,25 @@ export default function Login() {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-navy">
-                Contraseña
-              </label>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="block text-sm font-medium text-navy">Contraseña</label>
+                {mode === 'login' && (
+                  <button
+                    type="button"
+                    onClick={() => void handleForgotPassword()}
+                    className="text-xs font-medium text-teal hover:underline"
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                )}
+              </div>
               <input
                 required
                 type="password"
-                minLength={6}
+                minLength={mode === 'register' ? 8 : 6}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Mínimo 6 caracteres"
+                placeholder={mode === 'register' ? 'Mínimo 8 caracteres' : 'Tu contraseña'}
                 className={inputClass}
               />
             </div>

@@ -28,6 +28,7 @@ export interface ActivityRow {
 export interface DatasetRow {
   id: string
   name: string
+  source: string
   storage_path: string | null
   rows: number | null
   columns: number | null
@@ -68,7 +69,7 @@ export async function fetchDatasets(limit = 20): Promise<FetchOutcome<DatasetRow
   if (!supabase || !(await hasSession())) return null
   const { data, error } = await supabase
     .from('datasets')
-    .select('id, name, storage_path, rows, columns, status, quality, created_at')
+    .select('id, name, source, storage_path, rows, columns, status, quality, created_at')
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) {

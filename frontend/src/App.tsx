@@ -12,7 +12,9 @@ import Historial from './pages/Historial'
 import Conectores from './pages/Conectores'
 import Alertas from './pages/Alertas'
 import Reportes from './pages/Reportes'
+import Planes from './pages/Planes'
 import Configuracion from './pages/Configuracion'
+import AdminCuentas from './pages/AdminCuentas'
 
 export default function App() {
   return (
@@ -31,7 +33,9 @@ export default function App() {
               <Route path="/conectores" element={<Conectores />} />
               <Route path="/alertas" element={<Alertas />} />
               <Route path="/reportes" element={<Reportes />} />
+              <Route path="/planes" element={<Planes />} />
               <Route path="/configuracion" element={<Configuracion />} />
+              <Route path="/admin" element={<AdminCuentas />} />
             </Route>
           </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

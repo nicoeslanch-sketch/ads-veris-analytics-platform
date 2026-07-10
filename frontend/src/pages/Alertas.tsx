@@ -228,7 +228,7 @@ export default function Alertas() {
       <>
         <PageHeader
           title="Alertas"
-          subtitle="Tu sistema de aviso temprano: vigilancia automática y preventiva de tu negocio."
+          subtitle="Tu sistema de aviso temprano: las reglas se evalúan con tus datos cada vez que abres esta página."
         />
         <EmptyState
           icon={Bell}
@@ -256,7 +256,7 @@ export default function Alertas() {
     <>
       <PageHeader
         title="Alertas"
-        subtitle="Tu sistema de aviso temprano: vigilancia automática y preventiva de tu negocio."
+        subtitle="Tu sistema de aviso temprano: las reglas se evalúan con tus datos cada vez que abres esta página."
       />
 
       {error && (

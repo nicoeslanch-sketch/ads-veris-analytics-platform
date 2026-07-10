@@ -1,11 +1,33 @@
-"""Mapeo automatico de columnas al esquema normalizado del negocio (SPEC §5).
+"""Mapeo automático de columnas al esquema normalizado del negocio (SPEC §5 + Fase 9).
 
-Detecta por nombre de encabezado que columna cumple cada rol
-(fecha, cliente, producto, categoria, monto, cantidad, canal, sucursal, vendedor).
+Detecta por nombre de encabezado qué columna cumple cada rol del MOTOR
+(fecha, monto, costo, cantidad, producto, categoria, cliente, canal,
+sucursal, vendedor) — los 10 roles que alimentan métricas y limpieza.
+
+Fase 9 — mapeo universal en dos pasadas:
+1. **Diccionario** (`engine/dictionary.py`, ≈15.600 claves, 64 roles): cada
+   columna se matchea (exacto → contención → prefijo → fuzzy) y, si su rol
+   extendido tiene equivalencia segura con un rol del motor (`rol_motor` del
+   CSV), esa columna gana el rol. Es mucho más preciso: "Total Neto Factura",
+   "qty shipped" o "Fec_Emision" se reconocen sin tocar código.
+2. **Compatibilidad legacy**: para los roles del motor que queden vacíos se
+   corre la lista original de palabras clave sobre las columnas aún libres.
+   Esto preserva el comportamiento histórico (ej: un archivo cuyo único campo
+   de dinero es "Precio" sigue alimentando `monto`; "Región" sigue cayendo en
+   `sucursal` si no hay una sucursal real), y el diccionario solo mejora la
+   precisión cuando existe una columna mejor.
+
+`detect_columns_extended` expone además el rol EXTENDIDO por columna (64
+roles: rut, email, saldo, precio_unitario, etc.) con el método y la confianza
+del match — visible en el reporte de calidad y en /standardize, e insumo del
+clasificador IA (costura Fase 9) y de la biblioteca de prompts.
 """
 
 import re
 import unicodedata
+
+from . import dictionary
+from .dictionary import DictMatch
 
 
 def strip_accents_lower(value: str) -> str:
@@ -14,11 +36,11 @@ def strip_accents_lower(value: str) -> str:
 
 
 def norm_key(value: str) -> str:
-    """Clave de comparacion agresiva: solo letras y digitos, sin acentos, minusculas."""
+    """Clave de comparación agresiva: solo letras y dígitos, sin acentos, minúsculas."""
     return re.sub(r"[^a-z0-9]", "", strip_accents_lower(str(value)))
 
 
-# Abreviaciones societarias chilenas: mapeo DESPUES de norm_key.
+# Abreviaciones societarias chilenas: mapeo DESPUÉS de norm_key.
 _ENTITY_ABBREVS: tuple[tuple[str, str], ...] = (
     ("limitada", "ltda"),
     ("sociedadanonima", "sa"),
@@ -29,7 +51,7 @@ _ENTITY_ABBREVS: tuple[tuple[str, str], ...] = (
 
 
 def dedup_norm_key(value: str) -> str:
-    """norm_key + normalizacion de abreviaciones societarias chilenas.
+    """norm_key + normalización de abreviaciones societarias chilenas.
     Hace que 'Santiago Limitada' y 'SANTIAGO LTDA' produzcan la misma clave."""
     key = norm_key(value)
     for full, abbrev in _ENTITY_ABBREVS:
@@ -37,6 +59,7 @@ def dedup_norm_key(value: str) -> str:
     return key
 
 
+# Palabras clave LEGACY (red de compatibilidad, segunda pasada).
 # El orden importa: el primer rol que matchea se queda con la columna.
 ROLE_KEYWORDS: list[tuple[str, list[str]]] = [
     ("fecha", ["fecha", "date", "periodo", "emision"]),
@@ -51,13 +74,43 @@ ROLE_KEYWORDS: list[tuple[str, list[str]]] = [
     ("vendedor", ["vendedor", "ejecutivo", "seller", "representante"]),
 ]
 
+ENGINE_ROLES: tuple[str, ...] = tuple(role for role, _ in ROLE_KEYWORDS)
+
+_METHOD_RANK = {"exacto": 4, "contencion": 3, "prefijo": 2, "fuzzy": 1, "ia": 1}
+
+
+def detect_columns_extended(columns: list[str]) -> dict[str, DictMatch]:
+    """Rol extendido (64 roles) por columna, según el diccionario Fase 9."""
+    return dictionary.match_columns([str(c) for c in columns])
+
 
 def detect_column_roles(columns: list[str]) -> dict[str, str]:
-    """Devuelve {rol: nombre_de_columna} para las columnas reconocidas."""
+    """Devuelve {rol_del_motor: nombre_de_columna} para las columnas reconocidas."""
     mapping: dict[str, str] = {}
     taken: set[str] = set()
+    matches = detect_columns_extended(columns)
+
+    # ── Pasada 1: diccionario (rol_motor con equivalencia segura) ──
+    for role in ENGINE_ROLES:
+        best: tuple[tuple[int, int, int], str] | None = None
+        for index, col in enumerate(columns):
+            if col in taken:
+                continue
+            match = matches.get(col)
+            if not match or match.rol_motor != role:
+                continue
+            rank = (_METHOD_RANK.get(match.metodo, 0), match.prioridad, -index)
+            if best is None or rank > best[0]:
+                best = (rank, col)
+        if best:
+            mapping[role] = best[1]
+            taken.add(best[1])
+
+    # ── Pasada 2: compatibilidad legacy para roles aún vacíos ──
     normalized = {col: re.sub(r"\s+", " ", strip_accents_lower(col)) for col in columns}
     for role, keywords in ROLE_KEYWORDS:
+        if role in mapping:
+            continue
         for col in columns:
             if col in taken:
                 continue

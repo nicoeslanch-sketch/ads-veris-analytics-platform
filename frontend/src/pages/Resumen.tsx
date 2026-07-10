@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
+  Coins,
   HeartPulse,
+  Info,
   LayoutDashboard,
   Loader2,
   Percent,
+  Receipt,
   TrendingUp,
   Upload,
   Wallet,
@@ -20,6 +23,7 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -36,15 +40,54 @@ import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMont
 import { formatCLP, formatNumber } from '../lib/format'
 import type { MetricsResult } from '../lib/types'
 
-const RATIO_LABELS: Array<{ key: string; label: string }> = [
-  { key: 'roa', label: 'ROA (Retorno sobre activos)' },
-  { key: 'roe', label: 'ROE (Retorno sobre patrimonio)' },
-  { key: 'liquidez_corriente', label: 'Ratio de Liquidez Corriente' },
-  { key: 'prueba_acida', label: 'Prueba ácida' },
-  { key: 'rotacion_inventario', label: 'Rotación de Inventario' },
-  { key: 'dias_cobro', label: 'Días de Cobro Promedio' },
-  { key: 'dias_pago', label: 'Días de Pago Promedio' },
-]
+/** Indicadores operativos del negocio, calculados de los datos reales del
+ * archivo (los ratios de balance —ROA, ROE, liquidez— requieren conectar
+ * datos de balance y quedan como nota hasta entonces). */
+function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; value: string; hint?: string }> {
+  const kpis = m.kpis
+  const evo = m.evolucion_mensual
+  const items: Array<{ label: string; value: string; hint?: string }> = []
+
+  items.push({ label: 'Ticket promedio', value: formatCLP(kpis.ticket_promedio), hint: 'por venta' })
+  items.push({ label: 'Transacciones', value: formatNumber(kpis.transacciones), hint: 'en el periodo' })
+  if (kpis.unidades_totales != null) {
+    items.push({ label: 'Unidades vendidas', value: formatNumber(kpis.unidades_totales) })
+  }
+  if (evo.length >= 2) {
+    const best = evo.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
+    items.push({
+      label: 'Mejor mes',
+      value: formatMonthShort(best.mes),
+      hint: formatCLP(best.ingresos),
+    })
+    const first = evo[0]
+    if (first.ingresos > 0) {
+      const totalGrowth = ((evo[evo.length - 1].ingresos - first.ingresos) / first.ingresos) * 100
+      items.push({
+        label: 'Crecimiento del periodo',
+        value: `${totalGrowth >= 0 ? '+' : ''}${formatNumber(Math.round(totalGrowth * 10) / 10)}%`,
+        hint: `${formatMonthShort(first.mes)} → ${formatMonthShort(evo[evo.length - 1].mes)}`,
+      })
+    }
+  }
+  if (m.proyeccion) {
+    const g = m.proyeccion.crecimiento_pct
+    items.push({
+      label: 'Tendencia mensual',
+      value: `${g >= 0 ? '+' : ''}${formatNumber(Math.round(g * 10) / 10)}%`,
+      hint: 'crecimiento promedio',
+    })
+  }
+  const margen = kpis.margen_utilidad_pct?.valor
+  if (margen != null) {
+    items.push({
+      label: 'Margen del periodo',
+      value: `${formatNumber(Math.round(margen * 10) / 10)}%`,
+      hint: 'utilidad / ingresos',
+    })
+  }
+  return items.slice(0, 7)
+}
 
 function Variation({
   pct,
@@ -107,7 +150,8 @@ function ChartTooltip({
 
 export default function Resumen() {
   const { user } = useAuth()
-  const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics } = useDataset()
+  const location = useLocation()
+  const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet } = useDataset()
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -118,6 +162,10 @@ export default function Resumen() {
   const firstName =
     ((user?.user_metadata?.full_name as string | undefined) ?? '').trim().split(' ')[0] || null
   const ready = Boolean(file && cleaning)
+  const resumeWarning =
+    typeof (location.state as { resumeWarning?: unknown } | null)?.resumeWarning === 'string'
+      ? ((location.state as { resumeWarning: string }).resumeWarning)
+      : null
 
   useEffect(() => {
     if (!file || !cleaning) return
@@ -128,18 +176,22 @@ export default function Resumen() {
       lastDatasetKey.current = datasetKey
       defaultPeriodSet.current = false
     }
-    const key = `${datasetKey}|${period.from}|${period.to}`
+    const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     setLoading(true)
     setError(null)
     const fields: Record<string, string> = {}
+    if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
+    if (sheet) fields.sheet = sheet
     if (period.from) fields.date_from = period.from
     if (period.to) fields.date_to = period.to
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
       .then((result) => {
         setMetrics(result)
-        setContextMetrics(result)
+        // El contexto compartido (Alertas/Reportes/IA) solo cachea métricas
+        // del periodo COMPLETO — jamás el mes filtrado del Resumen (Fase 10 §5).
+        if (!period.from && !period.to) setContextMetrics(result)
         const months = result.periodo.meses_disponibles
         setMonthsAvailable(months)
         // Al entrar por primera vez, seleccionar el último mes con datos
@@ -153,7 +205,7 @@ export default function Resumen() {
         setError(err instanceof ApiError ? err.message : 'No se pudieron calcular las métricas.'),
       )
       .finally(() => setLoading(false))
-  }, [file, datasetId, storagePath, cleaning, uploadedAt, period, setMonthsAvailable, setPeriod])
+  }, [file, datasetId, storagePath, cleaning, uploadedAt, period, sheet, setMonthsAvailable, setPeriod])
 
   if (!ready) {
     return (
@@ -198,53 +250,93 @@ export default function Resumen() {
           : ((m[key] ?? null) as number | null),
     }))
 
+  // Fase 8: los KPIs se adaptan al archivo. Con columna de costos se muestran
+  // ganancia/margen/flujo; sin ella, indicadores REALES de ingresos en vez de
+  // tres tarjetas vacías con "—".
   const kpiCards = kpis
-    ? [
-        {
-          label: 'Ingresos Totales',
-          icon: Wallet,
-          color: CHART.ingresos,
-          value: formatCLP(kpis.ingresos_totales.valor),
-          variation: <Variation pct={kpis.ingresos_totales.variacion_pct} suffix="vs mes anterior" />,
-          spark: sparkOf('ingresos'),
-        },
-        {
-          label: 'Ganancia Neta',
-          icon: BarChart3,
-          color: CHART.gastos,
-          value: kpis.ganancia_neta ? formatCLP(kpis.ganancia_neta.valor) : '—',
-          variation: kpis.ganancia_neta ? (
-            <Variation pct={kpis.ganancia_neta.variacion_pct} suffix="vs mes anterior" />
-          ) : (
-            <p className="text-xs text-navy/40">Requiere columna de costos</p>
-          ),
-          spark: sparkOf('utilidad'),
-        },
-        {
-          label: 'Margen de Utilidad',
-          icon: Percent,
-          color: CHART.utilidad,
-          value: margin !== null ? `${formatNumber(margin)}%` : '—',
-          variation: kpis.margen_utilidad_pct ? (
-            <Variation pct={kpis.margen_utilidad_pct.variacion_puntos} suffix="vs mes anterior" points />
-          ) : (
-            <p className="text-xs text-navy/40">Requiere columna de costos</p>
-          ),
-          spark: sparkOf('margen'),
-        },
-        {
-          label: 'Flujo de Caja',
-          icon: TrendingUp,
-          color: CHART.flujo,
-          value: kpis.flujo_caja ? formatCLP(kpis.flujo_caja.valor) : '—',
-          variation: kpis.flujo_caja ? (
-            <Variation pct={kpis.flujo_caja.variacion_pct} suffix="vs mes anterior" />
-          ) : (
-            <p className="text-xs text-navy/40">Requiere columna de costos</p>
-          ),
-          spark: sparkOf('utilidad'),
-        },
-      ]
+    ? hasCosts
+      ? [
+          {
+            label: 'Ingresos Totales',
+            icon: Wallet,
+            color: CHART.ingresos,
+            value: formatCLP(kpis.ingresos_totales.valor),
+            variation: <Variation pct={kpis.ingresos_totales.variacion_pct} suffix="vs mes anterior" />,
+            spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Utilidad Bruta',
+            icon: BarChart3,
+            color: CHART.gastos,
+            value: kpis.ganancia_neta ? formatCLP(kpis.ganancia_neta.valor) : '—',
+            variation: kpis.ganancia_neta ? (
+              <Variation pct={kpis.ganancia_neta.variacion_pct} suffix="vs mes anterior" />
+            ) : (
+              <p className="text-xs text-navy/40">Requiere columna de costos</p>
+            ),
+            spark: sparkOf('utilidad'),
+          },
+          {
+            label: 'Margen Bruto',
+            icon: Percent,
+            color: CHART.utilidad,
+            value: margin !== null ? `${formatNumber(margin)}%` : '—',
+            variation: kpis.margen_utilidad_pct ? (
+              <Variation pct={kpis.margen_utilidad_pct.variacion_puntos} suffix="vs mes anterior" points />
+            ) : (
+              <p className="text-xs text-navy/40">Requiere columna de costos</p>
+            ),
+            spark: sparkOf('margen'),
+          },
+          {
+            label: 'Resultado del Periodo',
+            icon: TrendingUp,
+            color: CHART.flujo,
+            value: kpis.flujo_caja ? formatCLP(kpis.flujo_caja.valor) : '—',
+            variation: kpis.flujo_caja ? (
+              <Variation pct={kpis.flujo_caja.variacion_pct} suffix="vs mes anterior" />
+            ) : (
+              <p className="text-xs text-navy/40">Requiere columna de costos</p>
+            ),
+            spark: sparkOf('utilidad'),
+          },
+        ]
+      : [
+          {
+            label: 'Ingresos Totales',
+            icon: Wallet,
+            color: CHART.ingresos,
+            value: formatCLP(kpis.ingresos_totales.valor),
+            variation: <Variation pct={kpis.ingresos_totales.variacion_pct} suffix="vs mes anterior" />,
+            spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Ticket Promedio',
+            icon: Coins,
+            color: CHART.utilidad,
+            value: formatCLP(kpis.ticket_promedio),
+            variation: <p className="text-xs text-navy/40">por transacción</p>,
+            spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Transacciones',
+            icon: Receipt,
+            color: CHART.gastos,
+            value: formatNumber(kpis.transacciones),
+            variation: <p className="text-xs text-navy/40">en el periodo</p>,
+            spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Tendencia Mensual',
+            icon: TrendingUp,
+            color: CHART.flujo,
+            value: metrics?.proyeccion
+              ? `${metrics.proyeccion.crecimiento_pct >= 0 ? '+' : ''}${formatNumber(metrics.proyeccion.crecimiento_pct)}%`
+              : '—',
+            variation: <p className="text-xs text-navy/40">crecimiento promedio</p>,
+            spark: sparkOf('ingresos'),
+          },
+        ]
     : []
 
   const canal = metrics?.ventas_por_canal ?? []
@@ -275,16 +367,27 @@ export default function Resumen() {
         </div>
       )}
 
+      {resumeWarning && (
+        <div className="mb-6 flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 text-sm text-navy/80">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+          <p>{resumeWarning}</p>
+        </div>
+      )}
+
       {loading && !metrics ? (
         <div className="flex items-center gap-3 py-20 text-sm text-navy/60">
           <Loader2 className="h-5 w-5 animate-spin text-teal" /> Calculando indicadores...
         </div>
       ) : metrics && kpis ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
-          {/* KPIs */}
+          {/* KPIs (con tono suave del color de cada indicador) */}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {kpiCards.map(({ label, icon: Icon, color, value, variation, spark }) => (
-              <Card key={label} className="!p-4">
+              <Card
+                key={label}
+                className="!p-4"
+                style={{ background: `linear-gradient(135deg, ${color}0d, #ffffff 55%)` }}
+              >
                 <div className="flex items-center gap-2">
                   <span
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
@@ -302,6 +405,35 @@ export default function Resumen() {
               </Card>
             ))}
           </div>
+
+          {!hasCosts && (
+            <div className="mt-4 flex items-start gap-2 rounded-lg border border-teal/25 bg-teal/[0.05] px-4 py-2.5 text-xs text-navy/65">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" />
+              <p>
+                Tu archivo no trae una columna de <strong>costos</strong>: agrégala (o asígnala en
+                el mapeo de Limpieza) para ver utilidad bruta, margen y resultado del periodo.
+              </p>
+            </div>
+          )}
+
+          {/* Advertencias de exactitud (Fase 10): moneda distinta/mezclada y
+              cobertura parcial de costos — el usuario debe saberlo SIEMPRE. */}
+          {metrics.advertencias.filter((a) => !a.startsWith('No se detectó')).length > 0 && (
+            <div className="mt-4 space-y-2">
+              {metrics.advertencias
+                .filter((a) => !a.startsWith('No se detectó'))
+                .slice(0, 3)
+                .map((aviso) => (
+                  <div
+                    key={aviso}
+                    className="flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/[0.07] px-4 py-2.5 text-xs text-navy/75"
+                  >
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+                    <p>{aviso}</p>
+                  </div>
+                ))}
+            </div>
+          )}
 
           {/* Evolución + Indicadores clave */}
           <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -328,6 +460,20 @@ export default function Resumen() {
                       width={60}
                     />
                     <Tooltip content={<ChartTooltip />} />
+                    {evolution.length >= 2 && (
+                      <ReferenceLine
+                        y={evolution.reduce((s, m) => s + m.ingresos, 0) / evolution.length}
+                        stroke={AXIS_INK}
+                        strokeDasharray="6 4"
+                        strokeOpacity={0.55}
+                        label={{
+                          value: 'promedio',
+                          position: 'insideTopRight',
+                          fill: AXIS_INK,
+                          fontSize: 10,
+                        }}
+                      />
+                    )}
                     <Line
                       type="monotone"
                       dataKey="ingresos"
@@ -380,27 +526,34 @@ export default function Resumen() {
 
             <Card>
               <h2 className="text-base font-semibold text-navy">Indicadores Clave</h2>
-              <ul className="mt-4 divide-y divide-navy/5">
-                {RATIO_LABELS.map(({ key, label }) => {
-                  const value = metrics.indicadores_financieros.items[key]
-                  return (
-                    <li key={key} className="flex items-center justify-between gap-2 py-2.5 text-sm">
-                      <span className="text-navy/70">{label}</span>
-                      <span className="font-semibold text-navy/35">
-                        {value !== null && value !== undefined ? formatNumber(value) : '—'}
-                      </span>
-                    </li>
-                  )
-                })}
+              <p className="mt-0.5 text-xs text-navy/50">Calculados de tus datos reales.</p>
+              <ul className="mt-3 divide-y divide-navy/5">
+                {buildOperationalIndicators(metrics).map(({ label, value, hint }) => (
+                  <li key={label} className="flex items-center justify-between gap-2 py-2.5 text-sm">
+                    <span className="text-navy/70">{label}</span>
+                    <span className="text-right">
+                      <span className="font-semibold text-navy">{value}</span>
+                      {hint && <span className="block text-[10px] text-navy/40">{hint}</span>}
+                    </span>
+                  </li>
+                ))}
               </ul>
-              <p className="mt-3 text-[11px] leading-relaxed text-navy/45">
-                {metrics.indicadores_financieros.nota}
+              <p className="mt-3 rounded-lg bg-navy/[0.04] px-3 py-2 text-[11px] leading-relaxed text-navy/50">
+                ROA, ROE, liquidez y prueba ácida se habilitarán cuando conectes los datos
+                de balance de tu negocio.
               </p>
             </Card>
           </div>
 
-          {/* Categorías + Estado financiero */}
-          <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          {/* Categorías + Estado financiero (solo si el archivo trae categorías) */}
+          <div
+            className={`mt-6 grid gap-6 ${
+              (metrics.por_categoria ?? []).length > 0
+                ? 'xl:grid-cols-[minmax(0,1fr)_340px]'
+                : 'xl:grid-cols-2'
+            }`}
+          >
+            {(metrics.por_categoria ?? []).length > 0 && (
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Análisis por Categoría</h2>
               <div className="mt-4 overflow-x-auto">
@@ -454,6 +607,7 @@ export default function Resumen() {
                 </table>
               </div>
             </Card>
+            )}
 
             <Card>
               <h2 className="text-base font-semibold text-navy">Estado Financiero</h2>
@@ -485,8 +639,10 @@ export default function Resumen() {
             </Card>
           </div>
 
-          {/* Canal + Top productos + Proyección */}
+          {/* Canal + Top productos + Proyección — solo las tarjetas con datos
+              reales del archivo (Fase 8: nada de recuadros vacíos) */}
           <div className="mt-6 grid gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+            {canal.length > 0 && (
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
               <div className="mt-2 flex flex-col items-center gap-3">
@@ -538,7 +694,9 @@ export default function Resumen() {
                 </ul>
               </div>
             </Card>
+            )}
 
+            {topProducts.length > 0 && (
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
               <ul className="mt-4 space-y-3">
@@ -566,6 +724,7 @@ export default function Resumen() {
                 ))}
               </ul>
             </Card>
+            )}
 
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Proyección (Próximos 3 meses)</h2>

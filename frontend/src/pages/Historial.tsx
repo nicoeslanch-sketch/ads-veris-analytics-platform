@@ -57,6 +57,15 @@ const STATUS_BADGE: Record<DatasetRow['status'], { label: string; tone: 'teal' |
   error: { label: 'Error', tone: 'coral' },
 }
 
+const SOURCE_BADGE: Record<string, { label: string; tone: 'teal' | 'green' | 'navy' }> = {
+  excel_csv: { label: 'Excel / CSV', tone: 'green' },
+  google_sheets: { label: 'Google Sheets', tone: 'teal' },
+}
+
+function sourceBadge(source: string | null | undefined) {
+  return SOURCE_BADGE[source ?? ''] ?? { label: source || 'Desconocida', tone: 'navy' as const }
+}
+
 export default function Historial() {
   const { setUploaded, setStandardization, setCleaning } = useDataset()
   const navigate = useNavigate()
@@ -105,6 +114,7 @@ export default function Historial() {
       if (dataset.status === 'limpio') {
         // Continuar con las reglas reales del último cleaning_job cuando existan.
         const savedRules = await fetchLatestCleaningRules(dataset.id)
+        const usedDefaultRules = !savedRules
         const cleaned = await apiPost<CleanResult>(
           '/clean',
           buildDatasetForm(file, dataset.storage_path, {
@@ -113,7 +123,14 @@ export default function Historial() {
           }),
         )
         setCleaning(cleaned)
-        navigate('/')
+        navigate('/', {
+          state: usedDefaultRules
+            ? {
+                resumeWarning:
+                  'No encontramos reglas guardadas para este dataset; se retomo con las reglas automaticas por defecto.',
+              }
+            : undefined,
+        })
       } else {
         navigate('/limpieza')
       }
@@ -221,6 +238,7 @@ export default function Historial() {
               <thead>
                 <tr className="border-b border-navy/10 text-left text-xs font-semibold uppercase tracking-wide text-navy/50">
                   <th className="pb-2 pr-4">Archivo</th>
+                  <th className="pb-2 pr-4">Fuente</th>
                   <th className="pb-2 pr-4">Fecha</th>
                   <th className="pb-2 pr-4">Filas</th>
                   <th className="pb-2 pr-4">Calidad</th>
@@ -231,6 +249,7 @@ export default function Historial() {
               <tbody>
                 {(datasets ?? []).map((dataset) => {
                   const badge = STATUS_BADGE[dataset.status]
+                  const source = sourceBadge(dataset.source)
                   return (
                     <tr key={dataset.id} className="border-b border-navy/5">
                       <td className="max-w-56 py-3 pr-4">
@@ -238,6 +257,9 @@ export default function Historial() {
                           <FileSpreadsheet className="h-4.5 w-4.5 shrink-0 text-green" />
                           <span className="truncate">{dataset.name}</span>
                         </div>
+                      </td>
+                      <td className="whitespace-nowrap py-3 pr-4">
+                        <Badge tone={source.tone}>{source.label}</Badge>
                       </td>
                       <td className="whitespace-nowrap py-3 pr-4 text-navy/70">
                         {formatDateTime(new Date(dataset.created_at))}

@@ -86,7 +86,11 @@ export async function markStandardized(
         return false
       }
     }
-    await logActivity('estandarizacion', `Estandarización aplicada: ${result.archivo}`, datasetId)
+    try {
+      await logActivity('estandarizacion', `Estandarización aplicada: ${result.archivo}`, datasetId)
+    } catch (err) {
+      console.warn('[persistencia] No se pudo registrar actividad de estandarizacion:', err)
+    }
     return true
   } catch (err) {
     // best-effort: fallo en persistencia no bloquea el pipeline
@@ -135,7 +139,11 @@ export async function saveCleaningJob(
       console.warn('[persistencia] Falló el update de datasets:', dsError.message)
       return false
     }
-    await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
+    try {
+      await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
+    } catch (err) {
+      console.warn('[persistencia] No se pudo registrar actividad de limpieza:', err)
+    }
     return true
   } catch (err) {
     console.warn('[persistencia] Error de red guardando la limpieza:', err)
@@ -143,8 +151,44 @@ export async function saveCleaningJob(
   }
 }
 
-/** Guarda un análisis de Explorar datos (migración 0004). Best-effort. */
-export async function saveAnalysis(
+/** Fase 7 §5.10: persiste el mapeo de roles corregido por el usuario en
+ * dataset_columns (requiere la migración 0008: policy + grant de update).
+ * Best-effort: la corrección aplica igual en la sesión aunque esto falle. */
+export async function saveColumnMapping(
+  datasetId: string | null,
+  mapping: Record<string, string>,
+): Promise<boolean> {
+  if (!supabase || !datasetId) return false
+  try {
+    // Limpiar roles anteriores y asignar los nuevos, columna por columna.
+    const { error: clearError } = await supabase
+      .from('dataset_columns')
+      .update({ mapped_role: null })
+      .eq('dataset_id', datasetId)
+    if (clearError) {
+      console.warn('[persistencia] No se pudo limpiar el mapeo previo:', clearError.message)
+      return false
+    }
+    for (const [role, column] of Object.entries(mapping)) {
+      if (!column) continue
+      const { error } = await supabase
+        .from('dataset_columns')
+        .update({ mapped_role: role })
+        .eq('dataset_id', datasetId)
+        .eq('original_name', column)
+      if (error) {
+        console.warn(`[persistencia] No se pudo guardar el rol ${role}:`, error.message)
+        return false
+      }
+    }
+    return true
+  } catch (err) {
+    console.warn('[persistencia] Error de red guardando el mapeo:', err)
+    return false
+  }
+}
+
+/** Guarda un análisis de Explorar datos (migración 0004). Best-effort. */export async function saveAnalysis(
   datasetId: string | null,
   name: string,
   config: Record<string, unknown>,
@@ -171,13 +215,18 @@ export async function logActivity(
   type: 'carga' | 'estandarizacion' | 'limpieza' | 'analisis' | 'chat' | 'recomendacion',
   description: string,
   datasetId: string | null = null,
-): Promise<void> {
+): Promise<boolean> {
   const userId = await getUserId()
-  if (!supabase || !userId) return
-  await supabase.from('activity_log').insert({
+  if (!supabase || !userId) return false
+  const { error } = await supabase.from('activity_log').insert({
     user_id: userId,
     dataset_id: datasetId,
     activity_type: type,
     description,
   })
+  if (error) {
+    console.warn('[persistencia] Fallo el insert en activity_log:', error.message)
+    return false
+  }
+  return true
 }

@@ -1,16 +1,24 @@
-"""Cuotas de IA por plan (SPEC §9 — planes y feature gating).
+"""Cuotas de IA por plan (SPEC §9 + Fase 7).
 
-Cada consulta a /ai/* descuenta del cupo mensual del usuario según su plan
-(`profiles.plan`: basico|gold). El consumo vive en `ai_usage` (migración 0006)
-y se consulta/escribe vía PostgREST con la service_role key (solo backend).
+Dos cupos independientes, ambos registrados en ``ai_usage`` (migraciones 0006
+y 0009) vía PostgREST con la service_role key (solo backend):
 
-Comportamiento:
+- **Insights** (`kind` in summary|chat|recommendation): cupo mensual por plan.
+- **Limpieza dirigida** (`kind` = cleaning): base mensual (2, configurable con
+  AI_CLEANING_MONTHLY_LIMIT) **+ créditos addon** de ``plan_addons`` — un
+  ledger: filas positivas = tokens otorgados a mano, filas negativas =
+  consumos. El saldo es la suma. Los intentos base se reinician cada mes; los
+  addons son saldo aparte que no expira (decisión Fase 7 §7.2).
+
+Comportamiento compartido:
 - Supabase sin configurar (desarrollo local) → sin gating, devuelve None.
-- Cupo agotado → HTTP 429 con mensaje claro y el detalle del plan.
-- Error de red contra Supabase → se permite la consulta (fail-open) y se
-  registra el problema: la disponibilidad del asistente pesa más que una
-  consulta sin contar. Todo el módulo es síncrono: llamarlo con
-  `run_in_threadpool` desde los endpoints async.
+- Cupo agotado → HTTP 429 con mensaje claro y CTA.
+- Error de red contra Supabase → fail-open documentado: se permite la consulta
+  y se registra el problema (la disponibilidad pesa más que una consulta sin
+  contar). Todo el módulo es síncrono: llamarlo con `run_in_threadpool`.
+
+Deuda conocida (PHASE_STATUS → Pendiente): el control es check-then-record,
+una ráfaga simultánea justo en el límite puede excederlo por pocas consultas.
 """
 
 from datetime import datetime, timezone
@@ -18,9 +26,12 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import HTTPException, status
 
+from .capabilities import display_plan, get_plan, get_profile_flags, normalize_plan
 from .config import Settings
 
 _TIMEOUT = 10
+
+INSIGHT_KINDS = ("summary", "chat", "recommendation")
 
 
 def _headers(settings: Settings) -> dict:
@@ -39,29 +50,26 @@ def _month_start_iso() -> str:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 
-def get_plan(user_id: str, settings: Settings) -> str:
-    """Plan del usuario desde profiles; 'basico' si no hay fila."""
-    response = httpx.get(
-        _rest(settings, "profiles"),
-        params={"id": f"eq.{user_id}", "select": "plan"},
-        headers=_headers(settings),
-        timeout=_TIMEOUT,
-    )
-    response.raise_for_status()
-    rows = response.json()
-    plan = rows[0].get("plan") if rows else None
-    return plan if plan in ("basico", "gold") else "basico"
+def _configured(settings: Settings) -> bool:
+    return bool(settings.supabase_url and settings.supabase_service_role_key)
 
 
-def count_month_usage(user_id: str, settings: Settings) -> int:
-    """Consultas IA del usuario en el mes calendario en curso (UTC)."""
+def count_month_usage(
+    user_id: str,
+    settings: Settings,
+    kinds: tuple[str, ...] = INSIGHT_KINDS,
+) -> int:
+    """Consultas del usuario en el mes calendario en curso (UTC), por tipo."""
+    params = {
+        "user_id": f"eq.{user_id}",
+        "created_at": f"gte.{_month_start_iso()}",
+        "select": "id",
+    }
+    if kinds:
+        params["kind"] = f"in.({','.join(kinds)})"
     response = httpx.get(
         _rest(settings, "ai_usage"),
-        params={
-            "user_id": f"eq.{user_id}",
-            "created_at": f"gte.{_month_start_iso()}",
-            "select": "id",
-        },
+        params=params,
         headers={**_headers(settings), "Prefer": "count=exact", "Range": "0-0"},
         timeout=_TIMEOUT,
     )
@@ -73,24 +81,25 @@ def count_month_usage(user_id: str, settings: Settings) -> int:
 
 
 def limit_for(plan: str, settings: Settings) -> int:
-    return (
-        settings.ai_monthly_limit_gold
-        if plan == "gold"
-        else settings.ai_monthly_limit_basico
-    )
+    limits = {
+        "basico": settings.ai_monthly_limit_basico,
+        "analista": settings.ai_monthly_limit_analista,
+        "gold": settings.ai_monthly_limit_gold,
+    }
+    return limits[normalize_plan(plan)]
 
 
 def check_quota(user_id: str, settings: Settings) -> dict | None:
-    """Valida el cupo ANTES de llamar a Anthropic.
+    """Valida el cupo de INSIGHTS antes de llamar a Anthropic.
 
     Devuelve {"plan", "usadas", "limite"} o None si no hay Supabase (dev).
     Lanza 429 si el cupo mensual está agotado.
     """
-    if not settings.supabase_url or not settings.supabase_service_role_key:
+    if not _configured(settings):
         return None
     try:
         plan = get_plan(user_id, settings)
-        usadas = count_month_usage(user_id, settings)
+        usadas = count_month_usage(user_id, settings, kinds=INSIGHT_KINDS)
     except httpx.HTTPError as exc:
         # Fail-open: no castigar al usuario por un problema de red interno.
         print(f"[quota] No se pudo verificar el cupo de IA ({exc.__class__.__name__}); se permite la consulta.")
@@ -101,10 +110,10 @@ def check_quota(user_id: str, settings: Settings) -> dict | None:
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
                 f"Alcanzaste el límite mensual de consultas IA de tu plan "
-                f"{plan} ({limite}). "
+                f"{display_plan(plan)} ({limite}). "
                 + (
-                    "Mejora a Gold para ampliar tu cupo."
-                    if plan == "basico"
+                    "Mejora a Analista para ampliar tu cupo."
+                    if normalize_plan(plan) == "basico"
                     else "El cupo se renueva el próximo mes."
                 )
             ),
@@ -114,7 +123,7 @@ def check_quota(user_id: str, settings: Settings) -> dict | None:
 
 def record_usage(user_id: str, kind: str, settings: Settings) -> None:
     """Registra una consulta consumida (tras una llamada exitosa). Best-effort."""
-    if not settings.supabase_url or not settings.supabase_service_role_key:
+    if not _configured(settings):
         return
     try:
         response = httpx.post(
@@ -124,22 +133,22 @@ def record_usage(user_id: str, kind: str, settings: Settings) -> None:
             timeout=_TIMEOUT,
         )
         if response.status_code >= 400:
-            # Típico: migración 0006 sin ejecutar → PostgREST responde 404
+            # Típico: migración 0006/0009 sin ejecutar → PostgREST responde 404/400
             print(
                 f"[quota] ai_usage respondió {response.status_code} al registrar consumo "
-                "(¿está ejecutada la migración 0006?)."
+                "(¿están ejecutadas las migraciones 0006 y 0009?)."
             )
     except httpx.HTTPError as exc:
         print(f"[quota] No se pudo registrar el consumo de IA ({exc.__class__.__name__}).")
 
 
 def usage_info(user_id: str, settings: Settings) -> dict:
-    """Estado del cupo para la página Configuración."""
-    if not settings.supabase_url or not settings.supabase_service_role_key:
+    """Estado del cupo de insights para la página Configuración."""
+    if not _configured(settings):
         return {"disponible": False, "plan": "basico", "usadas": 0, "limite": 0}
     try:
         plan = get_plan(user_id, settings)
-        usadas = count_month_usage(user_id, settings)
+        usadas = count_month_usage(user_id, settings, kinds=INSIGHT_KINDS)
     except httpx.HTTPError:
         return {"disponible": False, "plan": "basico", "usadas": 0, "limite": 0}
     return {
@@ -148,4 +157,134 @@ def usage_info(user_id: str, settings: Settings) -> dict:
         "usadas": usadas,
         "limite": limit_for(plan, settings),
         "periodo": datetime.now(timezone.utc).strftime("%Y-%m"),
+    }
+
+
+# ── Fase 7: cuota de limpieza dirigida (base mensual + addons) ───────────────
+
+
+def addons_balance(user_id: str, settings: Settings) -> int:
+    """Saldo de créditos addon = suma del ledger plan_addons (migración 0009)."""
+    response = httpx.get(
+        _rest(settings, "plan_addons"),
+        params={"user_id": f"eq.{user_id}", "select": "credits"},
+        headers=_headers(settings),
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    return sum(int(row.get("credits") or 0) for row in response.json())
+
+
+def cleaning_limit_for(plan: str, settings: Settings) -> int:
+    """Intentos base de limpieza dirigida al mes según el plan (Fase 8)."""
+    if normalize_plan(plan) == "gold":
+        return settings.ai_cleaning_monthly_limit_gold
+    return settings.ai_cleaning_monthly_limit
+
+
+def check_cleaning_quota(user_id: str, settings: Settings) -> dict | None:
+    """Valida el cupo de limpieza dirigida ANTES de correr el motor.
+
+    Devuelve {"plan", "usadas_mes", "base", "addons", "consume_addon"} o None
+    si no hay Supabase (dev). Lanza 429 con CTA a Planes si no quedan intentos
+    base ni créditos addon. El administrador nunca agota cupo (Fase 8).
+    """
+    if not _configured(settings):
+        return None
+    try:
+        plan, is_admin = get_profile_flags(user_id, settings)
+        usadas = count_month_usage(user_id, settings, kinds=("cleaning",))
+        addons = addons_balance(user_id, settings)
+    except httpx.HTTPError as exc:
+        print(
+            f"[quota] No se pudo verificar el cupo de limpieza dirigida "
+            f"({exc.__class__.__name__}); se permite el intento."
+        )
+        return None
+    base = cleaning_limit_for(plan, settings)
+    if is_admin:
+        return {
+            "plan": plan,
+            "usadas_mes": usadas,
+            "base": base,
+            "addons": addons,
+            "consume_addon": False,
+        }
+    consume_addon = usadas >= base
+    if consume_addon and addons <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Usaste tus {base} intentos de limpieza dirigida de este mes y no "
+                "tienes tokens adicionales. Solicita más tokens en la página Planes "
+                "(addons) y nos pondremos en contacto contigo."
+            ),
+        )
+    return {
+        "plan": plan,
+        "usadas_mes": usadas,
+        "base": base,
+        "addons": addons,
+        "consume_addon": consume_addon,
+    }
+
+
+def record_cleaning_usage(user_id: str, settings: Settings, consume_addon: bool) -> None:
+    """Registra un intento de limpieza dirigida consumido. Best-effort.
+
+    Si el intento excede la base mensual, descuenta 1 crédito addon insertando
+    una fila negativa en el ledger plan_addons (auditable: quién/cuándo).
+    """
+    if not _configured(settings):
+        return
+    record_usage(user_id, "cleaning", settings)
+    if not consume_addon:
+        return
+    try:
+        response = httpx.post(
+            _rest(settings, "plan_addons"),
+            json={
+                "user_id": user_id,
+                "credits": -1,
+                "granted_by": "sistema",
+                "note": "Consumo de limpieza dirigida IA",
+            },
+            headers={**_headers(settings), "Prefer": "return=minimal"},
+            timeout=_TIMEOUT,
+        )
+        if response.status_code >= 400:
+            print(
+                f"[quota] plan_addons respondió {response.status_code} al descontar "
+                "un crédito (¿está ejecutada la migración 0009?)."
+            )
+    except httpx.HTTPError as exc:
+        print(f"[quota] No se pudo descontar el crédito addon ({exc.__class__.__name__}).")
+
+
+def cleaning_usage_info(user_id: str, settings: Settings) -> dict:
+    """Estado del cupo de limpieza dirigida para Planes y Configuración.
+    La base depende del plan del usuario (Fase 8: 10 Analista / 25 Gold)."""
+    if not _configured(settings):
+        return {
+            "disponible": False,
+            "usadas_mes": 0,
+            "base": settings.ai_cleaning_monthly_limit,
+            "addons": 0,
+        }
+    try:
+        plan = get_plan(user_id, settings)
+        usadas = count_month_usage(user_id, settings, kinds=("cleaning",))
+        addons = addons_balance(user_id, settings)
+    except httpx.HTTPError:
+        return {
+            "disponible": False,
+            "usadas_mes": 0,
+            "base": settings.ai_cleaning_monthly_limit,
+            "addons": 0,
+        }
+    return {
+        "disponible": True,
+        "usadas_mes": usadas,
+        "base": cleaning_limit_for(plan, settings),
+        "addons": addons,
     }

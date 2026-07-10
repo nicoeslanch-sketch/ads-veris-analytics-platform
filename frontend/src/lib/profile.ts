@@ -1,6 +1,7 @@
 /** Perfil del usuario (tabla profiles, migración 0001) — Fase 5 Configuración. */
 
 import { supabase } from './supabase'
+import type { PlanCode } from './plans'
 
 export interface Profile {
   full_name: string | null
@@ -8,7 +9,9 @@ export interface Profile {
   rut: string | null
   country: string | null
   phone: string | null
-  plan: 'basico' | 'gold'
+  plan: PlanCode
+  /** Fase 8: cuenta administradora (servicios@adsveris.com) — acceso total. */
+  is_admin: boolean
   preferences: Record<string, unknown>
 }
 
@@ -19,7 +22,7 @@ export async function fetchProfile(): Promise<Profile | null> {
   if (!userId) return null
   const { data, error } = await supabase
     .from('profiles')
-    .select('full_name, company, rut, country, phone, plan, preferences')
+    .select('full_name, company, rut, country, phone, plan, is_admin, preferences')
     .eq('id', userId)
     .maybeSingle()
   if (error) {

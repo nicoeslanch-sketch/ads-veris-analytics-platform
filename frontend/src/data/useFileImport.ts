@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react'
-import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
+import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import {
   insertDataset,
   markStandardized,
@@ -28,8 +28,8 @@ export function useFileImport() {
   ): Promise<boolean> => {
     setError(null)
     setPersistWarning(null)
-    if (!/\.(csv|xlsx|xls)$/i.test(selected.name)) {
-      setError('Formato no soportado. Sube un archivo Excel (.xlsx) o CSV (.csv).')
+    if (!/\.(csv|xlsx)$/i.test(selected.name)) {
+      setError('Formato no soportado. Sube un Excel moderno (.xlsx) o CSV (.csv); si tienes un .xls antiguo, guárdalo como .xlsx primero.')
       return false
     }
     setImporting(true)
@@ -45,6 +45,12 @@ export function useFileImport() {
         )
       }
       setUploaded(selected, datasetId, storagePath)
+
+      // Fase 8: retención de Storage (fire-and-forget). Poda archivos viejos
+      // según el plan del usuario; jamás bloquea ni rompe la carga.
+      if (storagePath) {
+        void apiPostJson('/storage/retention', {}).catch(() => undefined)
+      }
 
       const result = await apiPost<StandardizeResult>(
         '/standardize',

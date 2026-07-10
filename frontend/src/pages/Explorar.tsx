@@ -47,7 +47,7 @@ import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
 import { formatCLP } from '../lib/format'
-import type { GroupRow, MetricsResult } from '../lib/types'
+import type { DatasetDimensions, GroupRow, MetricsResult } from '../lib/types'
 
 // ── Configuración del análisis ────────────────────────────────────────────────
 
@@ -246,7 +246,7 @@ function ChartTooltip({ active, payload, label }: {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function Explorar() {
-  const { file, cleaning, datasetId, storagePath, uploadedAt, monthsAvailable, setMonthsAvailable } = useDataset()
+  const { file, cleaning, datasetId, storagePath, uploadedAt, monthsAvailable, setMonthsAvailable, mappingOverride, sheet } = useDataset()
   const ready = Boolean(file && cleaning)
 
   const [rango, setRango] = useState<Period>(ALL_PERIOD)
@@ -268,12 +268,14 @@ export default function Explorar() {
   useEffect(() => {
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
-    const key = `${datasetKey}|${rango.from}|${rango.to}`
+    const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     setLoading(true)
     setError(null)
     const fields: Record<string, string> = {}
+    if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
+    if (sheet) fields.sheet = sheet
     if (rango.from) fields.date_from = rango.from
     if (rango.to) fields.date_to = rango.to
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
@@ -288,7 +290,7 @@ export default function Explorar() {
       )
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, datasetId, storagePath, cleaning, uploadedAt, rango])
+  }, [file, datasetId, storagePath, cleaning, uploadedAt, rango, sheet])
 
   // Al cambiar el análisis, la recomendación anterior deja de aplicar
   useEffect(() => {
@@ -296,6 +298,24 @@ export default function Explorar() {
     setRecoError(null)
     setSaveState('idle')
   }, [rango, groupBy, metric, uploadedAt])
+
+  // Fase 8: si la agrupación activa no existe en este archivo, volver a una
+  // disponible (ej: archivo sin canal → jamás quedarse pegado en "canal").
+  useEffect(() => {
+    if (!metrics?.dimensiones) return
+    const d = metrics.dimensiones
+    const available: Record<GroupBy, boolean> = {
+      mes: d.fecha,
+      categoria: d.categoria,
+      producto: d.producto,
+      canal: d.canal || d.sucursal,
+    }
+    if (!available[groupBy]) {
+      const fallback = (Object.keys(available) as GroupBy[]).find((k) => available[k])
+      setGroupBy(fallback ?? 'mes')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metrics])
 
   if (!ready) {
     return (
@@ -317,6 +337,19 @@ export default function Explorar() {
 
   const hasCosts = Boolean(metrics?.kpis.ganancia_neta)
   const findings = metrics ? computeFindings(metrics) : []
+
+  // ── Fase 8: los análisis se adaptan a las columnas REALES del archivo ──
+  // Sin columna de canal/sucursal no se ofrece ese análisis (no botones
+  // inútiles); lo mismo para categoría, producto o fechas.
+  const dims: DatasetDimensions | undefined = metrics?.dimensiones
+  const groupAvailable: Record<GroupBy, boolean> = {
+    mes: !dims || dims.fecha,
+    categoria: !dims || dims.categoria,
+    producto: !dims || dims.producto,
+    canal: !dims || dims.canal || dims.sucursal,
+  }
+  const visiblePresets = PRESETS.filter((preset) => groupAvailable[preset.groupBy])
+  const hiddenCount = PRESETS.length - visiblePresets.length
 
   // Filas del gráfico y la tabla según la agrupación activa
   const groupRows: GroupRow[] =
@@ -403,14 +436,20 @@ export default function Explorar() {
         </button>
       </div>
 
-      {/* ¿Qué quieres descubrir hoy? */}
+      {/* ¿Qué quieres descubrir hoy? (adaptado a las columnas del archivo) */}
       <div>
         <h2 className="text-lg font-semibold text-navy">¿Qué quieres descubrir hoy?</h2>
         <p className="mt-0.5 text-sm text-navy/60">
           Parte de una pregunta típica o define tu propio análisis abajo.
+          {hiddenCount > 0 && (
+            <span className="text-navy/45">
+              {' '}
+              Los análisis se adaptan a las columnas de tu archivo.
+            </span>
+          )}
         </p>
         <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {PRESETS.map((preset) => {
+          {visiblePresets.map((preset) => {
             const active =
               groupBy === preset.groupBy &&
               (metric === preset.metric || (preset.metric === 'utilidad' && !hasCosts))
@@ -467,11 +506,13 @@ export default function Explorar() {
               onChange={(e) => setGroupBy(e.target.value as GroupBy)}
               className={selectClass}
             >
-              {(Object.keys(GROUP_LABEL) as GroupBy[]).map((key) => (
-                <option key={key} value={key}>
-                  {GROUP_LABEL[key]}
-                </option>
-              ))}
+              {(Object.keys(GROUP_LABEL) as GroupBy[])
+                .filter((key) => groupAvailable[key])
+                .map((key) => (
+                  <option key={key} value={key}>
+                    {GROUP_LABEL[key]}
+                  </option>
+                ))}
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-navy/50">

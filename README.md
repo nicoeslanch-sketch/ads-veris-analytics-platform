@@ -40,6 +40,19 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    - `supabase/migrations/0004_analyses.sql` (análisis guardados de Explorar datos)
    - `supabase/migrations/0005_rls_dataset_ownership.sql` (RLS estricta sobre dataset_id)
    - `supabase/migrations/0006_ai_usage.sql` (consumo IA para cuotas por plan)
+   - `supabase/migrations/0007_public_table_grants.sql` (permisos PostgREST para tablas con RLS)
+   - `supabase/migrations/0008_plans.sql` (Fase 7: planes basico|analista|gold,
+     `is_admin`, rol `costo` y mapeo editable)
+   - `supabase/migrations/0009_cleaning_credits.sql` (Fase 7: `kind = cleaning`,
+     ledger `plan_addons` y `addon_requests`)
+   - `supabase/migrations/0010_admin_support.sql` (Fase 8: cuenta administradora
+     `servicios@adsveris.com`, `support_requests` del botón de ayuda y auditoría
+     `admin_audit`. Si esa cuenta se crea DESPUÉS de correr la migración, repite el
+     UPDATE del paso 1 del archivo)
+   - `supabase/migrations/0011_lock_privileged_columns.sql` (**Fase 10 — SEGURIDAD
+     P0, obligatoria antes de aceptar usuarios externos**: bloquea que un usuario
+     edite su propio `plan` / `is_admin` por la REST API; el navegador solo puede
+     actualizar sus datos de contacto)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend
@@ -138,14 +151,63 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
 - [x] **Fase 5 — Alertas, Historial, Reportes, Configuración y planes**: alertas con
   reglas configurables (severidad, área, recomendación), Historial con "Retomar" desde
   Storage, reportes PDF/Excel, Configuración con perfil editable y contador de consultas
-  IA, cuotas mensuales por plan (básico/gold) con 429 al agotarse.
+  IA, cuotas mensuales por plan (Básico/Analista; `gold` interno) con 429 al agotarse.
 - [x] **Fase 6 — Conectores + endurecimiento**: importación desde **Google Sheets**
   (hoja pública/compartida por enlace, sin OAuth) al mismo pipeline; escape de HTML y
   anti formula-injection en reportes; persistencia best-effort con avisos visibles.
-  Pendiente (operación comercial): checkout Gold, conector SQL, alertas continuas y
+- [x] **Microfase 6.2 — preparación comercial**: capabilities por plan, descarga de base
+  limpia solo para Plan Analista y export seguro contra formula injection.
+  Pendiente (operación comercial): checkout Analista, conector SQL, alertas continuas y
   reportes generados en backend.
 
 ## Regla de flujo no negociable
 
 Si el usuario no ha cargado y limpiado datos, la plataforma no muestra dashboard.
 **Todo parte de los datos.**
+
+## Planes, tokens y administración (Fase 7)
+
+- **Interruptor de planes**: el gating vive tras `PLAN_ENFORCEMENT` (backend) y
+  `VITE_PLAN_ENFORCEMENT` (frontend). En Fase 7 ambos van en `false`: todo queda
+  accesible para probar y las puertas ya están instaladas. Para activar el modelo
+  comercial basta poner ambos en `true` y redeployar — sin tocar código.
+- **Limpieza dirigida**: 2 intentos base al mes (`AI_CLEANING_MONTHLY_LIMIT`).
+  Los intentos extra se venden como **tokens addon**: el usuario los pide desde la
+  página Planes (botón "Solicitar más" → tabla `addon_requests`) y ADS Veris los
+  otorga a mano.
+- **Otorgar tokens** (dos caminos equivalentes):
+  1. **Endpoint admin** (recomendado): marca tu usuario como admin una vez
+     (`update public.profiles set is_admin = true where id = '<TU-UUID>';`) y llama
+     `POST /admin/grant-credits` con `{"user_id": "<uuid-del-cliente>", "credits": 5,
+     "note": "Compra 5 tokens"}` (con tu JWT).
+  2. **SQL directo en Supabase**:
+     ```sql
+     insert into public.plan_addons (user_id, credits, granted_by, note)
+     values ('<uuid-del-cliente>', 5, 'manual', 'Compra 5 tokens');
+     ```
+  El saldo del usuario es `sum(credits)` de su ledger; los consumos quedan como filas
+  negativas insertadas por el sistema (auditable).
+- **Solicitudes pendientes**: `select * from public.addon_requests where status = 'pendiente';`
+  y márcalas atendidas con `update ... set status = 'atendida'`.
+- **Costuras IA del motor** (apagadas): `AI_REFINE_ENABLED=false` controla el refinado
+  final (`api/app/engine/ai_refine.py`); la interpretación de instrucciones vive en
+  `api/app/engine/directed.py`. Cada una tiene un único `# TODO IA` con interfaz
+  estable: activarlas es reemplazar el cuerpo por la llamada a Anthropic.
+
+## Mapeo universal de columnas (Fase 9)
+
+- El rol de cada columna se detecta contra el **diccionario**
+  `api/app/data/palabras_clave_roles.csv` (≈15.600 claves, 64 roles, 12 grupos)
+  en 4 etapas: exacto → contención por tokens → prefijo → fuzzy. Los roles del
+  motor (10) se llenan primero desde el diccionario y las palabras clave legacy
+  actúan como red de compatibilidad.
+- **Agregar cobertura** (un rubro nuevo, sinónimos de un cliente): edita el CSV
+  (separador `;`, columnas palabra_clave/rol/grupo/tipo_dato/idioma/prioridad/
+  rol_motor_actual) y despliega — sin tocar código. `rol_motor_actual` solo se
+  completa cuando la equivalencia con los 10 roles del motor es segura (un
+  precio unitario NO es un monto: sumarlo duplicaría ingresos).
+- La **biblioteca de prompts** (`api/app/data/prompts_estandarizacion_por_rol.txt`)
+  alimenta las costuras IA: clasificador de columnas sin match
+  (`AI_CLASSIFIER_ENABLED`, apagado), prompts de grupo por rol y el refinado
+  global (`AI_REFINE_ENABLED`, apagado). La IA decide y corrige residuos con
+  JSON validable; el motor determinista transforma.

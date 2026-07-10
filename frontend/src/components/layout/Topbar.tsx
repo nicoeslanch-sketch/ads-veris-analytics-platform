@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, Calendar, Check, ChevronDown, LogOut, Settings, User } from 'lucide-react'
+import { Bell, Calendar, Check, ChevronDown, LogOut, Menu, Settings, User } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../../data/DatasetContext'
 import { formatMonthShort } from '../../lib/charts'
@@ -15,7 +15,7 @@ function currentMonthRange(): string {
   return `${fmt(start)} - ${fmt(end)}`
 }
 
-export default function Topbar() {
+export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {}) {
   const { user, logout } = useAuth()
   const { period, setPeriod, monthsAvailable } = useDataset()
   const navigate = useNavigate()
@@ -46,7 +46,17 @@ export default function Topbar() {
   }
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-end gap-4 border-b border-white/10 bg-navy px-6 text-white">
+    <header className="flex h-16 shrink-0 items-center justify-end gap-4 border-b border-white/10 bg-navy px-4 text-white sm:px-6">
+      {/* Menú móvil (Fase 10 §15.1): abre el sidebar deslizante */}
+      {onMenuClick && (
+        <button
+          onClick={onMenuClick}
+          className="mr-auto rounded-lg p-2 text-white/80 transition-colors hover:bg-white/10"
+          aria-label="Abrir menú"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      )}
       {/* Selector de rango de fechas — filtra el dashboard (Fase 2) */}
       <div className="relative" ref={periodRef}>
         <button

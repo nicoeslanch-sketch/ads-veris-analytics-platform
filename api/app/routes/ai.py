@@ -12,12 +12,14 @@ frontend. La API key vive solo en la variable de entorno ANTHROPIC_API_KEY.
 """
 
 import json
+import uuid
+from typing import Literal
 
 from anthropic import APIConnectionError, APIStatusError, AsyncAnthropic
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import quota
 from ..auth import AuthenticatedUser, get_current_user
@@ -36,7 +38,9 @@ _SYSTEM = (
     "No te limites a describir los números: explica qué significan para el negocio "
     "y qué debería hacer el dueño al respecto. "
     "Responde siempre en español de Chile. Sé conciso: máximo 3-4 párrafos. "
-    "Usa moneda CLP (pesos chilenos) con formato $1.234.000. "
+    "Usa la MONEDA indicada en el contexto (por defecto CLP, formato $1.234.000); "
+    "si el contexto advierte monedas mezcladas o cobertura parcial de costos, "
+    "dilo explícitamente y evita conclusiones categóricas sobre esos montos. "
     "Nunca inventes datos que no estén en el contexto entregado."
 )
 
@@ -79,6 +83,7 @@ def _metrics_context(metrics: dict) -> str:
 
     kpis = metrics.get("kpis", {})
     moneda = metrics.get("moneda", "CLP")
+    parts.append(f"Moneda de los montos: {moneda}")
 
     def fmt(v):
         if v is None:
@@ -145,25 +150,29 @@ def _metrics_context(metrics: dict) -> str:
 # ── Modelos de request ────────────────────────────────────────────────────────
 
 
+# Límites estrictos (Fase 10 §9.2): un cliente directo no puede mandar
+# preguntas gigantes, cientos de mensajes ni roles arbitrarios.
+
+
 class SummaryRequest(BaseModel):
     metrics: dict
 
 
 class ChatMessage(BaseModel):
-    role: str  # "user" | "assistant"
-    content: str
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
 
 
 class ChatRequest(BaseModel):
-    pregunta: str
+    pregunta: str = Field(min_length=1, max_length=2000)
     metrics: dict
-    historial: list[ChatMessage] = []
+    historial: list[ChatMessage] = Field(default_factory=list, max_length=12)
 
 
 class RecommendationRequest(BaseModel):
     metrics: dict
-    hallazgos: list[str] = []
-    analisis: str = ""  # descripción del análisis activo (ej: "ingresos por categoría, mayo")
+    hallazgos: list[str] = Field(default_factory=list, max_length=8)
+    analisis: str = Field(default="", max_length=300)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -217,9 +226,11 @@ async def ai_summary(
             detail=f"Error del servicio de IA ({exc.status_code}): {exc.message}",
         ) from exc
     except Exception as exc:
+        incident = uuid.uuid4().hex[:8]
+        print(f"[ai] incidente {incident}: {exc.__class__.__name__}: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error interno del asistente: {exc}",
+            detail=f"Error interno del asistente (incidente {incident}). Intenta nuevamente.",
         ) from exc
 
     full_text: str = response.content[0].text  # type: ignore[index]
@@ -289,9 +300,11 @@ async def ai_recommendation(
             detail=f"Error del servicio de IA ({exc.status_code}): {exc.message}",
         ) from exc
     except Exception as exc:
+        incident = uuid.uuid4().hex[:8]
+        print(f"[ai] incidente {incident}: {exc.__class__.__name__}: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error interno del asistente: {exc}",
+            detail=f"Error interno del asistente (incidente {incident}). Intenta nuevamente.",
         ) from exc
 
     full_text: str = response.content[0].text  # type: ignore[index]
@@ -352,7 +365,16 @@ async def ai_chat(
             await run_in_threadpool(quota.record_usage, user.id, "chat", settings)
             yield "data: [DONE]\n\n"
         except Exception as exc:
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            # Fase 10 §9.3: al cliente jamás se le filtran detalles internos
+            # (proveedor, red, configuración). El detalle queda en los logs
+            # con un código de incidente para correlacionar.
+            incident = uuid.uuid4().hex[:8]
+            print(f"[ai/chat] incidente {incident} user={user.id}: {exc.__class__.__name__}: {exc}")
+            mensaje = (
+                "No se pudo completar la respuesta del asistente. "
+                f"Intenta nuevamente (incidente {incident})."
+            )
+            yield f"data: {json.dumps({'error': mensaje})}\n\n"
 
     return StreamingResponse(
         generate(),

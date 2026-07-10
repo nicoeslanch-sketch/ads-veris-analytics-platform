@@ -10,6 +10,8 @@ rotación de inventario, días de cobro/pago) quedan declarados pero sin valor:
 se habilitan cuando el usuario conecte sus datos financieros.
 """
 
+import re
+
 import pandas as pd
 
 from .mapping import detect_column_roles
@@ -30,6 +32,52 @@ def _numeric_series(df: pd.DataFrame, column: str | None) -> pd.Series:
     if column is None or column not in df.columns:
         return pd.Series([None] * len(df), index=df.index, dtype=float)
     return df[column].map(lambda v: parse_number(v) if not is_missing(v) else None).astype(float)
+
+
+# ── Moneda (Fase 10 §4.4): detección por tokens en la columna de montos ─────
+# El parser acepta "$ 1.200", "US$1.500", "€200"… pero el dashboard debe saber
+# QUÉ moneda está mostrando, y jamás sumar monedas distintas en silencio.
+_CURRENCY_SIGNALS = {
+    "USD": re.compile(r"(?i)(us\$|usd)"),
+    "EUR": re.compile(r"(?i)(€|eur)"),
+    "CLP": re.compile(r"(?i)(clp)"),
+}
+
+
+def detect_currency(raw: pd.Series | None) -> tuple[str, str | None]:
+    """(moneda_dominante, advertencia_o_None) a partir de los valores crudos.
+
+    '$' a secas se asume CLP (convención es-CL); solo tokens explícitos
+    (US$, USD, €, EUR, CLP) cambian o mezclan la moneda."""
+    if raw is None:
+        return "CLP", None
+    counts = {code: 0 for code in _CURRENCY_SIGNALS}
+    sample = [str(v) for v in raw.head(1000) if not is_missing(v)]
+    for value in sample:
+        for code, pattern in _CURRENCY_SIGNALS.items():
+            if pattern.search(value):
+                counts[code] += 1
+                break
+    explicit = {code: n for code, n in counts.items() if n > 0}
+    if not explicit:
+        return "CLP", None
+    dominant = max(explicit, key=lambda c: explicit[c])
+    others = [c for c in explicit if c != dominant]
+    # Sin token explícito la fila se asume en la moneda dominante; si hay más
+    # de un token explícito distinto, los totales estarían mezclando monedas.
+    if others:
+        detalle = ", ".join(sorted(explicit))
+        return dominant, (
+            f"Se detectaron montos en más de una moneda ({detalle}). Los totales "
+            "suman los valores SIN convertir: revisa la columna de montos o "
+            "sepárala por moneda antes de comparar."
+        )
+    if dominant != "CLP":
+        return dominant, (
+            f"Los montos parecen estar en {dominant}: los indicadores se muestran "
+            "en esa moneda, sin conversión a pesos chilenos."
+        )
+    return dominant, None
 
 
 def _pct_change(current: float, previous: float | None) -> float | None:
@@ -102,7 +150,10 @@ def compute_metrics(
     mapping: dict[str, str] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    currency_hint: tuple[str, str | None] | None = None,
 ) -> dict:
+    """`currency_hint` viene del pipeline (detección sobre los valores CRUDOS,
+    antes de que la estandarización quite los símbolos de moneda)."""
     roles = mapping or detect_column_roles(list(df.columns))
     roles = {role: col for role, col in roles.items() if col in df.columns}
     warnings: list[str] = []
@@ -179,34 +230,75 @@ def compute_metrics(
     costs = costs_all[mask]
     profits = profits_all[mask] if profits_all is not None else None
 
-    # ── Periodo anterior para las variaciones ──
+    # ── Periodo anterior para las variaciones (Fase 10 §4.5) ──
+    # Si la selección es un mes calendario completo, el periodo anterior es el
+    # MES CALENDARIO anterior (mayo se compara con abril, no con una ventana de
+    # 31 días que arrastra el 31 de marzo). Para rangos arbitrarios se mantiene
+    # la ventana equivalente de días.
     prev_amounts = prev_costs = None
+    prev_mask = None
     if has_dates and start is not None and end is not None:
-        window = end - start
-        prev_mask = dates_all.map(
-            lambda d: bool(pd.notna(d) and (start - window - pd.Timedelta(days=1)) <= d < start)
-        )
-        if prev_mask.any():
-            prev_amounts = float(amounts_all[prev_mask].dropna().sum())
-            prev_costs = float(costs_all[prev_mask].dropna().sum())
+        month_end = start + pd.offsets.MonthEnd(0)
+        is_full_month = start.day == 1 and end.normalize() == month_end.normalize()
+        if is_full_month:
+            prev_end = start - pd.Timedelta(days=1)
+            prev_start = prev_end.replace(day=1)
+            prev_mask = dates_all.map(
+                lambda d: bool(pd.notna(d) and prev_start <= d <= prev_end)
+            )
+        else:
+            window = end - start
+            prev_mask = dates_all.map(
+                lambda d: bool(pd.notna(d) and (start - window - pd.Timedelta(days=1)) <= d < start)
+            )
+        if not prev_mask.any():
+            prev_mask = None
     # Sin rango seleccionado ("todo el periodo") no hay periodo anterior
     # comparable: las variaciones quedan en null y la UI muestra "—".
 
     ingresos = float(amounts.dropna().sum())
-    gastos = float(costs.dropna().sum()) if has_costs else None
-    utilidad = (ingresos - gastos) if gastos is not None else None
-    prev_utilidad = (
-        (prev_amounts - prev_costs)
-        if prev_amounts is not None and prev_costs is not None and has_costs
-        else None
+
+    # ── Cobertura de costos (Fase 10 §4.1) ──
+    # Utilidad y margen se calculan SOLO sobre las filas que tienen ingreso Y
+    # costo. Antes se restaban los costos conocidos del total de ingresos, lo
+    # que trataba los costos faltantes como $0 e inflaba la utilidad.
+    filas_con_ingreso = int(amounts.notna().sum())
+    paired_mask = amounts.notna() & costs.notna() if has_costs else None
+    filas_pareadas = int(paired_mask.sum()) if paired_mask is not None else 0
+    cobertura_pct = (
+        round(filas_pareadas / filas_con_ingreso * 100, 1) if filas_con_ingreso else 0.0
     )
 
-    margen = round(utilidad / ingresos * 100, 1) if utilidad is not None and ingresos else None
-    prev_margen = (
-        round(prev_utilidad / prev_amounts * 100, 1)
-        if prev_utilidad is not None and prev_amounts
-        else None
-    )
+    gastos = float(costs.dropna().sum()) if has_costs else None
+    if has_costs and filas_pareadas:
+        ingresos_pareados = float(amounts[paired_mask].sum())
+        utilidad = ingresos_pareados - float(costs[paired_mask].sum())
+        margen = round(utilidad / ingresos_pareados * 100, 1) if ingresos_pareados else None
+    else:
+        ingresos_pareados = 0.0
+        utilidad = None
+        margen = None
+
+    prev_utilidad = prev_margen = None
+    if prev_mask is not None:
+        prev_amounts = float(amounts_all[prev_mask].dropna().sum())
+        prev_costs = float(costs_all[prev_mask].dropna().sum())
+        if has_costs:
+            prev_paired = amounts_all.notna() & costs_all.notna() & prev_mask
+            if prev_paired.any():
+                prev_ing_par = float(amounts_all[prev_paired].sum())
+                prev_utilidad = prev_ing_par - float(costs_all[prev_paired].sum())
+                prev_margen = (
+                    round(prev_utilidad / prev_ing_par * 100, 1) if prev_ing_par else None
+                )
+
+    if has_costs and filas_con_ingreso and cobertura_pct < 99.5:
+        warnings.append(
+            f"{filas_con_ingreso - filas_pareadas} de {filas_con_ingreso} ventas no "
+            f"tienen costo asociado (cobertura {cobertura_pct}%): la utilidad y el "
+            "margen se calculan solo sobre las ventas con costo — son resultados "
+            "PARCIALES, no el total del negocio."
+        )
 
     kpis: dict = {
         "ingresos_totales": _kpi(ingresos, prev_amounts),
@@ -217,8 +309,12 @@ def compute_metrics(
         kpis["unidades_totales"] = round(
             float(_numeric_series(selection, roles["cantidad"]).dropna().sum()), 2
         )
-    if has_costs:
+    if has_costs and utilidad is not None:
         kpis["gastos_totales"] = _kpi(gastos, prev_costs)
+        # Nota Fase 10 §4.2: esto es UTILIDAD BRUTA (venta − costo directo),
+        # no ganancia neta — faltan gastos operacionales, sueldos, impuestos…
+        # La clave JSON se mantiene por compatibilidad; la UI la rotula
+        # "Utilidad Bruta" y "Resultado del Periodo".
         kpis["ganancia_neta"] = _kpi(utilidad, prev_utilidad)
         kpis["margen_utilidad_pct"] = {
             "valor": margen,
@@ -226,8 +322,12 @@ def compute_metrics(
             if margen is not None and prev_margen is not None
             else None,
         }
-        # Simplificación Fase 2: flujo de caja operacional = cobros - pagos del periodo.
         kpis["flujo_caja"] = _kpi(utilidad, prev_utilidad)
+        kpis["cobertura_costos"] = {
+            "filas_con_ingreso": filas_con_ingreso,
+            "filas_con_ingreso_y_costo": filas_pareadas,
+            "pct": cobertura_pct,
+        }
     else:
         kpis["gastos_totales"] = None
         kpis["ganancia_neta"] = None
@@ -235,9 +335,35 @@ def compute_metrics(
         kpis["flujo_caja"] = None
 
     # ── Agrupaciones sobre la selección ──
+    def _has_data(role: str) -> bool:
+        col = roles.get(role)
+        return bool(col is not None and df[col].map(lambda v: not is_missing(v)).any())
+
+    moneda, aviso_moneda = (
+        currency_hint
+        if currency_hint is not None
+        else detect_currency(df[roles["monto"]] if roles.get("monto") else None)
+    )
+    if aviso_moneda:
+        warnings.insert(0, aviso_moneda)
+
     result: dict = {
-        "moneda": "CLP",
+        "moneda": moneda,
         "mapeo": roles,
+        # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
+        # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
+        "dimensiones": {
+            "fecha": bool(has_dates),
+            "monto": _has_data("monto"),
+            "costo": bool(has_costs),
+            "cantidad": _has_data("cantidad"),
+            "categoria": _has_data("categoria"),
+            "producto": _has_data("producto"),
+            "canal": _has_data("canal"),
+            "sucursal": _has_data("sucursal"),
+            "cliente": _has_data("cliente"),
+            "vendedor": _has_data("vendedor"),
+        },
         "periodo": {
             "desde": date_from,
             "hasta": date_to,
