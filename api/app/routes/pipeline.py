@@ -45,7 +45,8 @@ from ..engine.directed import (
 )
 from ..engine.export import safe_export_dataframe
 from ..engine.loader import UnsupportedFileError, load_dataframe_with_report
-from ..engine.mapping import detect_column_roles
+from ..engine.ai_classifier import classify_columns_with_ai
+from ..engine.mapping import detect_column_roles, detect_columns_extended
 from ..engine.metrics import compute_metrics
 from ..engine.standardize import normalize_headers, standardize_dataframe
 from ..storage import download_from_storage
@@ -198,6 +199,17 @@ def _standardize_sync(filename: str, content: bytes) -> dict:
     df_original, load_report = _load_or_400(filename, content)
     df_std, report = standardize_dataframe(df_original)
 
+    # Fase 9: mapeo universal — rol extendido (64 roles) por columna según el
+    # diccionario de palabras clave, con método y confianza del match.
+    extended = detect_columns_extended(list(df_std.columns))
+    settings = get_settings()
+    if settings.ai_classifier_enabled:
+        # Costura IA (apagada por defecto): clasificar lo que el diccionario
+        # no reconoció. Hoy el stub devuelve {}.
+        sin_match = [c for c in df_std.columns if c not in extended]
+        if sin_match:
+            extended.update(classify_columns_with_ai(sin_match, df_std))
+
     # Vista previa antes/después con los mismos encabezados normalizados.
     before = df_original.copy()
     before.columns = df_std.columns
@@ -208,6 +220,7 @@ def _standardize_sync(filename: str, content: bytes) -> dict:
         "column_types": report["column_types"],
         "column_confidence": report["column_confidence"],
         "mapeo": detect_column_roles(list(df_std.columns)),
+        "mapeo_extendido": {col: match.to_dict() for col, match in extended.items()},
         "cambios": report["cambios"],
         "avisos": load_report.get("avisos", []),
         "carga": {

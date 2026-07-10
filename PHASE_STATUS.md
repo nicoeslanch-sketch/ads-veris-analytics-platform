@@ -1,6 +1,6 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 8 completas.**
+**Estado actual: Fases 0 a 9 completas.**
 La Fase 8 enciende el modelo comercial (`PLAN_ENFORCEMENT` ON: base limpia y limpieza
 dirigida = Analista+, con aviso "Necesitas el Plan X → Ir a comprar el plan"), agrega el
 **panel Administrar cuentas** para la cuenta administradora (`servicios@adsveris.com`):
@@ -258,11 +258,51 @@ en Resumen/Limpieza/Estandarización/Admin.
 **Tests**: **80 pruebas** de la API (18 nuevas de Fase 8), build verde y 2 E2E
 Playwright (pipeline completo + adaptividad con archivo mínimo).
 
-## ⏳ Pendiente (Fase 9 sugerida — operación comercial)
+
+## ✅ Fase 9 — Mapeo universal: diccionario de roles y biblioteca de prompts (completa)
+
+**El problema**: el mapeo automático usaba ~40 palabras clave fijas para 10
+roles. Insuficiente para limpiar "cualquier" base de datos PyME.
+
+**La solución** (dos activos de datos + tres módulos):
+- `api/app/data/palabras_clave_roles.csv` — **≈15.600 claves únicas, 64 roles,
+  12 grupos** (es-CL + inglés, abreviaturas, RUT/DTE/UF/AFP, plurales y
+  compuestos reales). La columna `rol_motor_actual` marca la equivalencia
+  segura con los 10 roles del motor: el CSV mejora el mapeo HOY y deja listos
+  54 roles extendidos (rut, email, saldo, precio_unitario, stock, ...) para
+  cuando el motor de métricas los consuma.
+- `engine/dictionary.py` — matching en 4 etapas (exacto → contención por
+  tokens → prefijo → fuzzy Levenshtein), empates por largo y prioridad, carga
+  única + memoización.
+- `mapping.py` en dos pasadas — diccionario primero, **palabras clave legacy
+  como red de compatibilidad** para roles vacíos: cero regresiones (los 80
+  tests previos pasan intactos) y más precisión cuando existe una columna
+  mejor ("Total Neto" gana monto; "Precio Unitario" ya no se suma como ingreso).
+- `api/app/data/prompts_estandarizacion_por_rol.txt` + `engine/prompt_library.py`
+  — biblioteca de prompts por grupo de roles con catálogo acotado (la IA
+  decide/corrige residuos y devuelve JSON validable; el motor transforma).
+  Incluye el clasificador de columnas sin match ([PROMPT B]) y el prompt de
+  refinado global ([PROMPT C], interfaz exacta de `refine_with_ai`).
+- `engine/ai_classifier.py` — costura del clasificador IA, **preparada y
+  APAGADA** (`AI_CLASSIFIER_ENABLED=false`): el fallback que convierte el
+  diccionario finito en cobertura universal cuando se encienda.
+
+**API**: `/standardize` expone `mapeo_extendido` (rol, método, confianza por
+columna); el `reporte_calidad` de `/clean` suma `rol_extendido`, `grupo_rol` y
+`match_diccionario`.
+
+**Tests**: 97 en verde (17 nuevos de la Fase 9).
+
+## ⏳ Pendiente (Fase 10 sugerida — operación comercial)
 
 - **Pasarela de pago** (Webpay/Flow/MercadoPago): reemplazar `startCheckout()` y
   llamar `set_user_plan(source="pasarela")` desde el webhook. La activación manual
   del admin queda como respaldo.
+- Encender el clasificador IA de columnas (`AI_CLASSIFIER_ENABLED`) y conectar
+  los prompts de grupo a los residuos por columna (`ejemplos_invalidos` del
+  reporte de calidad) — la biblioteca de prompts ya está en el repo.
+- Consumir los roles extendidos del diccionario (rut, email, saldo,
+  precio_unitario, stock, ...) en métricas y validaciones específicas por rol.
 - Activar las costuras IA del motor: `interpret_cleaning_instructions` (interpretación
   libre por IA) y `refine_with_ai` (`AI_REFINE_ENABLED`) — un prompt cada una.
 - Notificación por correo al admin cuando llega una solicitud de soporte (hoy: semáforo

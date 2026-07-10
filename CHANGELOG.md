@@ -2,6 +2,54 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.10.0] - 2026-07-09 - Fase 9: Mapeo universal — diccionario de roles y biblioteca de prompts IA
+
+### Agregado
+- **Diccionario universal de roles** (`api/app/data/palabras_clave_roles.csv`):
+  ≈15.600 palabras clave normalizadas únicas, **64 roles en 12 grupos** (tiempo,
+  dinero, cantidad, identificadores, entidades, catálogo, ubicación, contacto,
+  clasificación, texto libre, RRHH, bancario), en español chileno e inglés, con
+  abreviaturas reales (fec_emision, cxc, qty), términos locales (RUT, DTE, glosa,
+  comuna, AFP, UF) y compuestos/plurales legítimos. Columnas: palabra_clave, rol,
+  grupo, tipo_dato, idioma, prioridad y `rol_motor_actual` (equivalencia segura
+  con los 10 roles del motor de métricas).
+- **Motor de matching** (`api/app/engine/dictionary.py`): match del encabezado en
+  4 etapas — exacto → contención por TOKENS ("fecha de emision" dentro de "Fecha
+  de Emisión DTE", sin falsos positivos por substring) → prefijo/sufijo
+  ("FechaVenta2026") → fuzzy Levenshtein acotado ("Montto" → monto). Empates por
+  largo de clave y `prioridad`. Carga lazy única + memoización: costo ~0 por request.
+- **`detect_column_roles` en dos pasadas** (`mapping.py`): (1) diccionario —
+  gana la columna con mejor match cuyo rol extendido tiene equivalencia segura
+  con el motor; (2) **compatibilidad legacy** — las palabras clave históricas
+  rellenan los roles que queden vacíos. Resultado: "Total Neto" le gana el rol
+  monto a "Precio Unitario" (que ya no se suma como ingreso), pero un archivo
+  cuyo único campo de dinero es "Precio" sigue funcionando igual que siempre.
+- **Mapeo extendido visible**: `/standardize` devuelve `mapeo_extendido` (rol de
+  64, método y confianza por columna) y el `reporte_calidad` de `/clean` incluye
+  `rol_extendido`, `grupo_rol` y `match_diccionario` por columna — insumo directo
+  del refinado IA (§5.13) y de la tarjeta de mapeo de Limpieza.
+- **Biblioteca de prompts** (`api/app/data/prompts_estandarizacion_por_rol.txt` +
+  `engine/prompt_library.py`): prompt de sistema, clasificador de columnas sin
+  match ([PROMPT B]), 12 prompts de grupo con catálogo acotado por rol (nunca
+  imputar 0 en dinero, nunca fusionar clientes distintos, RUT inválido se marca)
+  y el prompt de refinado global ([PROMPT C] = interfaz de `refine_with_ai`).
+  Parseo lazy por secciones, `prompt_for_role(rol)` resuelve el grupo vía el CSV
+  y `fill()` rellena las variables de plantilla.
+- **Costura IA del clasificador** (`engine/ai_classifier.py`, flag
+  `AI_CLASSIFIER_ENABLED=false`): cuando el diccionario no reconoce un encabezado,
+  la IA lo clasificará dentro de la MISMA taxonomía cerrada usando nombre +
+  muestra de valores. Preparada y APAGADA, con un único `# TODO IA` — mismo
+  criterio que las costuras de la Fase 7.
+- Tests: **97 pruebas** (17 nuevas: carga del diccionario, las 4 etapas de match,
+  falsos positivos por substring, roles extendidos sin motor, dos pasadas de
+  mapeo, compatibilidad histórica, mapeo_extendido en la API, reporte de calidad,
+  parseo de la biblioteca de prompts y flujo /metrics completo).
+
+### Cambiado
+- El mapeo automático de columnas pasa de ~40 palabras clave fijas a un
+  diccionario de datos versionado en el repo: agregar cobertura para un rubro
+  nuevo es editar el CSV, no tocar código.
+
 ## [0.9.0] - 2026-07-09 - Fase 8: Panel de administración, soporte, gating comercial y adaptividad
 
 ### Agregado

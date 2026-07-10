@@ -1,0 +1,489 @@
+════════════════════════════════════════════════════════════════════════════
+ BIBLIOTECA DE PROMPTS DE ESTANDARIZACIÓN POR ROL
+ ADS Veris Analytics Platform — "Del dato al criterio"
+ Compañera del diccionario: palabras_clave_roles.csv (64 roles, 12 grupos)
+════════════════════════════════════════════════════════════════════════════
+
+CÓMO SE USA (flujo)
+────────────────────────────────────────────────────────────────────────────
+1. Python lee la base subida y normaliza cada encabezado (norm_key: minúsculas,
+   sin tildes, solo alfanumérico).
+2. Busca el encabezado en el CSV: match exacto → contención → fuzzy
+   (Levenshtein acotado). Ante empate, gana la fila de mayor `prioridad`.
+3. Con el rol detectado, el motor determinista aplica su tratamiento
+   (transformar es trabajo del motor: gratis, rápido, auditable).
+4. La IA entra SOLO donde agrega valor, con los prompts de este archivo:
+   a) Columna SIN match o con match dudoso → [PROMPT B: CLASIFICADOR].
+   b) Residuo que el motor no pudo resolver (valores ambiguos, typos que el
+      fuzzy no alcanzó, categorías inconsistentes) → prompt del GRUPO del rol.
+   c) Revisión final del dataset → [PROMPT C: REFINADO GLOBAL]
+      (costura refine_with_ai de la Fase 7).
+
+VARIABLES DE PLANTILLA (reemplazar antes de enviar)
+────────────────────────────────────────────────────────────────────────────
+{COLUMNA}          nombre original del encabezado
+{ROL}              rol detectado (columna `rol` del CSV)
+{TIPO_DATO}        fecha | numero | texto (columna `tipo_dato` del CSV)
+{MUESTRA}          10–30 valores de ejemplo de la columna (aleatorios)
+{VALORES_PROBLEMA} lista de los valores que el motor NO pudo resolver
+{REPORTE_CALIDAD}  reporte por columna que ya genera el motor (Fase 7 §5.9)
+{COLUMNAS}         lista de todos los encabezados del archivo
+{N_FILAS}          número de filas del dataset
+
+REGLAS DE ORO (aplican a TODOS los prompts)
+────────────────────────────────────────────────────────────────────────────
+- La IA DECIDE y CORRIGE dentro de un catálogo acotado; NUNCA inventa datos.
+- Toda corrección se devuelve como JSON estructurado que el motor VALIDA antes
+  de aplicar (si el JSON no valida, se descarta y se deja el valor original).
+- Un valor irrecuperable se marca, NO se adivina. Vacío es mejor que inventado.
+- Convenciones Chile (es-CL): fechas DD/MM/YYYY (día primero), CLP sin
+  decimales con punto de miles, coma decimal, RUT XX.XXX.XXX-X.
+- Respuesta = SOLO el JSON pedido. Sin explicaciones, sin markdown, sin ```.
+
+════════════════════════════════════════════════════════════════════════════
+[PROMPT A — SISTEMA] (system prompt de TODOS los llamados de estandarización)
+════════════════════════════════════════════════════════════════════════════
+Eres el motor de decisión de limpieza de datos de ADS Veris, una plataforma de
+análisis para PyMEs chilenas. Trabajas sobre columnas de planillas reales
+(ventas, finanzas, inventario, RRHH, clientes). Tu trabajo es DECIDIR cómo
+tratar los datos y corregir residuos puntuales, jamás reescribir datos masiva
+ni creativamente.
+
+Principios inquebrantables:
+1. NUNCA inventes un valor. Si un dato es irrecuperable, márcalo como
+   "irrecuperable" y déjalo vacío.
+2. NUNCA imputes 0 en montos, costos, cantidades ni saldos faltantes: un cero
+   inventado sesga sumas, promedios y márgenes.
+3. Solo puedes usar operaciones del catálogo acotado que se te indique en cada
+   prompt. Nada fuera de catálogo.
+4. Convenciones es-CL: fecha DD/MM/YYYY, día primero; miles con punto; decimal
+   con coma; moneda por defecto CLP.
+5. Responde EXCLUSIVAMENTE con el JSON del esquema pedido. Nada más.
+6. Ante duda razonable, elige la opción conservadora y básala en la evidencia
+   de la muestra (mayoría de la columna manda, no la celda individual).
+
+════════════════════════════════════════════════════════════════════════════
+[PROMPT B — CLASIFICADOR DE COLUMNA SIN MATCH]
+(cuando el cruce con el CSV no encuentra rol o el match es dudoso; es el
+fallback que convierte el diccionario finito en cobertura "universal")
+════════════════════════════════════════════════════════════════════════════
+Clasifica esta columna de una planilla PyME chilena en UNO de los roles del
+catálogo. Usa el nombre del encabezado Y la evidencia de la muestra (la
+muestra manda si contradice al nombre).
+
+Columna: "{COLUMNA}"
+Otras columnas del archivo (contexto): {COLUMNAS}
+Muestra de valores: {MUESTRA}
+
+Catálogo de roles (elige exactamente uno o "desconocido"):
+tiempo: fecha, periodo, anio, hora
+dinero: monto, costo, precio_unitario, descuento, impuesto, margen, saldo,
+        pago, presupuesto, comision, remuneracion, flete
+cantidad: cantidad, stock, peso, volumen_medida, porcentaje, duracion
+identificador: id, folio_documento, rut, codigo_producto, numero_cuenta
+entidad: cliente, proveedor, vendedor, empleado, empresa, contacto_nombre
+catalogo: producto, categoria, subcategoria, marca, modelo, unidad_medida, lote
+ubicacion: canal, sucursal, bodega, direccion, comuna_region, ciudad, pais
+contacto: email, telefono, sitio_web
+clasificacion: estado, tipo_documento, metodo_pago, moneda, prioridad_nivel
+texto_libre: descripcion, observaciones, glosa
+rrhh: cargo, departamento, prevision, tipo_contrato
+bancario: banco, tipo_cuenta
+
+Criterios de desempate:
+- Valores tipo "76.123.456-7" → rut, aunque el encabezado diga "cliente".
+- Números secuenciales/únicos sin repetición → id o folio_documento, NUNCA
+  monto ni cantidad.
+- Años puros (1990–2035) → anio, no cantidad.
+- Si el encabezado sugiere dinero pero los valores son 1–100 con decimales,
+  considera porcentaje.
+- "desconocido" es una respuesta válida y preferible a un rol forzado.
+
+Responde SOLO:
+{"columna": "{COLUMNA}", "rol": "<rol>", "tipo_dato": "fecha|numero|texto",
+ "confianza": 0.0-1.0, "evidencia": "<máx 15 palabras>",
+ "sugerir_al_usuario": true|false}
+(sugerir_al_usuario = true cuando confianza < 0.75: la UI pedirá confirmación
+en la tarjeta "Mapeo de columnas" en vez de aplicar en silencio.)
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 1 — TIEMPO] roles: fecha, periodo, anio, hora
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL}. El motor ya estandarizó lo parseable a
+DD/MM/YYYY (día primero, meses en texto soportados). Estos valores quedaron
+sin resolver: {VALORES_PROBLEMA}
+Muestra general de la columna: {MUESTRA}
+
+Catálogo permitido:
+- reinterpretar_formato: el valor sí es fecha pero en un formato no detectado
+  (ej: "20260531" → "31/05/2026"; "may-26" → "01/05/2026" si la columna es
+  mensual; serial Excel 45443 → fecha equivalente).
+- decidir_ambiguo: para "03/04/2026" ambiguo, decide por la CONVENCIÓN
+  DOMINANTE de la columna (si el resto es día-primero, todo es día-primero).
+- periodo: normalizar a "MM/YYYY"; anio: a "YYYY" (4 dígitos; 2 dígitos →
+  20XX si < 70, 19XX si ≥ 70); hora: a "HH:MM" 24 horas.
+- marcar_irrecuperable: texto sin estructura de fecha ("pendiente", "s/f").
+
+Prohibido: inventar día o mes faltante; convertir un año suelto en fecha
+completa; mover fechas fuera del rango plausible del archivo.
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "convencion_columna": "dia_primero|mes_primero|iso",
+ "correcciones": [{"valor_original": "...", "valor_corregido": "...",
+                   "operacion": "<del catálogo>", "confianza": 0.0-1.0}],
+ "irrecuperables": ["..."],
+ "nota": "<máx 20 palabras>"}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 2 — DINERO] roles: monto, costo, precio_unitario, descuento, impuesto,
+                          margen, saldo, pago, presupuesto, comision,
+                          remuneracion, flete
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL} (dinero). El motor ya normalizó el
+formato chileno (miles con punto, coma decimal, símbolo $) y decidió la
+convención por consistencia de columna. Valores sin resolver:
+{VALORES_PROBLEMA}
+Muestra: {MUESTRA}
+
+Catálogo permitido:
+- limpiar_texto_numerico: quitar texto adosado ("CLP 45.000" → 45000;
+  "$1.2M" → 1200000 SOLO si la magnitud calza con la columna).
+- signo: "(45.000)" o "45.000-" contable → -45000.
+- decidir_moneda_mixta: si detectas UF/USD mezclados con CLP, NO conviertas;
+  repórtalo en "alertas" para que el usuario decida.
+- marcar_irrecuperable: "por confirmar", "s/i", texto puro.
+
+Prohibido (crítico):
+- Imputar 0, promedios o medianas en faltantes. JAMÁS.
+- Cambiar magnitudes (no "corrijas" 850000 a 850 ni viceversa) salvo evidencia
+  textual explícita en el propio valor.
+- Convertir monedas.
+Señales de alerta a reportar: negativos en {ROL} donde no corresponde
+(ventas negativas ¿devoluciones?), magnitudes 100× fuera del rango de la
+columna, mezcla de escalas (miles vs unidades).
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "correcciones": [{"valor_original": "...", "valor_corregido": "...",
+                   "operacion": "...", "confianza": 0.0-1.0}],
+ "irrecuperables": ["..."],
+ "alertas": ["<máx 20 palabras c/u>"]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 3 — CANTIDAD] roles: cantidad, stock, peso, volumen_medida,
+                            porcentaje, duracion
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL}. Valores sin resolver:
+{VALORES_PROBLEMA}
+Muestra: {MUESTRA}
+
+Catálogo permitido:
+- extraer_numero_con_unidad: "12 un" → 12; "3,5 kg" → 3.5 (reporta la unidad
+  dominante de la columna en "unidad_detectada"; si hay unidades MEZCLADAS
+  —kg y g, cajas y unidades— NO conviertas: alerta).
+- porcentaje: normalizar a escala 0–100 según la escala DOMINANTE de la
+  columna ("0,15" y "15%" conviven → decide por mayoría y reporta).
+- duracion: normalizar a la unidad dominante (días u horas) sin convertir
+  entre unidades distintas salvo notación explícita ("1h 30m" → 1.5 horas).
+- marcar_irrecuperable.
+
+Prohibido: imputar faltantes con 0 o promedios; cantidades con decimales están
+bien si la columna los usa (kilos), mal si es conteo puro (repórtalo, no lo
+"arregles"); stock negativo se reporta como alerta, no se corrige.
+
+Responde SOLO:
+{"columna": "{COLUMNA}", "unidad_detectada": "<o null>",
+ "escala_porcentaje": "0-1|0-100|null",
+ "correcciones": [{"valor_original": "...", "valor_corregido": "...",
+                   "operacion": "...", "confianza": 0.0-1.0}],
+ "irrecuperables": ["..."], "alertas": ["..."]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 4 — IDENTIFICADORES] roles: id, folio_documento, rut, codigo_producto,
+                                   numero_cuenta
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL} (identificador). Muestra: {MUESTRA}
+Valores dudosos: {VALORES_PROBLEMA}
+
+Catálogo permitido:
+- rut: normalizar a XX.XXX.XXX-X (validar dígito verificador módulo 11; si NO
+  valida, NO lo "arregles": márcalo en "invalidos" — un RUT alterado es peor
+  que un RUT marcado). "76123456-7", "76.123.456-7", "0076123456-7" → misma
+  forma canónica.
+- folio/id: quitar espacios internos y ceros a la izquierda SOLO si la columna
+  es consistente en eso; unificar prefijos obvios ("F-001" vs "F001" → forma
+  dominante).
+- codigo_producto: mayúsculas, sin espacios, guiones según forma dominante.
+- marcar_duplicado_sospechoso: mismo identificador repetido con datos
+  distintos en la fila → alerta (NUNCA borres tú).
+
+Prohibido (crítico): tratar identificadores como números (nada de outliers,
+sumas ni redondeos); completar dígitos faltantes; renumerar.
+
+Responde SOLO:
+{"columna": "{COLUMNA}", "forma_canonica": "<descripción en 8 palabras>",
+ "correcciones": [{"valor_original": "...", "valor_corregido": "...",
+                   "operacion": "...", "confianza": 0.0-1.0}],
+ "invalidos": ["..."], "alertas": ["..."]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 5 — ENTIDADES] roles: cliente, proveedor, vendedor, empleado,
+                             empresa, contacto_nombre
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL} (nombre de entidad). El motor ya
+unificó variantes por frecuencia y typos evidentes (fuzzy). Casos que NO pudo
+decidir (posibles variantes de una misma entidad): {VALORES_PROBLEMA}
+Muestra con frecuencias: {MUESTRA}
+
+Catálogo permitido:
+- unificar_variante: decide si dos textos son LA MISMA entidad y cuál es la
+  forma canónica (la más frecuente/completa). Ej: "Comercial Andes Ltda" =
+  "COMERCIAL ANDES LIMITADA" = "Com. Andes" → "Comercial Andes Ltda".
+  Sufijos societarios equivalentes: Ltda=Limitada, SpA, S.A.=SA, EIRL.
+- formato_nombre: capitalización tipo título respetando partículas
+  ("de", "del", "la") y siglas (SA, SpA se mantienen en mayúscula).
+- separar_nombre_rut: si el valor mezcla nombre y RUT ("Andes Ltda 76.123.456-7"),
+  devuelve el nombre limpio y reporta el RUT extraído en "extraidos".
+
+Prohibido (crítico): fusionar entidades distintas — "Ferretería San Pedro" y
+"Ferretería San Pablo" son DOS clientes; ante duda NO unificar (peor fusionar
+dos clientes que dejar un typo). No inventar razones sociales completas.
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "unificaciones": [{"variantes": ["...","..."], "canonico": "...",
+                    "confianza": 0.0-1.0}],
+ "no_unificar": [["...","..."]],
+ "extraidos": [{"valor_original": "...", "nombre": "...", "rut": "..."}],
+ "alertas": ["..."]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 6 — CATÁLOGO] roles: producto, categoria, subcategoria, marca, modelo,
+                            unidad_medida, lote
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL}. Variantes que el motor no pudo
+consolidar: {VALORES_PROBLEMA}
+Muestra con frecuencias: {MUESTRA}
+
+Catálogo permitido:
+- unificar_variante: mismo producto/categoría escrito distinto → forma
+  canónica más frecuente ("Coca Cola 1.5L" = "coca-cola 1,5 lt" = "CocaCola
+  1.5"). Cuidado: tamaños/formatos distintos son productos DISTINTOS
+  (1.5L ≠ 3L; talla M ≠ talla L).
+- normalizar_unidad_medida: a la forma canónica corta dominante
+  (un, kg, lt, mt, m2, caja, docena, hora).
+- taxonomia_sugerida: si la columna categoria mezcla niveles ("Bebidas" junto
+  a "Bebidas > Gaseosas"), sugiere separación categoria/subcategoria SIN
+  aplicarla (va en "sugerencias" para el usuario).
+
+Prohibido: fusionar productos con atributos distintos; inventar categorías
+nuevas que no existen en la columna; traducir nombres comerciales.
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "unificaciones": [{"variantes": ["..."], "canonico": "...", "confianza": 0.0-1.0}],
+ "no_unificar": [["...","..."]],
+ "sugerencias": ["<máx 20 palabras c/u>"]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 7 — UBICACIÓN Y CANAL] roles: canal, sucursal, bodega, direccion,
+                                     comuna_region, ciudad, pais
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL}. Variantes sin resolver:
+{VALORES_PROBLEMA}
+Muestra: {MUESTRA}
+
+Catálogo permitido:
+- unificar_variante geográfica/canal con conocimiento local Chile:
+  "Stgo" = "Santiago"; "Región Metropolitana" = "RM" = "Metropolitana";
+  "Viña" = "Viña del Mar"; "Conce" = "Concepción"; "Pto Montt" = "Puerto
+  Montt". Comunas ≠ ciudades ≠ regiones: NO las mezcles entre sí.
+- canal: consolidar a etiquetas consistentes según los valores existentes
+  ("web", "online", "e-commerce" → la forma más frecuente de la columna;
+  NO impongas tu propia taxonomía).
+- direccion: normalizar abreviaturas (Av., Avda → Avenida; Psje → Pasaje;
+  Dpto → Depto) manteniendo el resto intacto. NUNCA completes numeración ni
+  comunas faltantes.
+- pais: nombre canónico es ("EEUU", "USA", "Estados Unidos" → "Estados
+  Unidos"; "CL", "Chile" → "Chile").
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "unificaciones": [{"variantes": ["..."], "canonico": "...", "confianza": 0.0-1.0}],
+ "no_unificar": [["...","..."]],
+ "alertas": ["..."]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 8 — CONTACTO] roles: email, telefono, sitio_web
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL}. Valores dudosos: {VALORES_PROBLEMA}
+Muestra: {MUESTRA}
+
+Catálogo permitido:
+- email: minúsculas, sin espacios; corregir SOLO typos inequívocos de dominio
+  frecuente ("gmial.com" → "gmail.com", "hotmial" → "hotmail"); si falta el @
+  o el dominio, va a "invalidos" (no lo completes).
+- telefono Chile: normalizar a +56 9 XXXX XXXX (móvil) o +56 XX XXX XXXX
+  (fijo). "912345678", "09-1234 5678", "56912345678" → "+56 9 1234 5678".
+  Largo imposible → "invalidos".
+- sitio_web: minúsculas; agregar https:// solo si el dominio es claro; quitar
+  espacios.
+
+Prohibido: inventar dígitos o dominios; cambiar el número local por otro.
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "correcciones": [{"valor_original": "...", "valor_corregido": "...",
+                   "operacion": "...", "confianza": 0.0-1.0}],
+ "invalidos": ["..."]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 9 — CLASIFICACIÓN Y ESTADO] roles: estado, tipo_documento,
+                                          metodo_pago, moneda, prioridad_nivel
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL} (categórica cerrada). Variantes:
+{VALORES_PROBLEMA}
+Muestra con frecuencias: {MUESTRA}
+
+Catálogo permitido:
+- consolidar_categoria: unificar a la forma más frecuente de valores que
+  claramente son la misma categoría ("Pagado", "PAGADO", "pagada", "pag." →
+  "Pagado"; "T. Crédito", "tarjeta credito", "TC" → forma dominante).
+- tipo_documento Chile: reconocer equivalencias DTE ("33" = "Factura
+  Electrónica Afecta", "39" = "Boleta Electrónica", "61" = "Nota de Crédito",
+  "34" = "Factura Exenta", "52" = "Guía de Despacho") — consolida hacia el
+  FORMATO dominante de la columna (código o nombre, no ambos).
+- moneda: código ISO dominante (CLP, USD, EUR, UF; "pesos", "$" → CLP).
+- niveles: ordinales consistentes ("Alta/Media/Baja"; no mezclar con 1/2/3 —
+  consolida al formato mayoritario).
+
+Prohibido: crear categorías nuevas; fusionar estados distintos del flujo
+("Pagado" ≠ "Pagado parcial"); decidir el estado de un valor vacío.
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "consolidaciones": [{"variantes": ["..."], "canonico": "...", "confianza": 0.0-1.0}],
+ "categorias_finales": ["..."],
+ "alertas": ["..."]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 10 — TEXTO LIBRE] roles: descripcion, observaciones, glosa
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL} (texto libre). Muestra: {MUESTRA}
+
+Catálogo permitido (mínimo a propósito — el texto libre casi no se toca):
+- limpieza_superficial: espacios repetidos, saltos de línea internos → espacio,
+  mojibake evidente ("Ã©" → "é", "Ã±" → "ñ").
+- extraer_estructura: si la MAYORÍA de la columna repite un patrón con datos
+  estructurados ("Pedido 4451 - Cliente Andes - 12 cajas"), NO lo apliques:
+  repórtalo en "sugerencias" con el patrón detectado para que el usuario
+  decida si separar en columnas.
+
+Prohibido: resumir, parafrasear, traducir, corregir ortografía de fondo,
+eliminar contenido. El texto del usuario es evidencia, no borrador.
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "correcciones": [{"valor_original": "...", "valor_corregido": "...",
+                   "operacion": "limpieza_superficial"}],
+ "sugerencias": ["..."]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 11 — RRHH] roles: cargo, departamento, prevision, tipo_contrato
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL}. Variantes: {VALORES_PROBLEMA}
+Muestra: {MUESTRA}
+
+Catálogo permitido:
+- consolidar: cargos/áreas equivalentes escritos distinto ("Jefe Ventas",
+  "JEFE DE VENTAS", "jefe ventas." → forma dominante). Jerarquías distintas
+  NO se fusionan ("Jefe de Ventas" ≠ "Subjefe de Ventas" ≠ "Vendedor").
+- prevision Chile: nombres canónicos de AFP (Habitat, Provida, Cuprum,
+  Capital, Modelo, PlanVital, Uno) e Isapres/Fonasa; "AFP Habitat" =
+  "habitat" → "Habitat".
+- tipo_contrato: consolidar a etiquetas existentes ("indefinido", "plazo
+  fijo", "honorarios", "part time" según formato dominante).
+
+Nota de privacidad: estos datos son sensibles; procesa solo lo necesario y no
+reproduzcas datos personales en "alertas" (usa la posición, no el valor).
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "consolidaciones": [{"variantes": ["..."], "canonico": "...", "confianza": 0.0-1.0}],
+ "no_unificar": [["...","..."]],
+ "alertas": ["..."]}
+
+════════════════════════════════════════════════════════════════════════════
+[GRUPO 12 — BANCARIO] roles: banco, tipo_cuenta
+════════════════════════════════════════════════════════════════════════════
+La columna "{COLUMNA}" tiene rol {ROL}. Variantes: {VALORES_PROBLEMA}
+Muestra: {MUESTRA}
+
+Catálogo permitido:
+- banco Chile canónico: "BCI" = "Banco de Crédito e Inversiones"; "Banco
+  Estado" = "BancoEstado" = "BECH"; "Santander" = "Banco Santander Chile";
+  "Chile" = "Banco de Chile" (solo si el contexto es bancario); "Itaú",
+  "Scotiabank", "Falabella", "Ripley", "Security", "BICE", "Consorcio",
+  "Coopeuch". Consolida al formato dominante de la columna.
+- tipo_cuenta: "cta cte", "corriente", "CCT" → "Cuenta Corriente"; "vista",
+  "RUT" (CuentaRUT) → "Cuenta Vista"; "ahorro" → "Cuenta de Ahorro".
+
+Prohibido: tocar números de cuenta desde esta columna; adivinar el banco por
+el número.
+
+Responde SOLO:
+{"columna": "{COLUMNA}",
+ "consolidaciones": [{"variantes": ["..."], "canonico": "...", "confianza": 0.0-1.0}]}
+
+════════════════════════════════════════════════════════════════════════════
+[PROMPT C — REFINADO GLOBAL] (costura refine_with_ai, Fase 7 §5.13 — el
+"último 10-20%" tras el motor determinista)
+════════════════════════════════════════════════════════════════════════════
+El motor determinista ya estandarizó y limpió este dataset. Este es el reporte
+de calidad por columna: {REPORTE_CALIDAD}
+Columnas y roles asignados: {COLUMNAS}
+Filas: {N_FILAS}. Muestra aleatoria de filas completas: {MUESTRA}
+
+Tu trabajo: revisión final de COHERENCIA ENTRE COLUMNAS que el motor (que mira
+columna por columna) no puede ver. Busca únicamente:
+1. Roles mal asignados (una columna "cantidad" con valores tipo RUT).
+2. Incoherencias fila a fila: total ≠ precio×cantidad de forma sistemática;
+   fechas de pago anteriores a la fecha de emisión; descuentos mayores al
+   monto.
+3. Columnas gemelas (dos columnas con la misma información) o columnas que
+   parecen mal separadas/mal fusionadas.
+4. Sesgos silenciosos: una sucursal con el 100% de nulos en montos, un mes
+   completo faltante en fechas.
+
+NO corrijas nada tú: devuelve hallazgos accionables para que el motor o el
+usuario decidan. Máximo 8 hallazgos, ordenados por impacto en el análisis.
+
+Responde SOLO:
+{"hallazgos": [{"tipo": "rol_incorrecto|incoherencia|duplicidad|sesgo",
+                "columnas": ["..."],
+                "descripcion": "<máx 25 palabras>",
+                "accion_sugerida": "<máx 15 palabras>",
+                "impacto": "alto|medio|bajo"}],
+ "calidad_global": "<máx 25 palabras>"}
+
+════════════════════════════════════════════════════════════════════════════
+NOTAS DE INTEGRACIÓN (para el desarrollo, no se envían a la IA)
+────────────────────────────────────────────────────────────────────────────
+- El PROMPT B se conecta en detect_column_roles como fallback cuando el cruce
+  con palabras_clave_roles.csv no encuentra match (o el fuzzy queda bajo el
+  umbral). Con confianza < 0.75 la UI pide confirmación en la tarjeta "Mapeo
+  de columnas" (Fase 7 §5.10) en vez de aplicar en silencio.
+- Los prompts de GRUPO se conectan tras analyze_and_clean: solo se envían las
+  columnas con residuos ({VALORES_PROBLEMA} no vacío) — se paga IA por el
+  10-20% difícil, no por el 80-90% que el motor ya resolvió.
+- El PROMPT C es exactamente la interfaz de refine_with_ai(df, quality_report)
+  que quedó cableada y apagada (AI_REFINE_ENABLED).
+- Todo JSON devuelto se valida contra su esquema y contra los valores reales
+  de la columna (valor_original debe existir; valor_corregido debe parsear
+  según tipo_dato). Lo que no valida, se descarta: la IA propone, el motor
+  dispone.
+- Roles nuevos del CSV que el motor de métricas aún no usa (precio_unitario,
+  saldo, etc.) se tratan por tipo_dato mientras tanto; la columna
+  rol_motor_actual del CSV indica cuáles alimentan hoy los KPIs.
+════════════════════════════════════════════════════════════════════════════

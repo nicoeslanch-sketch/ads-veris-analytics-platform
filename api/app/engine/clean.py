@@ -30,7 +30,12 @@ import re
 
 import pandas as pd
 
-from .mapping import dedup_norm_key, detect_column_roles, strip_accents_lower
+from .mapping import (
+    dedup_norm_key,
+    detect_column_roles,
+    detect_columns_extended,
+    strip_accents_lower,
+)
 from .standardize import (
     is_missing,
     missing_mask,
@@ -274,8 +279,19 @@ def analyze_and_clean(
 
     preview = _preview_with_issues(df, column_types, duplicated_mask, caches)
 
-    # Enriquecer el reporte de calidad con lo que sabe la estandarización.
+    # Enriquecer el reporte de calidad con lo que sabe la estandarización
+    # y el mapeo universal (Fase 9): rol extendido + método y confianza.
+    extended = detect_columns_extended(list(df.columns))
     for col, info in per_column.items():
+        match = extended.get(col)
+        if match:
+            info["rol_extendido"] = match.rol
+            info["grupo_rol"] = match.grupo
+            info["match_diccionario"] = {
+                "palabra_clave": match.palabra_clave,
+                "metodo": match.metodo,
+                "confianza": match.confianza,
+            }
         info["confianza_tipo"] = std_report["column_confidence"].get(col)
         convention = std_report["convenciones_numericas"].get(col)
         if convention:

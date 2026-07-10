@@ -189,3 +189,21 @@ Si el usuario no ha cargado y limpiado datos, la plataforma no muestra dashboard
   final (`api/app/engine/ai_refine.py`); la interpretación de instrucciones vive en
   `api/app/engine/directed.py`. Cada una tiene un único `# TODO IA` con interfaz
   estable: activarlas es reemplazar el cuerpo por la llamada a Anthropic.
+
+## Mapeo universal de columnas (Fase 9)
+
+- El rol de cada columna se detecta contra el **diccionario**
+  `api/app/data/palabras_clave_roles.csv` (≈15.600 claves, 64 roles, 12 grupos)
+  en 4 etapas: exacto → contención por tokens → prefijo → fuzzy. Los roles del
+  motor (10) se llenan primero desde el diccionario y las palabras clave legacy
+  actúan como red de compatibilidad.
+- **Agregar cobertura** (un rubro nuevo, sinónimos de un cliente): edita el CSV
+  (separador `;`, columnas palabra_clave/rol/grupo/tipo_dato/idioma/prioridad/
+  rol_motor_actual) y despliega — sin tocar código. `rol_motor_actual` solo se
+  completa cuando la equivalencia con los 10 roles del motor es segura (un
+  precio unitario NO es un monto: sumarlo duplicaría ingresos).
+- La **biblioteca de prompts** (`api/app/data/prompts_estandarizacion_por_rol.txt`)
+  alimenta las costuras IA: clasificador de columnas sin match
+  (`AI_CLASSIFIER_ENABLED`, apagado), prompts de grupo por rol y el refinado
+  global (`AI_REFINE_ENABLED`, apagado). La IA decide y corrige residuos con
+  JSON validable; el motor determinista transforma.

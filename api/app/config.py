@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Costura IA del motor (§5.13): refinado final del dataset con IA.
     # Preparado pero APAGADO hasta perfeccionar el motor determinista.
     ai_refine_enabled: bool = False
+    # Fase 9: clasificador IA de columnas SIN match en el diccionario de
+    # 15.600 palabras clave (engine/ai_classifier.py, [PROMPT B]).
+    # Preparado pero APAGADO — mismo criterio que las costuras de la Fase 7.
+    ai_classifier_enabled: bool = False
 
     # ── Fase 8: retención de archivos en Storage (por usuario) ──
     # Tope de archivos guardados por plan; al subir uno nuevo, el frontend

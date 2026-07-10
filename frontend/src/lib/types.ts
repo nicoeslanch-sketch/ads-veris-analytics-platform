@@ -11,6 +11,7 @@ export interface StandardizeResult {
   avisos?: string[]
   carga?: LoadInfo
   mapeo: Record<string, string>
+  mapeo_extendido?: Record<string, DictionaryMatch>
   cambios: {
     encabezados_normalizados: number
     textos_normalizados: number
@@ -84,8 +85,21 @@ export interface LoadInfo {
   filas_titulo_omitidas: number
 }
 
+export interface DictionaryMatch {
+  rol: string
+  grupo: string
+  tipo_dato: string
+  rol_motor: string | null
+  palabra_clave: string
+  metodo: 'exacto' | 'contencion' | 'prefijo' | 'fuzzy' | 'ia'
+  confianza: number
+}
+
 export interface ColumnQuality {
   rol: string | null
+  rol_extendido?: string
+  grupo_rol?: string
+  match_diccionario?: { palabra_clave: string; metodo: string; confianza: number }
   tipo: ColumnType
   en_alcance: boolean
   vacia?: boolean
