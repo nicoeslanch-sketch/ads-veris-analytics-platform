@@ -66,7 +66,11 @@ async function getAccessToken(): Promise<string | null> {
   return data.session?.access_token ?? null
 }
 
-export async function apiPost<T>(path: string, form: FormData): Promise<T> {
+export async function apiPost<T>(
+  path: string,
+  form: FormData,
+  timeoutMs = PIPELINE_TIMEOUT_MS,
+): Promise<T> {
   const token = await getAccessToken()
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
@@ -74,7 +78,7 @@ export async function apiPost<T>(path: string, form: FormData): Promise<T> {
   const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
-    response = await fetchWithTimeout(fullUrl, { method: 'POST', headers, body: form }, PIPELINE_TIMEOUT_MS)
+    response = await fetchWithTimeout(fullUrl, { method: 'POST', headers, body: form }, timeoutMs)
   } catch (err) {
     throw connectionError(
       err,
