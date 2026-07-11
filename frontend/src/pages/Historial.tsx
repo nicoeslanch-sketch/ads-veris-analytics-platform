@@ -29,7 +29,6 @@ import EmptyState from '../components/ui/EmptyState'
 import { useDataset } from '../data/DatasetContext'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import {
-  downloadDatasetFile,
   fetchActivity,
   fetchDatasets,
   fetchLatestCleaningRules,
@@ -92,19 +91,18 @@ export default function Historial() {
     }
   }, [])
 
-  /** Rehidrata la sesión: descarga el archivo de Storage y re-estandariza.
-   * Si el dataset ya estaba limpio, re-aplica la limpieza para dejar el
-   * dashboard y el asistente operativos de inmediato. */
+  /** Rehidrata la sesión re-ejecutando el pipeline sobre el archivo de
+   * Storage. Fase 11 §5.4: el archivo YA NO se descarga al navegador — todas
+   * las llamadas usan storage_path y el backend lo lee directo (con archivos
+   * grandes, bajar 15 MB al cliente era la mitad de la lentitud de Retomar);
+   * el segundo módulo que lo pida sale del caché del servidor. */
   const handleResume = async (dataset: DatasetRow) => {
     if (!dataset.storage_path) return
     setResuming(dataset.id)
     setResumeError(null)
     try {
-      const file = await downloadDatasetFile(dataset.storage_path, dataset.name)
-      if (!file) {
-        setResumeError('No se pudo descargar el archivo desde Storage.')
-        return
-      }
+      // Placeholder liviano: solo aporta el nombre (la data viaja por storage_path).
+      const file = new File([], dataset.name, { type: 'application/octet-stream' })
       setUploaded(file, dataset.id, dataset.storage_path)
       const result = await apiPost<StandardizeResult>(
         '/standardize',

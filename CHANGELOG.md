@@ -2,6 +2,78 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
+
+La lentitud reportada con bases de >50.000 filas tenía una causa raíz medible:
+el caché del pipeline excluía los archivos grandes, así que CADA módulo
+(Limpieza, Resumen, Explorar, IA, Alertas, Reportes) reprocesaba el archivo
+completo desde cero; además la estandarización parseaba celda por celda.
+Benchmark 50.000×8: estandarizar+limpiar pasó de ~13,3 s a **~1,8 s** y los
+módulos siguientes salen del caché en ~0,3 s.
+
+### Rendimiento (archivos grandes)
+- **Caché por presupuesto de celdas**: ya no hay lista de exclusión por tamaño —
+  el caché admite hasta 2,4 M de celdas TOTALES con desalojo LRU, así el archivo
+  grande (el que más lo necesita) también se cachea. "Retomar" desde Historial y
+  cambiar de módulo dejan de reprocesar el pipeline completo.
+- **Parseo por valores únicos** (`map_unique`): fechas, números y textos se
+  parsean una vez por valor distinto (50.000 filas suelen tener <2.000 valores
+  únicos) en estandarización, limpieza y métricas.
+- **Loader vectorizado**: la detección de filas vacías al final del archivo dejó
+  de recorrer fila por fila.
+- **Retomar sin descarga**: Historial ya no baja el archivo al navegador; todas
+  las llamadas van por `storage_path` y el backend lo lee directo de Storage.
+
+### Motor más preciso (menos errores de estandarización/limpieza)
+- **Números US**: `1,234.56` y `1,234,567` ahora se parsean (regla universal:
+  el ÚLTIMO separador es el decimal); convivencia es-CL/US en la misma base.
+- **Fechas con evidencia por valor**: en una columna que mezcla DD/MM y MM/DD,
+  cada valor inequívoco (13/05, 05/14) se interpreta por su propia evidencia y
+  las ambiguas usan la convención dominante **con aviso visible** al usuario.
+- **Variantes morfológicas**: "pagada"→"pagado", "boletas"→"boleta" en
+  categóricas de baja cardinalidad, con guardas conservadoras (≤30 categorías,
+  misma raíz, solo vocal final a/o o plural 's', minoría ≤ ¼ de la dominante —
+  categorías equilibradas jamás se fusionan).
+- **Mapeo parcial fusionado** (`resolve_mapping`): corregir UNA columna en
+  Limpieza ya no borra el resto del mapeo automático en /metrics (antes el
+  dashboard podía quedar en $0 tras asignar una sola columna).
+
+### Frontend confiable
+- **Timeouts con reintento**: las llamadas al pipeline se cancelan a los 240 s
+  (90 s JSON, 60 s GET) con mensaje claro, y Resumen/Explorar muestran botón
+  **"Reintentar"** — antes un fallo dejaba la página vacía para siempre porque
+  la clave de fetch quedaba marcada como "ya pedida".
+- **Claves de recálculo completas**: cambiar el mapeo de columnas o la hoja
+  refresca Resumen, Explorar y las métricas compartidas (Alertas/Reportes/IA).
+- **Moneda activa real**: los montos se formatean con la moneda detectada por el
+  backend (`US$`, `€`, `$`) en toda la sesión — una base USD ya no se muestra
+  como pesos chilenos.
+- **Resumen sin monto**: si ninguna columna se reconoce como ventas/monto, el
+  dashboard muestra una guía para asignarla en el mapeo (antes: puro $0).
+- Cambio de hoja fallido revierte a la hoja anterior (el contexto jamás apunta
+  a una hoja que no se procesó).
+
+### Continuidad de sesión
+- **Restaurar último trabajo**: al iniciar sesión con la sesión vacía, la
+  plataforma retoma automáticamente el dataset más reciente del Historial
+  (indicador "Restaurando tu último trabajo…" + opción "Empezar con otro
+  documento"). La retención de Storage también corre al iniciar sesión.
+- **"Estandarizar nuevo documento"**: banner explícito en Estandarización con
+  el dataset activo ([Continuar] / [Estandarizar nuevo documento]) y enlace
+  "Procesar otro archivo" en Limpieza — cada documento nuevo crea su registro
+  en el Historial y el anterior queda guardado para retomar.
+
+### Contacto
+- **WhatsApp, Instagram y correo** en el bloque de ayuda del sidebar y en el
+  modal de soporte: wa.me/56983894129, instagram.com/adsveris y
+  servicios@adsveris.com.
+
+### Verificación
+- 129 pruebas backend (12 nuevas de Fase 11: convenciones numéricas, fechas
+  mixtas con aviso, pagado/pagada con guarda de equilibrio, mapeo parcial,
+  caché reutilizado entre módulos, `map_unique` ≡ `map`), build de producción
+  y E2E completo (pipeline + contactos + banner de continuidad + moneda).
+
 ## [0.11.0] - 2026-07-09 - Fase 10: Endurecimiento comercial — seguridad, exactitud financiera y responsive
 
 Triage crítico del informe de calidad externo: se tomó lo que endurece el

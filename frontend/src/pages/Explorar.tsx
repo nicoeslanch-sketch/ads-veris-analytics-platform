@@ -46,7 +46,7 @@ import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../data/Datase
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
-import { formatCLP } from '../lib/format'
+import { formatCLP, setActiveCurrency } from '../lib/format'
 import type { DatasetDimensions, GroupRow, MetricsResult } from '../lib/types'
 
 // ── Configuración del análisis ────────────────────────────────────────────────
@@ -256,6 +256,8 @@ export default function Explorar() {
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Fase 11 §9.3: "Reintentar" tras un timeout o corte de red
+  const [retryTick, setRetryTick] = useState(0)
   const lastFetchKey = useRef<string | null>(null)
 
   const [reco, setReco] = useState<{ recomendacion: string; plan: string[] } | null>(null)
@@ -268,7 +270,8 @@ export default function Explorar() {
   useEffect(() => {
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
-    const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}`
+    // Mapeo manual y reintento en la clave: cambiar el mapeo refresca el análisis
+    const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     setLoading(true)
@@ -281,16 +284,20 @@ export default function Explorar() {
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
       .then((result) => {
         setMetrics(result)
+        setActiveCurrency(result.moneda)
         if (monthsAvailable.length === 0 && result.periodo.meses_disponibles.length > 0) {
           setMonthsAvailable(result.periodo.meses_disponibles)
         }
       })
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'No se pudo calcular el análisis.'),
-      )
+      .catch((err) => {
+        // Anular la clave: sin esto el próximo render "cree" que ya se pidió
+        // y la página queda vacía hasta recargar (Fase 11 §9.3).
+        lastFetchKey.current = null
+        setError(err instanceof ApiError ? err.message : 'No se pudo calcular el análisis.')
+      })
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, datasetId, storagePath, cleaning, uploadedAt, rango, sheet])
+  }, [file, datasetId, storagePath, cleaning, uploadedAt, rango, sheet, mappingOverride, retryTick])
 
   // Al cambiar el análisis, la recomendación anterior deja de aplicar
   useEffect(() => {
@@ -534,9 +541,16 @@ export default function Explorar() {
       {/* Resultados: gráfico + hallazgos / profundiza + recomendación */}
       {error ? (
         <Card className="mt-6 border-coral/40 bg-coral/5">
-          <div className="flex items-start gap-2 text-sm text-coral">
+          <div className="flex flex-wrap items-start gap-2 text-sm text-coral">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>{error}</p>
+            <p className="min-w-0 flex-1">{error}</p>
+            <button
+              type="button"
+              onClick={() => setRetryTick((t) => t + 1)}
+              className="shrink-0 rounded-lg border border-coral/40 bg-white px-3 py-1 text-xs font-semibold text-coral transition-colors hover:bg-coral/10"
+            >
+              Reintentar
+            </button>
           </div>
         </Card>
       ) : (

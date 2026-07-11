@@ -44,6 +44,8 @@ export interface CleanResult {
   }
   problemas: {
     duplicados: number
+    /** Fase 10: duplicados con misma clave pero montos distintos (revisión manual). */
+    duplicados_probables?: number
     valores_nulos: number
     fechas_invalidas: number
     textos_inconsistentes: number
@@ -203,6 +205,8 @@ export interface MetricsResult {
     ganancia_neta: KpiValue | null
     margen_utilidad_pct: { valor: number | null; variacion_puntos: number | null } | null
     flujo_caja: KpiValue | null
+    /** Fase 10: % de filas con ingreso que también traen costo (margen confiable). */
+    cobertura_costos?: { filas_con_ingreso: number; filas_con_ingreso_y_costo: number; pct: number }
   }
   evolucion_mensual: Array<{ mes: string; ingresos: number; gastos?: number; utilidad?: number }>
   por_categoria?: GroupRow[]

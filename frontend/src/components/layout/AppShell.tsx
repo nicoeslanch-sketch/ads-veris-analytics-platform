@@ -4,6 +4,7 @@ import { Sparkles, X } from 'lucide-react'
 import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 import AiPanel from './AiPanel'
+import DatasetBootstrap from './DatasetBootstrap'
 
 /** Rutas donde vive el panel derecho del Asistente IA (Fase 7 §4):
  * SOLO Resumen y Explorar datos. En el resto, el contenido usa todo el ancho
@@ -75,6 +76,8 @@ export default function AppShell() {
         <Topbar onMenuClick={!isDesktopNav ? () => setNavOpen(true) : undefined} />
         <div className="flex min-h-0 flex-1">
           <main className="min-w-0 flex-1 overflow-y-auto bg-work p-4 sm:p-6 lg:p-8">
+            {/* Fase 11 §6: al iniciar sesión se retoma el último trabajo */}
+            <DatasetBootstrap />
             <Outlet />
           </main>
 

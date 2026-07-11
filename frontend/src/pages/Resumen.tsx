@@ -37,7 +37,7 @@ import { useAuth } from '../auth/AuthContext'
 import { monthPeriod, useDataset } from '../data/DatasetContext'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
-import { formatCLP, formatNumber } from '../lib/format'
+import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import type { MetricsResult } from '../lib/types'
 
 /** Indicadores operativos del negocio, calculados de los datos reales del
@@ -155,6 +155,9 @@ export default function Resumen() {
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Fase 11 §9.3: tras un fallo (timeout, red) el usuario puede reintentar sin
+  // recargar la página — el botón incrementa retryTick y el efecto vuelve a correr.
+  const [retryTick, setRetryTick] = useState(0)
   const defaultPeriodSet = useRef(false)
   const lastFetchKey = useRef<string | null>(null)
   const lastDatasetKey = useRef<string | null>(null)
@@ -176,7 +179,9 @@ export default function Resumen() {
       lastDatasetKey.current = datasetKey
       defaultPeriodSet.current = false
     }
-    const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}`
+    // El mapeo manual y el reintento forman parte de la clave: cambiar el mapeo
+    // en Limpieza refresca el dashboard, y "Reintentar" fuerza una nueva llamada.
+    const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     setLoading(true)
@@ -189,6 +194,7 @@ export default function Resumen() {
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
       .then((result) => {
         setMetrics(result)
+        setActiveCurrency(result.moneda)
         // El contexto compartido (Alertas/Reportes/IA) solo cachea métricas
         // del periodo COMPLETO — jamás el mes filtrado del Resumen (Fase 10 §5).
         if (!period.from && !period.to) setContextMetrics(result)
@@ -201,11 +207,14 @@ export default function Resumen() {
           setPeriod(monthPeriod(months[months.length - 1]))
         }
       })
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'No se pudieron calcular las métricas.'),
-      )
+      .catch((err) => {
+        // Si falla, la clave se anula para que el próximo intento sí ejecute
+        // (antes quedaba "marcada como hecha" y la página se veía vacía para siempre).
+        lastFetchKey.current = null
+        setError(err instanceof ApiError ? err.message : 'No se pudieron calcular las métricas.')
+      })
       .finally(() => setLoading(false))
-  }, [file, datasetId, storagePath, cleaning, uploadedAt, period, sheet, setMonthsAvailable, setPeriod])
+  }, [file, datasetId, storagePath, cleaning, uploadedAt, period, sheet, mappingOverride, retryTick, setMonthsAvailable, setPeriod])
 
   if (!ready) {
     return (
@@ -361,9 +370,16 @@ export default function Resumen() {
       </div>
 
       {error && (
-        <div className="mb-6 flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral">
+        <div className="mb-6 flex flex-wrap items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>{error}</p>
+          <p className="min-w-0 flex-1">{error}</p>
+          <button
+            type="button"
+            onClick={() => setRetryTick((t) => t + 1)}
+            className="shrink-0 rounded-lg border border-coral/40 bg-white px-3 py-1 text-xs font-semibold text-coral transition-colors hover:bg-coral/10"
+          >
+            Reintentar
+          </button>
         </div>
       )}
 
@@ -378,6 +394,16 @@ export default function Resumen() {
         <div className="flex items-center gap-3 py-20 text-sm text-navy/60">
           <Loader2 className="h-5 w-5 animate-spin text-teal" /> Calculando indicadores...
         </div>
+      ) : metrics && metrics.dimensiones?.monto === false ? (
+        /* Fase 11: sin columna de monto el dashboard sería puro $0 — mejor
+           decirlo claro y llevar al usuario al mapeo de columnas. */
+        <EmptyState
+          icon={Wallet}
+          title="No detectamos la columna de ventas o monto"
+          description="Tu archivo se procesó, pero ninguna columna se reconoció como monto de venta. Asígnala manualmente en el mapeo de columnas de Limpieza y el dashboard se calculará con tus datos."
+          ctaLabel="Ir a asignar columnas"
+          ctaTo="/limpieza"
+        />
       ) : metrics && kpis ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
           {/* KPIs (con tono suave del color de cada indicador) */}

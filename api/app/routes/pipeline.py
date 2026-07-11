@@ -202,16 +202,46 @@ def _validate_scope(scope: dict | None) -> dict | None:
     return scope
 
 
-# ── Caché del pipeline (§5.7) ─────────────────────────────────────────────────
+# ── Caché del pipeline (§5.7 + Fase 11) ──────────────────────────────────────
 # Un mismo archivo con las mismas reglas/mapeo/alcance se procesa UNA vez.
-# LRU pequeño y con tope de celdas: protege la memoria de Render.
+#
+# Fase 11: el tope ANTIGUO era por entrada (600k celdas) y excluía justamente
+# a los archivos grandes — un 50.000×20 se reprocesaba completo en CADA
+# módulo (Resumen, Explorar, Reportes, retomar…), que era la lentitud
+# reportada. Ahora el límite es un PRESUPUESTO TOTAL de celdas: caben varias
+# bases chicas o una grande, y se desalojan las más antiguas (LRU) hasta que
+# la nueva quepa. Presupuesto para Render 512 MB: 2,4M celdas × ~80 B ≈ 190 MB
+# en el peor caso.
 
 _CACHE_LOCK = threading.Lock()
 _CLEAN_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
-# Dimensionado para Render free (512 MB): cada entrada guarda un DataFrame de
-# strings (~60–100 bytes/celda). 3 × 600k celdas ≈ 150 MB en el peor caso.
-_CACHE_MAX_ENTRIES = 3
-_CACHE_MAX_CELLS = 600_000
+_CACHE_TOTAL_CELL_BUDGET = 2_400_000
+# Una entrada individual jamás puede superar el presupuesto completo
+# (el loader ya limita a 200.000 filas).
+_CACHE_MAX_ENTRY_CELLS = 2_400_000
+
+
+def _cache_entry_cells(result: dict, apply: bool) -> int:
+    rows = result["resumen"]["filas_despues" if apply else "filas_antes"]
+    cols = result["resumen"]["columnas_despues" if apply else "columnas_antes"]
+    return rows * max(cols, 1)
+
+
+def _cache_store(key: tuple, result: dict, apply: bool) -> None:
+    cells = _cache_entry_cells(result, apply)
+    if cells > _CACHE_MAX_ENTRY_CELLS:
+        return
+    with _CACHE_LOCK:
+        _CLEAN_CACHE[key] = result
+        _CLEAN_CACHE.move_to_end(key)
+        # Desalojar LRU hasta caber en el presupuesto total.
+        def total() -> int:
+            return sum(
+                _cache_entry_cells(r, bool(r["resumen"]["aplicado"]))
+                for r in _CLEAN_CACHE.values()
+            )
+        while len(_CLEAN_CACHE) > 1 and total() > _CACHE_TOTAL_CELL_BUDGET:
+            _CLEAN_CACHE.popitem(last=False)
 
 
 def _cache_key(
@@ -275,14 +305,7 @@ def _analyze_cached(
         if notas:
             result["avisos"] = result["avisos"] + [f"IA: {n}" for n in notas]
 
-    rows = result["resumen"]["filas_despues" if apply else "filas_antes"]
-    cols = result["resumen"]["columnas_despues" if apply else "columnas_antes"]
-    if rows * max(cols, 1) <= _CACHE_MAX_CELLS:
-        with _CACHE_LOCK:
-            _CLEAN_CACHE[key] = result
-            _CLEAN_CACHE.move_to_end(key)
-            while len(_CLEAN_CACHE) > _CACHE_MAX_ENTRIES:
-                _CLEAN_CACHE.popitem(last=False)
+    _cache_store(key, result, apply)
     return result
 
 
@@ -325,7 +348,7 @@ def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -
         "mapeo": detect_column_roles(list(df_std.columns)),
         "mapeo_extendido": {col: match.to_dict() for col, match in extended.items()},
         "cambios": report["cambios"],
-        "avisos": load_report.get("avisos", []),
+        "avisos": list(load_report.get("avisos", [])) + list(report.get("avisos", [])),
         "carga": {
             "hoja_usada": load_report.get("hoja_usada"),
             "hojas_disponibles": load_report.get("hojas_disponibles", []),

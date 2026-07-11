@@ -17,6 +17,7 @@ import {
   Settings2,
   Sparkles,
   Type,
+  Upload,
   Wand2,
 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
@@ -185,7 +186,7 @@ export default function Limpieza() {
   const result = cleaning ?? detection
   const applied = cleaning !== null
   const totalProblems = result
-    ? PROBLEM_LABELS.reduce((sum, { key }) => sum + result.problemas[key], 0)
+    ? PROBLEM_LABELS.reduce((sum, { key }) => sum + (result.problemas[key] ?? 0), 0)
     : 0
   const quality = result
     ? applied
@@ -364,12 +365,21 @@ export default function Limpieza() {
           title="Limpieza de datos ✨"
           subtitle="Revisa, ajusta y limpia tus datos para que estén listos para el análisis."
         />
-        <Link
-          to="/historial"
-          className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5"
-        >
-          <CalendarClock className="h-4 w-4" /> Historial de cargas
-        </Link>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* Fase 11 §6.2: salida explícita para estandarizar OTRO documento */}
+          <Link
+            to="/estandarizacion"
+            className="inline-flex items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5"
+          >
+            <Upload className="h-4 w-4" /> Procesar otro archivo
+          </Link>
+          <Link
+            to="/historial"
+            className="inline-flex items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5"
+          >
+            <CalendarClock className="h-4 w-4" /> Historial de cargas
+          </Link>
+        </div>
       </div>
 
       {/* Encabezado: archivo, filas, columnas, calidad, estado (tonos suaves) */}
@@ -699,10 +709,10 @@ export default function Limpieza() {
                         </span>
                         <span
                           className={`font-semibold ${
-                            result.problemas[key] > 0 ? 'text-coral' : 'text-navy/40'
+                            (result.problemas[key] ?? 0) > 0 ? 'text-coral' : 'text-navy/40'
                           }`}
                         >
-                          {formatNumber(result.problemas[key])}
+                          {formatNumber(result.problemas[key] ?? 0)}
                         </span>
                       </li>
                     ))}

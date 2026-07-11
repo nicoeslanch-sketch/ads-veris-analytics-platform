@@ -119,3 +119,34 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
                 taken.add(col)
                 break
     return mapping
+
+# Roles que consume el motor de métricas (equivale a clean.VALID_ROLES).
+ENGINE_ROLES = (
+    "fecha", "monto", "costo", "cantidad", "producto", "categoria",
+    "cliente", "canal", "sucursal", "vendedor",
+)
+
+
+def resolve_mapping(columns: list[str], override: dict | None) -> dict[str, str]:
+    """Mapeo automático FUSIONADO con las correcciones del usuario (Fase 11).
+
+    Única fuente de verdad para /clean, /metrics, descargas e historial: un
+    override parcial jamás borra los roles detectados automáticamente."""
+    detected = detect_column_roles(columns)
+    if not override:
+        return detected
+    resolved = dict(detected)
+    for role, col in override.items():
+        role_key = str(role).strip().lower()
+        if role_key not in ENGINE_ROLES:
+            continue
+        if not col:
+            resolved.pop(role_key, None)
+            continue
+        if col in columns:
+            # Un mismo nombre de columna no puede cumplir dos roles.
+            for other_role, other_col in list(resolved.items()):
+                if other_col == col and other_role != role_key:
+                    resolved.pop(other_role)
+            resolved[role_key] = col
+    return resolved

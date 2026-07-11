@@ -7,8 +7,9 @@
 
 import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { CheckCircle2, Clock, HelpCircle, Loader2, MessageCircle, Send, X } from 'lucide-react'
+import { CheckCircle2, Clock, HelpCircle, Instagram, Loader2, Mail, MessageCircle, Send, X } from 'lucide-react'
 import { ApiError, apiGet, apiPostJson } from '../../lib/api'
+import { CONTACT_EMAIL, INSTAGRAM_URL, WHATSAPP_URL, WhatsAppIcon } from './ContactLinks'
 
 interface MyRequest {
   id: string
@@ -138,6 +139,37 @@ export default function HelpModal({ onClose }: { onClose: () => void }) {
                   </>
                 )}
               </button>
+            </div>
+
+            {/* Fase 11 §1: canales directos — WhatsApp, Instagram y correo */}
+            <div className="mt-5 border-t border-navy/10 pt-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-navy/45">
+                También puedes escribirnos directo
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <a
+                  href={WHATSAPP_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-green/10 px-3 py-1.5 text-xs font-semibold text-green transition-colors hover:bg-green hover:text-white"
+                >
+                  <WhatsAppIcon className="h-3.5 w-3.5" /> WhatsApp
+                </a>
+                <a
+                  href={INSTAGRAM_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-coral/10 px-3 py-1.5 text-xs font-semibold text-coral transition-colors hover:bg-coral hover:text-white"
+                >
+                  <Instagram className="h-3.5 w-3.5" /> @adsveris
+                </a>
+                <a
+                  href={`mailto:${CONTACT_EMAIL}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-teal/10 px-3 py-1.5 text-xs font-semibold text-teal transition-colors hover:bg-teal hover:text-white"
+                >
+                  <Mail className="h-3.5 w-3.5" /> {CONTACT_EMAIL}
+                </a>
+              </div>
             </div>
 
             {mine.length > 0 && (

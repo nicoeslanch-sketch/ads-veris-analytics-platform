@@ -14,8 +14,8 @@ import re
 
 import pandas as pd
 
-from .mapping import detect_column_roles
-from .standardize import is_missing, parse_date, parse_number
+from .mapping import detect_column_roles, resolve_mapping
+from .standardize import is_missing, map_unique, parse_date, parse_number
 
 FINANCIAL_RATIOS = [
     "roa",
@@ -31,7 +31,9 @@ FINANCIAL_RATIOS = [
 def _numeric_series(df: pd.DataFrame, column: str | None) -> pd.Series:
     if column is None or column not in df.columns:
         return pd.Series([None] * len(df), index=df.index, dtype=float)
-    return df[column].map(lambda v: parse_number(v) if not is_missing(v) else None).astype(float)
+    return map_unique(
+        df[column], lambda v: parse_number(v) if not is_missing(v) else None
+    ).astype(float)
 
 
 # ── Moneda (Fase 10 §4.4): detección por tokens en la columna de montos ─────
@@ -154,7 +156,10 @@ def compute_metrics(
 ) -> dict:
     """`currency_hint` viene del pipeline (detección sobre los valores CRUDOS,
     antes de que la estandarización quite los símbolos de moneda)."""
-    roles = mapping or detect_column_roles(list(df.columns))
+    # Fase 11 §9.2: el mapeo manual se FUSIONA con el automático. Antes un
+    # override parcial (ej: solo "monto") reemplazaba el mapeo completo y
+    # hacía desaparecer fecha/categoría/canal detectados → dashboard vacío.
+    roles = resolve_mapping(list(df.columns), mapping)
     roles = {role: col for role, col in roles.items() if col in df.columns}
     warnings: list[str] = []
 
@@ -173,7 +178,9 @@ def compute_metrics(
         )
 
     dates_all = (
-        df[roles["fecha"]].map(parse_date) if roles.get("fecha") else pd.Series([None] * len(df))
+        map_unique(df[roles["fecha"]], parse_date)
+        if roles.get("fecha")
+        else pd.Series([None] * len(df))
     )
     has_dates = roles.get("fecha") is not None and dates_all.notna().any()
     if not has_dates:

@@ -1,6 +1,19 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 10 completas.**
+**Estado actual: Fases 0 a 11 completas.**
+La Fase 11 ataca la lentitud con bases grandes (>50.000 filas) en su causa raíz:
+el caché del pipeline excluía los archivos grandes y cada módulo reprocesaba
+todo — ahora el caché funciona por **presupuesto de celdas con desalojo LRU** y
+el parseo es **por valores únicos** (50.000×8: de ~13,3 s a ~1,8 s; módulos
+siguientes ~0,3 s). "Retomar" ya no descarga el archivo al navegador. El motor
+gana precisión: números US (`1,234.56`), fechas mixtas DD/MM–MM/DD resueltas
+por evidencia por valor con aviso, variantes morfológicas (pagada→pagado) con
+guardas conservadoras, y el mapeo parcial del usuario se FUSIONA con el
+automático (corregir una columna ya no vacía el dashboard). El frontend suma
+timeouts con botón "Reintentar", claves de recálculo con mapeo/hoja, moneda
+activa real (US$/€/$) y continuidad de sesión: al iniciar sesión se restaura el
+último trabajo, con "Estandarizar nuevo documento" explícito y contactos
+directos (WhatsApp, Instagram, servicios@adsveris.com) en la ayuda.
 La Fase 10 es el endurecimiento comercial tras el triage crítico del informe de
 calidad externo: cierra la **vulnerabilidad P0 de profiles** (migración 0011 —
 un usuario podía auto-asignarse Gold/admin vía REST), corrige la **exactitud
@@ -318,7 +331,21 @@ reclasificadas + test de auditoría, responsive completo (hamburguesa + drawer
 IA sin consumo oculto), recuperar contraseña, anti-spam de soporte, créditos
 auditados, deps fijadas y CI. **118 tests + build + 2 E2E.**
 
-## ⏳ Pendiente (Fase 11 sugerida — operación comercial)
+## ✅ Fase 11 — Rendimiento con datos grandes, precisión del motor y continuidad (completa)
+
+Ver el detalle en `CHANGELOG.md` [0.12.0]. Resumen: caché del pipeline por
+**presupuesto de celdas** (2,4 M totales, LRU — los archivos grandes también se
+cachean y los módulos dejan de reprocesar), parseo por **valores únicos**
+(50.000×8: ~13,3 s → ~1,8 s), loader vectorizado, "Retomar" sin descargar el
+archivo al navegador; números US (`1,234.56`), fechas mixtas con evidencia por
+valor + aviso, pagada→pagado con guardas conservadoras, `resolve_mapping` que
+fusiona el mapeo del usuario con el automático; timeouts con "Reintentar",
+claves de recálculo con mapeo/hoja, moneda activa real, CTA cuando no hay
+columna de monto; restauración del último trabajo al iniciar sesión,
+"Estandarizar nuevo documento", retención también al login y contactos de ayuda
+(WhatsApp/Instagram/correo). **129 tests + build + 3 E2E.**
+
+## ⏳ Pendiente (Fase 12 sugerida — operación comercial)
 
 - **Pasarela de pago** (Webpay/Flow/MercadoPago): reemplazar `startCheckout()` y
   llamar `set_user_plan(source="pasarela")` desde el webhook. La activación manual

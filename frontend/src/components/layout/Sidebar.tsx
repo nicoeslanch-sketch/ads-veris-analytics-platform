@@ -19,6 +19,7 @@ import {
 import { useDataset } from '../../data/DatasetContext'
 import { usePlan } from '../../lib/usePlan'
 import HelpModal from './HelpModal'
+import ContactLinks from './ContactLinks'
 
 interface NavItem {
   to: string
@@ -129,6 +130,8 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
           >
             Ir a ayuda
           </button>
+          {/* Fase 11 §1: contacto directo — WhatsApp, Instagram y correo */}
+          <ContactLinks variant="sidebar" />
         </div>
       </div>
 

@@ -65,7 +65,8 @@ export async function fetchActivity(limit = 60): Promise<FetchOutcome<ActivityRo
   return data as ActivityRow[]
 }
 
-export async function fetchDatasets(limit = 20): Promise<FetchOutcome<DatasetRow>> {
+// Fase 11 §14.3: el Plan Gold conserva hasta 50 archivos — el listado debe alcanzarlos.
+export async function fetchDatasets(limit = 50): Promise<FetchOutcome<DatasetRow>> {
   if (!supabase || !(await hasSession())) return null
   const { data, error } = await supabase
     .from('datasets')

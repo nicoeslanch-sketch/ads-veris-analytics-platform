@@ -13,6 +13,34 @@ const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, '') ??
   (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
+/** Timeouts (Fase 11 §11.1): una petición colgada ya no deja la página
+ * "cargando" para siempre. El primer procesamiento de un archivo grande
+ * puede tardar — el pipeline recibe margen amplio; las lecturas, poco. */
+const PIPELINE_TIMEOUT_MS = 240_000
+const JSON_TIMEOUT_MS = 90_000
+const GET_TIMEOUT_MS = 60_000
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function connectionError(err: unknown, fallback: string): ApiError {
+  if (err instanceof DOMException && err.name === 'AbortError') {
+    return new ApiError(0, 'La solicitud tardó demasiado y se canceló. Vuelve a intentar.')
+  }
+  return new ApiError(0, fallback)
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -46,10 +74,10 @@ export async function apiPost<T>(path: string, form: FormData): Promise<T> {
   const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
-    response = await fetch(fullUrl, { method: 'POST', headers, body: form })
-  } catch {
-    throw new ApiError(
-      0,
+    response = await fetchWithTimeout(fullUrl, { method: 'POST', headers, body: form }, PIPELINE_TIMEOUT_MS)
+  } catch (err) {
+    throw connectionError(
+      err,
       'No se pudo contactar al motor de datos. ¿Está corriendo la API? (VITE_API_BASE_URL)',
     )
   }
@@ -106,9 +134,9 @@ export async function apiDownload(path: string, form: FormData, fallbackFilename
   const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
-    response = await fetch(fullUrl, { method: 'POST', headers, body: form })
-  } catch {
-    throw new ApiError(0, 'No se pudo contactar al servidor.')
+    response = await fetchWithTimeout(fullUrl, { method: 'POST', headers, body: form }, PIPELINE_TIMEOUT_MS)
+  } catch (err) {
+    throw connectionError(err, 'No se pudo contactar al servidor.')
   }
   if (!response.ok) {
     let detail = `Error ${response.status} del servidor.`
@@ -142,9 +170,9 @@ export async function apiGet<T>(path: string): Promise<T> {
   const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
-    response = await fetch(fullUrl, { headers })
-  } catch {
-    throw new ApiError(0, 'No se pudo contactar al servidor.')
+    response = await fetchWithTimeout(fullUrl, { headers }, GET_TIMEOUT_MS)
+  } catch (err) {
+    throw connectionError(err, 'No se pudo contactar al servidor.')
   }
   const rawBody = await response.text()
   if (!response.ok) {
@@ -171,9 +199,13 @@ export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
   const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
-    response = await fetch(fullUrl, { method: 'POST', headers, body: JSON.stringify(body) })
-  } catch {
-    throw new ApiError(0, 'No se pudo contactar al servidor.')
+    response = await fetchWithTimeout(
+      fullUrl,
+      { method: 'POST', headers, body: JSON.stringify(body) },
+      JSON_TIMEOUT_MS,
+    )
+  } catch (err) {
+    throw connectionError(err, 'No se pudo contactar al servidor.')
   }
   const rawBody = await response.text()
   if (!response.ok) {

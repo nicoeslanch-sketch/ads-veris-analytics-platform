@@ -34,10 +34,12 @@ from .mapping import (
     dedup_norm_key,
     detect_column_roles,
     detect_columns_extended,
+    resolve_mapping,
     strip_accents_lower,
 )
 from .standardize import (
     is_missing,
+    map_unique,
     missing_mask,
     parse_date,
     parse_number,
@@ -94,31 +96,21 @@ def _dedup_masks(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     distintos jamás se fusionan). SIN columna ID, solo los exactos se eliminan
     automáticamente; los normalizados se marcan como probables para revisión."""
     exact = df.duplicated(keep="first")
-    comparison = df.map(lambda v: dedup_norm_key(str(v)))
+    # Fase 11: la clave normalizada se calcula UNA vez por valor único de
+    # cada columna (antes era celda por celda: el paso más caro del análisis).
+    comparison = pd.DataFrame(
+        {col: map_unique(df[col], lambda v: dedup_norm_key(str(v))) for col in df.columns},
+        index=df.index,
+    )
     normalized = comparison.duplicated(keep="first")
     return exact, normalized
 
 
 def _resolve_mapping(columns: list[str], mapping: dict | None) -> dict[str, str]:
-    """Roles del negocio: usa el mapeo corregido por el usuario si es válido."""
-    detected = detect_column_roles(columns)
-    if not mapping:
-        return detected
-    resolved = dict(detected)
-    for role, col in mapping.items():
-        role_key = str(role).strip().lower()
-        if role_key not in VALID_ROLES:
-            continue
-        if not col:
-            resolved.pop(role_key, None)
-            continue
-        if col in columns:
-            # Un mismo nombre de columna no puede cumplir dos roles.
-            for other_role, other_col in list(resolved.items()):
-                if other_col == col and other_role != role_key:
-                    resolved.pop(other_role)
-            resolved[role_key] = col
-    return resolved
+    """Roles del negocio: mapeo automático + correcciones del usuario.
+    Fase 11: delega en mapping.resolve_mapping — la MISMA lógica que usa
+    /metrics (antes métricas reemplazaba el mapeo completo con el override)."""
+    return resolve_mapping(columns, mapping)
 
 
 def _resolve_scope(columns: list[str], scope: dict | None) -> tuple[set[str], bool]:
@@ -151,9 +143,9 @@ def _column_caches(
         missing[col] = miss
         ctype = column_types.get(col, "texto")
         if ctype == "fecha":
-            dates[col] = df[col].map(lambda v: parse_date(v))
+            dates[col] = map_unique(df[col], lambda v: parse_date(v))
         elif ctype == "numero":
-            numbers[col] = df[col].map(lambda v: parse_number(v))
+            numbers[col] = map_unique(df[col], lambda v: parse_number(v))
     return missing, dates, numbers
 
 
@@ -394,13 +386,17 @@ def analyze_and_clean(
                 continue
             ctype = column_types.get(col, "texto")
             if ctype == "fecha" and active["fechas"]:
-                # Las fechas irreparables quedan vacías (señalizadas en la descarga).
-                df[col] = df[col].map(
-                    lambda v: "" if not is_missing(v) and parse_date(v) is None else v
+                # Las fechas irreparables quedan vacías (señalizadas en la
+                # descarga). Fase 11: por valores únicos (antes celda a celda,
+                # el mayor costo del apply con 50.000 filas).
+                df[col] = map_unique(
+                    df[col],
+                    lambda v: "" if not is_missing(v) and parse_date(v) is None else v,
                 )
             elif ctype == "numero" and active["tipos"]:
-                df[col] = df[col].map(
-                    lambda v: "" if not is_missing(v) and parse_number(v) is None else v
+                df[col] = map_unique(
+                    df[col],
+                    lambda v: "" if not is_missing(v) and parse_number(v) is None else v,
                 )
             # §5.1: sin imputación de nulos — nunca "0" en montos/costos/cantidades.
 

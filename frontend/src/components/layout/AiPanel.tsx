@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, Loader2, Lock, RefreshCw, Sparkles, Star, TriangleAlert } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
 import { ApiError, apiPost, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
+import { setActiveCurrency } from '../../lib/format'
 import type { MetricsResult } from '../../lib/types'
 
 // ── Tipos locales ─────────────────────────────────────────────────────────────
@@ -87,6 +88,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
           ...(sheet ? { sheet } : {}),
         }
         m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg, fields))
+        setActiveCurrency(m.moneda)
         localMetrics.current = m
         setContextMetrics(m)
       } else {

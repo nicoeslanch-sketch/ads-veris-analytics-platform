@@ -79,6 +79,18 @@ def missing_mask(series: pd.Series) -> pd.Series:
     return normalized.isin(MISSING_TOKENS)
 
 
+def map_unique(series: pd.Series, func) -> pd.Series:
+    """`series.map(func)` calculando func UNA vez por valor único (Fase 11).
+
+    En datos reales las columnas repiten muchísimo (fechas, categorías,
+    estados, montos típicos): 50.000 filas suelen tener menos de 2.000
+    valores únicos — parsear cada celda era el mayor costo del motor."""
+    uniques = series.unique()
+    if len(uniques) >= len(series) * 0.9:
+        return series.map(func)  # casi todo único: el índice no ayuda
+    return series.map({value: func(value) for value in uniques})
+
+
 def normalize_headers(df: pd.DataFrame) -> int:
     """Limpia encabezados in-place. Devuelve cuántos cambiaron."""
     changes = 0
@@ -141,35 +153,64 @@ def detect_value_type(series: pd.Series, column_name: str) -> str:
 # ── Fechas ────────────────────────────────────────────────────────────────────
 
 
-def column_dayfirst(series: pd.Series) -> bool:
-    """Formato dominante de la columna (§5.6): ¿el primer token es el día?
+def _value_dayfirst_evidence(text: str) -> bool | None:
+    """Evidencia de orientación de UN valor: True=día/mes, False=mes/día,
+    None=ambiguo o ISO (Fase 11 §7)."""
+    parts = re.split(r"[-/.]", text)
+    if len(parts) != 3:
+        return None
+    try:
+        first, second = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if first > 31:  # ISO yyyy-mm-dd: el orden lo resuelve pandas
+        return None
+    if 12 < first <= 31:
+        return True
+    if 12 < second <= 31:
+        return False
+    return None
 
-    Si algún valor tiene primer token > 12 → día primero (es-CL, definitivo).
-    Si algún valor tiene segundo token > 12 → mes primero.
-    Sin evidencia → día primero (convención chilena)."""
-    day_first_evidence = month_first_evidence = 0
+
+def column_date_profile(series: pd.Series) -> dict:
+    """Perfil de formato de fecha de la columna (Fase 11 §7).
+
+    {dayfirst, dmy, mdy, ambiguas, mixta}: si conviven evidencias DD/MM y
+    MM/DD la columna es MIXTA — cada valor inequívoco se interpreta por su
+    propia evidencia y las ambiguas usan la convención dominante, con aviso."""
+    dmy = mdy = ambiguous = 0
     for value in _sample_values(series):
         text = str(value).strip().split(" ")[0]
         if not _DATE_SHAPE.match(text):
             continue
-        parts = re.split(r"[-/.]", text)
-        if len(parts) != 3:
-            continue
-        try:
-            first, second = int(parts[0]), int(parts[1])
-        except ValueError:
-            continue
-        if first > 31:  # ISO yyyy-mm-dd: el orden lo resuelve pandas
-            continue
-        if 12 < first <= 31:
-            day_first_evidence += 1
-        elif 12 < second <= 31:
-            month_first_evidence += 1
-    if day_first_evidence and not month_first_evidence:
-        return True
-    if month_first_evidence and not day_first_evidence:
-        return False
-    return day_first_evidence >= month_first_evidence
+        evidence = _value_dayfirst_evidence(text)
+        if evidence is True:
+            dmy += 1
+        elif evidence is False:
+            mdy += 1
+        else:
+            parts = re.split(r"[-/.]", text)
+            # Ambigua: tres partes numéricas y la primera NO es un año ISO.
+            if len(parts) == 3 and parts[0].isdigit() and len(parts[0]) <= 2:
+                ambiguous += 1
+    if dmy and not mdy:
+        dayfirst = True
+    elif mdy and not dmy:
+        dayfirst = False
+    else:
+        dayfirst = dmy >= mdy  # empate/sin evidencia → convención chilena
+    return {
+        "dayfirst": dayfirst,
+        "dmy": dmy,
+        "mdy": mdy,
+        "ambiguas": ambiguous,
+        "mixta": bool(dmy and mdy),
+    }
+
+
+def column_dayfirst(series: pd.Series) -> bool:
+    """Compatibilidad: solo la orientación dominante (§5.6)."""
+    return column_date_profile(series)["dayfirst"]
 
 
 def _parse_text_month_date(text: str) -> pd.Timestamp | None:
@@ -201,9 +242,14 @@ def parse_date(value: str, dayfirst: bool = True) -> pd.Timestamp | None:
         text = text.split(" ")[0]
         if is_missing(text) or not _DATE_SHAPE.match(text):
             return None
+    # Fase 11 §7: la evidencia del PROPIO valor manda sobre la convención de
+    # la columna — en una columna DD/MM, "05/22/2026" es inequívocamente
+    # MM/DD y ya no se descarta ni se interpreta al revés.
+    evidence = _value_dayfirst_evidence(text)
+    effective_dayfirst = dayfirst if evidence is None else evidence
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        parsed = pd.to_datetime(text, dayfirst=dayfirst, errors="coerce")
+        parsed = pd.to_datetime(text, dayfirst=effective_dayfirst, errors="coerce")
     return None if pd.isna(parsed) else parsed
 
 
@@ -244,11 +290,20 @@ def parse_number(value: str, dot3_convention: str = "miles") -> float | None:
     negative = paren_negative or text.startswith("-")
     text = text.lstrip("-")
     if "," in text and "." in text:
-        # Formato chileno completo: 1.234.567,89
-        text = text.replace(".", "").replace(",", ".")
+        # Fase 11 §10.2: con AMBOS separadores, el que aparece AL FINAL es el
+        # decimal — regla universal que cubre el formato chileno/europeo
+        # ("1.234.567,89") y el estadounidense ("1,234.56") sin adivinar.
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
     elif "," in text:
-        # Coma como separador decimal (es-CL)
-        text = text.replace(",", ".")
+        if text.count(",") > 1:
+            # Solo comas múltiples: separador de miles US (1,234,567).
+            text = text.replace(",", "")
+        else:
+            # Coma como separador decimal (es-CL)
+            text = text.replace(",", ".")
     elif text.count(".") > 1:
         # Solo puntos de miles: 1.234.567
         text = text.replace(".", "")
@@ -361,7 +416,7 @@ def _normalize_text_column(
     solo difieren en mayúsculas/tildes/espacios se reemplazan por la forma más
     frecuente; los typos cercanos se fusionan con Levenshtein acotado —
     SOLO si `allow_fuzzy` (jamás en columnas identificadoras, Fase 10 §6.1)."""
-    stripped = series.map(lambda v: "" if is_missing(v) else re.sub(r"\s+", " ", str(v)).strip())
+    stripped = map_unique(series, lambda v: "" if is_missing(v) else re.sub(r"\s+", " ", str(v)).strip())
     changes = int((stripped != series.map(str)).sum())
 
     frequencies: dict[str, dict[str, int]] = {}
@@ -388,7 +443,36 @@ def _normalize_text_column(
                 fuzzy_examples.append([canonical[rare_key], canonical[canon_key]])
             canonical[rare_key] = canonical[canon_key]
 
-    unified = stripped.map(lambda v: canonical[norm_key(v)] if v else v)
+        # Fase 11 §8: variantes MORFOLÓGICAS en categóricas de baja
+        # cardinalidad — "pagada" (5) → "pagado" (55). El fuzzy clásico no las
+        # toca porque ambas son "frecuentes" (≥3). Guardas: ≤30 categorías,
+        # misma raíz, solo vocal final a/o o plural con "s", y la minoritaria
+        # es ≤ 1/4 de la dominante (categorías equilibradas jamás se fusionan).
+        totals = {key: sum(v.values()) for key, v in frequencies.items()}
+        if 2 <= len(totals) <= 30:
+            ordered = sorted(totals, key=lambda k: totals[k], reverse=True)
+            for minor in list(ordered):
+                if canonical[minor] != _pick_canonical(frequencies[minor]):
+                    continue  # ya fusionada por el fuzzy
+                for major in ordered:
+                    if major == minor or totals[major] < max(totals[minor] * 4, 3):
+                        continue
+                    if len(minor) < 4 or minor[:3] != major[:3]:
+                        continue
+                    vowel_swap = (
+                        len(minor) == len(major)
+                        and minor[:-1] == major[:-1]
+                        and {minor[-1], major[-1]} <= {"a", "o"}
+                        and not minor[-2] in "aeiou "
+                    )
+                    plural = minor == major + "s" or major == minor + "s"
+                    if vowel_swap or plural:
+                        if len(fuzzy_examples) < 5:
+                            fuzzy_examples.append([canonical[minor], canonical[major]])
+                        canonical[minor] = canonical[major]
+                        break
+
+    unified = map_unique(stripped, lambda v: canonical[norm_key(v)] if v else v)
     changes += int((unified != stripped).sum())
     return unified, changes, fuzzy_examples
 
@@ -407,6 +491,7 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     date_dayfirst: dict[str, bool] = {}
     fuzzy_total = 0
     fuzzy_examples: list[list[str]] = []
+    date_avisos: list[str] = []
     text_changes = date_changes = number_changes = 0
 
     for col in result.columns:
@@ -426,8 +511,21 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 fuzzy_total += len(examples)
                 fuzzy_examples.extend(examples[: max(0, 5 - len(fuzzy_examples))])
         elif ctype == "fecha":
-            dayfirst = column_dayfirst(result[col])
+            profile = column_date_profile(result[col])
+            dayfirst = profile["dayfirst"]
             date_dayfirst[col] = dayfirst
+            if profile["mixta"]:
+                # Fase 11 §7: DD/MM y MM/DD conviven en la misma columna.
+                # Los valores inequívocos se resuelven por su propia evidencia
+                # (parse_date); los ambiguos usan la convención dominante y el
+                # usuario queda AVISADO en vez de una conversión silenciosa.
+                dominante = "día/mes (es-CL)" if dayfirst else "mes/día (US)"
+                date_avisos.append(
+                    f"La columna '{col}' mezcla formatos de fecha día/mes y mes/día "
+                    f"({profile['dmy']} y {profile['mdy']} valores inequívocos). "
+                    f"{profile['ambiguas']} fecha(s) ambiguas se interpretaron como "
+                    f"{dominante} — revísalas antes de confiar en los meses."
+                )
 
             def _standardize_date(value: str) -> str:
                 if is_missing(value):
@@ -435,7 +533,7 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 parsed = parse_date(value, dayfirst=dayfirst)
                 return str(value).strip() if parsed is None else parsed.strftime("%d/%m/%Y")
 
-            new = result[col].map(_standardize_date)
+            new = map_unique(result[col], _standardize_date)
             date_changes += int((new != result[col].map(str)).sum())
             result[col] = new
         else:
@@ -448,7 +546,7 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 number = parse_number(value, dot3_convention=convention)
                 return str(value).strip() if number is None else format_number(number)
 
-            new = result[col].map(_standardize_number)
+            new = map_unique(result[col], _standardize_number)
             number_changes += int((new != result[col].map(str)).sum())
             result[col] = new
 
@@ -457,6 +555,7 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "column_confidence": column_confidence,
         "convenciones_numericas": numeric_conventions,
         "fechas_dayfirst": date_dayfirst,
+        "avisos": date_avisos,
         "fusiones_texto": {"total": fuzzy_total, "ejemplos": fuzzy_examples},
         "cambios": {
             "encabezados_normalizados": renamed_headers,

@@ -227,7 +227,10 @@ def load_dataframe_with_report(
         df = _load_excel(content, report, sheet=sheet)
 
     # Filas completamente vacías al final (frecuentes en Excel) no son datos.
-    non_empty_mask = df.apply(lambda row: any(str(v).strip() for v in row), axis=1)
+    # Fase 11: vectorizado por columna (antes era fila por fila con apply).
+    non_empty_mask = pd.Series(False, index=df.index)
+    for col in df.columns:
+        non_empty_mask |= df[col].astype(str).str.strip() != ""
     df = df[non_empty_mask].reset_index(drop=True)
 
     # Filas de totales al final ("Total", "Suma"): resumen, no datos (Fase 8).
