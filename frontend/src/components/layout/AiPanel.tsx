@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Loader2, Lock, RefreshCw, Sparkles, Star, TriangleAlert } from 'lucide-react'
+import { ArrowUp, Loader2, Lock, RefreshCw, Sparkles, Square, Star, TriangleAlert } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
 import { ApiError, apiPost, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
 import { setActiveCurrency } from '../../lib/format'
@@ -64,8 +64,18 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fetchedForFile = useRef<string | null>(null)
+  const activationRequest = useRef(0)
+  const activationAbortRef = useRef<AbortController | null>(null)
+  const streamAbortRef = useRef<AbortController | null>(null)
   // Métricas locales al panel (pueden venir del contexto o fetchearse aquí)
   const localMetrics = useRef<MetricsResult | null>(null)
+
+  useEffect(() => {
+    return () => {
+      activationAbortRef.current?.abort()
+      streamAbortRef.current?.abort()
+    }
+  }, [])
 
   // Auto-scroll al fondo cuando llegan mensajes
   useEffect(() => {
@@ -77,8 +87,18 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     storagePathArg: string | null,
     metricsArg: MetricsResult | null,
   ) => {
+    activationAbortRef.current?.abort()
+    const controller = new AbortController()
+    activationAbortRef.current = controller
+    const requestId = activationRequest.current + 1
+    activationRequest.current = requestId
+    const isCurrent = () => activationRequest.current === requestId && !controller.signal.aborted
+
     setLoading(true)
     setError(null)
+    setSummary(null)
+    setMessages([])
+    localMetrics.current = null
     try {
       let m = metricsArg
       if (!m) {
@@ -87,20 +107,29 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
           ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
           ...(sheet ? { sheet } : {}),
         }
-        m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg, fields))
+        m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg, fields), {
+          signal: controller.signal,
+        })
+        if (!isCurrent()) return
         setActiveCurrency(m.moneda)
         localMetrics.current = m
         setContextMetrics(m)
       } else {
+        if (!isCurrent()) return
         localMetrics.current = m
       }
       setLoadingLabel('Generando resumen con IA…')
-      const res = await apiPostJson<Summary>('/ai/summary', { metrics: m })
+      const res = await apiPostJson<Summary>('/ai/summary', { metrics: m }, {
+        signal: controller.signal,
+      })
+      if (!isCurrent()) return
       setSummary(res)
     } catch (err) {
+      if (!isCurrent()) return
       setError(err instanceof ApiError ? err.message : 'No se pudo iniciar el asistente.')
     } finally {
-      setLoading(false)
+      if (activationAbortRef.current === controller) activationAbortRef.current = null
+      if (isCurrent()) setLoading(false)
     }
   }
 
@@ -108,6 +137,9 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   useEffect(() => {
     if (!active || !file) {
       if (!active) {
+        activationRequest.current += 1
+        activationAbortRef.current?.abort()
+        streamAbortRef.current?.abort()
         setSummary(null)
         setError(null)
         setMessages([])
@@ -118,12 +150,16 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       return
     }
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
-    const fileKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
+    const fileKey = [
+      datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0),
+      sheet ?? '',
+      JSON.stringify(mappingOverride ?? {}),
+    ].join('|')
     if (fetchedForFile.current === fileKey) return
     fetchedForFile.current = fileKey
     void runActivation(file, storagePath, contextMetrics)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, file, datasetId, storagePath, uploadedAt])
+  }, [active, file, datasetId, storagePath, uploadedAt, sheet, mappingOverride])
 
   // Si las métricas llegan al contexto después (usuario visitó Resumen),
   // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.
@@ -140,6 +176,8 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     setMessages((prev) => [...prev, { role: 'user', content: question }])
     setMessages((prev) => [...prev, { role: 'assistant', content: '', streaming: true }])
     setStreaming(true)
+    const controller = new AbortController()
+    streamAbortRef.current = controller
 
     try {
       await apiStream(
@@ -162,18 +200,28 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
             return updated
           })
         },
+        { signal: controller.signal },
       )
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : 'Error al contactar el asistente.'
+      const msg = controller.signal.aborted
+        ? 'Respuesta detenida.'
+        : err instanceof ApiError
+          ? err.message
+          : 'Error al contactar el asistente.'
       setMessages((prev) => {
         const updated = [...prev]
         const last = updated[updated.length - 1]
         if (last?.streaming) {
-          updated[updated.length - 1] = { role: 'assistant', content: `⚠️ ${msg}`, streaming: false }
+          updated[updated.length - 1] = {
+            role: 'assistant',
+            content: controller.signal.aborted ? msg : `⚠️ ${msg}`,
+            streaming: false,
+          }
         }
         return updated
       })
     } finally {
+      if (streamAbortRef.current === controller) streamAbortRef.current = null
       setMessages((prev) => {
         const updated = [...prev]
         const last = updated[updated.length - 1]
@@ -183,6 +231,10 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       setStreaming(false)
       inputRef.current?.focus()
     }
+  }
+
+  const stopStreaming = () => {
+    streamAbortRef.current?.abort()
   }
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -324,12 +376,14 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
             style={{ lineHeight: '1.25rem' }}
           />
           <button
-            onClick={() => void sendMessage(input)}
-            disabled={!input.trim() || streaming}
+            type="button"
+            onClick={streaming ? stopStreaming : () => void sendMessage(input)}
+            disabled={!streaming && !input.trim()}
+            title={streaming ? 'Detener respuesta' : 'Enviar'}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal transition-colors hover:bg-teal/80 disabled:cursor-not-allowed disabled:bg-white/10"
           >
             {streaming ? (
-              <Loader2 className="h-3 w-3 animate-spin text-white" />
+              <Square className="h-2.5 w-2.5 fill-white text-white" />
             ) : (
               <ArrowUp className="h-3 w-3 text-white" />
             )}

@@ -239,6 +239,25 @@ def test_storage_path_de_otro_usuario_devuelve_403(client, auth_headers):
         assert response.status_code == 403, path
 
 
+def test_storage_path_rechaza_traversal_y_codificados(client, auth_headers):
+    """service_role no debe descargar una ruta distinta a la validada."""
+    dangerous_paths = [
+        "user-test-123/../otro-usuario-999/archivo.csv",
+        "user-test-123/%2e%2e/otro-usuario-999/archivo.csv",
+        "user-test-123/.%2e/otro-usuario-999/archivo.csv",
+        "user-test-123/%252e%252e/otro-usuario-999/archivo.csv",
+        "user-test-123/%2F/otro-usuario-999/archivo.csv",
+        "user-test-123\\archivo.csv",
+    ]
+    for storage_path in dangerous_paths:
+        response = client.post(
+            "/standardize",
+            data={"storage_path": storage_path},
+            headers=auth_headers,
+        )
+        assert response.status_code == 403, storage_path
+
+
 def test_storage_path_propio_pasa_validacion_de_propiedad(client, auth_headers):
     # El path pertenece al usuario del token (user-test-123). Sin Supabase
     # configurado en tests, el siguiente paso (descarga) responde 503 — lo que

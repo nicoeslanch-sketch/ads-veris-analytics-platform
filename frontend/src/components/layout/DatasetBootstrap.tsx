@@ -28,13 +28,15 @@ export default function DatasetBootstrap() {
   const [restoring, setRestoring] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState<string | null>(null)
   const cancelledRef = useRef(false)
+  const restoreAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     if (!supabaseConfigured || !user) return
     if (file || attemptedUsers.has(user.id)) return
-    attemptedUsers.add(user.id)
     cancelledRef.current = false
     let active = true
+    const controller = new AbortController()
+    restoreAbortRef.current = controller
 
     // La retención de Storage también corre al iniciar sesión (Fase 11 §6.3):
     // los archivos antiguos se podan aunque el usuario no cargue nada nuevo.
@@ -42,9 +44,16 @@ export default function DatasetBootstrap() {
 
     const run = async () => {
       const datasets = await fetchDatasets(10)
-      if (!active || cancelledRef.current || !Array.isArray(datasets)) return
+      if (!active || cancelledRef.current) return
+      if (!Array.isArray(datasets)) {
+        attemptedUsers.add(user.id)
+        return
+      }
       const latest = datasets.find((d) => d.storage_path && d.status !== 'error')
-      if (!latest?.storage_path) return
+      if (!latest?.storage_path) {
+        attemptedUsers.add(user.id)
+        return
+      }
       setRestoring(latest.name)
       setRestoreError(null)
       try {
@@ -53,7 +62,7 @@ export default function DatasetBootstrap() {
         const std = await apiPost<StandardizeResult>(
           '/standardize',
           buildDatasetForm(placeholder, latest.storage_path),
-          AUTO_RESTORE_TIMEOUT_MS,
+          { timeoutMs: AUTO_RESTORE_TIMEOUT_MS, signal: controller.signal },
         )
         if (!active || cancelledRef.current) return
         let cleaned: CleanResult | null = null
@@ -65,7 +74,7 @@ export default function DatasetBootstrap() {
               apply: 'true',
               rules: JSON.stringify(rules ?? DEFAULT_RULES),
             }),
-            AUTO_RESTORE_TIMEOUT_MS,
+            { timeoutMs: AUTO_RESTORE_TIMEOUT_MS, signal: controller.signal },
           )
           if (!active || cancelledRef.current) return
         }
@@ -82,12 +91,16 @@ export default function DatasetBootstrap() {
           )
         }
       } finally {
-        if (active) setRestoring(null)
+        if (active) {
+          attemptedUsers.add(user.id)
+          setRestoring(null)
+        }
       }
     }
     void run()
     return () => {
       active = false
+      controller.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, file])
@@ -127,6 +140,7 @@ export default function DatasetBootstrap() {
         to="/estandarizacion"
         onClick={() => {
           cancelledRef.current = true
+          restoreAbortRef.current?.abort()
           setRestoring(null)
         }}
         className="shrink-0 rounded-lg border border-navy/20 bg-white px-3 py-1.5 text-xs font-semibold text-navy transition-colors hover:border-teal/60"

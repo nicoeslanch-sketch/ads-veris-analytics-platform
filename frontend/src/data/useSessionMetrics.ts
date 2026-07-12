@@ -26,31 +26,43 @@ export function useSessionMetrics(): {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fetchedFor = useRef<string | null>(null)
+  const latestRequest = useRef(0)
 
   useEffect(() => {
-    if (!file || !cleaning || isFullPeriod(metrics)) return
+    if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Hoja y mapeo en la clave: si el usuario los cambia, se recalcula (Fase 11)
     const key = `${datasetKey}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}`
+    if (isFullPeriod(metrics) && fetchedFor.current === key) return
     if (fetchedFor.current === key) return
     fetchedFor.current = key
+    const controller = new AbortController()
+    const requestId = latestRequest.current + 1
+    latestRequest.current = requestId
     setLoading(true)
     setError(null)
     const fields: Record<string, string> = {
       ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
       ...(sheet ? { sheet } : {}),
     }
-    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
+    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
+      signal: controller.signal,
+    })
       .then((result) => {
+        if (latestRequest.current !== requestId || controller.signal.aborted) return
         setActiveCurrency(result.moneda)
         setMetrics(result)
       })
       .catch((err) => {
+        if (latestRequest.current !== requestId || controller.signal.aborted) return
         // Sin este reset, el hook nunca volvería a intentar tras un fallo
         fetchedFor.current = null
         setError(err instanceof ApiError ? err.message : 'No se pudieron calcular las métricas.')
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics, sheet, mappingOverride])
 

@@ -117,6 +117,7 @@ export default function Limpieza() {
     file,
     datasetId,
     storagePath,
+    uploadedAt,
     standardization,
     cleaning,
     setCleaning,
@@ -131,7 +132,7 @@ export default function Limpieza() {
   const [downloading, setDownloading] = useState<'xlsx' | 'csv' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
-  const detectStartedFor = useRef<File | null>(null)
+  const detectStartedFor = useRef<string | null>(null)
 
   // ── Limpieza dirigida (Analista/Gold) y descarga de base limpia (Analista+) ──
   const aiCleaning = useCapability('ai_cleaning')
@@ -153,17 +154,39 @@ export default function Limpieza() {
   }, [])
 
   useEffect(() => {
-    if (!file || cleaning || detectStartedFor.current === file) return
-    detectStartedFor.current = file
+    if (!file || cleaning) return
+    const key = [
+      datasetId ?? storagePath ?? `${file.name}:${file.lastModified}:${uploadedAt?.getTime() ?? 0}`,
+      sheet ?? '',
+      JSON.stringify(mappingOverride ?? {}),
+    ].join('|')
+    if (detectStartedFor.current === key) return
+    detectStartedFor.current = key
+    const controller = new AbortController()
+    const fields = {
+      apply: 'false',
+      ...(sheet ? { sheet } : {}),
+      ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
+    }
+    setDetection(null)
     setDetecting(true)
     setError(null)
-    apiPost<CleanResult>('/clean', buildDatasetForm(file, storagePath, { apply: 'false', ...(sheet ? { sheet } : {}) }))
-      .then(setDetection)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'No se pudo analizar el archivo.'),
-      )
-      .finally(() => setDetecting(false))
-  }, [file, storagePath, cleaning, sheet])
+    apiPost<CleanResult>('/clean', buildDatasetForm(file, storagePath, fields), {
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (detectStartedFor.current === key && !controller.signal.aborted) setDetection(result)
+      })
+      .catch((err) => {
+        if (detectStartedFor.current === key && !controller.signal.aborted) {
+          setError(err instanceof ApiError ? err.message : 'No se pudo analizar el archivo.')
+        }
+      })
+      .finally(() => {
+        if (detectStartedFor.current === key && !controller.signal.aborted) setDetecting(false)
+      })
+    return () => controller.abort()
+  }, [file, datasetId, storagePath, uploadedAt, cleaning, sheet, mappingOverride])
 
   if (!file || !standardization) {
     return (

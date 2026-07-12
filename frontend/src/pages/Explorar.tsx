@@ -259,6 +259,7 @@ export default function Explorar() {
   // Fase 11 §9.3: "Reintentar" tras un timeout o corte de red
   const [retryTick, setRetryTick] = useState(0)
   const lastFetchKey = useRef<string | null>(null)
+  const latestRequest = useRef(0)
 
   const [reco, setReco] = useState<{ recomendacion: string; plan: string[] } | null>(null)
   const [recoLoading, setRecoLoading] = useState(false)
@@ -274,6 +275,9 @@ export default function Explorar() {
     const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
+    const controller = new AbortController()
+    const requestId = latestRequest.current + 1
+    latestRequest.current = requestId
     setLoading(true)
     setError(null)
     const fields: Record<string, string> = {}
@@ -281,8 +285,11 @@ export default function Explorar() {
     if (sheet) fields.sheet = sheet
     if (rango.from) fields.date_from = rango.from
     if (rango.to) fields.date_to = rango.to
-    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
+    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
+      signal: controller.signal,
+    })
       .then((result) => {
+        if (latestRequest.current !== requestId || controller.signal.aborted) return
         setMetrics(result)
         setActiveCurrency(result.moneda)
         if (monthsAvailable.length === 0 && result.periodo.meses_disponibles.length > 0) {
@@ -290,12 +297,16 @@ export default function Explorar() {
         }
       })
       .catch((err) => {
+        if (latestRequest.current !== requestId || controller.signal.aborted) return
         // Anular la clave: sin esto el próximo render "cree" que ya se pidió
         // y la página queda vacía hasta recargar (Fase 11 §9.3).
         lastFetchKey.current = null
         setError(err instanceof ApiError ? err.message : 'No se pudo calcular el análisis.')
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, datasetId, storagePath, cleaning, uploadedAt, rango, sheet, mappingOverride, retryTick])
 

@@ -19,18 +19,50 @@ const API_BASE_URL =
 const PIPELINE_TIMEOUT_MS = 240_000
 const JSON_TIMEOUT_MS = 90_000
 const GET_TIMEOUT_MS = 60_000
+const STREAM_TOTAL_TIMEOUT_MS = 180_000
+const STREAM_IDLE_TIMEOUT_MS = 45_000
+
+interface ApiRequestOptions {
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+interface ApiStreamOptions extends ApiRequestOptions {
+  idleTimeoutMs?: number
+}
+
+type StreamAbortReason = 'total' | 'idle' | 'external'
+
+function streamAbortMessage(reason: StreamAbortReason): string {
+  if (reason === 'external') return 'Respuesta detenida.'
+  if (reason === 'idle') return 'El asistente dejo de responder y se cancelo la solicitud.'
+  return 'La respuesta del asistente tardo demasiado y se cancelo.'
+}
+
+function normalizeOptions(
+  options: number | ApiRequestOptions | undefined,
+  defaultTimeoutMs: number,
+): { timeoutMs: number; signal?: AbortSignal } {
+  if (typeof options === 'number') return { timeoutMs: options }
+  return { timeoutMs: options?.timeoutMs ?? defaultTimeoutMs, signal: options?.signal }
+}
 
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  externalSignal?: AbortSignal,
 ): Promise<Response> {
   const controller = new AbortController()
+  const forwardAbort = () => controller.abort()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  if (externalSignal?.aborted) controller.abort()
+  else externalSignal?.addEventListener('abort', forwardAbort, { once: true })
   try {
     return await fetch(url, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timer)
+    externalSignal?.removeEventListener('abort', forwardAbort)
   }
 }
 
@@ -69,8 +101,9 @@ async function getAccessToken(): Promise<string | null> {
 export async function apiPost<T>(
   path: string,
   form: FormData,
-  timeoutMs = PIPELINE_TIMEOUT_MS,
+  options?: number | ApiRequestOptions,
 ): Promise<T> {
+  const { timeoutMs, signal } = normalizeOptions(options, PIPELINE_TIMEOUT_MS)
   const token = await getAccessToken()
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
@@ -78,7 +111,7 @@ export async function apiPost<T>(
   const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
-    response = await fetchWithTimeout(fullUrl, { method: 'POST', headers, body: form }, timeoutMs)
+    response = await fetchWithTimeout(fullUrl, { method: 'POST', headers, body: form }, timeoutMs, signal)
   } catch (err) {
     throw connectionError(
       err,
@@ -195,7 +228,12 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 /** POST con body JSON (para los endpoints /ai/*). */
-export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
+export async function apiPostJson<T>(
+  path: string,
+  body: unknown,
+  options?: number | ApiRequestOptions,
+): Promise<T> {
+  const { timeoutMs, signal } = normalizeOptions(options, JSON_TIMEOUT_MS)
   const token = await getAccessToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
@@ -206,7 +244,8 @@ export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
     response = await fetchWithTimeout(
       fullUrl,
       { method: 'POST', headers, body: JSON.stringify(body) },
-      JSON_TIMEOUT_MS,
+      timeoutMs,
+      signal,
     )
   } catch (err) {
     throw connectionError(err, 'No se pudo contactar al servidor.')
@@ -236,16 +275,51 @@ export async function apiStream(
   path: string,
   body: unknown,
   onChunk: (text: string) => void,
+  options: ApiStreamOptions = {},
 ): Promise<void> {
   const token = await getAccessToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
 
   const fullUrl = `${requireBase()}${path}`
+  const controller = new AbortController()
+  const timeoutMs = options.timeoutMs ?? STREAM_TOTAL_TIMEOUT_MS
+  const idleTimeoutMs = options.idleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS
+  let abortReason: StreamAbortReason = 'total'
+  const forwardAbort = () => {
+    abortReason = 'external'
+    controller.abort()
+  }
+  const totalTimer = setTimeout(() => {
+    abortReason = 'total'
+    controller.abort()
+  }, timeoutMs)
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  const armIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => {
+      abortReason = 'idle'
+      controller.abort()
+    }, idleTimeoutMs)
+  }
+  if (options.signal?.aborted) forwardAbort()
+  else options.signal?.addEventListener('abort', forwardAbort, { once: true })
+
   let response: Response
   try {
-    response = await fetch(fullUrl, { method: 'POST', headers, body: JSON.stringify(body) })
-  } catch {
+    response = await fetch(fullUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } catch (err) {
+    clearTimeout(totalTimer)
+    if (idleTimer) clearTimeout(idleTimer)
+    options.signal?.removeEventListener('abort', forwardAbort)
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError(0, streamAbortMessage(abortReason))
+    }
     throw new ApiError(0, 'No se pudo contactar al servidor.')
   }
   if (!response.ok) {
@@ -255,32 +329,53 @@ export async function apiStream(
       const parsed = JSON.parse(text)
       if (typeof parsed.detail === 'string') detail = parsed.detail
     } catch { }
+    clearTimeout(totalTimer)
+    if (idleTimer) clearTimeout(idleTimer)
+    options.signal?.removeEventListener('abort', forwardAbort)
     throw new ApiError(response.status, detail)
   }
 
   const reader = response.body?.getReader()
-  if (!reader) throw new ApiError(0, 'No se pudo leer el stream del servidor.')
+  if (!reader) {
+    clearTimeout(totalTimer)
+    if (idleTimer) clearTimeout(idleTimer)
+    options.signal?.removeEventListener('abort', forwardAbort)
+    throw new ApiError(0, 'No se pudo leer el stream del servidor.')
+  }
 
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = line.slice(6).trim()
-      if (data === '[DONE]') return
-      try {
-        const parsed = JSON.parse(data)
-        if (parsed.error) throw new ApiError(500, parsed.error as string)
-        if (typeof parsed.chunk === 'string') onChunk(parsed.chunk)
-      } catch (e) {
-        if (e instanceof ApiError) throw e
+  try {
+    armIdleTimer()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      armIdleTimer()
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const data = line.slice(6).trim()
+        if (data === '[DONE]') return
+        try {
+          const parsed = JSON.parse(data)
+          if (parsed.error) throw new ApiError(500, parsed.error as string)
+          if (typeof parsed.chunk === 'string') onChunk(parsed.chunk)
+        } catch (e) {
+          if (e instanceof ApiError) throw e
+        }
       }
     }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError(0, streamAbortMessage(abortReason))
+    }
+    throw err
+  } finally {
+    clearTimeout(totalTimer)
+    if (idleTimer) clearTimeout(idleTimer)
+    options.signal?.removeEventListener('abort', forwardAbort)
   }
 }

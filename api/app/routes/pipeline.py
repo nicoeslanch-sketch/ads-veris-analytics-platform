@@ -28,6 +28,7 @@ import os
 import re
 import threading
 from collections import OrderedDict
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
@@ -57,15 +58,36 @@ MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # multipart es solo para archivos pequeños
 PREVIEW_ROWS = 5
 
 
-def _check_storage_ownership(storage_path: str, user: AuthenticatedUser) -> None:
+def _normalize_user_storage_path(storage_path: str, user: AuthenticatedUser) -> str:
     """El bucket organiza los archivos por carpeta {user_id}/...; la API descarga
     con la service_role key (salta RLS), así que la propiedad se valida aquí."""
-    normalized = storage_path.lstrip("/")
-    if not normalized.startswith(f"{user.id}/"):
+    raw = storage_path.strip()
+    if not raw:
+        raise HTTPException(status_code=422, detail="storage_path vacio.")
+
+    normalized = raw.lstrip("/")
+    decoded = normalized
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        decoded = next_decoded
+
+    parts = decoded.split("/")
+    invalid = (
+        "\\" in normalized
+        or decoded != normalized
+        or "%" in decoded
+        or len(parts) < 2
+        or parts[0] != user.id
+        or any(part in {"", ".", ".."} for part in parts)
+    )
+    if invalid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tienes acceso a ese archivo.",
         )
+    return "/".join(parts)
 
 
 async def _read_input(
@@ -82,9 +104,9 @@ async def _read_input(
             )
         return file.filename or "archivo.csv", content
     if storage_path:
-        _check_storage_ownership(storage_path, user)
-        content = await run_in_threadpool(download_from_storage, storage_path)
-        return os.path.basename(storage_path), content
+        safe_storage_path = _normalize_user_storage_path(storage_path, user)
+        content = await run_in_threadpool(download_from_storage, safe_storage_path)
+        return os.path.basename(safe_storage_path), content
     raise HTTPException(
         status_code=422,
         detail="Envía un archivo (campo 'file') o una ruta de Storage (campo 'storage_path').",

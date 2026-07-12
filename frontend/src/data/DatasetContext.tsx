@@ -79,7 +79,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [uploadedAt, setUploadedAt] = useState<Date | null>(null)
   const [period, setPeriod] = useState<Period>(ALL_PERIOD)
   const [monthsAvailable, setMonthsAvailable] = useState<string[]>([])
-  const [mappingOverride, setMappingOverride] = useState<Record<string, string> | null>(null)
+  const [mappingOverride, setMappingOverrideState] = useState<Record<string, string> | null>(null)
   const [sheet, setSheetState] = useState<string | null>(null)
 
   // Cambiar de hoja significa OTROS datos: limpieza, métricas y mapeo caducan.
@@ -89,7 +89,15 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
-    setMappingOverride(null)
+    setMappingOverrideState(null)
+  }, [])
+
+  const setMappingOverride = useCallback((mapping: Record<string, string> | null) => {
+    setMappingOverrideState(mapping)
+    setCleaningState(null)
+    setMetricsState(null)
+    setMonthsAvailable([])
+    setPeriod(ALL_PERIOD)
   }, [])
 
   const setUploaded = useCallback(
@@ -103,7 +111,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setUploadedAt(new Date())
       setPeriod(ALL_PERIOD)
       setMonthsAvailable([])
-      setMappingOverride(null)
+      setMappingOverrideState(null)
       setSheetState(null)
     },
     [],
@@ -119,7 +127,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setUploadedAt(null)
     setPeriod(ALL_PERIOD)
     setMonthsAvailable([])
-    setMappingOverride(null)
+    setMappingOverrideState(null)
     setSheetState(null)
   }, [])
 
@@ -172,6 +180,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       sheet,
       setSheet,
       setUploaded,
+      setMappingOverride,
       reset,
     ],
   )

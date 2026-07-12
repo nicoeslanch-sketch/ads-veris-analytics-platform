@@ -9,6 +9,8 @@ proteger la memoria del servidor: se revisa Content-Length y, como respaldo,
 se corta la descarga en streaming si el archivo lo supera.
 """
 
+from urllib.parse import quote
+
 import httpx
 from fastapi import HTTPException, status
 
@@ -25,6 +27,15 @@ def _too_large() -> HTTPException:
     )
 
 
+def _storage_object_url(storage_path: str) -> str:
+    settings = get_settings()
+    encoded_path = "/".join(quote(part, safe="") for part in storage_path.split("/"))
+    return (
+        f"{settings.supabase_url.rstrip('/')}/storage/v1/object/"
+        f"{settings.supabase_storage_bucket}/{encoded_path}"
+    )
+
+
 def download_from_storage(storage_path: str) -> bytes:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
@@ -32,11 +43,7 @@ def download_from_storage(storage_path: str) -> bytes:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="El servidor no tiene configurado el acceso a Supabase Storage.",
         )
-    path = storage_path.lstrip("/")
-    url = (
-        f"{settings.supabase_url.rstrip('/')}/storage/v1/object/"
-        f"{settings.supabase_storage_bucket}/{path}"
-    )
+    url = _storage_object_url(storage_path)
     headers = {
         "Authorization": f"Bearer {settings.supabase_service_role_key}",
         "apikey": settings.supabase_service_role_key,

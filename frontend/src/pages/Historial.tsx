@@ -103,12 +103,10 @@ export default function Historial() {
     try {
       // Placeholder liviano: solo aporta el nombre (la data viaja por storage_path).
       const file = new File([], dataset.name, { type: 'application/octet-stream' })
-      setUploaded(file, dataset.id, dataset.storage_path)
       const result = await apiPost<StandardizeResult>(
         '/standardize',
         buildDatasetForm(file, dataset.storage_path),
       )
-      setStandardization(result)
       if (dataset.status === 'limpio') {
         // Continuar con las reglas reales del último cleaning_job cuando existan.
         const savedRules = await fetchLatestCleaningRules(dataset.id)
@@ -120,6 +118,8 @@ export default function Historial() {
             rules: JSON.stringify(savedRules ?? DEFAULT_RULES),
           }),
         )
+        setUploaded(file, dataset.id, dataset.storage_path)
+        setStandardization(result)
         setCleaning(cleaned)
         navigate('/', {
           state: usedDefaultRules
@@ -130,6 +130,8 @@ export default function Historial() {
             : undefined,
         })
       } else {
+        setUploaded(file, dataset.id, dataset.storage_path)
+        setStandardization(result)
         navigate('/limpieza')
       }
     } catch (err) {

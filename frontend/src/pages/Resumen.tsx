@@ -161,6 +161,7 @@ export default function Resumen() {
   const defaultPeriodSet = useRef(false)
   const lastFetchKey = useRef<string | null>(null)
   const lastDatasetKey = useRef<string | null>(null)
+  const latestRequest = useRef(0)
 
   const firstName =
     ((user?.user_metadata?.full_name as string | undefined) ?? '').trim().split(' ')[0] || null
@@ -184,6 +185,9 @@ export default function Resumen() {
     const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
+    const controller = new AbortController()
+    const requestId = latestRequest.current + 1
+    latestRequest.current = requestId
     setLoading(true)
     setError(null)
     const fields: Record<string, string> = {}
@@ -191,8 +195,11 @@ export default function Resumen() {
     if (sheet) fields.sheet = sheet
     if (period.from) fields.date_from = period.from
     if (period.to) fields.date_to = period.to
-    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields))
+    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
+      signal: controller.signal,
+    })
       .then((result) => {
+        if (latestRequest.current !== requestId || controller.signal.aborted) return
         setMetrics(result)
         setActiveCurrency(result.moneda)
         // El contexto compartido (Alertas/Reportes/IA) solo cachea métricas
@@ -208,12 +215,16 @@ export default function Resumen() {
         }
       })
       .catch((err) => {
+        if (latestRequest.current !== requestId || controller.signal.aborted) return
         // Si falla, la clave se anula para que el próximo intento sí ejecute
         // (antes quedaba "marcada como hecha" y la página se veía vacía para siempre).
         lastFetchKey.current = null
         setError(err instanceof ApiError ? err.message : 'No se pudieron calcular las métricas.')
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
   }, [file, datasetId, storagePath, cleaning, uploadedAt, period, sheet, mappingOverride, retryTick, setMonthsAvailable, setPeriod])
 
   if (!ready) {
