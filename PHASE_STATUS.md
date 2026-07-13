@@ -1,6 +1,6 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 4 completos.**
+**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 5 completos.**
 El motor ahora detecta duplicados siempre y conserva todas las filas por defecto.
 Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
 original; las coincidencias creadas por la normalización nunca se borran. La
@@ -15,6 +15,8 @@ auditoría completa.
 El Bloque 4 añade diagnósticos no destructivos de coherencia nombre↔ID y una
 auditoría de fórmulas Excel limitada a las filas reales de datos, con especial
 atención a fórmulas volátiles y fórmulas presentes en identificadores.
+El Bloque 5 procesa hojas bajo demanda y usa un manifiesto de sesión explícito
+para la descarga completa; el caché nunca funciona como fuente de verdad.
 
 La Fase 11 ataca la lentitud con bases grandes (>50.000 filas) en su causa raíz:
 el caché del pipeline excluía los archivos grandes y cada módulo reprocesaba
@@ -360,7 +362,7 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 "Estandarizar nuevo documento", retención también al login y contactos de ayuda
 (WhatsApp/Instagram/correo). **129 tests + build + 3 E2E.**
 
-## ✅ Fase 12 — Bloques 1 a 4
+## ✅ Fase 12 — Bloques 1 a 5
 
 - Detección siempre activa y eliminación por defecto en `false`, aunque exista
   una columna cuyo nombre parezca identificador.
@@ -385,7 +387,12 @@ columna de monto; restauración del último trabajo al iniciar sesión,
   origen; son observaciones y nunca autorizan cambios automáticos.
 - Fórmulas `.xlsx` auditadas solo en filas reales de datos, separando fórmulas
   volátiles y fórmulas en identificadores.
-- Bloques 5–6: pendientes en la rama de Fase 12 autorizada por el dueño.
+- Pestañas por hoja con estado propio; descarga XLSX gobernada por un manifiesto
+  explícito que registra también las hojas no procesadas.
+- Combinación opcional solo para estructuras idénticas, con `hoja_origen` y
+  confirmación. Los JOIN entre estructuras distintas quedan pendientes porque
+  requieren que el usuario declare una clave común y la cardinalidad esperada.
+- Bloque 6: pendiente en la rama de Fase 12 autorizada por el dueño.
 
 ## ⏳ Pendiente (operación comercial)
 

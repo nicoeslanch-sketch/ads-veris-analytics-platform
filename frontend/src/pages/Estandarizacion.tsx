@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -53,8 +53,20 @@ const STEPS = [
 ]
 
 export default function Estandarizacion() {
-  const { file, standardization, uploadedAt, storagePath, setStandardization, sheet, setSheet, reset } =
-    useDataset()
+  const {
+    file,
+    standardization,
+    uploadedAt,
+    storagePath,
+    setStandardization,
+    sheet,
+    setSheet,
+    availableSheets,
+    sheetSessions,
+    combineSheets,
+    setCombineSheets,
+    reset,
+  } = useDataset()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
   const [changingSheet, setChangingSheet] = useState(false)
@@ -67,11 +79,28 @@ export default function Estandarizacion() {
   }
 
   // Fase 10 §8.3: el usuario elige la hoja del Excel y se re-estandariza.
-  const availableSheets = standardization?.carga?.hojas_disponibles ?? []
   const activeSheet = sheet ?? standardization?.carga?.hoja_usada ?? null
+  const processedSheets = availableSheets.filter(
+    (name) => Boolean(sheetSessions[name]?.standardization),
+  )
+  const processedColumnSets = processedSheets.map((name) =>
+    [...(sheetSessions[name]?.standardization?.preview.columnas ?? [])].sort().join('\u0000'),
+  )
+  const canCombineSheets =
+    processedColumnSets.length >= 2 &&
+    processedColumnSets.every((columns) => columns === processedColumnSets[0])
+
+  useEffect(() => {
+    if (!canCombineSheets && combineSheets) setCombineSheets(false)
+  }, [canCombineSheets, combineSheets, setCombineSheets])
 
   const changeSheet = async (name: string) => {
     if (!file || changingSheet || name === activeSheet) return
+    if (sheetSessions[name]?.standardization) {
+      setSheet(name)
+      setSheetError(null)
+      return
+    }
     const previousSheet = sheet
     setChangingSheet(true)
     setSheetError(null)
@@ -268,37 +297,82 @@ export default function Estandarizacion() {
         </div>
       </div>
 
-      {/* Selector de hoja (solo Excel con varias hojas) — Fase 10 §8.3 */}
+      {/* Fase 12 B5: cada pestaña conserva su propio estado; el manifiesto de
+          descarga se construye desde este estado explícito, nunca del caché. */}
       {availableSheets.length > 1 && (
-        <Card className="mt-10 bg-gradient-to-r from-teal/[0.04] to-transparent">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-navy">Hojas del archivo</h2>
-              <p className="text-xs text-navy/55">
-                Se eligió automáticamente la hoja con más datos; si tu base vive en otra
-                hoja, selecciónala aquí (la limpieza y el dashboard se recalculan).
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {availableSheets.map((name) => (
+        <Card className="mt-10 overflow-hidden !p-0">
+          <div className="px-5 pt-5">
+            <h2 className="text-sm font-semibold text-navy">Hojas del archivo</h2>
+            <p className="mt-1 text-xs text-navy/55">
+              Abre cada hoja que quieras procesar. Cambiar de hoja no crea un documento
+              nuevo y su configuración queda guardada por separado durante esta sesión.
+            </p>
+          </div>
+          <div
+            role="tablist"
+            aria-label="Hojas del archivo Excel"
+            className="mt-4 flex max-w-full gap-1 overflow-x-auto border-b border-navy/10 px-5"
+          >
+            {availableSheets.map((name) => {
+              const processed = Boolean(sheetSessions[name]?.standardization)
+              const selected = name === activeSheet
+              return (
                 <button
                   key={name}
+                  role="tab"
+                  aria-selected={selected}
                   onClick={() => void changeSheet(name)}
                   disabled={changingSheet}
-                  className={`rounded-lg border px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-60 ${
-                    name === activeSheet
-                      ? 'border-teal bg-teal text-white'
-                      : 'border-navy/20 bg-white text-navy hover:border-teal/60'
+                  className={`flex min-w-max items-center gap-2 border-b-2 px-3 py-3 text-xs font-semibold transition-colors disabled:opacity-60 ${
+                    selected
+                      ? 'border-teal text-teal'
+                      : 'border-transparent text-navy/65 hover:border-navy/20 hover:text-navy'
                   }`}
                 >
-                  {name}
+                  {changingSheet && selected ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : processed ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-green" />
+                  ) : (
+                    <span className="h-2.5 w-2.5 rounded-full border border-navy/35" />
+                  )}
+                  <span>{name}</span>
+                  <span className="font-normal text-navy/45">
+                    {processed ? 'Procesada' : 'Sin procesar'}
+                  </span>
                 </button>
-              ))}
-              {changingSheet && <Loader2 className="h-4 w-4 animate-spin text-teal" />}
-            </div>
+              )
+            })}
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <p className="text-xs text-navy/60">
+              Estás viendo: <strong className="text-navy">{activeSheet ?? '—'}</strong>
+            </p>
+            {canCombineSheets && (
+              <label className="flex cursor-pointer items-start gap-2 text-xs text-navy">
+                <input
+                  type="checkbox"
+                  checked={combineSheets}
+                  onChange={(event) => setCombineSheets(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-teal"
+                />
+                <span>
+                  <strong>Combinar {processedSheets.length} hojas compatibles</strong>
+                  <span className="block text-navy/50">
+                    Crea una base adicional con la columna hoja_origen.
+                  </span>
+                </span>
+              </label>
+            )}
+          </div>
+          {processedSheets.length >= 2 && !canCombineSheets && (
+            <p className="border-t border-gold/20 bg-gold/[0.06] px-5 py-3 text-xs text-navy/65">
+              Estas hojas tienen estructuras distintas. No se unirán automáticamente:
+              relacionarlas requiere que indiques una clave común.
+            </p>
+          )}
           {sheetError && (
-            <p className="mt-3 rounded-lg border border-coral/40 bg-coral/5 px-3 py-2 text-xs text-coral">
+            <p className="border-t border-coral/30 bg-coral/5 px-5 py-3 text-xs text-coral">
               {sheetError}
             </p>
           )}

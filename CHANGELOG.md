@@ -71,6 +71,21 @@ aparecen únicamente después de normalizar permanecen como candidatas a revisi�
 - La ausencia de fórmulas o un fallo tolerable de inspección no bloquea el
   pipeline; la auditoría se entrega como diagnóstico aditivo.
 
+### Bloque 5 — procesamiento multihoja explícito
+- Estandarización presenta las hojas como pestañas con estado procesada/sin
+  procesar y conserva por hoja su estandarización, limpieza, mapeo y decisión
+  sobre duplicados durante la sesión.
+- La descarga XLSX recibe un manifiesto explícito que debe enumerar todas las
+  hojas reales. El caché solo acelera; nunca decide qué hojas entran. Cada hoja
+  marcada se exporta limpia y las no procesadas quedan registradas en una hoja
+  consolidada `Observaciones`.
+- Hojas con el mismo conjunto de encabezados normalizados se pueden combinar
+  únicamente tras confirmación, en `Datos_combinados`, con `hoja_origen`. No se
+  realizan JOIN automáticos entre estructuras distintas.
+- Resumen y Explorar muestran un selector de hoja activa y limpian las métricas
+  anteriores antes de recalcular, evitando mezclar el nombre de una hoja con
+  resultados todavía pertenecientes a otra.
+
 ## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
 
 La lentitud reportada con bases de >50.000 filas tenía una causa raíz medible:

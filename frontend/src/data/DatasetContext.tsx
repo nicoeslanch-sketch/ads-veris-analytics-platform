@@ -9,7 +9,12 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import type { CleanResult, MetricsResult, StandardizeResult } from '../lib/types'
+import type {
+  CleanResult,
+  MetricsResult,
+  SheetManifest,
+  StandardizeResult,
+} from '../lib/types'
 
 /** Rango de fechas activo del topbar; null = todo el periodo. */
 export interface Period {
@@ -19,6 +24,13 @@ export interface Period {
 }
 
 export const ALL_PERIOD: Period = { from: null, to: null, label: 'Todo el periodo' }
+
+export interface SheetSession {
+  standardization: StandardizeResult | null
+  cleaning: CleanResult | null
+  mappingOverride: Record<string, string> | null
+  eliminarDuplicados: boolean
+}
 
 /** Construye el periodo de un mes "YYYY-MM" (primer al último día). */
 export function monthPeriod(isoMonth: string): Period {
@@ -58,6 +70,10 @@ interface DatasetState {
   /** Hoja de Excel elegida por el usuario (Fase 10 §8.3); null = automática.
    * Cambiarla invalida limpieza y métricas (los datos son otros). */
   sheet: string | null
+  availableSheets: string[]
+  sheetSessions: Record<string, SheetSession>
+  sheetManifest: SheetManifest | null
+  combineSheets: boolean
   setSheet: (sheet: string | null) => void
   setUploaded: (file: File, datasetId: string | null, storagePath: string | null) => void
   setStandardization: (result: StandardizeResult) => void
@@ -67,6 +83,7 @@ interface DatasetState {
   setMonthsAvailable: (months: string[]) => void
   setMappingOverride: (mapping: Record<string, string> | null) => void
   setEliminarDuplicados: (value: boolean) => void
+  setCombineSheets: (value: boolean) => void
   reset: () => void
 }
 
@@ -85,25 +102,62 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [mappingOverride, setMappingOverrideState] = useState<Record<string, string> | null>(null)
   const [sheet, setSheetState] = useState<string | null>(null)
   const [eliminarDuplicados, setEliminarDuplicados] = useState(false)
+  const [availableSheets, setAvailableSheets] = useState<string[]>([])
+  const [sheetSessions, setSheetSessions] = useState<Record<string, SheetSession>>({})
+  const [combineSheets, setCombineSheets] = useState(false)
 
-  // Cambiar de hoja significa OTROS datos: limpieza, métricas y mapeo caducan.
+  // Cada hoja mantiene su propia configuración. Al activarla se restaura solo
+  // su estado; métricas y periodo siempre se recalculan para evitar mezclas.
   const setSheet = useCallback((newSheet: string | null) => {
+    const session = newSheet ? sheetSessions[newSheet] : undefined
     setSheetState(newSheet)
-    setCleaningState(null)
+    setStandardizationState(session?.standardization ?? null)
+    setCleaningState(session?.cleaning ?? null)
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
-    setMappingOverrideState(null)
-    setEliminarDuplicados(false)
+    setMappingOverrideState(session?.mappingOverride ?? null)
+    setEliminarDuplicados(session?.eliminarDuplicados ?? false)
+  }, [sheetSessions])
+
+  const setStandardization = useCallback((result: StandardizeResult) => {
+    const activeSheet = result.carga?.hoja_usada ?? null
+    const sheets = result.carga?.hojas_disponibles ?? []
+    setStandardizationState(result)
+    if (sheets.length) setAvailableSheets(sheets)
+    if (!activeSheet) return
+    setSheetState(activeSheet)
+    setSheetSessions((previous) => ({
+      ...previous,
+      [activeSheet]: {
+        standardization: result,
+        cleaning: previous[activeSheet]?.cleaning ?? null,
+        mappingOverride: previous[activeSheet]?.mappingOverride ?? null,
+        eliminarDuplicados: previous[activeSheet]?.eliminarDuplicados ?? false,
+      },
+    }))
   }, [])
 
   const setCleaning = useCallback((result: CleanResult) => {
+    const activeSheet = result.carga?.hoja_usada ?? sheet
+    const removeDuplicates = Boolean(result.opciones_aplicacion?.eliminar_duplicados)
     setCleaningState(result)
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
-    setEliminarDuplicados(Boolean(result.opciones_aplicacion?.eliminar_duplicados))
-  }, [])
+    setEliminarDuplicados(removeDuplicates)
+    if (activeSheet) {
+      setSheetSessions((previous) => ({
+        ...previous,
+        [activeSheet]: {
+          standardization: previous[activeSheet]?.standardization ?? standardization,
+          cleaning: result,
+          mappingOverride: previous[activeSheet]?.mappingOverride ?? mappingOverride,
+          eliminarDuplicados: removeDuplicates,
+        },
+      }))
+    }
+  }, [mappingOverride, sheet, standardization])
 
   const setMappingOverride = useCallback((mapping: Record<string, string> | null) => {
     setMappingOverrideState(mapping)
@@ -111,7 +165,33 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
-  }, [])
+    if (sheet) {
+      setSheetSessions((previous) => ({
+        ...previous,
+        [sheet]: {
+          standardization: previous[sheet]?.standardization ?? standardization,
+          cleaning: null,
+          mappingOverride: mapping,
+          eliminarDuplicados: previous[sheet]?.eliminarDuplicados ?? eliminarDuplicados,
+        },
+      }))
+    }
+  }, [eliminarDuplicados, sheet, standardization])
+
+  const updateEliminarDuplicados = useCallback((value: boolean) => {
+    setEliminarDuplicados(value)
+    if (sheet) {
+      setSheetSessions((previous) => ({
+        ...previous,
+        [sheet]: {
+          standardization: previous[sheet]?.standardization ?? standardization,
+          cleaning: previous[sheet]?.cleaning ?? cleaning,
+          mappingOverride: previous[sheet]?.mappingOverride ?? mappingOverride,
+          eliminarDuplicados: value,
+        },
+      }))
+    }
+  }, [cleaning, mappingOverride, sheet, standardization])
 
   const setUploaded = useCallback(
     (newFile: File, newDatasetId: string | null, newStoragePath: string | null) => {
@@ -127,6 +207,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setMappingOverrideState(null)
       setSheetState(null)
       setEliminarDuplicados(false)
+      setAvailableSheets([])
+      setSheetSessions({})
+      setCombineSheets(false)
     },
     [],
   )
@@ -144,6 +227,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMappingOverrideState(null)
     setSheetState(null)
     setEliminarDuplicados(false)
+    setAvailableSheets([])
+    setSheetSessions({})
+    setCombineSheets(false)
   }, [])
 
   // Al cerrar sesión o cambiar de usuario en el mismo navegador, el dataset
@@ -157,6 +243,26 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     }
     lastUserId.current = userId
   }, [userId, reset])
+
+  const sheetManifest = useMemo<SheetManifest | null>(() => {
+    if (availableSheets.length <= 1) return null
+    return {
+      hojas: availableSheets.map((name) => {
+        const session = sheetSessions[name]
+        const directed = session?.cleaning?.dirigida
+        return {
+          nombre: name,
+          procesar: Boolean(session?.standardization),
+          rules: session?.cleaning?.reglas_activas ?? {},
+          mapping: session?.mappingOverride ?? {},
+          scope: directed
+            ? { incluir: directed.columnas_incluir, excluir: directed.columnas_excluir }
+            : {},
+          eliminar_duplicados: session?.eliminarDuplicados ?? false,
+        }
+      }),
+    }
+  }, [availableSheets, sheetSessions])
 
   const value = useMemo(
     () => ({
@@ -172,15 +278,20 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       mappingOverride,
       eliminarDuplicados,
       sheet,
+      availableSheets,
+      sheetSessions,
+      sheetManifest,
+      combineSheets,
       setSheet,
       setUploaded,
-      setStandardization: setStandardizationState,
+      setStandardization,
       setCleaning,
       setMetrics: setMetricsState,
       setPeriod,
       setMonthsAvailable,
       setMappingOverride,
-      setEliminarDuplicados,
+      setEliminarDuplicados: updateEliminarDuplicados,
+      setCombineSheets,
       reset,
     }),
     [
@@ -196,10 +307,16 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       mappingOverride,
       eliminarDuplicados,
       sheet,
+      availableSheets,
+      sheetSessions,
+      sheetManifest,
+      combineSheets,
       setSheet,
       setUploaded,
+      setStandardization,
       setMappingOverride,
       setCleaning,
+      updateEliminarDuplicados,
       reset,
     ],
   )

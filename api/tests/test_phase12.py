@@ -1,6 +1,7 @@
 """Fase 12, Bloque 1: duplicados no destructivos e identidad de filas."""
 
 import io
+import json
 
 import openpyxl
 import pandas as pd
@@ -437,3 +438,126 @@ def test_formulas_solo_se_escanean_en_area_real_y_alertan_id_volatil():
     assert detail["valores_fijos"] == 2
     assert detail["ejemplos"][0]["fila_origen"] == 4
     assert any("Advertencia fuerte" in warning for warning in report["avisos"])
+
+
+def _multi_sheet_workbook() -> bytes:
+    workbook = openpyxl.Workbook()
+    january = workbook.active
+    january.title = "Enero"
+    january.append(["Fecha", "Producto", "Ventas"])
+    january.append(["01/01/2026", "A", 100])
+    january.append(["02/01/2026", "B", 200])
+    february = workbook.create_sheet("Febrero")
+    february.append(["Producto", "Ventas", "Fecha"])
+    february.append(["C", 300, "01/02/2026"])
+    february.append(["D", 400, "02/02/2026"])
+    notes = workbook.create_sheet("Notas")
+    notes.append(["Comentario"])
+    notes.append(["Hoja informativa que el usuario no procesó"])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def test_descarga_multihoja_usa_manifiesto_y_combina_solo_con_confirmacion(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline as pipeline_module
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "require_capability_for_user",
+        lambda user_id, capability, settings: "analista",
+    )
+    manifest = {
+        "hojas": [
+            {
+                "nombre": "Enero",
+                "procesar": True,
+                "rules": {},
+                "mapping": {},
+                "scope": {},
+                "eliminar_duplicados": False,
+            },
+            {
+                "nombre": "Febrero",
+                "procesar": True,
+                "rules": {},
+                "mapping": {},
+                "scope": {},
+                "eliminar_duplicados": False,
+            },
+            {
+                "nombre": "Notas",
+                "procesar": False,
+                "rules": {},
+                "mapping": {},
+                "scope": {},
+                "eliminar_duplicados": False,
+            },
+        ]
+    }
+    response = client.post(
+        "/clean/download",
+        files={
+            "file": (
+                "meses.xlsx",
+                _multi_sheet_workbook(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+        data={
+            "fmt": "xlsx",
+            "manifest": json.dumps(manifest),
+            "combinar_hojas": "true",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    exported = openpyxl.load_workbook(io.BytesIO(response.content), data_only=False)
+    assert exported.sheetnames == ["Enero", "Febrero", "Datos_combinados", "Observaciones"]
+    assert exported["Enero"].max_row == 3
+    assert exported["Febrero"].max_row == 3
+    combined = list(exported["Datos_combinados"].iter_rows(values_only=True))
+    assert combined[0][0] == "hoja_origen"
+    assert [row[0] for row in combined[1:]] == ["Enero", "Enero", "Febrero", "Febrero"]
+    observations = list(exported["Observaciones"].iter_rows(min_row=2, values_only=True))
+    assert any(row[1] == "Notas" and row[3] == "hoja_no_procesada" for row in observations)
+
+
+def test_descarga_multihoja_rechaza_manifiesto_que_omite_hojas(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline as pipeline_module
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "require_capability_for_user",
+        lambda user_id, capability, settings: "analista",
+    )
+    response = client.post(
+        "/clean/download",
+        files={"file": ("meses.xlsx", _multi_sheet_workbook())},
+        data={
+            "fmt": "xlsx",
+            "manifest": json.dumps(
+                {
+                    "hojas": [
+                        {
+                            "nombre": "Enero",
+                            "procesar": True,
+                            "rules": {},
+                            "mapping": {},
+                            "scope": {},
+                            "eliminar_duplicados": False,
+                        }
+                    ]
+                }
+            ),
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert "enumerar todas las hojas" in response.json()["detail"]

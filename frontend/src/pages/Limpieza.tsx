@@ -131,6 +131,8 @@ export default function Limpieza() {
     mappingOverride,
     setMappingOverride,
     sheet,
+    sheetManifest,
+    combineSheets,
     eliminarDuplicados,
   } = useDataset()
   const [detection, setDetection] = useState<CleanResult | null>(null)
@@ -163,6 +165,13 @@ export default function Limpieza() {
   useEffect(() => {
     refreshUsage()
   }, [])
+
+  useEffect(() => {
+    setRules(cleaning?.reglas_activas ?? DEFAULT_RULES)
+    setDirected(cleaning?.dirigida ?? null)
+    setDetection(null)
+    setDuplicateRemovalPending(false)
+  }, [sheet, cleaning])
 
   useEffect(() => {
     if (!duplicateConfirmOpen) return
@@ -327,6 +336,10 @@ export default function Limpieza() {
           excluir: directed.columnas_excluir,
         })
       }
+      if (fmt === 'xlsx' && sheetManifest) {
+        extra.manifest = JSON.stringify(sheetManifest)
+        extra.combinar_hojas = String(combineSheets)
+      }
       await apiDownload('/clean/download', buildDatasetForm(file, storagePath, extra), `${stem}_limpio.${fmt}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo descargar el archivo.')
@@ -419,6 +432,10 @@ export default function Limpieza() {
   const sinIntentos = totalRestantes !== null && totalRestantes <= 0
   const assistedLocked = aiCleaning.enforced && !aiCleaning.loading && !aiCleaning.hasByPlan
   const downloadLocked = downloadClean.enforced && !downloadClean.loading && !downloadClean.hasByPlan
+  const processedSheetCount = sheetManifest?.hojas.filter((item) => item.procesar).length ?? 0
+  const unprocessedSheetCount = sheetManifest
+    ? sheetManifest.hojas.length - processedSheetCount
+    : 0
 
   const steps = [
     { title: 'Cargar datos', text: 'Archivo cargado', done: true, warn: false },
@@ -629,8 +646,9 @@ export default function Limpieza() {
                   <div>
                     <h3 className="text-sm font-semibold text-navy">Tu base actualizada</h3>
                     <p className="text-xs text-navy/55">
-                      Excel con los datos intactos + hoja de Observaciones; celdas marcadas:
-                      amarillo = fecha a revisar, rojo = dato faltante.
+                      {sheetManifest
+                        ? `El XLSX incluirá ${processedSheetCount} hoja(s) procesada(s) y registrará ${unprocessedSheetCount} sin procesar en Observaciones.`
+                        : 'Excel con los datos intactos + hoja de Observaciones; amarillo = fecha a revisar, rojo = dato faltante.'}
                     </p>
                   </div>
                 </div>
@@ -650,7 +668,7 @@ export default function Limpieza() {
                       ) : (
                         <Download className="h-4 w-4" />
                       )}
-                      Descargar base actualizada
+                      {sheetManifest ? 'Descargar libro completo' : 'Descargar base actualizada'}
                     </button>
                     <button
                       onClick={() => void handleDownload('csv')}
@@ -661,7 +679,7 @@ export default function Limpieza() {
                       {downloading === 'csv' ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : null}
-                      CSV
+                      {sheetManifest ? 'CSV hoja activa' : 'CSV'}
                     </button>
                     <Link
                       to="/explorar"

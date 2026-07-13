@@ -287,6 +287,19 @@ export interface CleaningOptions {
   eliminar_duplicados: boolean
 }
 
+export interface SheetManifestEntry {
+  nombre: string
+  procesar: boolean
+  rules: Partial<CleaningRules>
+  mapping: Record<string, string>
+  scope: { incluir?: string[]; excluir?: string[] }
+  eliminar_duplicados: boolean
+}
+
+export interface SheetManifest {
+  hojas: SheetManifestEntry[]
+}
+
 export const DEFAULT_CLEANING_OPTIONS: CleaningOptions = {
   eliminar_duplicados: false,
 }

@@ -42,6 +42,7 @@ import {
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
+import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../data/DatasetContext'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
@@ -267,6 +268,10 @@ export default function Explorar() {
 
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'fail'>('idle')
 
+  useEffect(() => {
+    setMetrics(null)
+  }, [sheet])
+
   // Métricas del rango seleccionado (uploadedAt distingue cargas con igual nombre)
   useEffect(() => {
     if (!file || !cleaning) return
@@ -455,6 +460,8 @@ export default function Explorar() {
               : 'Guardar análisis'}
         </button>
       </div>
+
+      <ActiveSheetSelector />
 
       {/* ¿Qué quieres descubrir hoy? (adaptado a las columnas del archivo) */}
       <div>

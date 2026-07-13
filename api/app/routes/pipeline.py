@@ -224,6 +224,95 @@ def _validate_scope(scope: dict | None) -> dict | None:
     return scope
 
 
+_MANIFEST_ENTRY_KEYS = {
+    "nombre",
+    "procesar",
+    "rules",
+    "mapping",
+    "scope",
+    "eliminar_duplicados",
+}
+
+
+def _parse_sheet_manifest(raw: str | None) -> dict | None:
+    """Valida el contrato explícito de descarga multihoja.
+
+    El manifiesto, no el caché del proceso, es la fuente de verdad de las hojas
+    elegidas por el usuario y de la configuración aplicada a cada una.
+    """
+    if not raw:
+        return None
+    if len(raw) > 100_000:
+        raise HTTPException(status_code=422, detail="El manifiesto de hojas es demasiado grande.")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="El campo 'manifest' debe ser JSON válido.")
+    if not isinstance(value, dict) or set(value) != {"hojas"}:
+        raise HTTPException(
+            status_code=422,
+            detail="El manifiesto debe ser un objeto con una única lista 'hojas'.",
+        )
+    entries = value.get("hojas")
+    if not isinstance(entries, list) or not entries or len(entries) > 50:
+        raise HTTPException(
+            status_code=422,
+            detail="El manifiesto debe incluir entre 1 y 50 hojas.",
+        )
+
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=422, detail=f"La hoja {index} del manifiesto no es válida.")
+        unknown = set(entry) - _MANIFEST_ENTRY_KEYS
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"La hoja {index} contiene campos desconocidos: {', '.join(sorted(unknown))}.",
+            )
+        name = _clean_sheet_param(entry.get("nombre"))
+        if not name:
+            raise HTTPException(status_code=422, detail=f"La hoja {index} no tiene nombre.")
+        if name in seen:
+            raise HTTPException(status_code=422, detail=f"La hoja '{name}' está repetida en el manifiesto.")
+        seen.add(name)
+        if not isinstance(entry.get("procesar"), bool):
+            raise HTTPException(
+                status_code=422,
+                detail=f"'procesar' debe ser true o false para la hoja '{name}'.",
+            )
+
+        rules = entry.get("rules", {})
+        mapping = entry.get("mapping", {})
+        scope = entry.get("scope", {})
+        if not isinstance(rules, dict) or not isinstance(mapping, dict) or not isinstance(scope, dict):
+            raise HTTPException(
+                status_code=422,
+                detail=f"rules, mapping y scope deben ser objetos en la hoja '{name}'.",
+            )
+        remove_duplicates = entry.get("eliminar_duplicados", False)
+        if not isinstance(remove_duplicates, bool):
+            raise HTTPException(
+                status_code=422,
+                detail=f"eliminar_duplicados debe ser booleano en la hoja '{name}'.",
+            )
+        normalized.append(
+            {
+                "nombre": name,
+                "procesar": entry["procesar"],
+                "rules": _validate_rules(rules),
+                "mapping": _validate_mapping(mapping) or {},
+                "scope": _validate_scope(scope) or {},
+                "eliminar_duplicados": remove_duplicates,
+            }
+        )
+
+    if not any(entry["procesar"] for entry in normalized):
+        raise HTTPException(status_code=422, detail="Selecciona al menos una hoja para procesar.")
+    return {"hojas": normalized}
+
+
 # ── Caché del pipeline (§5.7 + Fase 11) ──────────────────────────────────────
 # Un mismo archivo con las mismas reglas/mapeo/alcance se procesa UNA vez.
 #
@@ -434,38 +523,11 @@ def _extract_columns_sync(
     return columns, detect_column_roles(columns)
 
 
-def _clean_download_sync(
-    filename: str,
-    content: bytes,
-    rules: dict,
-    fmt: str,
-    mapping: dict | None = None,
-    scope: dict | None = None,
-    sheet: str | None = None,
-    eliminar_duplicados: bool = False,
-) -> tuple[bytes, str, str]:
+def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
+    """Marcas visuales y observaciones auditables para una hoja limpia."""
     from ..engine.standardize import is_missing
 
-    result = _analyze_cached(
-        filename,
-        content,
-        rules,
-        apply=True,
-        mapping=mapping,
-        scope=scope,
-        sheet=sheet,
-        eliminar_duplicados=eliminar_duplicados,
-    )
-    df = result["_df_limpio"].copy()
-    column_types: dict = result["column_types"]
-    col_role = {col_name: role for role, col_name in result["mapeo"].items()}
-    stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
-
-    # Fase 10 §6.5: la base limpia se descarga SIN textos de revisión dentro de
-    # los datos — una columna de fecha sigue siendo fecha y una numérica sigue
-    # siendo numérica (importable en cualquier sistema). Las celdas problemáticas
-    # se marcan con color y el DETALLE va en la hoja "Observaciones".
-    _ROLE_LABEL: dict[str, str] = {
+    role_labels: dict[str, str] = {
         "fecha": "fecha",
         "monto": "monto",
         "costo": "costo",
@@ -477,10 +539,11 @@ def _clean_download_sync(
         "sucursal": "sucursal",
         "vendedor": "vendedor",
     }
+    column_types: dict = result["column_types"]
+    col_role = {col_name: role for role, col_name in result["mapeo"].items()}
     total = max(len(df), 1)
     source_rows = list(result.get("_source_rows_limpio") or range(2, len(df) + 2))
     source_sheet = (result.get("carga") or {}).get("hoja_usada")
-
     yellow: dict[tuple[int, str], str] = {}
     red: dict[tuple[int, str], str] = {}
 
@@ -488,21 +551,109 @@ def _clean_download_sync(
         ctype = column_types.get(col, "texto")
         role = col_role.get(col)
         vals = list(df[col])
-        fill_rate = sum(1 for v in vals if not is_missing(str(v))) / total
-
-        for row_idx, val in enumerate(vals):
-            if not is_missing(str(val)):
+        fill_rate = sum(1 for value in vals if not is_missing(str(value))) / total
+        for row_idx, value in enumerate(vals):
+            if not is_missing(str(value)):
                 continue
             if ctype == "fecha":
-                yellow[(row_idx, col)] = (
-                    "Fecha faltante o que no se pudo interpretar: revisar."
-                )
+                yellow[(row_idx, col)] = "Fecha faltante o que no se pudo interpretar: revisar."
             elif fill_rate >= 0.7:
-                etiqueta = _ROLE_LABEL.get(role, col) if role else col
-                red[(row_idx, col)] = (
-                    f"Dato faltante en una columna casi completa ({etiqueta})."
-                )
+                label = role_labels.get(role, col) if role else col
+                red[(row_idx, col)] = f"Dato faltante en una columna casi completa ({label})."
 
+    observations = [
+        (source_rows[row], source_sheet, col, "revisar", message)
+        for (row, col), message in yellow.items()
+    ] + [
+        (source_rows[row], source_sheet, col, "faltante", message)
+        for (row, col), message in red.items()
+    ] + [
+        (
+            detail["fila_origen"],
+            detail.get("hoja_origen"),
+            "*",
+            "duplicado_eliminado",
+            detail["motivo"],
+        )
+        for detail in result.get("_filas_duplicadas_eliminadas", [])
+    ]
+    return yellow, red, observations
+
+
+def _safe_excel_sheet_name(name: str, used: set[str]) -> str:
+    """Nombre válido y único sin perder silenciosamente una hoja."""
+    base = re.sub(r"[\\/*?:\[\]]", "_", str(name)).strip().strip("'") or "Hoja"
+    base = base[:31]
+    candidate = base
+    suffix = 2
+    while candidate.casefold() in used:
+        tail = f"_{suffix}"
+        candidate = f"{base[: 31 - len(tail)]}{tail}"
+        suffix += 1
+    used.add(candidate.casefold())
+    return candidate
+
+
+def _write_clean_sheet(wb, title: str, df, yellow: dict, red: dict) -> None:
+    from openpyxl.styles import Font, PatternFill
+
+    ws = wb.create_sheet(title)
+    exported = safe_export_dataframe(df)
+    ws.append(list(exported.columns))
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for row in exported.itertuples(index=False, name=None):
+        ws.append(list(row))
+
+    yellow_fill = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
+    red_fill = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
+    columns = list(df.columns)
+    positions = {column: index + 1 for index, column in enumerate(columns)}
+    for row, column in yellow:
+        ws.cell(row=row + 2, column=positions[column]).fill = yellow_fill
+    for row, column in red:
+        ws.cell(row=row + 2, column=positions[column]).fill = red_fill
+
+
+def _write_observations_sheet(wb, observations: list[tuple]) -> None:
+    from openpyxl.styles import Font
+
+    ws = wb.create_sheet("Observaciones")
+    ws.append(["Fila origen", "Hoja", "Columna", "Tipo", "Detalle"])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    if observations:
+        for source_row, source_sheet, column, kind, message in observations:
+            ws.append([source_row, source_sheet or "CSV", column, kind, message])
+    else:
+        ws.append(["—", "—", "—", "—", "Sin observaciones: la base quedó completa."])
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 24
+    ws.column_dimensions["E"].width = 64
+
+
+def _clean_download_sync(
+    filename: str,
+    content: bytes,
+    rules: dict,
+    fmt: str,
+    mapping: dict | None = None,
+    scope: dict | None = None,
+    sheet: str | None = None,
+    eliminar_duplicados: bool = False,
+) -> tuple[bytes, str, str]:
+    result = _analyze_cached(
+        filename,
+        content,
+        rules,
+        apply=True,
+        mapping=mapping,
+        scope=scope,
+        sheet=sheet,
+        eliminar_duplicados=eliminar_duplicados,
+    )
+    df = result["_df_limpio"].copy()
+    stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
     df_export = safe_export_dataframe(df)
 
     if fmt == "csv":
@@ -514,64 +665,131 @@ def _clean_download_sync(
         )
 
     import openpyxl
-    from openpyxl.styles import Font, PatternFill
 
-    buf = io.BytesIO()
-    df_export.to_excel(buf, index=False, engine="openpyxl", sheet_name="Datos_limpios")
-    buf.seek(0)
-
-    wb = openpyxl.load_workbook(buf)
-    ws = wb.active
-    col_list = list(df.columns)
-    YELLOW_FILL = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
-    RED_FILL = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
-
-    for (r, c) in yellow:
-        ws.cell(row=r + 2, column=col_list.index(c) + 1).fill = YELLOW_FILL
-    for (r, c) in red:
-        ws.cell(row=r + 2, column=col_list.index(c) + 1).fill = RED_FILL
-
-    # Hoja de Observaciones: usa la fila REAL del archivo, nunca index + 2.
-    observations = sorted(
-        [
-            (source_rows[r], source_sheet, c, "revisar", msg)
-            for (r, c), msg in yellow.items()
-        ]
-        + [
-            (source_rows[r], source_sheet, c, "faltante", msg)
-            for (r, c), msg in red.items()
-        ]
-        + [
-            (
-                detail["fila_origen"],
-                detail.get("hoja_origen"),
-                "*",
-                "duplicado_eliminado",
-                detail["motivo"],
-            )
-            for detail in result.get("_filas_duplicadas_eliminadas", [])
-        ],
-        key=lambda item: (item[0], item[2]),
-    )
-    ws_obs = wb.create_sheet("Observaciones")
-    ws_obs.append(["Fila origen", "Hoja", "Columna", "Tipo", "Detalle"])
-    for cell in ws_obs[1]:
-        cell.font = Font(bold=True)
-    if observations:
-        for source_row, source_sheet_name, col, kind, msg in observations:
-            ws_obs.append([source_row, source_sheet_name or "CSV", col, kind, msg])
-    else:
-        ws_obs.append(["—", "—", "—", "—", "Sin observaciones: la base quedó completa."])
-    ws_obs.column_dimensions["B"].width = 20
-    ws_obs.column_dimensions["C"].width = 24
-    ws_obs.column_dimensions["E"].width = 64
-
-    buf2 = io.BytesIO()
-    wb.save(buf2)
-    buf2.seek(0)
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    yellow, red, observations = _export_annotations(result, df)
+    _write_clean_sheet(wb, "Datos_limpios", df, yellow, red)
+    _write_observations_sheet(wb, observations)
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
     return (
-        buf2.getvalue(),
+        output.getvalue(),
         f"{stem}_limpio.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def _clean_download_multi_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    combine_sheets: bool,
+) -> tuple[bytes, str, str]:
+    """Exporta exactamente las hojas declaradas por el cliente.
+
+    El caché acelera cada análisis, pero nunca participa en la decisión de qué
+    hojas están procesadas. El manifiesto debe enumerar todas las hojas reales.
+    """
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=422, detail="La descarga multihoja requiere un archivo .xlsx.")
+
+    entries = manifest["hojas"]
+    _, load_report = _load_or_400(filename, content, sheet=entries[0]["nombre"])
+    available = list(load_report.get("hojas_disponibles", []))
+    declared = [entry["nombre"] for entry in entries]
+    missing = [name for name in available if name not in declared]
+    unknown = [name for name in declared if name not in available]
+    if missing or unknown or len(declared) != len(available):
+        details: list[str] = []
+        if missing:
+            details.append(f"faltan: {', '.join(missing)}")
+        if unknown:
+            details.append(f"no existen: {', '.join(unknown)}")
+        raise HTTPException(
+            status_code=422,
+            detail="El manifiesto debe enumerar todas las hojas del Excel (" + "; ".join(details) + ").",
+        )
+
+    import openpyxl
+    import pandas as pd
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    used_names = {"observaciones"}
+    if combine_sheets:
+        used_names.add("datos_combinados")
+    observations: list[tuple] = []
+    processed_frames: list[tuple[str, object]] = []
+
+    for entry in entries:
+        sheet_name = entry["nombre"]
+        if not entry["procesar"]:
+            observations.append(
+                (
+                    "—",
+                    sheet_name,
+                    "*",
+                    "hoja_no_procesada",
+                    "Hoja incluida en el manifiesto, pero el usuario decidió no procesarla.",
+                )
+            )
+            continue
+        result = _analyze_cached(
+            filename,
+            content,
+            entry["rules"],
+            apply=True,
+            mapping=entry["mapping"] or None,
+            scope=entry["scope"] or None,
+            sheet=sheet_name,
+            eliminar_duplicados=entry["eliminar_duplicados"],
+        )
+        frame = result["_df_limpio"].copy()
+        yellow, red, sheet_observations = _export_annotations(result, frame)
+        export_name = _safe_excel_sheet_name(sheet_name, used_names)
+        _write_clean_sheet(wb, export_name, frame, yellow, red)
+        observations.extend(sheet_observations)
+        processed_frames.append((sheet_name, frame))
+
+    if combine_sheets:
+        if len(processed_frames) < 2:
+            raise HTTPException(
+                status_code=422,
+                detail="Se necesitan al menos dos hojas procesadas para combinarlas.",
+            )
+        first_columns = list(processed_frames[0][1].columns)
+        if "hoja_origen" in first_columns:
+            raise HTTPException(
+                status_code=422,
+                detail="No se pueden combinar las hojas porque ya existe una columna 'hoja_origen'.",
+            )
+        first_set = set(first_columns)
+        if any(set(frame.columns) != first_set for _, frame in processed_frames[1:]):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Solo se pueden combinar hojas con el mismo conjunto de encabezados "
+                    "normalizados. No se realizan uniones por claves automáticamente."
+                ),
+            )
+        combined_parts = []
+        for source_name, frame in processed_frames:
+            part = frame.reindex(columns=first_columns).copy()
+            part.insert(0, "hoja_origen", source_name)
+            combined_parts.append(part)
+        combined = pd.concat(combined_parts, ignore_index=True)
+        _write_clean_sheet(wb, "Datos_combinados", combined, {}, {})
+
+    _write_observations_sheet(wb, observations)
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
+    return (
+        output.getvalue(),
+        f"{stem}_multihoja_limpio.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -741,6 +959,8 @@ async def clean_download(
     mapping: str | None = Form(None),
     scope: str | None = Form(None),
     sheet: str | None = Form(None),
+    manifest: str | None = Form(None),
+    combinar_hojas: bool = Form(False),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
@@ -757,6 +977,30 @@ async def clean_download(
             detail="El campo 'fmt' debe ser 'csv' o 'xlsx'.",
         )
     filename, content = await _read_input(file, storage_path, user)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if combinar_hojas and sheet_manifest is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Para combinar hojas debes enviar un manifiesto explícito.",
+        )
+    if sheet_manifest is not None:
+        if export_format != "xlsx":
+            raise HTTPException(
+                status_code=422,
+                detail="La descarga multihoja solo está disponible en formato XLSX.",
+            )
+        file_bytes, out_name, media_type = await run_in_threadpool(
+            _clean_download_multi_sync,
+            filename,
+            content,
+            sheet_manifest,
+            combinar_hojas,
+        )
+        return StreamingResponse(
+            iter([file_bytes]),
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
+        )
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     scope_dict = _validate_scope(_parse_json_field(scope, "scope") or None)

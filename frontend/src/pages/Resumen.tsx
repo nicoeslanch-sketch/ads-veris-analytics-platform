@@ -33,6 +33,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
+import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import { useAuth } from '../auth/AuthContext'
 import { monthPeriod, useDataset } from '../data/DatasetContext'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
@@ -170,6 +171,10 @@ export default function Resumen() {
     typeof (location.state as { resumeWarning?: unknown } | null)?.resumeWarning === 'string'
       ? ((location.state as { resumeWarning: string }).resumeWarning)
       : null
+
+  useEffect(() => {
+    setMetrics(null)
+  }, [sheet])
 
   useEffect(() => {
     if (!file || !cleaning) return
@@ -381,6 +386,8 @@ export default function Resumen() {
           <Upload className="h-4 w-4" /> Importar datos
         </Link>
       </div>
+
+      <ActiveSheetSelector />
 
       {error && (
         <div className="mb-6 flex flex-wrap items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral">
