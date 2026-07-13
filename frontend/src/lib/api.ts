@@ -227,6 +227,35 @@ export async function apiGet<T>(path: string): Promise<T> {
   }
 }
 
+/** DELETE autenticado para operaciones orquestadas por el backend. */
+export async function apiDelete<T>(path: string): Promise<T> {
+  const token = await getAccessToken()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const fullUrl = `${requireBase()}${path}`
+  let response: Response
+  try {
+    response = await fetchWithTimeout(fullUrl, { method: 'DELETE', headers }, PIPELINE_TIMEOUT_MS)
+  } catch (err) {
+    throw connectionError(err, 'No se pudo contactar al servidor.')
+  }
+  const rawBody = await response.text()
+  if (!response.ok) {
+    let detail = `Error ${response.status} del servidor.`
+    try {
+      const parsed = JSON.parse(rawBody)
+      if (typeof parsed.detail === 'string') detail = parsed.detail
+    } catch { }
+    throw new ApiError(response.status, detail)
+  }
+  try {
+    return JSON.parse(rawBody) as T
+  } catch {
+    throw new ApiError(response.status, 'Respuesta inesperada del servidor.')
+  }
+}
+
 /** POST con body JSON (para los endpoints /ai/*). */
 export async function apiPostJson<T>(
   path: string,

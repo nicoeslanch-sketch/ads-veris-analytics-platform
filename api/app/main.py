@@ -12,6 +12,7 @@ from .config import get_settings
 from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
 from .routes.connectors import router as connectors_router
+from .routes.datasets import router as datasets_router
 from .routes.pipeline import router as pipeline_router
 from .routes.plans import router as plans_router
 from .routes.retention import router as retention_router
@@ -60,6 +61,7 @@ def me(user: AuthenticatedUser = Depends(get_current_user)) -> dict:
 app.include_router(pipeline_router)
 app.include_router(ai_router)
 app.include_router(connectors_router)
+app.include_router(datasets_router)
 app.include_router(plans_router)
 app.include_router(admin_router)
 app.include_router(support_router)

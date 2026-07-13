@@ -28,7 +28,6 @@ import os
 import re
 import threading
 from collections import OrderedDict
-from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
@@ -50,7 +49,7 @@ from ..engine.ai_classifier import classify_columns_with_ai
 from ..engine.mapping import detect_column_roles, detect_columns_extended
 from ..engine.metrics import compute_metrics, detect_currency
 from ..engine.standardize import normalize_headers, standardize_dataframe
-from ..storage import download_from_storage
+from ..storage import download_from_storage, normalize_user_storage_path
 
 router = APIRouter()
 
@@ -61,33 +60,7 @@ PREVIEW_ROWS = 5
 def _normalize_user_storage_path(storage_path: str, user: AuthenticatedUser) -> str:
     """El bucket organiza los archivos por carpeta {user_id}/...; la API descarga
     con la service_role key (salta RLS), así que la propiedad se valida aquí."""
-    raw = storage_path.strip()
-    if not raw:
-        raise HTTPException(status_code=422, detail="storage_path vacio.")
-
-    normalized = raw.lstrip("/")
-    decoded = normalized
-    for _ in range(3):
-        next_decoded = unquote(decoded)
-        if next_decoded == decoded:
-            break
-        decoded = next_decoded
-
-    parts = decoded.split("/")
-    invalid = (
-        "\\" in normalized
-        or decoded != normalized
-        or "%" in decoded
-        or len(parts) < 2
-        or parts[0] != user.id
-        or any(part in {"", ".", ".."} for part in parts)
-    )
-    if invalid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes acceso a ese archivo.",
-        )
-    return "/".join(parts)
+    return normalize_user_storage_path(storage_path, user.id)
 
 
 async def _read_input(

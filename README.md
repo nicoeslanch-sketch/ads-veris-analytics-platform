@@ -56,6 +56,9 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    - `supabase/migrations/0012_cleaning_job_options.sql` (**Fase 12, Bloque 1**:
      persiste en cada limpieza la decisión explícita y segura de eliminar o no
      duplicados exactos)
+   - `supabase/migrations/0013_dataset_deletion_saga.sql` (**Fase 12, Bloque 6A**:
+     eliminación recuperable de Storage + PostgreSQL, trabajos reintentables y
+     finalización transaccional con historial retenido)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend

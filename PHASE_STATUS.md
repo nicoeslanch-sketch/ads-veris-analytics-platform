@@ -392,7 +392,10 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 - Combinación opcional solo para estructuras idénticas, con `hoja_origen` y
   confirmación. Los JOIN entre estructuras distintas quedan pendientes porque
   requieren que el usuario declare una clave común y la cardinalidad esperada.
-- Bloque 6: pendiente en la rama de Fase 12 autorizada por el dueño.
+- Bloque 6A completo: eliminación confirmada desde Historial mediante una saga
+  reintentable Storage→PostgreSQL; la fase de base es una RPC transaccional y el
+  trabajo sobrevive al dataset. Requiere la migración `0013`.
+- Bloque 6B: pendiente en la rama de Fase 12 autorizada por el dueño.
 
 ## ⏳ Pendiente (operación comercial)
 

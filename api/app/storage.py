@@ -9,7 +9,7 @@ proteger la memoria del servidor: se revisa Content-Length y, como respaldo,
 se corta la descarga en streaming si el archivo lo supera.
 """
 
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import httpx
 from fastapi import HTTPException, status
@@ -17,6 +17,35 @@ from fastapi import HTTPException, status
 from .config import get_settings
 
 MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
+
+
+def normalize_user_storage_path(storage_path: str, user_id: str) -> str:
+    """Valida que una ruta pertenezca exactamente a la carpeta del usuario."""
+    raw = str(storage_path or "").strip()
+    if not raw:
+        raise HTTPException(status_code=422, detail="storage_path vacío.")
+    normalized = raw.lstrip("/")
+    decoded = normalized
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            break
+        decoded = next_decoded
+    parts = decoded.split("/")
+    invalid = (
+        "\\" in normalized
+        or decoded != normalized
+        or "%" in decoded
+        or len(parts) < 2
+        or parts[0] != user_id
+        or any(part in {"", ".", ".."} for part in parts)
+    )
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes acceso a ese archivo.",
+        )
+    return "/".join(parts)
 
 
 def _too_large() -> HTTPException:
@@ -78,3 +107,40 @@ def download_from_storage(storage_path: str) -> bytes:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"No se pudo contactar a Supabase Storage: {exc.__class__.__name__}",
         )
+
+
+def delete_from_storage(storage_path: str) -> None:
+    """Elimina un objeto de forma idempotente; una ausencia ya cumple el objetivo."""
+    settings = get_settings()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servidor no tiene configurado el acceso a Supabase Storage.",
+        )
+    url = (
+        f"{settings.supabase_url.rstrip('/')}/storage/v1/object/"
+        f"{settings.supabase_storage_bucket}"
+    )
+    headers = {
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        "apikey": settings.supabase_service_role_key,
+    }
+    try:
+        response = httpx.request(
+            "DELETE",
+            url,
+            json={"prefixes": [storage_path]},
+            headers=headers,
+            timeout=60,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"No se pudo contactar a Supabase Storage: {exc.__class__.__name__}",
+        )
+    if response.status_code in {200, 204, 404}:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"Supabase Storage respondió {response.status_code} al eliminar el archivo.",
+    )

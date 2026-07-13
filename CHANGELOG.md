@@ -86,6 +86,18 @@ aparecen únicamente después de normalizar permanecen como candidatas a revisi�
   anteriores antes de recalcular, evitando mezclar el nombre de una hoja con
   resultados todavía pertenecientes a otra.
 
+### Bloque 6A — eliminación recuperable desde Historial
+- Historial incorpora una acción accesible de eliminación con diálogo modal,
+  foco en Cancelar, trampa de foco, confirmación irreversible y aviso especial
+  cuando se elimina el dataset activo.
+- `DELETE /datasets/{id}` orquesta una saga durable e idempotente: persiste el
+  trabajo, valida propiedad, elimina Storage y recién entonces finaliza la fase
+  PostgreSQL. Un fallo guarda etapa y error para retomar sin repetir fases ya
+  confirmadas.
+- La migración `0013_dataset_deletion_saga.sql` crea los trabajos de eliminación
+  sin FK al dataset y una RPC transaccional que conserva el log, ejecuta las
+  cascadas y marca `completed` de forma atómica.
+
 ## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
 
 La lentitud reportada con bases de >50.000 filas tenía una causa raíz medible:

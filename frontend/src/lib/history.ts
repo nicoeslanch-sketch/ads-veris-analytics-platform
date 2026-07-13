@@ -20,6 +20,7 @@ export type ActivityType =
   | 'analisis'
   | 'chat'
   | 'recomendacion'
+  | 'eliminacion'
 
 export interface ActivityRow {
   id: string
