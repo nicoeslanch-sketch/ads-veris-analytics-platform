@@ -48,6 +48,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     uploadedAt,
     mappingOverride,
     sheet,
+    eliminarDuplicados,
     setMetrics: setContextMetrics,
   } = useDataset()
   const active = Boolean(cleaning && file)
@@ -104,6 +105,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       if (!m) {
         setLoadingLabel('Calculando indicadores…')
         const fields: Record<string, string> = {
+          eliminar_duplicados: String(eliminarDuplicados),
           ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
           ...(sheet ? { sheet } : {}),
         }
@@ -154,12 +156,13 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0),
       sheet ?? '',
       JSON.stringify(mappingOverride ?? {}),
+      String(eliminarDuplicados),
     ].join('|')
     if (fetchedForFile.current === fileKey) return
     fetchedForFile.current = fileKey
     void runActivation(file, storagePath, contextMetrics)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, file, datasetId, storagePath, uploadedAt, sheet, mappingOverride])
+  }, [active, file, datasetId, storagePath, uploadedAt, sheet, mappingOverride, eliminarDuplicados])
 
   // Si las métricas llegan al contexto después (usuario visitó Resumen),
   // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.

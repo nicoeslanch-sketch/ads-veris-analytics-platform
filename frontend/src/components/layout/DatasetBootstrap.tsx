@@ -14,7 +14,7 @@ import { AlertTriangle, Loader2 } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { useDataset } from '../../data/DatasetContext'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../../lib/api'
-import { fetchDatasets, fetchLatestCleaningRules } from '../../lib/history'
+import { fetchDatasets, fetchLatestCleaningConfig } from '../../lib/history'
 import { supabaseConfigured } from '../../lib/supabase'
 import { DEFAULT_RULES, type CleanResult, type StandardizeResult } from '../../lib/types'
 
@@ -67,12 +67,15 @@ export default function DatasetBootstrap() {
         if (!active || cancelledRef.current) return
         let cleaned: CleanResult | null = null
         if (latest.status === 'limpio') {
-          const rules = await fetchLatestCleaningRules(latest.id)
+          const config = await fetchLatestCleaningConfig(latest.id)
           cleaned = await apiPost<CleanResult>(
             '/clean',
             buildDatasetForm(placeholder, latest.storage_path, {
               apply: 'true',
-              rules: JSON.stringify(rules ?? DEFAULT_RULES),
+              rules: JSON.stringify(config?.rules ?? DEFAULT_RULES),
+              eliminar_duplicados: String(
+                config?.options.eliminar_duplicados ?? false,
+              ),
             }),
             { timeoutMs: AUTO_RESTORE_TIMEOUT_MS, signal: controller.signal },
           )

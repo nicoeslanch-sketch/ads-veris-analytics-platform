@@ -246,7 +246,7 @@ function ChartTooltip({ active, payload, label }: {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function Explorar() {
-  const { file, cleaning, datasetId, storagePath, uploadedAt, monthsAvailable, setMonthsAvailable, mappingOverride, sheet } = useDataset()
+  const { file, cleaning, datasetId, storagePath, uploadedAt, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, eliminarDuplicados } = useDataset()
   const ready = Boolean(file && cleaning)
 
   const [rango, setRango] = useState<Period>(ALL_PERIOD)
@@ -272,7 +272,7 @@ export default function Explorar() {
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Mapeo manual y reintento en la clave: cambiar el mapeo refresca el análisis
-    const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${retryTick}`
+    const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     const controller = new AbortController()
@@ -280,7 +280,9 @@ export default function Explorar() {
     latestRequest.current = requestId
     setLoading(true)
     setError(null)
-    const fields: Record<string, string> = {}
+    const fields: Record<string, string> = {
+      eliminar_duplicados: String(eliminarDuplicados),
+    }
     if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
     if (sheet) fields.sheet = sheet
     if (rango.from) fields.date_from = rango.from
@@ -308,7 +310,7 @@ export default function Explorar() {
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, datasetId, storagePath, cleaning, uploadedAt, rango, sheet, mappingOverride, retryTick])
+  }, [file, datasetId, storagePath, cleaning, uploadedAt, rango, sheet, mappingOverride, eliminarDuplicados, retryTick])
 
   // Al cambiar el análisis, la recomendación anterior deja de aplicar
   useEffect(() => {

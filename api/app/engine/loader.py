@@ -19,6 +19,7 @@ Fase 8:
 `load_dataframe` se mantiene como wrapper compatible.
 """
 
+import csv
 import io
 import re
 import unicodedata
@@ -29,6 +30,12 @@ import pandas as pd
 SUPPORTED_EXTENSIONS = (".csv", ".xlsx")
 MAX_ROWS = 200_000
 _HEADER_SCAN_ROWS = 10
+
+# Metadatos fuera de las columnas del usuario. El motor los usa para auditar
+# una fila con su número real en el archivo, incluso después de quitar títulos,
+# filas vacías o totales y de hacer reset_index().
+SOURCE_ROWS_ATTR = "source_rows"
+SOURCE_SHEET_ATTR = "source_sheet"
 
 # Fase 10 §8.2: un .xlsx es un ZIP — 15 MB comprimidos pueden expandirse a
 # cientos de MB (zip bomb) y tumbar el proceso al leerlo con pandas.
@@ -119,6 +126,31 @@ def _clean_string_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df.replace({"nan": "", "NaT": "", "None": ""})
 
 
+def _csv_source_rows(text: str, separator: str, expected_rows: int) -> list[int]:
+    """Números de registro físicos del CSV, respetando líneas entrecomilladas.
+
+    `csv.reader.line_num` apunta a la última línea física consumida por cada
+    registro. Si el parser estándar y pandas discrepan ante un CSV irregular,
+    se usa una secuencia conservadora en vez de romper la carga.
+    """
+    try:
+        reader = csv.reader(io.StringIO(text), delimiter=separator)
+        rows: list[int] = []
+        header_seen = False
+        for record in reader:
+            if not any(str(value).strip() for value in record):
+                continue
+            if not header_seen:
+                header_seen = True
+                continue
+            rows.append(reader.line_num)
+        if len(rows) == expected_rows:
+            return rows
+    except (csv.Error, UnicodeError):
+        pass
+    return list(range(2, expected_rows + 2))
+
+
 def _detect_header_row(raw: pd.DataFrame) -> int:
     """Fila real de encabezados dentro de las primeras _HEADER_SCAN_ROWS.
 
@@ -178,8 +210,12 @@ def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.Da
             f"Se omitieron {header_row} fila(s) de título sobre los encabezados."
         )
     headers = [str(v).strip() for v in raw.iloc[header_row].tolist()]
+    data_index = raw.index[header_row + 1 :]
+    source_rows = [int(index) + 1 for index in data_index]
     df = raw.iloc[header_row + 1 :].reset_index(drop=True)
     df.columns = headers
+    df.attrs[SOURCE_ROWS_ATTR] = source_rows
+    df.attrs[SOURCE_SHEET_ATTR] = best_sheet
     return df
 
 
@@ -223,18 +259,25 @@ def load_dataframe_with_report(
             keep_default_na=False,
             skip_blank_lines=True,
         )
+        df.attrs[SOURCE_ROWS_ATTR] = _csv_source_rows(text, separator, len(df))
+        df.attrs[SOURCE_SHEET_ATTR] = None
     else:
         df = _load_excel(content, report, sheet=sheet)
 
     # Filas completamente vacías al final (frecuentes en Excel) no son datos.
     # Fase 11: vectorizado por columna (antes era fila por fila con apply).
+    source_rows = list(df.attrs.get(SOURCE_ROWS_ATTR, range(2, len(df) + 2)))
+    source_sheet = df.attrs.get(SOURCE_SHEET_ATTR)
     non_empty_mask = pd.Series(False, index=df.index)
     for col in df.columns:
         non_empty_mask |= df[col].astype(str).str.strip() != ""
+    keep_positions = [position for position, keep in enumerate(non_empty_mask.tolist()) if keep]
+    source_rows = [source_rows[position] for position in keep_positions]
     df = df[non_empty_mask].reset_index(drop=True)
 
     # Filas de totales al final ("Total", "Suma"): resumen, no datos (Fase 8).
     df = _drop_trailing_total_rows(df, report).reset_index(drop=True)
+    source_rows = source_rows[: len(df)]
 
     if df.empty or len(df.columns) == 0:
         raise UnsupportedFileError("El archivo no tiene datos que procesar.")
@@ -242,7 +285,10 @@ def load_dataframe_with_report(
         raise UnsupportedFileError(
             f"El archivo supera el máximo de {MAX_ROWS:,} filas para esta versión.".replace(",", ".")
         )
-    return df.reset_index(drop=True), report
+    df = df.reset_index(drop=True)
+    df.attrs[SOURCE_ROWS_ATTR] = source_rows
+    df.attrs[SOURCE_SHEET_ATTR] = source_sheet
+    return df, report
 
 
 def load_dataframe(filename: str, content: bytes) -> pd.DataFrame:

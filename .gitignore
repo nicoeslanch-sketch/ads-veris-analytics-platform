@@ -241,3 +241,6 @@ npm-debug.log*
 .env
 .env.local
 supabase/.temp/
+
+# Datos reales de regresión: solo locales, nunca se versionan.
+REQ5325*.xlsx

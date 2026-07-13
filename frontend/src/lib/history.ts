@@ -5,7 +5,11 @@ muestra el estado explicativo. RLS garantiza que cada usuario ve solo lo suyo.
 */
 
 import { supabase } from './supabase'
-import type { CleaningRules } from './types'
+import {
+  DEFAULT_CLEANING_OPTIONS,
+  type CleaningOptions,
+  type CleaningRules,
+} from './types'
 
 const BUCKET = 'datasets'
 
@@ -39,6 +43,12 @@ export interface DatasetRow {
 
 export interface CleaningJobRow {
   rules: CleaningRules | null
+  options?: CleaningOptions | null
+}
+
+export interface CleaningConfig {
+  rules: CleaningRules | null
+  options: CleaningOptions
 }
 
 async function hasSession(): Promise<boolean> {
@@ -94,18 +104,41 @@ export async function downloadDatasetFile(
   return new File([data], name, { type: data.type })
 }
 
-export async function fetchLatestCleaningRules(datasetId: string): Promise<CleaningRules | null> {
+export async function fetchLatestCleaningConfig(datasetId: string): Promise<CleaningConfig | null> {
   if (!supabase || !(await hasSession())) return null
   const { data, error } = await supabase
     .from('cleaning_jobs')
-    .select('rules')
+    .select('rules, options')
     .eq('dataset_id', datasetId)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (error) {
-    console.warn('[historial] No se pudieron leer reglas de limpieza:', error.message)
-    return null
+    // Compatibilidad durante el despliegue: si 0012 aún no se aplicó, se
+    // recuperan las reglas antiguas y la decisión segura queda en false.
+    const fallback = await supabase
+      .from('cleaning_jobs')
+      .select('rules')
+      .eq('dataset_id', datasetId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (fallback.error) {
+      console.warn('[historial] No se pudo leer la configuración de limpieza:', error.message)
+      return null
+    }
+    const legacy = fallback.data as CleaningJobRow | null
+    return legacy
+      ? { rules: legacy.rules, options: DEFAULT_CLEANING_OPTIONS }
+      : null
   }
-  return (data as CleaningJobRow | null)?.rules ?? null
+  const row = data as CleaningJobRow | null
+  return row
+    ? { rules: row.rules, options: row.options ?? DEFAULT_CLEANING_OPTIONS }
+    : null
+}
+
+/** @deprecated Usa fetchLatestCleaningConfig para no perder las opciones. */
+export async function fetchLatestCleaningRules(datasetId: string): Promise<CleaningRules | null> {
+  return (await fetchLatestCleaningConfig(datasetId))?.rules ?? null
 }

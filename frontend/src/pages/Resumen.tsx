@@ -151,7 +151,7 @@ function ChartTooltip({
 export default function Resumen() {
   const { user } = useAuth()
   const location = useLocation()
-  const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet } = useDataset()
+  const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, eliminarDuplicados } = useDataset()
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -182,7 +182,7 @@ export default function Resumen() {
     }
     // El mapeo manual y el reintento forman parte de la clave: cambiar el mapeo
     // en Limpieza refresca el dashboard, y "Reintentar" fuerza una nueva llamada.
-    const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${retryTick}`
+    const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     const controller = new AbortController()
@@ -190,7 +190,9 @@ export default function Resumen() {
     latestRequest.current = requestId
     setLoading(true)
     setError(null)
-    const fields: Record<string, string> = {}
+    const fields: Record<string, string> = {
+      eliminar_duplicados: String(eliminarDuplicados),
+    }
     if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
     if (sheet) fields.sheet = sheet
     if (period.from) fields.date_from = period.from
@@ -225,7 +227,7 @@ export default function Resumen() {
         if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [file, datasetId, storagePath, cleaning, uploadedAt, period, sheet, mappingOverride, retryTick, setMonthsAvailable, setPeriod])
+  }, [file, datasetId, storagePath, cleaning, uploadedAt, period, sheet, mappingOverride, eliminarDuplicados, retryTick, setMonthsAvailable, setPeriod])
 
   if (!ready) {
     return (

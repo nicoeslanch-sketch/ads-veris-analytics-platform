@@ -2,6 +2,43 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.13.0] - 2026-07-13 - Fase 12, Bloque 1: duplicados no destructivos
+
+Este bloque cambia deliberadamente la política de seguridad del motor: los
+duplicados se detectan siempre, pero **no se eliminan por defecto**. La acción
+"Eliminar duplicados exactos" requiere una confirmación explícita del usuario;
+solo elimina repeticiones exactas del archivo original. Las coincidencias que
+aparecen únicamente después de normalizar permanecen como candidatas a revisión.
+
+### Motor y trazabilidad
+- Se separaron los duplicados exactos originales, los normalizados adicionales,
+  los conflictos de ID y las advertencias de posible granularidad omitida. Estas
+  categorías son mutuamente excluyentes y no se suman como si midieran lo mismo.
+- La taxonomía de identificadores distingue fila, documento, entidad y atributo.
+  Ningún nombre de columna ni heurística autoriza borrados automáticamente.
+- La exclusión estadística de RUT, teléfonos, códigos, SKU, años, folios e índices
+  quedó independiente de la política de duplicados, preservando la protección IQR.
+- El loader conserva por metadatos la fila física original y la hoja de origen,
+  sin contaminar las columnas del usuario. El preview y la hoja `Observaciones`
+  usan esa referencia real.
+- `/clean`, `/clean/assisted`, `/clean/download` y `/metrics` aceptan el campo
+  aditivo `eliminar_duplicados`, con default seguro `false`; la decisión también
+  forma parte de la clave de caché.
+
+### Frontend y persistencia
+- Limpieza muestra un diagnóstico prominente y una acción coral independiente,
+  seguida de un modal de riesgo con cancelar enfocado por defecto.
+- La limpieza dirigida no puede autorizar el borrado mediante texto libre.
+- La opción elegida se propaga a métricas, IA, descarga y restauración de sesión.
+- Nueva migración `0012_cleaning_job_options.sql` para persistir la decisión en
+  `cleaning_jobs.options`. No se aplica automáticamente al proyecto remoto.
+
+### Verificación
+- Fixture sintético específico para cada conducta de seguridad y script local
+  `scripts/regresion_req5325.py` para auditar el archivo real sin versionarlo.
+- Regresión REQ5325: 14.917 filas por defecto; 14.324 únicamente tras confirmar
+  la eliminación de sus 593 repeticiones exactas.
+
 ## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
 
 La lentitud reportada con bases de >50.000 filas tenía una causa raíz medible:

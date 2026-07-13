@@ -136,8 +136,7 @@ def test_fuzzy_sigue_activo_en_categorias(client, auth_headers):
 
 
 def test_duplicados_normalizados_sin_id_no_se_eliminan(client, auth_headers):
-    """§6.2: sin columna ID, filas que solo difieren en mayúsculas quedan como
-    'probables' y NO se eliminan; las 100% idénticas sí."""
+    """Fase 12: exactos y normalizados se separan; ninguno sale por defecto."""
     csv = (
         "Fecha;Producto;Ventas\n"
         "01/05/2026;Producto A;1000\n"
@@ -151,11 +150,19 @@ def test_duplicados_normalizados_sin_id_no_se_eliminan(client, auth_headers):
         data={"apply": "true"},
         headers=auth_headers,
     ).json()
-    # OJO: la estandarización unifica mayúsculas ANTES del dedup, por lo que
-    # "producto b"/"PRODUCTO B" pueden volverse idénticas. Lo no negociable:
-    # el criterio queda explícito y las probables se avisan.
-    assert body["duplicados_criterio"] == "fila_exacta_sin_id"
-    assert body["resumen"]["filas_despues"] >= 2
+    assert body["duplicados_criterio"] == "fila_exacta_original_con_confirmacion"
+    assert body["problemas"]["duplicados"] == 1
+    assert body["problemas"]["duplicados_probables"] == 1
+    assert body["resumen"]["filas_despues"] == 4
+
+    confirmed = client.post(
+        "/clean",
+        files={"file": ("dups.csv", csv.encode("utf-8"), "text/csv")},
+        data={"apply": "true", "eliminar_duplicados": "true"},
+        headers=auth_headers,
+    ).json()
+    assert confirmed["resumen"]["filas_despues"] == 3
+    assert confirmed["correcciones"]["filas_duplicadas_eliminadas"] == 1
 
 
 def test_duplicados_con_id_distinto_jamas_se_fusionan(client, auth_headers):

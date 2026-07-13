@@ -53,6 +53,9 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      P0, obligatoria antes de aceptar usuarios externos**: bloquea que un usuario
      edite su propio `plan` / `is_admin` por la REST API; el navegador solo puede
      actualizar sus datos de contacto)
+   - `supabase/migrations/0012_cleaning_job_options.sql` (**Fase 12, Bloque 1**:
+     persiste en cada limpieza la decisión explícita y segura de eliminar o no
+     duplicados exactos)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend
@@ -159,6 +162,10 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
   limpia solo para Plan Analista y export seguro contra formula injection.
   Pendiente (operación comercial): checkout Analista, conector SQL, alertas continuas y
   reportes generados en backend.
+- [x] **Fase 12, Bloque 1 — duplicados no destructivos**: detección automática,
+  eliminación desactivada por defecto y disponible solo mediante confirmación explícita;
+  exactos originales separados de coincidencias normalizadas, diagnóstico de IDs,
+  fila física de origen y decisión persistida. Los bloques 2–6 esperan validación.
 
 ## Regla de flujo no negociable
 

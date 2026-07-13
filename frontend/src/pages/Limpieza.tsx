@@ -15,7 +15,9 @@ import {
   Loader2,
   Rows3,
   Settings2,
+  ShieldAlert,
   Sparkles,
+  Trash2,
   Type,
   Upload,
   Wand2,
@@ -43,7 +45,6 @@ import {
 const RULE_LABELS: Array<{ key: keyof CleaningRules; label: string }> = [
   { key: 'fechas', label: 'Estándar de formato de fecha' },
   { key: 'textos', label: 'Unificar texto' },
-  { key: 'duplicados', label: 'Eliminar duplicados' },
   { key: 'tipos', label: 'Convertir tipos de dato' },
   { key: 'nulos', label: 'Normalizar y señalizar nulos' },
   { key: 'columnas_vacias', label: 'Eliminar columnas vacías' },
@@ -124,6 +125,7 @@ export default function Limpieza() {
     mappingOverride,
     setMappingOverride,
     sheet,
+    eliminarDuplicados,
   } = useDataset()
   const [detection, setDetection] = useState<CleanResult | null>(null)
   const [rules, setRules] = useState<CleaningRules>(DEFAULT_RULES)
@@ -132,6 +134,9 @@ export default function Limpieza() {
   const [downloading, setDownloading] = useState<'xlsx' | 'csv' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
+  const [duplicateConfirmOpen, setDuplicateConfirmOpen] = useState(false)
+  const [duplicateRemovalPending, setDuplicateRemovalPending] = useState(false)
+  const cancelDuplicateRef = useRef<HTMLButtonElement | null>(null)
   const detectStartedFor = useRef<string | null>(null)
 
   // ── Limpieza dirigida (Analista/Gold) y descarga de base limpia (Analista+) ──
@@ -154,6 +159,16 @@ export default function Limpieza() {
   }, [])
 
   useEffect(() => {
+    if (!duplicateConfirmOpen) return
+    cancelDuplicateRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDuplicateConfirmOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [duplicateConfirmOpen])
+
+  useEffect(() => {
     if (!file || cleaning) return
     const key = [
       datasetId ?? storagePath ?? `${file.name}:${file.lastModified}:${uploadedAt?.getTime() ?? 0}`,
@@ -165,6 +180,7 @@ export default function Limpieza() {
     const controller = new AbortController()
     const fields = {
       apply: 'false',
+      eliminar_duplicados: 'false',
       ...(sheet ? { sheet } : {}),
       ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
     }
@@ -216,6 +232,15 @@ export default function Limpieza() {
       ? result.resumen.calidad_despues
       : result.resumen.calidad_antes
     : null
+  const duplicateDetails = result?.duplicados_detalle
+  const exactDuplicates = duplicateDetails?.exactos ?? result?.problemas.duplicados ?? 0
+  const selectedDuplicates = duplicateRemovalPending
+    ? exactDuplicates
+    : duplicateDetails?.filas_seleccionadas_para_eliminar ?? 0
+  const removedDuplicates = duplicateDetails?.filas_eliminadas ?? 0
+  const granularityWarning = result?.avisos?.find((aviso) =>
+    aviso.includes('variable diferenciadora'),
+  )
 
   const effectiveMapping: Record<string, string> = {
     ...(result?.mapeo ?? standardization.mapeo),
@@ -230,8 +255,11 @@ export default function Limpieza() {
 
   // Qué se corregirá según los toggles activos (mismo cálculo que hace la API).
   const planned = result
-    ? [
-        { label: 'Filas duplicadas a eliminar', value: rules.duplicados ? result.problemas.duplicados : 0 },
+      ? [
+        {
+          label: 'Filas exactas seleccionadas para eliminar',
+          value: selectedDuplicates,
+        },
         { label: 'Valores nulos normalizados y señalizados', value: rules.nulos ? result.problemas.valores_nulos : 0 },
         {
           label: 'Fechas a estandarizar',
@@ -276,6 +304,7 @@ export default function Limpieza() {
       const stem = file.name.replace(/\.[^.]+$/, '')
       const extra: Record<string, string> = {
         rules: JSON.stringify(rules),
+        eliminar_duplicados: String(eliminarDuplicados),
         fmt,
         ...mappingFields(),
       }
@@ -306,8 +335,9 @@ export default function Limpieza() {
   }
 
   /** Botón principal: reglas por defecto, para TODOS los planes. */
-  const handleApply = async () => {
+  const handleApply = async (removeExactDuplicates = false) => {
     setApplying(true)
+    setDuplicateRemovalPending(removeExactDuplicates)
     setError(null)
     setPersistWarning(null)
     setDirected(null)
@@ -317,6 +347,7 @@ export default function Limpieza() {
         buildDatasetForm(file, storagePath, {
           apply: 'true',
           rules: JSON.stringify(rules),
+          eliminar_duplicados: String(removeExactDuplicates),
           ...mappingFields(),
         }),
       )
@@ -325,7 +356,13 @@ export default function Limpieza() {
       setError(err instanceof ApiError ? err.message : 'No se pudo aplicar la limpieza.')
     } finally {
       setApplying(false)
+      setDuplicateRemovalPending(false)
     }
+  }
+
+  const handleConfirmedDuplicateRemoval = () => {
+    setDuplicateConfirmOpen(false)
+    void handleApply(true)
   }
 
   /** Botón del chat: limpieza dirigida con las variables escritas. */
@@ -343,6 +380,8 @@ export default function Limpieza() {
         buildDatasetForm(file, storagePath, {
           instructions: instructions.trim(),
           rules: JSON.stringify(rules),
+          // El texto libre nunca autoriza eliminación de filas.
+          eliminar_duplicados: 'false',
           ...mappingFields(),
         }),
       )
@@ -545,6 +584,14 @@ export default function Limpieza() {
                     {formatNumber(result.resumen.columnas_antes)} →{' '}
                     {formatNumber(result.resumen.columnas_despues)}.
                   </p>
+                  {exactDuplicates > 0 && (
+                    <p className="mt-2 text-sm text-navy/70">
+                      Duplicados exactos: <strong>{formatNumber(exactDuplicates)} detectados</strong>
+                      {' · '}
+                      <strong>{formatNumber(removedDuplicates)} eliminados</strong>. Los demás se
+                      conservaron.
+                    </p>
+                  )}
                   {directed && directed.columnas_incluir.length > 0 && (
                     <p className="mt-2 text-sm text-navy/70">
                       <Wand2 className="mr-1 inline h-4 w-4 text-teal" />
@@ -714,6 +761,54 @@ export default function Limpieza() {
               )}
             </Card>
 
+            {result && exactDuplicates > 0 && (
+              <Card className="border-coral/25 bg-gradient-to-r from-coral/[0.05] via-transparent to-transparent">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-coral/10">
+                        <ShieldAlert className="h-5 w-5 text-coral" />
+                      </div>
+                      <div>
+                        <h2 className="text-sm font-semibold text-navy">Duplicados exactos</h2>
+                        <p className="text-xs text-navy/55">
+                          Detectar no elimina filas. Solo se borran después de tu confirmación.
+                        </p>
+                      </div>
+                    </div>
+                    <dl className="mt-4 grid max-w-xl grid-cols-3 gap-3">
+                      <div>
+                        <dt className="text-[11px] text-navy/50">Detectados</dt>
+                        <dd className="text-lg font-bold text-navy">{formatNumber(exactDuplicates)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-[11px] text-navy/50">Seleccionados</dt>
+                        <dd className="text-lg font-bold text-gold">{formatNumber(selectedDuplicates)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-[11px] text-navy/50">Eliminados</dt>
+                        <dd className="text-lg font-bold text-coral">{formatNumber(removedDuplicates)}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDuplicateConfirmOpen(true)}
+                    disabled={applying || assistedRunning || detecting}
+                    className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-coral px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-coral/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Eliminar duplicados exactos ({formatNumber(exactDuplicates)})
+                  </button>
+                </div>
+                {granularityWarning && (
+                  <p className="mt-4 rounded-lg border border-gold/35 bg-gold/[0.08] px-3 py-2.5 text-xs leading-relaxed text-navy/70">
+                    {granularityWarning}
+                  </p>
+                )}
+              </Card>
+            )}
+
             {/* Problemas / correcciones / reglas — tres columnas a lo ancho */}
             {result && (
               <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
@@ -772,7 +867,9 @@ export default function Limpieza() {
                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-navy/10">
                       <Settings2 className="h-4 w-4 text-navy/60" />
                     </div>
-                    <h3 className="text-sm font-semibold text-navy">Reglas activas (automáticas)</h3>
+                    <h3 className="text-sm font-semibold text-navy">
+                      Reglas automáticas (no eliminan filas)
+                    </h3>
                   </div>
                   <ul className="mt-4 space-y-3">
                     {RULE_LABELS.map(({ key, label }) => (
@@ -863,8 +960,11 @@ export default function Limpieza() {
             </div>
             <p className="mt-1.5 text-sm text-navy/60">
               O escribe tú qué limpiar: menciona las columnas y reglas (ej:{' '}
-              <em>"limpia Fecha y Ventas, elimina duplicados, no toques Cliente"</em>) y la
+              <em>"limpia Fecha y Ventas, no toques Cliente"</em>) y la
               plataforma dirige la limpieza con tus instrucciones.
+            </p>
+            <p className="mt-1 text-xs text-navy/50">
+              Las instrucciones pueden detectar duplicados, pero nunca autorizan eliminarlos.
             </p>
 
             {assistedLocked ? (
@@ -948,6 +1048,61 @@ export default function Limpieza() {
           </Card>
         )}
       </div>
+
+      {duplicateConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-navy-deep/55 p-4"
+          onMouseDown={() => setDuplicateConfirmOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="duplicate-confirm-title"
+            className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-coral/10">
+                <ShieldAlert className="h-5 w-5 text-coral" />
+              </div>
+              <div>
+                <h2 id="duplicate-confirm-title" className="text-base font-semibold text-navy">
+                  ¿Eliminar {formatNumber(exactDuplicates)} duplicados exactos?
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-navy/70">
+                  Se eliminarán solo las repeticiones que ya eran idénticas en el archivo
+                  original. Las coincidencias creadas por normalización se conservarán.
+                </p>
+              </div>
+            </div>
+            <p className="mt-4 rounded-lg border border-gold/40 bg-gold/[0.09] px-3 py-3 text-xs leading-relaxed text-navy/75">
+              {granularityWarning ??
+                'Dos filas idénticas pueden ser registros legítimos si el archivo omitió una variable diferenciadora. Verifica el origen antes de continuar.'}
+            </p>
+            <p className="mt-3 text-xs font-medium text-coral">
+              Esta acción modifica la base procesada y no se puede deshacer dentro de esta sesión.
+            </p>
+            <div className="mt-5 flex justify-end gap-2.5">
+              <button
+                ref={cancelDuplicateRef}
+                type="button"
+                onClick={() => setDuplicateConfirmOpen(false)}
+                className="rounded-lg border border-navy/20 bg-white px-4 py-2 text-sm font-semibold text-navy transition-colors hover:bg-navy/5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmedDuplicateRemoval}
+                className="inline-flex items-center gap-2 rounded-lg bg-coral px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-coral/90"
+              >
+                <Trash2 className="h-4 w-4" />
+                Eliminar duplicados exactos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

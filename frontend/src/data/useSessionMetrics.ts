@@ -20,8 +20,10 @@ export function useSessionMetrics(): {
   loading: boolean
   error: string | null
 } {
-  const { file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics, mappingOverride, sheet } =
-    useDataset()
+  const {
+    file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics,
+    mappingOverride, sheet, eliminarDuplicados,
+  } = useDataset()
   const ready = Boolean(file && cleaning)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -32,7 +34,7 @@ export function useSessionMetrics(): {
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Hoja y mapeo en la clave: si el usuario los cambia, se recalcula (Fase 11)
-    const key = `${datasetKey}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}`
+    const key = `${datasetKey}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}`
     if (isFullPeriod(metrics) && fetchedFor.current === key) return
     if (fetchedFor.current === key) return
     fetchedFor.current = key
@@ -42,6 +44,7 @@ export function useSessionMetrics(): {
     setLoading(true)
     setError(null)
     const fields: Record<string, string> = {
+      eliminar_duplicados: String(eliminarDuplicados),
       ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
       ...(sheet ? { sheet } : {}),
     }
@@ -64,7 +67,7 @@ export function useSessionMetrics(): {
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics, sheet, mappingOverride])
+  }, [file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics, sheet, mappingOverride, eliminarDuplicados])
 
   // Solo entregar métricas del periodo completo (nunca el mes filtrado ajeno).
   return { ready, metrics: isFullPeriod(metrics) ? metrics : null, loading, error }

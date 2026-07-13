@@ -31,7 +31,7 @@ import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import {
   fetchActivity,
   fetchDatasets,
-  fetchLatestCleaningRules,
+  fetchLatestCleaningConfig,
   type ActivityRow,
   type ActivityType,
   type DatasetRow,
@@ -109,13 +109,16 @@ export default function Historial() {
       )
       if (dataset.status === 'limpio') {
         // Continuar con las reglas reales del último cleaning_job cuando existan.
-        const savedRules = await fetchLatestCleaningRules(dataset.id)
-        const usedDefaultRules = !savedRules
+        const savedConfig = await fetchLatestCleaningConfig(dataset.id)
+        const usedDefaultRules = !savedConfig?.rules
         const cleaned = await apiPost<CleanResult>(
           '/clean',
           buildDatasetForm(file, dataset.storage_path, {
             apply: 'true',
-            rules: JSON.stringify(savedRules ?? DEFAULT_RULES),
+            rules: JSON.stringify(savedConfig?.rules ?? DEFAULT_RULES),
+            eliminar_duplicados: String(
+              savedConfig?.options.eliminar_duplicados ?? false,
+            ),
           }),
         )
         setUploaded(file, dataset.id, dataset.storage_path)

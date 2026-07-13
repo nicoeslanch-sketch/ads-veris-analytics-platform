@@ -26,6 +26,7 @@ Cambios profesionales Fase 7 (§5):
   la IA de refinado (costura §5.13).
 """
 
+import os
 import re
 
 import pandas as pd
@@ -37,6 +38,7 @@ from .mapping import (
     resolve_mapping,
     strip_accents_lower,
 )
+from .loader import SOURCE_ROWS_ATTR, SOURCE_SHEET_ATTR
 from .standardize import (
     is_missing,
     map_unique,
@@ -51,7 +53,9 @@ PREVIEW_ROWS = 8
 DEFAULT_RULES = {
     "fechas": True,            # Estándar de formato de fecha
     "textos": True,            # Unificar texto
-    "duplicados": True,        # Eliminar duplicados
+    # Compatibilidad: se acepta y persiste, pero ya no controla detección ni
+    # eliminación. Solo `eliminar_duplicados=True` tras confirmación explícita.
+    "duplicados": True,
     "tipos": True,             # Convertir tipos de dato
     "nulos": True,             # Normalizar y señalizar valores nulos
     "columnas_vacias": True,   # Eliminar columnas vacías
@@ -67,16 +71,84 @@ VALID_ROLES = (
 # donde imputar 0 sería gravísimo (§5.1).
 METRIC_ROLES = {"monto", "costo", "cantidad"}
 
-_ID_HINT_TOKENS = {
+# Exclusión AMPLIA para análisis estadístico. Esta lista deliberadamente no se
+# usa para decidir duplicados: RUT, teléfono, año o código no identifican una
+# fila, pero tampoco deben tratarse como métricas sujetas a IQR.
+_STATISTICAL_ID_HINT_TOKENS = {
     "id", "folio", "factura", "boleta", "documento", "doc", "nro", "num",
     "numero", "correlativo", "ticket", "orden", "codigo", "cod", "rut",
-    "telefono", "fono", "ano", "year", "postal",
+    "telefono", "fono", "celular", "ano", "year", "postal", "sku", "indice",
+    "index", "secuencial", "serie", "dte",
 }
 
 
-def _is_id_like(column: str) -> bool:
+def exclude_from_statistical_outliers(column: str, role: str | None = None) -> bool:
+    """True si una columna no debe recibir control IQR.
+
+    Es una política independiente de la taxonomía de duplicados. Mantiene la
+    protección histórica para IDs, RUT, códigos, teléfonos, años y folios.
+    """
     tokens = set(re.sub(r"[^a-z0-9]+", " ", strip_accents_lower(column)).split())
-    return bool(tokens & _ID_HINT_TOKENS)
+    return bool(tokens & _STATISTICAL_ID_HINT_TOKENS)
+
+
+_DOCUMENT_ID_TOKENS = {
+    "folio", "factura", "boleta", "documento", "doc", "dte", "ticket",
+    "orden", "pedido", "guia",
+}
+_ENTITY_ID_TOKENS = {"rut", "sku"}
+_ATTRIBUTE_ID_TOKENS = {
+    "telefono", "fono", "celular", "ano", "year", "postal", "indice",
+    "index", "secuencial",
+}
+_ROW_ID_COMPACT_NAMES = {
+    "id", "rowid", "idfila", "filaid", "lineid", "idlinea", "lineaid",
+    "transactionid", "idtransaccion", "transaccionid", "idmovimiento",
+    "movimientoid", "movimiento",
+}
+
+
+def classify_identifier_kind(column: str, series: pd.Series | None = None) -> str:
+    """Clasifica el encabezado para el diagnóstico, nunca para borrar filas.
+
+    Retorna ``fila``, ``documento``, ``entidad`` o ``atributo``. Una detección
+    por nombre solo mejora los avisos; la eliminación sigue limitada a filas
+    exactas originales y requiere el flag explícito del usuario.
+    """
+    normalized = strip_accents_lower(column)
+    tokens = set(re.sub(r"[^a-z0-9]+", " ", normalized).split())
+    compact = re.sub(r"[^a-z0-9]", "", normalized)
+
+    if tokens & _DOCUMENT_ID_TOKENS:
+        return "documento"
+    if tokens & _ATTRIBUTE_ID_TOKENS:
+        return "atributo"
+    if tokens & _ENTITY_ID_TOKENS:
+        return "entidad"
+    if ({"cliente", "producto", "proveedor"} & tokens) and (
+        {"id", "codigo", "cod", "numero", "nro", "num"} & tokens
+    ):
+        return "entidad"
+    if compact in _ROW_ID_COMPACT_NAMES:
+        return "fila"
+    if "id" in tokens and not ({"cliente", "producto", "proveedor"} & tokens):
+        return "fila"
+    return "atributo"
+
+
+def _safe_int_env(name: str, default: int, minimum: int) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+DUPLICATE_LARGE_GROUP_THRESHOLD = _safe_int_env(
+    "DUPLICATE_LARGE_GROUP_THRESHOLD", 3, 2
+)
+MAX_AUDIT_DETAILS_IN_RESPONSE = _safe_int_env(
+    "MAX_AUDIT_DETAILS_IN_RESPONSE", 5000, 1
+)
 
 
 def _quality(problem_cells: int, total_cells: int) -> float:
@@ -85,25 +157,121 @@ def _quality(problem_cells: int, total_cells: int) -> float:
     return round(max(0.0, 1 - problem_cells / total_cells) * 100, 1)
 
 
-def _dedup_masks(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-    """(exactos, normalizados) — Fase 10 §6.2.
+def _dedup_masks(
+    df_original: pd.DataFrame, df_standardized: pd.DataFrame | None = None
+) -> tuple[pd.Series, pd.Series]:
+    """(exactos originales, normalizados adicionales), categorías excluyentes.
 
-    - exactos: filas 100% idénticas tras la estandarización.
-    - normalizados: además ignoran mayúsculas/tildes/puntuación de formato
-      ('76.123.456-7' == '76123456-7', 'Santiago Centro' == 'SANTIAGO CENTRO').
-
-    Con columna identificadora, el criterio normalizado es seguro (dos folios
-    distintos jamás se fusionan). SIN columna ID, solo los exactos se eliminan
-    automáticamente; los normalizados se marcan como probables para revisión."""
-    exact = df.duplicated(keep="first")
+    Los exactos se calculan sobre el DataFrame cargado, antes de estandarizar.
+    Los normalizados solo incluyen coincidencias NUEVAS creadas por cambios de
+    formato. Ninguna máscara implica por sí sola autorización para eliminar.
+    """
+    exact = df_original.duplicated(keep="first")
+    comparison_source = df_standardized if df_standardized is not None else df_original
     # Fase 11: la clave normalizada se calcula UNA vez por valor único de
     # cada columna (antes era celda por celda: el paso más caro del análisis).
     comparison = pd.DataFrame(
-        {col: map_unique(df[col], lambda v: dedup_norm_key(str(v))) for col in df.columns},
-        index=df.index,
+        {
+            col: map_unique(comparison_source[col], lambda v: dedup_norm_key(str(v)))
+            for col in comparison_source.columns
+        },
+        index=comparison_source.index,
     )
     normalized = comparison.duplicated(keep="first")
-    return exact, normalized
+    return exact, normalized & ~exact
+
+
+def _source_rows(df: pd.DataFrame) -> list[int]:
+    rows = list(df.attrs.get(SOURCE_ROWS_ATTR, range(2, len(df) + 2)))
+    if len(rows) != len(df):
+        return list(range(2, len(df) + 2))
+    return [int(row) for row in rows]
+
+
+def _duplicate_group_stats(df: pd.DataFrame, source_rows: list[int]) -> dict:
+    """Estadísticas de grupos exactos sin sumar unidades incompatibles."""
+    involved_mask = df.duplicated(keep=False)
+    positions = [position for position, involved in enumerate(involved_mask) if involved]
+    if not positions:
+        return {
+            "grupos": 0,
+            "filas_involucradas": 0,
+            "tamano_maximo_grupo": 0,
+            "grupos_contiguos": 0,
+            "ejemplos_grupos": [],
+        }
+
+    involved = df.iloc[positions]
+    grouped_positions: dict[int, list[int]] = {}
+    group_ids = involved.groupby(list(df.columns), sort=False, dropna=False).ngroup()
+    for position, group_id in zip(positions, group_ids, strict=True):
+        grouped_positions.setdefault(int(group_id), []).append(position)
+
+    groups = list(grouped_positions.values())
+    examples = [
+        {
+            "tamano": len(group),
+            "filas_origen": [
+                source_rows[position]
+                for position in group[: min(20, MAX_AUDIT_DETAILS_IN_RESPONSE)]
+            ],
+            "filas_origen_truncadas": len(group)
+            > min(20, MAX_AUDIT_DETAILS_IN_RESPONSE),
+        }
+        for group in sorted(groups, key=len, reverse=True)[
+            : min(5, MAX_AUDIT_DETAILS_IN_RESPONSE)
+        ]
+    ]
+    return {
+        "grupos": len(groups),
+        "filas_involucradas": len(positions),
+        "tamano_maximo_grupo": max(map(len, groups)),
+        "grupos_contiguos": sum(
+            1 for group in groups if group[-1] - group[0] + 1 == len(group)
+        ),
+        "ejemplos_grupos": examples,
+    }
+
+
+def _row_identifier_diagnostics(df: pd.DataFrame, source_rows: list[int]) -> tuple[list[dict], int, list[dict]]:
+    diagnostics: list[dict] = []
+    conflict_examples: list[dict] = []
+    total_conflicts = 0
+
+    for col in df.columns:
+        if classify_identifier_kind(col, df[col]) != "fila":
+            continue
+        missing = missing_mask(df[col])
+        present = df.loc[~missing, col]
+        unique_values = int(present.nunique(dropna=False))
+        repeated_values = int(present[present.duplicated(keep=False)].nunique(dropna=False))
+        conflicts = 0
+        if repeated_values:
+            repeated_rows = df.loc[~missing & df[col].duplicated(keep=False)]
+            for value, group in repeated_rows.groupby(col, sort=False, dropna=False):
+                other = group.drop(columns=[col])
+                if len(other.drop_duplicates()) <= 1:
+                    continue
+                conflicts += 1
+                if len(conflict_examples) < min(5, MAX_AUDIT_DETAILS_IN_RESPONSE):
+                    conflict_examples.append(
+                        {
+                            "columna": col,
+                            "identificador": str(value)[:120],
+                            "filas_origen": [source_rows[int(index)] for index in group.index[:10]],
+                        }
+                    )
+        total_conflicts += conflicts
+        diagnostics.append(
+            {
+                "columna": col,
+                "completitud_pct": round(len(present) / max(len(df), 1) * 100, 1),
+                "proporcion_unicos": round(unique_values / max(len(present), 1), 4),
+                "identificadores_repetidos": repeated_values,
+                "conflictos_contenido": conflicts,
+            }
+        )
+    return diagnostics, total_conflicts, conflict_examples
 
 
 def _resolve_mapping(columns: list[str], mapping: dict | None) -> dict[str, str]:
@@ -155,17 +323,13 @@ def _detect_problems(
     text_changes: int,
     roles_by_col: dict[str, str],
     scoped_cols: set[str],
-    has_id_column: bool | None = None,
+    exact_duplicate_mask: pd.Series | None = None,
+    normalized_only_mask: pd.Series | None = None,
 ) -> dict:
     miss_cache, date_cache, num_cache = _column_caches(df, column_types)
     empty_columns = [col for col in df.columns if bool(miss_cache[col].all())]
-    if has_id_column is None:
-        has_id_column = any(_is_id_like(col) for col in df.columns)
-    exact_mask, normalized_mask = _dedup_masks(df)
-    # Fase 10 §6.2: sin columna ID no hay evidencia para eliminar filas que
-    # solo coinciden tras normalizar — se marcan como "probables", no se borran.
-    duplicated_mask = normalized_mask if has_id_column else exact_mask
-    probable_dups = 0 if has_id_column else int((normalized_mask & ~exact_mask).sum())
+    if exact_duplicate_mask is None or normalized_only_mask is None:
+        exact_duplicate_mask, normalized_only_mask = _dedup_masks(df, df)
 
     nulls = 0
     invalid_dates = 0
@@ -207,7 +371,7 @@ def _detect_problems(
                 info["ejemplos_invalidos"] = [str(v) for v in df[col][wrong_mask].head(3)]
             # Outliers SOLO en roles métricos (§5.3): jamás IDs, RUT o años.
             role = roles_by_col.get(col)
-            if role in METRIC_ROLES and not _is_id_like(col):
+            if role in METRIC_ROLES and not exclude_from_statistical_outliers(col, role):
                 numbers = parsed.dropna()
                 if len(numbers) >= 8:
                     q1, q3 = numbers.quantile(0.25), numbers.quantile(0.75)
@@ -220,8 +384,10 @@ def _detect_problems(
         per_column[col] = info
 
     return {
-        "duplicados": int(duplicated_mask.sum()),
-        "duplicados_probables": probable_dups,
+        # Semántica estable: exactos del archivo original vs coincidencias
+        # adicionales tras normalización. Nunca dependen del nombre de un ID.
+        "duplicados": int(exact_duplicate_mask.sum()),
+        "duplicados_probables": int(normalized_only_mask.sum()),
         "valores_nulos": nulls,
         "fechas_invalidas": invalid_dates,
         "textos_inconsistentes": text_changes,
@@ -229,7 +395,8 @@ def _detect_problems(
         "columnas_vacias": len(empty_columns),
         "valores_fuera_de_rango": out_of_range,
         "_columnas_vacias_nombres": empty_columns,
-        "_duplicados_mask": duplicated_mask,
+        "_duplicados_mask": exact_duplicate_mask,
+        "_duplicados_normalizados_mask": normalized_only_mask,
         "_por_columna": per_column,
         "_caches": (miss_cache, date_cache, num_cache),
     }
@@ -240,23 +407,53 @@ def _preview_with_issues(
     column_types: dict[str, str],
     duplicated_mask: pd.Series,
     caches: tuple[dict, dict, dict],
+    source_rows: list[int],
 ) -> dict:
     """Primeras filas + coordenadas de celdas problemáticas para resaltarlas."""
     preview = df.head(PREVIEW_ROWS)
     miss_cache, date_cache, num_cache = caches
     issues: list[dict] = []
     for row_index in range(len(preview)):
+        fila_origen = source_rows[row_index]
         if bool(duplicated_mask.iloc[row_index]):
-            issues.append({"fila": row_index, "columna": "*", "tipo": "duplicado"})
+            issues.append(
+                {
+                    "fila": row_index,
+                    "fila_origen": fila_origen,
+                    "columna": "*",
+                    "tipo": "duplicado",
+                }
+            )
         for col in preview.columns:
             if bool(miss_cache[col].iloc[row_index]):
-                issues.append({"fila": row_index, "columna": col, "tipo": "nulo"})
+                issues.append(
+                    {
+                        "fila": row_index,
+                        "fila_origen": fila_origen,
+                        "columna": col,
+                        "tipo": "nulo",
+                    }
+                )
                 continue
             ctype = column_types.get(col, "texto")
             if ctype == "fecha" and pd.isna(date_cache[col].iloc[row_index]):
-                issues.append({"fila": row_index, "columna": col, "tipo": "fecha_invalida"})
+                issues.append(
+                    {
+                        "fila": row_index,
+                        "fila_origen": fila_origen,
+                        "columna": col,
+                        "tipo": "fecha_invalida",
+                    }
+                )
             elif ctype == "numero" and pd.isna(num_cache[col].iloc[row_index]):
-                issues.append({"fila": row_index, "columna": col, "tipo": "tipo_incorrecto"})
+                issues.append(
+                    {
+                        "fila": row_index,
+                        "fila_origen": fila_origen,
+                        "columna": col,
+                        "tipo": "tipo_incorrecto",
+                    }
+                )
     return {
         "columnas": list(preview.columns),
         "filas": [[str(v) for v in row] for row in preview.itertuples(index=False, name=None)],
@@ -270,31 +467,69 @@ def analyze_and_clean(
     apply: bool,
     mapping: dict | None = None,
     scope: dict | None = None,
+    eliminar_duplicados: bool = False,
 ) -> dict:
     active = {**DEFAULT_RULES, **(rules or {})}
 
-    # La limpieza siempre parte de datos estandarizados (idempotente).
+    # Conservamos la identidad cargada ANTES de estandarizar. Dos filas que se
+    # vuelven iguales por mayúsculas, espacios o formato son solo candidatas a
+    # revisión y jamás entran en la máscara eliminable.
     df, std_report = standardize_dataframe(df_original)
+    loaded_original = df_original.copy()
+    loaded_original.columns = df.columns
+    source_rows = _source_rows(df_original)
+    source_sheet = df_original.attrs.get(SOURCE_SHEET_ATTR)
+    exact_original_mask, normalized_only_mask = _dedup_masks(loaded_original, df)
+
     column_types = std_report["column_types"]
     text_changes = std_report["cambios"]["textos_normalizados"]
 
     roles = _resolve_mapping(list(df.columns), mapping)
     roles_by_col = {col: role for role, col in roles.items()}
     scoped_cols, directed = _resolve_scope(list(df.columns), scope)
-    has_id_column = any(_is_id_like(col) for col in df.columns)
 
     rows_before, cols_before = len(df), len(df.columns)
     total_cells = rows_before * cols_before
 
     problems = _detect_problems(
-        df, column_types, text_changes, roles_by_col, scoped_cols, has_id_column
+        df,
+        column_types,
+        text_changes,
+        roles_by_col,
+        scoped_cols,
+        exact_original_mask,
+        normalized_only_mask,
     )
     empty_columns: list[str] = problems.pop("_columnas_vacias_nombres")
     duplicated_mask: pd.Series = problems.pop("_duplicados_mask")
+    problems.pop("_duplicados_normalizados_mask")
     per_column: dict = problems.pop("_por_columna")
     caches = problems.pop("_caches")
 
-    preview = _preview_with_issues(df, column_types, duplicated_mask, caches)
+    preview = _preview_with_issues(df, column_types, duplicated_mask, caches, source_rows)
+
+    group_stats = _duplicate_group_stats(loaded_original, source_rows)
+    row_ids, conflicts_id, conflict_examples = _row_identifier_diagnostics(
+        loaded_original, source_rows
+    )
+    possible_omitted_granularity = bool(
+        not row_ids
+        and group_stats["tamano_maximo_grupo"] >= DUPLICATE_LARGE_GROUP_THRESHOLD
+    )
+    duplicate_detail = {
+        "exactos": problems["duplicados"],
+        "normalizados": problems["duplicados_probables"],
+        "conflictos_id": conflicts_id,
+        **group_stats,
+        "identificadores_fila": row_ids,
+        "ejemplos_conflictos_id": conflict_examples,
+        "posible_granularidad_omitida": possible_omitted_granularity,
+        "eliminacion_habilitada": bool(eliminar_duplicados),
+        "filas_seleccionadas_para_eliminar": (
+            problems["duplicados"] if eliminar_duplicados else 0
+        ),
+        "filas_eliminadas": 0,
+    }
 
     # Enriquecer el reporte de calidad con lo que sabe la estandarización
     # y el mapeo universal (Fase 9): rol extendido + método y confianza.
@@ -317,21 +552,32 @@ def analyze_and_clean(
             info["politica_nulos"] = "preservados (nunca se imputa 0 en montos)"
 
     avisos: list[str] = []
-    duplicados_criterio = (
-        "fila_completa_normalizada" if has_id_column else "fila_exacta_sin_id"
-    )
-    if problems["duplicados"] > 0 and not has_id_column:
+    duplicados_criterio = "fila_exacta_original_con_confirmacion"
+    if problems["duplicados"] > 0:
         avisos.append(
-            f"Se detectaron {problems['duplicados']} fila(s) 100% idénticas y el archivo "
-            "no trae una columna identificadora (folio, boleta, ID). Si dos ventas "
-            "legítimas pueden ser idénticas, revisa antes de eliminar: en la descarga "
-            "quedan marcadas."
+            f"Se detectaron {problems['duplicados']} repetición(es) exacta(s) en el "
+            "archivo original. Se conservarán mientras no confirmes explícitamente "
+            "su eliminación."
+        )
+    if possible_omitted_granularity:
+        avisos.append(
+            "Se detectaron grupos de hasta "
+            f"{group_stats['tamano_maximo_grupo']} filas idénticas y el archivo no contiene "
+            "un identificador único por registro. Esto puede indicar que el extracto "
+            "omitió una variable diferenciadora —por ejemplo, persona, línea, movimiento o "
+            "documento— o que el proceso de extracción multiplicó registros. Verifica el "
+            "origen antes de eliminar."
         )
     if problems.get("duplicados_probables", 0) > 0:
         avisos.append(
-            f"{problems['duplicados_probables']} fila(s) casi idénticas (solo difieren "
-            "en mayúsculas o formato) NO se eliminan automáticamente por seguridad. "
-            "Agrega una columna identificadora o revísalas a mano."
+            f"{problems['duplicados_probables']} coincidencia(s) adicional(es) aparecieron "
+            "solo después de normalizar mayúsculas o formato. Se informan para revisión y "
+            "no se eliminarán, incluso si confirmas los duplicados exactos."
+        )
+    if conflicts_id:
+        avisos.append(
+            f"Se detectaron {conflicts_id} identificador(es) de fila repetido(s) con "
+            "contenido distinto. Son conflictos de origen, no duplicados eliminables."
         )
     fusiones = std_report.get("fusiones_texto", {})
     if fusiones.get("total"):
@@ -360,7 +606,12 @@ def analyze_and_clean(
         per_column[c].get("nulos", 0) for c in scoped_cols if c in per_column
     )
     corrections = {
-        "filas_duplicadas_a_eliminar": problems["duplicados"] if active["duplicados"] else 0,
+        # `rules.duplicados` queda deprecada: detectar es obligatorio y borrar
+        # depende exclusivamente de esta decisión separada y explícita.
+        "filas_duplicadas_a_eliminar": (
+            problems["duplicados"] if eliminar_duplicados else 0
+        ),
+        "filas_duplicadas_eliminadas": 0,
         # §5.1: los nulos ya NO se reemplazan por 0 — se normalizan y señalizan.
         "valores_nulos_normalizados": scoped_nulls if active["nulos"] else 0,
         "fechas_a_estandarizar": std_report["cambios"]["fechas_estandarizadas"]
@@ -373,13 +624,42 @@ def analyze_and_clean(
 
     quality_after = quality_before
     rows_after, cols_after = rows_before, cols_before
+    clean_source_rows = list(source_rows)
+    removed_duplicate_rows: list[dict] = []
+    remaining_exact_mask = exact_original_mask.reset_index(drop=True)
+    remaining_normalized_mask = normalized_only_mask.reset_index(drop=True)
 
     if apply:
         miss_cache, date_cache, num_cache = caches
         if active["columnas_vacias"] and empty_columns:
             df = df.drop(columns=empty_columns)
-        if active["duplicados"]:
-            df = df[~duplicated_mask].reset_index(drop=True)
+        if eliminar_duplicados:
+            removed_positions = [
+                position for position, duplicated in enumerate(duplicated_mask) if duplicated
+            ]
+            # Este detalle es privado (se excluye de la respuesta HTTP) y debe
+            # quedar completo para la hoja Observaciones de la descarga.
+            for position in removed_positions:
+                removed_duplicate_rows.append(
+                    {
+                        "fila_origen": source_rows[position],
+                        "hoja_origen": source_sheet,
+                        "regla": "duplicado_exacto_original",
+                        "categoria": "fila_eliminada",
+                        "aplicada": True,
+                        "confianza": 1.0,
+                        "motivo": "Eliminación confirmada explícitamente por el usuario.",
+                    }
+                )
+            keep = ~duplicated_mask
+            clean_source_rows = [
+                source_rows[position] for position, should_keep in enumerate(keep) if should_keep
+            ]
+            remaining_exact_mask = exact_original_mask.loc[keep].reset_index(drop=True)
+            remaining_normalized_mask = normalized_only_mask.loc[keep].reset_index(drop=True)
+            df = df.loc[keep].reset_index(drop=True)
+            corrections["filas_duplicadas_eliminadas"] = len(removed_positions)
+            duplicate_detail["filas_eliminadas"] = len(removed_positions)
 
         for col in df.columns:
             if col not in scoped_cols:
@@ -401,16 +681,20 @@ def analyze_and_clean(
             # §5.1: sin imputación de nulos — nunca "0" en montos/costos/cantidades.
 
         rows_after, cols_after = len(df), len(df.columns)
+        df.attrs[SOURCE_ROWS_ATTR] = clean_source_rows
+        df.attrs[SOURCE_SHEET_ATTR] = source_sheet
         remaining = _detect_problems(
             df,
             column_types,
             text_changes=0,
             roles_by_col=roles_by_col,
             scoped_cols=scoped_cols,
-            has_id_column=has_id_column,
+            exact_duplicate_mask=remaining_exact_mask,
+            normalized_only_mask=remaining_normalized_mask,
         )
         remaining.pop("_columnas_vacias_nombres")
         remaining.pop("_duplicados_mask")
+        remaining.pop("_duplicados_normalizados_mask")
         remaining.pop("_por_columna")
         remaining.pop("_caches")
         # Los nulos preservados por diseño ya están catalogados por columna en el
@@ -436,6 +720,8 @@ def analyze_and_clean(
         "problemas": problems,
         "correcciones": corrections,
         "reglas_activas": active,
+        "opciones_aplicacion": {"eliminar_duplicados": bool(eliminar_duplicados)},
+        "duplicados_detalle": duplicate_detail,
         "preview": preview,
         "estandarizacion": std_report["cambios"],
         "column_types": column_types,
@@ -445,4 +731,6 @@ def analyze_and_clean(
         "duplicados_criterio": duplicados_criterio,
         "fusiones_texto": fusiones,
         "_df_limpio": df if apply else None,
+        "_source_rows_limpio": clean_source_rows if apply else source_rows,
+        "_filas_duplicadas_eliminadas": removed_duplicate_rows,
     }

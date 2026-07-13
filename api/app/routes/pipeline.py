@@ -273,6 +273,7 @@ def _cache_key(
     mapping: dict | None,
     scope: dict | None,
     sheet: str | None = None,
+    eliminar_duplicados: bool = False,
 ) -> tuple:
     return (
         hashlib.sha1(content).digest(),
@@ -281,6 +282,7 @@ def _cache_key(
         json.dumps(mapping or {}, sort_keys=True),
         json.dumps(scope or {}, sort_keys=True),
         sheet or "",
+        bool(eliminar_duplicados),
     )
 
 
@@ -292,10 +294,13 @@ def _analyze_cached(
     mapping: dict | None = None,
     scope: dict | None = None,
     sheet: str | None = None,
+    eliminar_duplicados: bool = False,
 ) -> dict:
     """analyze_and_clean con caché. El dict cacheado JAMÁS se muta: los
     endpoints construyen su respuesta con una copia superficial."""
-    key = _cache_key(content, rules, apply, mapping, scope, sheet)
+    key = _cache_key(
+        content, rules, apply, mapping, scope, sheet, eliminar_duplicados
+    )
     with _CACHE_LOCK:
         cached = _CLEAN_CACHE.get(key)
         if cached is not None:
@@ -310,7 +315,14 @@ def _analyze_cached(
     monto_col = raw_roles.get("monto")
     currency = detect_currency(df[monto_col] if monto_col in df.columns else None)
 
-    result = analyze_and_clean(df, rules, apply, mapping=mapping, scope=scope)
+    result = analyze_and_clean(
+        df,
+        rules,
+        apply,
+        mapping=mapping,
+        scope=scope,
+        eliminar_duplicados=eliminar_duplicados,
+    )
     result["_moneda"] = currency
     result["avisos"] = list(load_report.get("avisos", [])) + list(result.get("avisos", []))
     result["carga"] = {
@@ -393,9 +405,17 @@ def _clean_sync(
     scope: dict | None = None,
     extra: dict | None = None,
     sheet: str | None = None,
+    eliminar_duplicados: bool = False,
 ) -> dict:
     result = _analyze_cached(
-        filename, content, rules, apply, mapping=mapping, scope=scope, sheet=sheet
+        filename,
+        content,
+        rules,
+        apply,
+        mapping=mapping,
+        scope=scope,
+        sheet=sheet,
+        eliminar_duplicados=eliminar_duplicados,
     )
     return _public_clean_response(result, filename, extra)
 
@@ -419,11 +439,19 @@ def _clean_download_sync(
     mapping: dict | None = None,
     scope: dict | None = None,
     sheet: str | None = None,
+    eliminar_duplicados: bool = False,
 ) -> tuple[bytes, str, str]:
     from ..engine.standardize import is_missing
 
     result = _analyze_cached(
-        filename, content, rules, apply=True, mapping=mapping, scope=scope, sheet=sheet
+        filename,
+        content,
+        rules,
+        apply=True,
+        mapping=mapping,
+        scope=scope,
+        sheet=sheet,
+        eliminar_duplicados=eliminar_duplicados,
     )
     df = result["_df_limpio"].copy()
     column_types: dict = result["column_types"]
@@ -447,6 +475,8 @@ def _clean_download_sync(
         "vendedor": "vendedor",
     }
     total = max(len(df), 1)
+    source_rows = list(result.get("_source_rows_limpio") or range(2, len(df) + 2))
+    source_sheet = (result.get("carga") or {}).get("hoja_usada")
 
     yellow: dict[tuple[int, str], str] = {}
     red: dict[tuple[int, str], str] = {}
@@ -498,24 +528,40 @@ def _clean_download_sync(
     for (r, c) in red:
         ws.cell(row=r + 2, column=col_list.index(c) + 1).fill = RED_FILL
 
-    # Hoja de Observaciones: fila, columna, problema (los datos quedan intactos).
+    # Hoja de Observaciones: usa la fila REAL del archivo, nunca index + 2.
     observations = sorted(
-        [(r, c, "revisar", msg) for (r, c), msg in yellow.items()]
-        + [(r, c, "faltante", msg) for (r, c), msg in red.items()],
-        key=lambda item: (item[0], item[1]),
+        [
+            (source_rows[r], source_sheet, c, "revisar", msg)
+            for (r, c), msg in yellow.items()
+        ]
+        + [
+            (source_rows[r], source_sheet, c, "faltante", msg)
+            for (r, c), msg in red.items()
+        ]
+        + [
+            (
+                detail["fila_origen"],
+                detail.get("hoja_origen"),
+                "*",
+                "duplicado_eliminado",
+                detail["motivo"],
+            )
+            for detail in result.get("_filas_duplicadas_eliminadas", [])
+        ],
+        key=lambda item: (item[0], item[2]),
     )
     ws_obs = wb.create_sheet("Observaciones")
-    ws_obs.append(["Fila", "Columna", "Tipo", "Detalle"])
+    ws_obs.append(["Fila origen", "Hoja", "Columna", "Tipo", "Detalle"])
     for cell in ws_obs[1]:
         cell.font = Font(bold=True)
     if observations:
-        for row_idx, col, kind, msg in observations:
-            # +2: fila 1 = encabezados de la hoja de datos.
-            ws_obs.append([row_idx + 2, col, kind, msg])
+        for source_row, source_sheet_name, col, kind, msg in observations:
+            ws_obs.append([source_row, source_sheet_name or "CSV", col, kind, msg])
     else:
-        ws_obs.append(["—", "—", "—", "Sin observaciones: la base quedó completa."])
-    ws_obs.column_dimensions["B"].width = 24
-    ws_obs.column_dimensions["D"].width = 64
+        ws_obs.append(["—", "—", "—", "—", "Sin observaciones: la base quedó completa."])
+    ws_obs.column_dimensions["B"].width = 20
+    ws_obs.column_dimensions["C"].width = 24
+    ws_obs.column_dimensions["E"].width = 64
 
     buf2 = io.BytesIO()
     wb.save(buf2)
@@ -534,11 +580,18 @@ def _metrics_sync(
     date_from: str | None,
     date_to: str | None,
     sheet: str | None = None,
+    eliminar_duplicados: bool = False,
 ) -> dict:
     # Las métricas siempre se calculan sobre datos estandarizados y limpios.
     # Con el caché (§5.7), cambiar el periodo NO re-corre el pipeline completo.
     result = _analyze_cached(
-        filename, content, rules=None, apply=True, mapping=mapping, sheet=sheet
+        filename,
+        content,
+        rules=None,
+        apply=True,
+        mapping=mapping,
+        sheet=sheet,
+        eliminar_duplicados=eliminar_duplicados,
     )
     df_clean = result["_df_limpio"]
     computed = compute_metrics(
@@ -572,6 +625,7 @@ async def clean(
     storage_path: str | None = Form(None),
     rules: str | None = Form(None),
     apply: bool = Form(False),
+    eliminar_duplicados: bool = Form(False),
     mapping: str | None = Form(None),
     sheet: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
@@ -581,7 +635,7 @@ async def clean(
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     return await run_in_threadpool(
         _clean_sync, filename, content, rules_dict, apply, mapping_dict, None, None,
-        _clean_sheet_param(sheet),
+        _clean_sheet_param(sheet), eliminar_duplicados,
     )
 
 
@@ -591,6 +645,7 @@ async def clean_assisted(
     storage_path: str | None = Form(None),
     instructions: str = Form(...),
     rules: str | None = Form(None),
+    eliminar_duplicados: bool = Form(False),
     mapping: str | None = Form(None),
     sheet: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
@@ -647,7 +702,7 @@ async def clean_assisted(
     scope = {"incluir": plan.columnas_incluir, "excluir": plan.columnas_excluir}
     result = await run_in_threadpool(
         _clean_sync, filename, content, merged_rules, True, mapping_dict, scope,
-        None, sheet_name,
+        None, sheet_name, eliminar_duplicados,
     )
 
     # 4) Registrar el consumo (best-effort) SOLO tras un run exitoso.
@@ -677,6 +732,7 @@ async def clean_download(
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
     rules: str | None = Form(None),
+    eliminar_duplicados: bool = Form(False),
     fmt: str = Form("xlsx"),
     format: str | None = Form(None),
     mapping: str | None = Form(None),
@@ -703,7 +759,7 @@ async def clean_download(
     scope_dict = _validate_scope(_parse_json_field(scope, "scope") or None)
     file_bytes, out_name, media_type = await run_in_threadpool(
         _clean_download_sync, filename, content, rules_dict, export_format,
-        mapping_dict, scope_dict, _clean_sheet_param(sheet),
+        mapping_dict, scope_dict, _clean_sheet_param(sheet), eliminar_duplicados,
     )
     return StreamingResponse(
         iter([file_bytes]),
@@ -717,6 +773,7 @@ async def metrics(
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
     mapping: str | None = Form(None),
+    eliminar_duplicados: bool = Form(False),
     date_from: str | None = Form(None),
     date_to: str | None = Form(None),
     sheet: str | None = Form(None),
@@ -726,5 +783,5 @@ async def metrics(
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     return await run_in_threadpool(
         _metrics_sync, filename, content, mapping_dict, date_from, date_to,
-        _clean_sheet_param(sheet),
+        _clean_sheet_param(sheet), eliminar_duplicados,
     )

@@ -1,6 +1,14 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 11 completas.**
+**Estado actual: Fases 0 a 11 completas; Fase 12, Bloque 1 completo y pendiente de validación del dueño.**
+El motor ahora detecta duplicados siempre y conserva todas las filas por defecto.
+Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
+original; las coincidencias creadas por la normalización nunca se borran. La
+decisión se propaga a métricas, descarga, IA, caché e historial, y las incidencias
+usan la fila física del archivo como trazabilidad. La migración local `0012`
+persiste esa opción, pero debe aplicarse al proyecto remoto después de validar el
+bloque. Los Bloques 2–6 no se iniciaron, tal como exige el ritmo de la Fase 12.
+
 La Fase 11 ataca la lentitud con bases grandes (>50.000 filas) en su causa raíz:
 el caché del pipeline excluía los archivos grandes y cada módulo reprocesaba
 todo — ahora el caché funciona por **presupuesto de celdas con desalojo LRU** y
@@ -345,7 +353,22 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 "Estandarizar nuevo documento", retención también al login y contactos de ayuda
 (WhatsApp/Instagram/correo). **129 tests + build + 3 E2E.**
 
-## ⏳ Pendiente (Fase 12 sugerida — operación comercial)
+## ✅ Fase 12 — Bloque 1: duplicados no destructivos (pendiente de validación)
+
+- Detección siempre activa y eliminación por defecto en `false`, aunque exista
+  una columna cuyo nombre parezca identificador.
+- Clasificación separada de exactos originales, normalizados adicionales,
+  conflictos de ID y posible granularidad omitida.
+- Acción prominente "Eliminar duplicados exactos" con confirmación; el texto libre
+  de la limpieza dirigida no puede conceder ese permiso.
+- Decisión coherente en limpieza, métricas, descarga, IA, caché e historial.
+- Fila física y hoja de origen conservadas como metadatos, sin añadir columnas al
+  dataset del usuario; exportadas en `Observaciones`.
+- Migración local `0012_cleaning_job_options.sql`; no aplicada remotamente en este
+  bloque. Script de regresión real versionado, archivo REQ5325 fuera del repositorio.
+- Bloques 2–6: sin iniciar hasta recibir validación explícita del dueño.
+
+## ⏳ Pendiente (operación comercial)
 
 - **Pasarela de pago** (Webpay/Flow/MercadoPago): reemplazar `startCheckout()` y
   llamar `set_user_plan(source="pasarela")` desde el webhook. La activación manual
@@ -412,6 +435,7 @@ python -m pytest tests/ -v
 #   supabase/migrations/0009_cleaning_credits.sql (Fase 7: tokens y solicitudes)
 #   supabase/migrations/0010_admin_support.sql  (Fase 8: admin, soporte y auditoría)
 #   supabase/migrations/0011_lock_privileged_columns.sql (Fase 10: P0 — plan/is_admin solo backend)
+#   supabase/migrations/0012_cleaning_job_options.sql (Fase 12 B1: decisión explícita de duplicados)
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

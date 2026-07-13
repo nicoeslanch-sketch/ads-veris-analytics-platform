@@ -27,6 +27,7 @@ export interface StandardizeResult {
 
 export interface CleanIssue {
   fila: number
+  fila_origen?: number
   columna: string
   tipo: 'duplicado' | 'nulo' | 'fecha_invalida' | 'tipo_incorrecto'
 }
@@ -55,6 +56,7 @@ export interface CleanResult {
   }
   correcciones: {
     filas_duplicadas_a_eliminar: number
+    filas_duplicadas_eliminadas?: number
     valores_nulos_normalizados: number
     fechas_a_estandarizar: number
     textos_a_unificar: number
@@ -63,6 +65,8 @@ export interface CleanResult {
     valores_fuera_de_rango_a_revisar: number
   }
   reglas_activas: CleaningRules
+  opciones_aplicacion?: CleaningOptions
+  duplicados_detalle?: DuplicateDetails
   preview: {
     columnas: string[]
     filas: string[][]
@@ -77,6 +81,21 @@ export interface CleanResult {
   fusiones_texto?: { total: number; ejemplos: string[][] }
   carga?: LoadInfo
   dirigida?: DirectedInfo
+}
+
+export interface DuplicateDetails {
+  exactos: number
+  normalizados: number
+  conflictos_id: number
+  grupos: number
+  filas_involucradas: number
+  tamano_maximo_grupo: number
+  grupos_contiguos: number
+  eliminacion_habilitada: boolean
+  filas_seleccionadas_para_eliminar: number
+  filas_eliminadas: number
+  posible_granularidad_omitida?: boolean
+  auditoria_truncada?: boolean
 }
 
 /* ── Fase 7: reporte de calidad, carga y limpieza dirigida ── */
@@ -142,11 +161,20 @@ export interface PlansUsage {
 export interface CleaningRules {
   fechas: boolean
   textos: boolean
+  /** @deprecated Detectar es obligatorio; eliminar usa CleaningOptions. */
   duplicados: boolean
   tipos: boolean
   nulos: boolean
   columnas_vacias: boolean
   fuera_de_rango: boolean
+}
+
+export interface CleaningOptions {
+  eliminar_duplicados: boolean
+}
+
+export const DEFAULT_CLEANING_OPTIONS: CleaningOptions = {
+  eliminar_duplicados: false,
 }
 
 export const DEFAULT_RULES: CleaningRules = {

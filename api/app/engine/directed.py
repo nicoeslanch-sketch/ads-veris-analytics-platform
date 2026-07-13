@@ -150,6 +150,12 @@ def interpret_cleaning_instructions(
             plan.reglas_forzadas[rule] = not _clause_is_negated(text_norm, pos)
             break
 
+    if plan.reglas_forzadas.get("duplicados"):
+        plan.avisos.append(
+            "La instrucción de texto solo detecta duplicados. Para eliminarlos debes usar "
+            "la acción separada y confirmar explícitamente en la interfaz."
+        )
+
     if "todas las columnas" in text_norm or "todo el archivo" in text_norm:
         plan.columnas_incluir = []
         plan.avisos.append("Se aplicará a todas las columnas (pediste el archivo completo).")

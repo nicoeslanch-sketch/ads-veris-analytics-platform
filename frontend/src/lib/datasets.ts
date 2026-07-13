@@ -6,7 +6,13 @@ la persistencia agrega historial y permite retomar archivos después.
 */
 
 import { supabase } from './supabase'
-import type { CleanResult, CleaningRules, StandardizeResult } from './types'
+import {
+  DEFAULT_CLEANING_OPTIONS,
+  type CleanResult,
+  type CleaningOptions,
+  type CleaningRules,
+  type StandardizeResult,
+} from './types'
 
 const BUCKET = 'datasets'
 export type DatasetSource = 'excel_csv' | 'google_sheets'
@@ -106,6 +112,7 @@ export async function saveCleaningJob(
   datasetId: string | null,
   rules: CleaningRules,
   result: CleanResult,
+  options: CleaningOptions = result.opciones_aplicacion ?? DEFAULT_CLEANING_OPTIONS,
 ): Promise<boolean> {
   const userId = await getUserId()
   if (!supabase || !userId || !datasetId) return false
@@ -114,6 +121,7 @@ export async function saveCleaningJob(
       dataset_id: datasetId,
       user_id: userId,
       rules,
+      options,
       problems_detected: result.problemas,
       problems_fixed: result.correcciones,
       rows_before: result.resumen.filas_antes,

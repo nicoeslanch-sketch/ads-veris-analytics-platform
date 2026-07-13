@@ -91,9 +91,11 @@ def test_clean_aplica_correcciones(client, auth_headers, sample_csv):
     body = response.json()
     resumen = body["resumen"]
     assert resumen["aplicado"] is True
-    assert resumen["filas_despues"] < resumen["filas_antes"]        # duplicados fuera
+    # Fase 12: limpiar ya no elimina filas sin una decisión separada.
+    assert resumen["filas_despues"] == resumen["filas_antes"]
+    assert body["correcciones"]["filas_duplicadas_a_eliminar"] == 0
     assert resumen["columnas_despues"] == resumen["columnas_antes"] - 1  # Notas eliminada
-    assert resumen["calidad_despues"] > resumen["calidad_antes"]
+    assert resumen["calidad_despues"] >= resumen["calidad_antes"]
 
 
 def test_clean_respeta_reglas_desactivadas(client, auth_headers, sample_csv):

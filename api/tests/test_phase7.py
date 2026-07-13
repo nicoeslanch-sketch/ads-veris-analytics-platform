@@ -451,7 +451,7 @@ def test_excel_multihoja_y_fila_de_titulo(client, auth_headers):
 
 
 def test_dedup_sin_columna_id_advierte(client, auth_headers, sample_csv):
-    """§5.2: filas idénticas sin columna identificadora → aviso explícito."""
+    """Fase 12: filas idénticas se detectan y exigen confirmación explícita."""
     name, content = sample_csv
     response = client.post(
         "/clean",
@@ -459,11 +459,11 @@ def test_dedup_sin_columna_id_advierte(client, auth_headers, sample_csv):
         headers=auth_headers,
     )
     body = response.json()
-    # Fase 10 §6.2: sin columna ID, solo filas 100% idénticas se eliminan;
-    # las que difieren en formato quedan como "probables" para revisión.
+    # Los campos heredados conservan sus nombres, con semántica estable.
     assert body["problemas"]["duplicados"] + body["problemas"].get("duplicados_probables", 0) >= 1
-    assert body["duplicados_criterio"] == "fila_exacta_sin_id"
-    assert any("identificadora" in a for a in body["avisos"])
+    assert body["duplicados_criterio"] == "fila_exacta_original_con_confirmacion"
+    assert body["correcciones"]["filas_duplicadas_a_eliminar"] == 0
+    assert any("confirmes explícitamente" in a for a in body["avisos"])
 
 
 def test_mapping_corregido_por_el_usuario(client, auth_headers):
