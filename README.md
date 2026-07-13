@@ -162,10 +162,11 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
   limpia solo para Plan Analista y export seguro contra formula injection.
   Pendiente (operación comercial): checkout Analista, conector SQL, alertas continuas y
   reportes generados en backend.
-- [x] **Fase 12, Bloque 1 — duplicados no destructivos**: detección automática,
+- [x] **Fase 12, Bloques 1–2 — motor no destructivo y conteos honestos**: detección automática,
   eliminación desactivada por defecto y disponible solo mediante confirmación explícita;
   exactos originales separados de coincidencias normalizadas, diagnóstico de IDs,
-  fila física de origen y decisión persistida. Los bloques 2–6 esperan validación.
+  fila física de origen y decisión persistida; categorías con unidades separadas,
+  contador textual sin duplicación y controles independientes de cero/negativos/IQR.
 
 ## Regla de flujo no negociable
 

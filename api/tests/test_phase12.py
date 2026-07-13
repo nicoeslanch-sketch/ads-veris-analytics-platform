@@ -11,6 +11,7 @@ from app.engine.clean import (
     classify_identifier_kind,
     exclude_from_statistical_outliers,
 )
+from app.engine.standardize import _normalize_text_column
 
 
 def _clean(client, auth_headers, csv: str, **data):
@@ -248,3 +249,44 @@ def test_respuesta_conserva_campos_anteriores_y_agrega_detalle(client, auth_head
         assert field in body
     assert "duplicados_detalle" in body
     assert "opciones_aplicacion" in body
+
+
+def test_contador_textual_no_cuenta_dos_veces_la_misma_celda():
+    values = pd.Series(["JUAN  PEREZ"] + ["Juan Perez"] * 10)
+
+    unified, detail, _ = _normalize_text_column(values)
+
+    assert unified.eq("Juan Perez").all()
+    assert detail["celdas_con_espacios_normalizados"] == 1
+    assert detail["celdas_con_variantes_unificadas"] == 1
+    assert detail["celdas_textuales_unicas_modificadas"] == 1
+    assert detail["placeholders_detectados"] == 0
+    assert detail["mojibake_detectado"] == 0
+    assert detail["mojibake_reparado"] == 0
+
+
+def test_controles_monetarios_e_iqr_son_solo_senalizacion(client, auth_headers):
+    amounts = [0, -1, 1, 2, 3, 4, 5, 6, 7, 100]
+    csv = "Ventas\n" + "\n".join(map(str, amounts)) + "\n"
+
+    body = _clean(client, auth_headers, csv, apply=True).json()
+
+    assert body["problemas"]["montos_cero"] == 1
+    assert body["problemas"]["montos_negativos"] == 1
+    assert body["problemas"]["outliers_iqr"] == 1
+    assert body["problemas"]["valores_fuera_de_rango"] == 1
+    detail = body["reporte_calidad"]["Ventas"]["outliers_iqr"]
+    assert detail["total"] == detail["bajo_limite"] + detail["sobre_limite"] == 1
+    assert detail["q1"] < detail["q3"]
+    assert body["resumen"]["filas_despues"] == len(amounts)
+    assert body["correcciones"]["valores_fuera_de_rango_a_revisar"] == 1
+
+
+def test_respuesta_no_inventa_total_unico_de_categorias(client, auth_headers):
+    body = _clean(client, auth_headers, "Ventas;Descripcion\n0;\n0;Informada\n").json()
+
+    assert body["problemas"]["montos_cero"] == 2
+    assert body["problemas"]["valores_nulos"] == 1
+    assert not {
+        "total_problemas", "problemas_totales", "incidencias_totales"
+    } & set(body)

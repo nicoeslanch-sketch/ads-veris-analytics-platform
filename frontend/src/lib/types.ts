@@ -17,6 +17,12 @@ export interface StandardizeResult {
     textos_normalizados: number
     fechas_estandarizadas: number
     numeros_estandarizados: number
+    celdas_con_espacios_normalizados?: number
+    celdas_con_variantes_unificadas?: number
+    celdas_textuales_unicas_modificadas?: number
+    placeholders_detectados?: number
+    mojibake_detectado?: number
+    mojibake_reparado?: number
   }
   preview: {
     columnas: string[]
@@ -52,6 +58,9 @@ export interface CleanResult {
     textos_inconsistentes: number
     tipos_incorrectos: number
     columnas_vacias: number
+    montos_cero?: number
+    montos_negativos?: number
+    outliers_iqr?: number
     valores_fuera_de_rango: number
   }
   correcciones: {
@@ -129,6 +138,18 @@ export interface ColumnQuality {
   fechas_invalidas?: number
   tipos_incorrectos?: number
   outliers?: number
+  montos_cero?: number
+  montos_negativos?: number
+  outliers_iqr?: {
+    q1: number
+    q3: number
+    iqr: number
+    limite_inferior: number
+    limite_superior: number
+    bajo_limite: number
+    sobre_limite: number
+    total: number
+  }
   confianza_tipo?: number | null
   convencion_numerica?: string
   politica_nulos?: string

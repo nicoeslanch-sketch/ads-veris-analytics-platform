@@ -148,6 +148,9 @@ def run(path: Path) -> dict:
     assert safe["resumen"]["filas_despues"] == EXPECTED["filas"]
     assert safe["correcciones"]["filas_duplicadas_a_eliminar"] == 0
     assert safe["correcciones"]["filas_duplicadas_eliminadas"] == 0
+    assert safe["problemas"]["montos_cero"] == EXPECTED["montos_cero"]
+    assert safe["problemas"]["montos_negativos"] == EXPECTED["montos_negativos"]
+    assert safe["problemas"]["outliers_iqr"] == EXPECTED["outliers_iqr"]
     assert int(safe["_df_limpio"].duplicated(keep="first").sum()) == 593
     assert confirmed["resumen"]["filas_despues"] == 14_324
     assert confirmed["correcciones"]["filas_duplicadas_eliminadas"] == 593

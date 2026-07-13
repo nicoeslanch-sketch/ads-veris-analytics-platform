@@ -1,13 +1,14 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 11 completas; Fase 12, Bloque 1 completo y pendiente de validación del dueño.**
+**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 y 2 completos.**
 El motor ahora detecta duplicados siempre y conserva todas las filas por defecto.
 Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
 original; las coincidencias creadas por la normalización nunca se borran. La
 decisión se propaga a métricas, descarga, IA, caché e historial, y las incidencias
 usan la fila física del archivo como trazabilidad. La migración local `0012`
 persiste esa opción, pero debe aplicarse al proyecto remoto después de validar el
-bloque. Los Bloques 2–6 no se iniciaron, tal como exige el ritmo de la Fase 12.
+bloque. El Bloque 2 corrige el doble conteo textual, elimina el total engañoso
+de problemas y separa montos cero, negativos e IQR sin modificar valores.
 
 La Fase 11 ataca la lentitud con bases grandes (>50.000 filas) en su causa raíz:
 el caché del pipeline excluía los archivos grandes y cada módulo reprocesaba
@@ -353,7 +354,7 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 "Estandarizar nuevo documento", retención también al login y contactos de ayuda
 (WhatsApp/Instagram/correo). **129 tests + build + 3 E2E.**
 
-## ✅ Fase 12 — Bloque 1: duplicados no destructivos (pendiente de validación)
+## ✅ Fase 12 — Bloques 1 y 2
 
 - Detección siempre activa y eliminación por defecto en `false`, aunque exista
   una columna cuyo nombre parezca identificador.
@@ -366,7 +367,11 @@ columna de monto; restauración del último trabajo al iniciar sesión,
   dataset del usuario; exportadas en `Observaciones`.
 - Migración local `0012_cleaning_job_options.sql`; no aplicada remotamente en este
   bloque. Script de regresión real versionado, archivo REQ5325 fuera del repositorio.
-- Bloques 2–6: sin iniciar hasta recibir validación explícita del dueño.
+- Conteos por categoría con unidades honestas; una celda textual se contabiliza
+  una sola vez aunque pase por varias normalizaciones.
+- Montos cero, negativos y atípicos IQR separados y solo señalizados, con
+  parámetros estadísticos por columna.
+- Bloques 3–6: pendientes en la rama de Fase 12 autorizada por el dueño.
 
 ## ⏳ Pendiente (operación comercial)
 

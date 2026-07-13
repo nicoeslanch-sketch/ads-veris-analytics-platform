@@ -2,7 +2,7 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
-## [0.13.0] - 2026-07-13 - Fase 12, Bloque 1: duplicados no destructivos
+## [0.13.0] - 2026-07-13 - Fase 12: motor no destructivo e identidad de datos
 
 Este bloque cambia deliberadamente la política de seguridad del motor: los
 duplicados se detectan siempre, pero **no se eliminan por defecto**. La acción
@@ -38,6 +38,17 @@ aparecen únicamente después de normalizar permanecen como candidatas a revisi�
   `scripts/regresion_req5325.py` para auditar el archivo real sin versionarlo.
 - Regresión REQ5325: 14.917 filas por defecto; 14.324 únicamente tras confirmar
   la eliminación de sus 593 repeticiones exactas.
+
+### Bloque 2 — conteos honestos y controles monetarios
+- El contador textual compara el valor final con el original: una celda que
+  atraviesa varias etapas se cuenta una sola vez. El reporte separa espacios,
+  variantes y celdas textuales únicas modificadas.
+- Limpieza dejó de sumar filas, celdas, columnas y observaciones en un supuesto
+  "total de problemas". La UI muestra cada categoría con su unidad y advierte
+  que pueden superponerse.
+- Montos cero, montos negativos y posibles atípicos IQR se reportan por separado.
+  Ninguno modifica datos. El detalle IQR por columna incluye cuartiles, rango,
+  límites y conteos bajo/sobre esos límites.
 
 ## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
 

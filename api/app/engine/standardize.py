@@ -409,15 +409,16 @@ def _fuzzy_merge_keys(frequencies: dict[str, dict[str, int]]) -> dict[str, str]:
 
 def _normalize_text_column(
     series: pd.Series, allow_fuzzy: bool = True
-) -> tuple[pd.Series, int, list[list[str]]]:
+) -> tuple[pd.Series, dict[str, int], list[list[str]]]:
     """Recorta espacios, limpia placeholders y unifica variantes de un mismo texto.
 
-    Devuelve (serie, cambios, ejemplos_de_fusiones_fuzzy). Las variantes que
+    Devuelve (serie, desglose, ejemplos_de_fusiones_fuzzy). Las variantes que
     solo difieren en mayúsculas/tildes/espacios se reemplazan por la forma más
     frecuente; los typos cercanos se fusionan con Levenshtein acotado —
     SOLO si `allow_fuzzy` (jamás en columnas identificadoras, Fase 10 §6.1)."""
+    original = series.map(str)
     stripped = map_unique(series, lambda v: "" if is_missing(v) else re.sub(r"\s+", " ", str(v)).strip())
-    changes = int((stripped != series.map(str)).sum())
+    spacing_changes = int((stripped != original).sum())
 
     frequencies: dict[str, dict[str, int]] = {}
     for value in stripped:
@@ -473,8 +474,19 @@ def _normalize_text_column(
                         break
 
     unified = map_unique(stripped, lambda v: canonical[norm_key(v)] if v else v)
-    changes += int((unified != stripped).sum())
-    return unified, changes, fuzzy_examples
+    variant_changes = int((unified != stripped).sum())
+    # Una celda puede pasar por ambas etapas. El contador visible compara
+    # únicamente el resultado final con el original para no contarla dos veces.
+    unique_changes = int((unified != original).sum())
+    return unified, {
+        "celdas_con_espacios_normalizados": spacing_changes,
+        "celdas_con_variantes_unificadas": variant_changes,
+        "celdas_textuales_unicas_modificadas": unique_changes,
+        # Bloque 3 completa estos campos; se declaran aditivamente desde ahora.
+        "placeholders_detectados": 0,
+        "mojibake_detectado": 0,
+        "mojibake_reparado": 0,
+    }, fuzzy_examples
 
 
 # ── Pipeline de estandarización ──────────────────────────────────────────────
@@ -493,6 +505,14 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     fuzzy_examples: list[list[str]] = []
     date_avisos: list[str] = []
     text_changes = date_changes = number_changes = 0
+    text_detail = {
+        "celdas_con_espacios_normalizados": 0,
+        "celdas_con_variantes_unificadas": 0,
+        "celdas_textuales_unicas_modificadas": 0,
+        "placeholders_detectados": 0,
+        "mojibake_detectado": 0,
+        "mojibake_reparado": 0,
+    }
 
     for col in result.columns:
         ctype, confidence = detect_value_type_confidence(result[col], col)
@@ -503,10 +523,12 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             # Fase 10 §6.1: nada de fuzzy sobre identificadores (SKU, folio,
             # RUT, email…) — un typo de distancia 1 puede ser otro código real.
             allow_fuzzy = not is_identifier_column(col, result[col])
-            result[col], changed, examples = _normalize_text_column(
+            result[col], detail, examples = _normalize_text_column(
                 result[col], allow_fuzzy=allow_fuzzy
             )
-            text_changes += changed
+            for key in text_detail:
+                text_detail[key] += detail[key]
+            text_changes += detail["celdas_textuales_unicas_modificadas"]
             if examples:
                 fuzzy_total += len(examples)
                 fuzzy_examples.extend(examples[: max(0, 5 - len(fuzzy_examples))])
@@ -562,6 +584,7 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             "textos_normalizados": text_changes,
             "fechas_estandarizadas": date_changes,
             "numeros_estandarizados": number_changes,
+            **text_detail,
         },
     }
     return result, report

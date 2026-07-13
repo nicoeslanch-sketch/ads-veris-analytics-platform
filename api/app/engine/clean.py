@@ -335,6 +335,8 @@ def _detect_problems(
     invalid_dates = 0
     wrong_types = 0
     out_of_range = 0
+    zero_amounts = 0
+    negative_amounts = 0
     per_column: dict[str, dict] = {}
 
     for col in df.columns:
@@ -371,6 +373,13 @@ def _detect_problems(
                 info["ejemplos_invalidos"] = [str(v) for v in df[col][wrong_mask].head(3)]
             # Outliers SOLO en roles métricos (§5.3): jamás IDs, RUT o años.
             role = roles_by_col.get(col)
+            if role == "monto":
+                col_zero = int(parsed.eq(0).sum())
+                col_negative = int(parsed.lt(0).sum())
+                zero_amounts += col_zero
+                negative_amounts += col_negative
+                info["montos_cero"] = col_zero
+                info["montos_negativos"] = col_negative
             if role in METRIC_ROLES and not exclude_from_statistical_outliers(col, role):
                 numbers = parsed.dropna()
                 if len(numbers) >= 8:
@@ -378,9 +387,21 @@ def _detect_problems(
                     iqr = q3 - q1
                     if iqr > 0:
                         lower, upper = q1 - 3 * iqr, q3 + 3 * iqr
-                        col_outliers = int(((numbers < lower) | (numbers > upper)).sum())
+                        below = int((numbers < lower).sum())
+                        above = int((numbers > upper).sum())
+                        col_outliers = below + above
                         out_of_range += col_outliers
                         info["outliers"] = col_outliers
+                        info["outliers_iqr"] = {
+                            "q1": round(float(q1), 4),
+                            "q3": round(float(q3), 4),
+                            "iqr": round(float(iqr), 4),
+                            "limite_inferior": round(float(lower), 4),
+                            "limite_superior": round(float(upper), 4),
+                            "bajo_limite": below,
+                            "sobre_limite": above,
+                            "total": col_outliers,
+                        }
         per_column[col] = info
 
     return {
@@ -393,6 +414,10 @@ def _detect_problems(
         "textos_inconsistentes": text_changes,
         "tipos_incorrectos": wrong_types,
         "columnas_vacias": len(empty_columns),
+        "montos_cero": zero_amounts,
+        "montos_negativos": negative_amounts,
+        "outliers_iqr": out_of_range,
+        # Alias compatible con versiones anteriores del frontend.
         "valores_fuera_de_rango": out_of_range,
         "_columnas_vacias_nombres": empty_columns,
         "_duplicados_mask": exact_duplicate_mask,

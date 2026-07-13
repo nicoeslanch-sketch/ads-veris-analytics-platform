@@ -54,15 +54,19 @@ const RULE_LABELS: Array<{ key: keyof CleaningRules; label: string }> = [
 const PROBLEM_LABELS: Array<{
   key: keyof CleanResult['problemas']
   label: string
+  unit: string
   icon: typeof Copy
 }> = [
-  { key: 'duplicados', label: 'Duplicados', icon: Copy },
-  { key: 'valores_nulos', label: 'Valores nulos', icon: FileWarning },
-  { key: 'fechas_invalidas', label: 'Formatos de fecha inválidos', icon: CalendarClock },
-  { key: 'textos_inconsistentes', label: 'Textos inconsistentes', icon: Type },
-  { key: 'tipos_incorrectos', label: 'Tipos de datos incorrectos', icon: Settings2 },
-  { key: 'columnas_vacias', label: 'Columnas vacías', icon: Columns3 },
-  { key: 'valores_fuera_de_rango', label: 'Valores fuera de rango', icon: AlertTriangle },
+  { key: 'duplicados', label: 'Filas idénticas repetidas', unit: 'filas', icon: Copy },
+  { key: 'duplicados_probables', label: 'Coincidencias tras normalización', unit: 'filas', icon: Copy },
+  { key: 'valores_nulos', label: 'Celdas físicamente vacías', unit: 'celdas', icon: FileWarning },
+  { key: 'fechas_invalidas', label: 'Fechas que requieren revisión', unit: 'celdas', icon: CalendarClock },
+  { key: 'textos_inconsistentes', label: 'Textos que cambiarían', unit: 'celdas', icon: Type },
+  { key: 'tipos_incorrectos', label: 'Tipos incompatibles', unit: 'celdas', icon: Settings2 },
+  { key: 'columnas_vacias', label: 'Columnas completamente vacías', unit: 'columnas', icon: Columns3 },
+  { key: 'montos_cero', label: 'Montos en cero para revisión', unit: 'celdas', icon: Coins },
+  { key: 'montos_negativos', label: 'Montos negativos para revisión', unit: 'celdas', icon: Coins },
+  { key: 'outliers_iqr', label: 'Posibles valores atípicos estadísticos (IQR)', unit: 'observaciones', icon: AlertTriangle },
 ]
 
 /** Roles del negocio corregibles desde la UI (Fase 7 §5.10). */
@@ -224,9 +228,13 @@ export default function Limpieza() {
 
   const result = cleaning ?? detection
   const applied = cleaning !== null
-  const totalProblems = result
-    ? PROBLEM_LABELS.reduce((sum, { key }) => sum + (result.problemas[key] ?? 0), 0)
-    : 0
+  const problemCategories = result
+    ? PROBLEM_LABELS.map((category) => ({
+        ...category,
+        value: Number(result.problemas[category.key] ?? 0),
+      })).filter(({ value }) => value > 0)
+    : []
+  const hasProblems = problemCategories.length > 0
   const quality = result
     ? applied
       ? result.resumen.calidad_despues
@@ -270,7 +278,10 @@ export default function Limpieza() {
         { label: 'Textos a unificar', value: rules.textos ? result.problemas.textos_inconsistentes : 0 },
         { label: 'Tipos de datos a corregir', value: rules.tipos ? result.problemas.tipos_incorrectos : 0 },
         { label: 'Columnas vacías a eliminar', value: rules.columnas_vacias ? result.problemas.columnas_vacias : 0 },
-        { label: 'Valores fuera de rango a revisar', value: rules.fuera_de_rango ? result.problemas.valores_fuera_de_rango : 0 },
+        {
+          label: 'Valores atípicos señalizados (no se modifican)',
+          value: rules.fuera_de_rango ? result.problemas.outliers_iqr ?? 0 : 0,
+        },
       ]
     : []
 
@@ -411,9 +422,9 @@ export default function Limpieza() {
     { title: 'Cargar datos', text: 'Archivo cargado', done: true, warn: false },
     {
       title: 'Revisar problemas',
-      text: result ? `${formatNumber(totalProblems)} detectados` : 'Analizando…',
+      text: result ? `${problemCategories.length} categorías con observaciones` : 'Analizando…',
       done: result !== null,
-      warn: result !== null && totalProblems > 0 && !applied,
+      warn: result !== null && hasProblems && !applied,
     },
     { title: 'Configurar reglas', text: 'Reglas automáticas activas', done: true, warn: false },
     { title: 'Aplicar limpieza', text: applied ? 'Limpieza aplicada' : 'Aún no ejecutado', done: applied, warn: false },
@@ -740,11 +751,20 @@ export default function Limpieza() {
                       </tbody>
                     </table>
                   </div>
-                  <div className="mt-4 flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 text-sm text-navy">
+                  <div className="mt-4 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 text-sm text-navy">
+                    <div className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
-                    <p>
-                      Detectamos <strong>{formatNumber(totalProblems)} problemas</strong> en tus
-                      datos que puedes revisar y corregir antes de continuar.
+                      <p className="font-semibold">Diagnóstico por categorías</p>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {problemCategories.map(({ key, label, unit, value }) => (
+                        <span key={key} className="rounded-md border border-gold/25 bg-white/70 px-2.5 py-1 text-xs text-navy/75">
+                          <strong>{formatNumber(value)}</strong> {unit}: {label.toLowerCase()}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-navy/60">
+                      Las categorías usan unidades distintas, pueden superponerse y no representan registros únicos.
                     </p>
                   </div>
                   {result.avisos && result.avisos.length > 0 && (
@@ -820,7 +840,7 @@ export default function Limpieza() {
                     <h3 className="text-sm font-semibold text-navy">Problemas detectados</h3>
                   </div>
                   <ul className="mt-4 space-y-2.5">
-                    {PROBLEM_LABELS.map(({ key, label, icon: Icon }) => (
+                    {PROBLEM_LABELS.map(({ key, label, unit, icon: Icon }) => (
                       <li key={key} className="flex items-center justify-between gap-2 text-sm">
                         <span className="flex items-center gap-2 text-navy/70">
                           <Icon className="h-4 w-4 text-navy/40" /> {label}
@@ -830,11 +850,14 @@ export default function Limpieza() {
                             (result.problemas[key] ?? 0) > 0 ? 'text-coral' : 'text-navy/40'
                           }`}
                         >
-                          {formatNumber(result.problemas[key] ?? 0)}
+                          {formatNumber(result.problemas[key] ?? 0)} {unit}
                         </span>
                       </li>
                     ))}
                   </ul>
+                  <p className="mt-3 text-xs leading-relaxed text-navy/45">
+                    Los valores IQR son inusuales respecto de la distribución; no son necesariamente errores y no se modificarán.
+                  </p>
                 </Card>
 
                 <Card className="bg-gradient-to-br from-teal/[0.05] to-transparent">
