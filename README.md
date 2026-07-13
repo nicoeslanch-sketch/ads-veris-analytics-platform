@@ -169,7 +169,7 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
   limpia solo para Plan Analista y export seguro contra formula injection.
   Pendiente (operación comercial): checkout Analista, conector SQL, alertas continuas y
   reportes generados en backend.
-- [x] **Fase 12, Bloques 1–5 — motor no destructivo, semántica segura y multihoja**: detección automática,
+- [x] **Fase 12, Bloques 1–6 — motor no destructivo, multihoja y UX segura**: detección automática,
   eliminación desactivada por defecto y disponible solo mediante confirmación explícita;
   exactos originales separados de coincidencias normalizadas, diagnóstico de IDs,
   fila física de origen y decisión persistida; categorías con unidades separadas,
@@ -177,7 +177,8 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
   placeholders por rol, nulos estructurales, reparación strict de mojibake,
   incoherencias nombre↔ID, auditoría conservadora de fórmulas Excel y descarga
   multihoja gobernada por un manifiesto explícito (combinación solo con
-  encabezados idénticos y confirmación).
+  encabezados idénticos y confirmación); eliminación recuperable desde Historial
+  y mapeo progresivo basado en confianza semántica.
 
 ## Regla de flujo no negociable
 

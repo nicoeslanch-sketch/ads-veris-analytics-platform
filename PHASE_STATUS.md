@@ -1,6 +1,6 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 5 completos.**
+**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 6 completos.**
 El motor ahora detecta duplicados siempre y conserva todas las filas por defecto.
 Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
 original; las coincidencias creadas por la normalización nunca se borran. La
@@ -362,7 +362,7 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 "Estandarizar nuevo documento", retención también al login y contactos de ayuda
 (WhatsApp/Instagram/correo). **129 tests + build + 3 E2E.**
 
-## ✅ Fase 12 — Bloques 1 a 5
+## ✅ Fase 12 — Bloques 1 a 6
 
 - Detección siempre activa y eliminación por defecto en `false`, aunque exista
   una columna cuyo nombre parezca identificador.
@@ -395,7 +395,9 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 - Bloque 6A completo: eliminación confirmada desde Historial mediante una saga
   reintentable Storage→PostgreSQL; la fase de base es una RPC transaccional y el
   trabajo sobrevive al dataset. Requiere la migración `0013`.
-- Bloque 6B: pendiente en la rama de Fase 12 autorizada por el dueño.
+- Bloque 6B completo: mapeo colapsado por defecto, chips de asignaciones, panel
+  de roles relevantes, confianza semántica y CTA directo desde Resumen. La
+  desasignación se conserva como override explícito.
 
 ## ⏳ Pendiente (operación comercial)
 

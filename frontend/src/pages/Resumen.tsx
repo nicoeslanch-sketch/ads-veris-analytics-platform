@@ -423,6 +423,7 @@ export default function Resumen() {
           description="Tu archivo se procesó, pero ninguna columna se reconoció como monto de venta. Asígnala manualmente en el mapeo de columnas de Limpieza y el dashboard se calculará con tus datos."
           ctaLabel="Ir a asignar columnas"
           ctaTo="/limpieza"
+          ctaState={{ openMapping: true, highlightRole: 'monto' }}
         />
       ) : metrics && kpis ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>

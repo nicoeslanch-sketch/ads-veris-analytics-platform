@@ -98,6 +98,17 @@ aparecen únicamente después de normalizar permanecen como candidatas a revisi�
   sin FK al dataset y una RPC transaccional que conserva el log, ejecuta las
   cascadas y marca `completed` de forma atómica.
 
+### Bloque 6B — mapeo progresivo y confianza semántica
+- Los diez selectores permanentes se reemplazaron por chips compactos y un panel
+  Ajustar. El panel muestra primero roles asignados y luego solo roles críticos
+  sin asignar que tengan candidatos semánticos de confianza media/alta.
+- Un monto ausente o un rol crítico de confianza baja abre el panel y destaca la
+  asignación. La confianza usada es la del rol (`mapeo_extendido`), no la del
+  tipo de dato; las asignaciones legacy sin score se declaran como limitación.
+- El CTA del dashboard abre y desplaza directamente este panel. Las correcciones
+  manuales se distinguen por rol, persisten con `saveColumnMapping` y una
+  desasignación explícita ya no es revertida por la detección automática.
+
 ## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
 
 La lentitud reportada con bases de >50.000 filas tenía una causa raíz medible:

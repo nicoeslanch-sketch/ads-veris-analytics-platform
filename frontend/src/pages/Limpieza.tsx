@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowRight,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Coins,
   Columns3,
   Copy,
@@ -71,19 +73,33 @@ const PROBLEM_LABELS: Array<{
   { key: 'outliers_iqr', label: 'Posibles valores atípicos estadísticos (IQR)', unit: 'observaciones', icon: AlertTriangle },
 ]
 
-/** Roles del negocio corregibles desde la UI (Fase 7 §5.10). */
-const MAPPING_ROLES: Array<{ role: string; label: string }> = [
-  { role: 'fecha', label: 'Fecha' },
-  { role: 'monto', label: 'Monto / Ventas' },
-  { role: 'costo', label: 'Costo' },
-  { role: 'cantidad', label: 'Cantidad' },
-  { role: 'producto', label: 'Producto' },
-  { role: 'categoria', label: 'Categoría' },
-  { role: 'cliente', label: 'Cliente' },
-  { role: 'canal', label: 'Canal' },
-  { role: 'sucursal', label: 'Sucursal' },
-  { role: 'vendedor', label: 'Vendedor' },
+const MAPPING_ROLES: Array<{ role: string; label: string; description: string }> = [
+  { role: 'fecha', label: 'Fecha', description: 'La fecha en que ocurrió cada venta o movimiento.' },
+  { role: 'monto', label: 'Monto / Ventas', description: 'La columna con el valor de cada venta.' },
+  { role: 'costo', label: 'Costo', description: 'El costo asociado a cada venta o producto.' },
+  { role: 'cantidad', label: 'Cantidad', description: 'Las unidades incluidas en cada registro.' },
+  { role: 'producto', label: 'Producto', description: 'El producto o servicio vendido.' },
+  { role: 'categoria', label: 'Categoría', description: 'La agrupación comercial del producto o servicio.' },
+  { role: 'cliente', label: 'Cliente', description: 'La persona o empresa asociada al registro.' },
+  { role: 'canal', label: 'Canal', description: 'El medio por el que se realizó la venta.' },
+  { role: 'sucursal', label: 'Sucursal', description: 'La tienda, sede o local de origen.' },
+  { role: 'vendedor', label: 'Vendedor', description: 'La persona responsable de la venta.' },
 ]
+
+const IMPORTANT_MAPPING_ROLES = new Set(['monto', 'fecha', 'costo', 'producto', 'categoria'])
+const MEDIUM_ROLE_CONFIDENCE = 0.75
+
+function applyMappingOverrides(
+  automatic: Record<string, string>,
+  override: Record<string, string> | null,
+): Record<string, string> {
+  const resolved = { ...automatic }
+  for (const [role, column] of Object.entries(override ?? {})) {
+    if (column) resolved[role] = column
+    else delete resolved[role]
+  }
+  return resolved
+}
 
 function qualityLabel(quality: number): { text: string; tone: 'green' | 'gold' | 'coral' } {
   if (quality >= 90) return { text: 'Excelente', tone: 'green' }
@@ -120,6 +136,7 @@ function QualityRing({ quality }: { quality: number }) {
 }
 
 export default function Limpieza() {
+  const location = useLocation()
   const {
     file,
     datasetId,
@@ -146,6 +163,31 @@ export default function Limpieza() {
   const [duplicateRemovalPending, setDuplicateRemovalPending] = useState(false)
   const cancelDuplicateRef = useRef<HTMLButtonElement | null>(null)
   const detectStartedFor = useRef<string | null>(null)
+  const mappingSectionRef = useRef<HTMLDivElement | null>(null)
+  const mappingNavigation = location.state as
+    | { openMapping?: boolean; highlightRole?: string }
+    | null
+  const automaticMapping = standardization?.mapeo ?? {}
+  const effectiveMapping = applyMappingOverrides(automaticMapping, mappingOverride)
+  const availableColumns =
+    (cleaning ?? detection)?.preview.columnas ?? standardization?.preview.columnas ?? []
+  const extendedMapping = standardization?.mapeo_extendido ?? {}
+  const correctedRoles = new Set(Object.keys(mappingOverride ?? {}))
+  const lowConfidenceRoles = Object.entries(effectiveMapping)
+    .filter(([role, column]) => {
+      if (!IMPORTANT_MAPPING_ROLES.has(role)) return false
+      if (correctedRoles.has(role)) return false
+      const match = extendedMapping[column]
+      return Boolean(
+        match && match.rol_motor === role && match.confianza < MEDIUM_ROLE_CONFIDENCE,
+      )
+    })
+    .map(([role]) => role)
+  const missingAmount = Boolean(standardization && !effectiveMapping.monto)
+  const highlightedRole = mappingNavigation?.highlightRole ?? (missingAmount ? 'monto' : null)
+  const [mappingExpanded, setMappingExpanded] = useState(
+    Boolean(mappingNavigation?.openMapping || missingAmount || lowConfidenceRoles.length),
+  )
 
   // ── Limpieza dirigida (Analista/Gold) y descarga de base limpia (Analista+) ──
   const aiCleaning = useCapability('ai_cleaning')
@@ -172,6 +214,25 @@ export default function Limpieza() {
     setDetection(null)
     setDuplicateRemovalPending(false)
   }, [sheet, cleaning])
+
+  useEffect(() => {
+    if (!standardization) return
+    if (mappingNavigation?.openMapping || missingAmount || lowConfidenceRoles.length > 0) {
+      setMappingExpanded(true)
+    }
+    if (mappingNavigation?.openMapping) {
+      requestAnimationFrame(() =>
+        mappingSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+      )
+    }
+  }, [
+    location.key,
+    lowConfidenceRoles.join('|'),
+    mappingNavigation?.openMapping,
+    missingAmount,
+    sheet,
+    standardization,
+  ])
 
   useEffect(() => {
     if (!duplicateConfirmOpen) return
@@ -261,11 +322,23 @@ export default function Limpieza() {
     aviso.includes('variable diferenciadora'),
   )
 
-  const effectiveMapping: Record<string, string> = {
-    ...(result?.mapeo ?? standardization.mapeo),
-    ...(mappingOverride ?? {}),
-  }
-  const availableColumns = result?.preview.columnas ?? standardization.preview.columnas
+  const semanticCandidates = (role: string) =>
+    Object.entries(extendedMapping)
+      .filter(
+        ([, match]) =>
+          match.rol_motor === role && match.confianza >= MEDIUM_ROLE_CONFIDENCE,
+      )
+      .map(([column]) => column)
+  const assignedMappingRoles = MAPPING_ROLES.filter(({ role }) => effectiveMapping[role])
+  const missingRelevantRoles = MAPPING_ROLES.filter(
+    ({ role }) =>
+      !effectiveMapping[role] &&
+      IMPORTANT_MAPPING_ROLES.has(role) &&
+      (semanticCandidates(role).length > 0 || role === highlightedRole),
+  )
+  const relevantMappingRoles = [...assignedMappingRoles, ...missingRelevantRoles]
+  const hasMappingCorrections = correctedRoles.size > 0
+  const mappingNeedsAttention = missingAmount || lowConfidenceRoles.length > 0
 
   const mappingFields = (): Record<string, string> => ({
     ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
@@ -304,18 +377,27 @@ export default function Limpieza() {
   }
 
   const handleMappingChange = (role: string, column: string) => {
-    const next: Record<string, string> = { ...effectiveMapping }
+    const nextOverride: Record<string, string> = { ...(mappingOverride ?? {}) }
     if (column) {
       // Un mismo nombre de columna no puede cumplir dos roles.
-      for (const [otherRole, otherCol] of Object.entries(next)) {
-        if (otherCol === column && otherRole !== role) delete next[otherRole]
+      for (const [otherRole, otherCol] of Object.entries(effectiveMapping)) {
+        if (otherCol === column && otherRole !== role) nextOverride[otherRole] = ''
       }
-      next[role] = column
+      if (automaticMapping[role] === column) delete nextOverride[role]
+      else nextOverride[role] = column
     } else {
-      delete next[role]
+      // Vacío explícito: el backend debe quitar el rol en vez de redetectarlo.
+      nextOverride[role] = ''
     }
-    setMappingOverride(next)
-    void saveColumnMapping(datasetId, next) // best-effort (migración 0008)
+    const nextEffective = applyMappingOverrides(automaticMapping, nextOverride)
+    const compactOverride = Object.fromEntries(
+      Object.entries(nextOverride).filter(
+        ([changedRole, changedColumn]) =>
+          changedColumn !== automaticMapping[changedRole],
+      ),
+    )
+    setMappingOverride(Object.keys(compactOverride).length ? compactOverride : null)
+    void saveColumnMapping(datasetId, nextEffective) // best-effort (migración 0008)
   }
 
   const handleDownload = async (fmt: 'xlsx' | 'csv') => {
@@ -930,38 +1012,140 @@ export default function Limpieza() {
               </div>
             )}
 
-            {/* Mapeo de columnas — a lo ancho, sin columna lateral (Fase 8) */}
-            <Card>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-teal/10">
-                  <Settings2 className="h-4 w-4 text-teal" />
+            {/* Fase 12 B6: resumen primero; selectores solo al pedir ajuste o
+                cuando falta un rol crítico / la confianza semántica es baja. */}
+            <div ref={mappingSectionRef}>
+              <Card className={mappingNeedsAttention ? 'border-gold/40' : ''}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-teal/10">
+                        <Settings2 className="h-4 w-4 text-teal" />
+                      </div>
+                      <div>
+                        <h2 className="text-sm font-semibold text-navy">Mapeo de columnas</h2>
+                        <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/55">
+                          {mappingNeedsAttention ? (
+                            <>
+                              <AlertTriangle className="h-3.5 w-3.5 text-gold" />
+                              Revisa los roles destacados antes de continuar.
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="h-3.5 w-3.5 text-green" />
+                              {hasMappingCorrections
+                                ? 'Mapeo revisado con tus correcciones.'
+                                : 'Mapeo detectado automáticamente ✓'}
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {assignedMappingRoles.length > 0 ? (
+                        assignedMappingRoles.map(({ role, label }) => {
+                          const corrected = correctedRoles.has(role)
+                          return (
+                            <span
+                              key={role}
+                              className={`inline-flex max-w-full items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs ${
+                                corrected
+                                  ? 'border-gold/40 bg-gold/10 text-navy'
+                                  : 'border-navy/10 bg-navy/[0.04] text-navy/75'
+                              }`}
+                              title={corrected ? 'Corregido por ti' : 'Detectado automáticamente'}
+                            >
+                              <strong>{label}</strong>
+                              <span aria-hidden="true">→</span>
+                              <span className="max-w-52 truncate">{effectiveMapping[role]}</span>
+                              {corrected && <span className="font-semibold text-gold">corregido por ti</span>}
+                            </span>
+                          )
+                        })
+                      ) : (
+                        <span className="text-xs text-navy/50">No hay roles asignados todavía.</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMappingExpanded((current) => !current)}
+                    aria-expanded={mappingExpanded}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-teal/40 px-3 py-2 text-xs font-semibold text-teal transition-colors hover:bg-teal/5"
+                  >
+                    {mappingExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    {mappingExpanded ? 'Ocultar ajustes' : 'Ajustar'}
+                  </button>
                 </div>
-                <h2 className="text-sm font-semibold text-navy">Mapeo de columnas</h2>
-                <p className="text-xs text-navy/55">
-                  · Revisa qué columna cumple cada rol del negocio: corregirlo mejora los
-                  indicadores y la limpieza.
-                </p>
-              </div>
-              <div className="mt-4 grid gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                {MAPPING_ROLES.map(({ role, label }) => (
-                  <label key={role} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="font-medium text-navy/70">{label}</span>
-                    <select
-                      value={effectiveMapping[role] ?? ''}
-                      onChange={(e) => handleMappingChange(role, e.target.value)}
-                      className="w-[140px] rounded-md border border-navy/20 bg-white px-2 py-1.5 text-xs text-navy outline-none focus:border-teal"
-                    >
-                      <option value="">Sin asignar</option>
-                      {availableColumns.map((col) => (
-                        <option key={col} value={col}>
-                          {col}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-              </div>
-            </Card>
+
+                {mappingExpanded && (
+                  <div className="mt-5 border-t border-navy/10 pt-1">
+                    <div className="grid gap-x-6 md:grid-cols-2">
+                      {relevantMappingRoles.map(({ role, label, description }) => {
+                        const column = effectiveMapping[role] ?? ''
+                        const match = column ? extendedMapping[column] : undefined
+                        const corrected = correctedRoles.has(role)
+                        const lowConfidence =
+                          !corrected &&
+                          Boolean(match && match.confianza < MEDIUM_ROLE_CONFIDENCE)
+                        const highlighted = role === highlightedRole || lowConfidence
+                        const candidates = new Set(semanticCandidates(role))
+                        return (
+                          <label
+                            key={role}
+                            className={`grid gap-2 border-b border-navy/10 py-4 ${
+                              highlighted ? 'bg-gold/[0.07] px-3' : ''
+                            }`}
+                          >
+                            <span>
+                              <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-navy">
+                                {label}
+                                {corrected && (
+                                  <span className="rounded-md bg-gold/15 px-2 py-0.5 text-[11px] text-navy">
+                                    Corregido por ti
+                                  </span>
+                                )}
+                                {lowConfidence && (
+                                  <span className="rounded-md bg-coral/10 px-2 py-0.5 text-[11px] text-coral">
+                                    Confianza baja
+                                  </span>
+                                )}
+                              </span>
+                              <span className="mt-0.5 block text-xs text-navy/55">{description}</span>
+                            </span>
+                            <select
+                              value={column}
+                              onChange={(event) => handleMappingChange(role, event.target.value)}
+                              className="w-full rounded-md border border-navy/20 bg-white px-3 py-2 text-sm text-navy outline-none focus:border-teal"
+                            >
+                              <option value="">Sin asignar</option>
+                              {availableColumns.map((candidate) => (
+                                <option key={candidate} value={candidate}>
+                                  {candidate}{candidates.has(candidate) ? ' · sugerida por el motor' : ''}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="text-[11px] text-navy/45">
+                              {corrected
+                                ? 'Asignación manual guardada para este dataset.'
+                                : match
+                                  ? `Confianza del rol ${Math.round(match.confianza * 100)}% · método ${match.metodo}.`
+                                  : column
+                                    ? 'El detector legacy asignó este rol sin una confianza semántica comparable.'
+                                    : 'Elige una columna solo si conoces su significado en tu negocio.'}
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <p className="mt-3 text-xs text-navy/55">
+                      Al cambiar una asignación, la limpieza y los indicadores se recalculan
+                      con el nuevo mapeo.
+                    </p>
+                  </div>
+                )}
+              </Card>
+            </div>
           </>
         )}
 
