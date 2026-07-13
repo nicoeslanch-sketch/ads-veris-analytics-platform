@@ -81,6 +81,7 @@ export interface CleanResult {
   opciones_aplicacion?: CleaningOptions
   duplicados_detalle?: DuplicateDetails
   nulos_detalle?: NullDetails
+  inconsistencias_identidad?: IdentityInconsistencies
   preview: {
     columnas: string[]
     filas: string[][]
@@ -141,12 +142,67 @@ export interface MojibakeAudit {
   ocurrencias: number
 }
 
+export interface IdentityInconsistencies {
+  nombre_con_varios_ids: {
+    conteo: number
+    ejemplos: Array<{
+      entidad: string
+      columna_nombre: string
+      columna_id: string
+      nombre: string
+      cantidad_ids: number
+      ids_ejemplo: string[]
+      filas_origen: number[]
+    }>
+  }
+  id_con_varios_nombres: {
+    conteo: number
+    ejemplos: Array<{
+      entidad: string
+      columna_nombre: string
+      columna_id: string
+      id: string
+      cantidad_nombres: number
+      nombres_ejemplo: string[]
+      filas_origen: number[]
+    }>
+  }
+  pares_analizados: Array<{
+    entidad: string
+    columna_nombre: string
+    columna_id: string
+  }>
+}
+
 /* ── Fase 7: reporte de calidad, carga y limpieza dirigida ── */
 
 export interface LoadInfo {
   hoja_usada: string | null
   hojas_disponibles: string[]
   filas_titulo_omitidas: number
+  formulas?: FormulaReport | null
+}
+
+export interface FormulaReport {
+  disponible: boolean
+  total: number
+  volatiles: number
+  identificadores_volatiles: string[]
+  error?: string
+  por_columna: Record<
+    string,
+    {
+      total: number
+      volatiles: number
+      valores_fijos: number
+      columna_identificadora: boolean
+      ejemplos: Array<{
+        fila_origen: number
+        formula: string
+        volatil: boolean
+      }>
+    }
+  >
 }
 
 export interface DictionaryMatch {

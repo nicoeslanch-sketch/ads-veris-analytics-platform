@@ -60,6 +60,17 @@ aparecen únicamente después de normalizar permanecen como candidatas a revisi�
   evidencia sospechosa. Cada propuesta conserva original, método, confianza y
   estado aplicado; los casos ambiguos quedan intactos.
 
+### Bloque 4 — identidad y fórmulas Excel
+- El motor cruza pares semánticos nombre↔ID de producto y cliente, y reporta
+  tanto nombres asociados a varios identificadores como identificadores asociados
+  a varios nombres. Conserva ejemplos y filas físicas de origen, sin corregir ni
+  eliminar datos automáticamente.
+- Los archivos `.xlsx` se inspeccionan con `openpyxl` en modo fórmula. El reporte
+  excluye filas de título, vacías y totales, separa fórmulas volátiles y destaca
+  fórmulas dentro de columnas identificadoras para revisión.
+- La ausencia de fórmulas o un fallo tolerable de inspección no bloquea el
+  pipeline; la auditoría se entrega como diagnóstico aditivo.
+
 ## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
 
 La lentitud reportada con bases de >50.000 filas tenía una causa raíz medible:

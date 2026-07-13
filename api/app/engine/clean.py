@@ -303,6 +303,114 @@ def _row_identifier_diagnostics(df: pd.DataFrame, source_rows: list[int]) -> tup
     return diagnostics, total_conflicts, conflict_examples
 
 
+def _identity_pairs(
+    columns: list[str], roles: dict[str, str], extended: dict
+) -> list[tuple[str, str, str]]:
+    """(entidad, columna_nombre, columna_id) usando el diccionario extendido."""
+    pairs: list[tuple[str, str, str]] = []
+    product_name = roles.get("producto")
+    client_name = roles.get("cliente")
+    for column in columns:
+        match = extended.get(column)
+        if not match or match.grupo != "identificador":
+            continue
+        normalized = strip_accents_lower(column)
+        if match.rol == "codigo_producto" and product_name:
+            pairs.append(("producto", product_name, column))
+        elif match.rol == "rut" and client_name:
+            pairs.append(("cliente", client_name, column))
+        elif match.rol == "id":
+            if product_name and any(
+                token in normalized for token in ("producto", "sku", "articulo", "item")
+            ):
+                pairs.append(("producto", product_name, column))
+            elif client_name and any(
+                token in normalized for token in ("cliente", "customer", "comprador", "rut")
+            ):
+                pairs.append(("cliente", client_name, column))
+    # Evita repetir un par si varias reglas del diccionario convergen.
+    return list(dict.fromkeys(pairs))
+
+
+def _identity_inconsistencies(
+    df: pd.DataFrame,
+    roles: dict[str, str],
+    extended: dict,
+    source_rows: list[int],
+) -> dict:
+    name_conflicts: list[dict] = []
+    id_conflicts: list[dict] = []
+    analyzed: list[dict] = []
+
+    for entity, name_col, id_col in _identity_pairs(list(df.columns), roles, extended):
+        analyzed.append(
+            {"entidad": entity, "columna_nombre": name_col, "columna_id": id_col}
+        )
+        names_to_ids: dict[str, set[str]] = {}
+        ids_to_names: dict[str, set[str]] = {}
+        name_display: dict[str, str] = {}
+        id_display: dict[str, str] = {}
+        rows_by_name: dict[str, list[int]] = {}
+        rows_by_id: dict[str, list[int]] = {}
+
+        for position, (name, identifier) in enumerate(
+            zip(df[name_col].astype(str), df[id_col].astype(str), strict=True)
+        ):
+            if is_missing(name) or is_missing(identifier):
+                continue
+            name_key = dedup_norm_key(name)
+            id_key = dedup_norm_key(identifier)
+            if not name_key or not id_key:
+                continue
+            names_to_ids.setdefault(name_key, set()).add(id_key)
+            ids_to_names.setdefault(id_key, set()).add(name_key)
+            name_display.setdefault(name_key, name)
+            id_display.setdefault(id_key, identifier)
+            rows_by_name.setdefault(name_key, []).append(source_rows[position])
+            rows_by_id.setdefault(id_key, []).append(source_rows[position])
+
+        for name_key, identifiers in names_to_ids.items():
+            if len(identifiers) < 2:
+                continue
+            name_conflicts.append(
+                {
+                    "entidad": entity,
+                    "columna_nombre": name_col,
+                    "columna_id": id_col,
+                    "nombre": name_display[name_key],
+                    "cantidad_ids": len(identifiers),
+                    "ids_ejemplo": [id_display[value] for value in sorted(identifiers)[:5]],
+                    "filas_origen": rows_by_name[name_key][:10],
+                }
+            )
+        for id_key, names in ids_to_names.items():
+            if len(names) < 2:
+                continue
+            id_conflicts.append(
+                {
+                    "entidad": entity,
+                    "columna_nombre": name_col,
+                    "columna_id": id_col,
+                    "id": id_display[id_key],
+                    "cantidad_nombres": len(names),
+                    "nombres_ejemplo": [name_display[value] for value in sorted(names)[:5]],
+                    "filas_origen": rows_by_id[id_key][:10],
+                }
+            )
+
+    return {
+        "nombre_con_varios_ids": {
+            "conteo": len(name_conflicts),
+            "ejemplos": name_conflicts[:5],
+        },
+        "id_con_varios_nombres": {
+            "conteo": len(id_conflicts),
+            "ejemplos": id_conflicts[:5],
+        },
+        "pares_analizados": analyzed,
+    }
+
+
 def _resolve_mapping(columns: list[str], mapping: dict | None) -> dict[str, str]:
     """Roles del negocio: mapeo automático + correcciones del usuario.
     Fase 11: delega en mapping.resolve_mapping — la MISMA lógica que usa
@@ -719,6 +827,9 @@ def analyze_and_clean(
     # Enriquecer el reporte de calidad con lo que sabe la estandarización
     # y el mapeo universal (Fase 9): rol extendido + método y confianza.
     extended = detect_columns_extended(list(df.columns))
+    identity_inconsistencies = _identity_inconsistencies(
+        df, roles, extended, source_rows
+    )
     for col, info in per_column.items():
         match = extended.get(col)
         if match:
@@ -763,6 +874,17 @@ def analyze_and_clean(
         avisos.append(
             f"Se detectaron {conflicts_id} identificador(es) de fila repetido(s) con "
             "contenido distinto. Son conflictos de origen, no duplicados eliminables."
+        )
+    for example in identity_inconsistencies["nombre_con_varios_ids"]["ejemplos"][:2]:
+        avisos.append(
+            f"El {example['entidad']} '{example['nombre']}' aparece con "
+            f"{example['cantidad_ids']} códigos distintos; puede ser un error de "
+            "digitación o entidades efectivamente distintas — revísalo en el origen."
+        )
+    for example in identity_inconsistencies["id_con_varios_nombres"]["ejemplos"][:2]:
+        avisos.append(
+            f"El código '{example['id']}' aparece con {example['cantidad_nombres']} "
+            f"nombres de {example['entidad']} distintos; se conserva sin fusionar."
         )
     if problems["nulos_semanticos"]:
         avisos.append(
@@ -921,6 +1043,7 @@ def analyze_and_clean(
             "semanticos": problems["nulos_semanticos"],
             "posibles_estructurales": structural_patterns,
         },
+        "inconsistencias_identidad": identity_inconsistencies,
         "preview": preview,
         "estandarizacion": std_report["cambios"],
         "column_types": column_types,

@@ -72,6 +72,10 @@ _TOTAL_ROW_RE = re.compile(
 )
 _MAX_TRAILING_TOTAL_ROWS = 3
 
+_VOLATILE_FORMULA_RE = re.compile(
+    r"(?i)(?:ALEATORIO(?:\.ENTRE)?|RAND(?:BETWEEN)?|RANDBETWEEN|AHORA|NOW|HOY|TODAY|INDIRECTO|INDIRECT)\s*\("
+)
+
 
 def _strip_accents_lower(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text)
@@ -219,6 +223,110 @@ def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.Da
     return df
 
 
+def _scan_xlsx_formulas(
+    content: bytes,
+    sheet: str,
+    headers: list[str],
+    source_rows: list[int],
+    report: dict,
+) -> None:
+    """Audita fórmulas en una pasada por el área real de datos seleccionada."""
+    formula_report: dict = {
+        "disponible": True,
+        "total": 0,
+        "volatiles": 0,
+        "por_columna": {},
+        "identificadores_volatiles": [],
+    }
+    report["formulas"] = formula_report
+    if not source_rows or not headers:
+        return
+
+    try:
+        import openpyxl
+        from .mapping import detect_columns_extended
+
+        workbook = openpyxl.load_workbook(
+            io.BytesIO(content), data_only=False, read_only=True
+        )
+        worksheet = workbook[sheet]
+        allowed_rows = set(source_rows)
+        fixed_by_column = {header: 0 for header in headers}
+        formula_by_column: dict[str, dict] = {}
+
+        for row in worksheet.iter_rows(
+            min_row=min(source_rows),
+            max_row=max(source_rows),
+            min_col=1,
+            max_col=len(headers),
+        ):
+            row_number = row[0].row
+            if row_number not in allowed_rows:
+                continue
+            for index, cell in enumerate(row):
+                header = headers[index]
+                if cell.data_type == "f":
+                    formula = str(cell.value or "")
+                    volatile = bool(_VOLATILE_FORMULA_RE.search(formula))
+                    detail = formula_by_column.setdefault(
+                        header, {"total": 0, "volatiles": 0, "ejemplos": []}
+                    )
+                    detail["total"] += 1
+                    detail["volatiles"] += int(volatile)
+                    if len(detail["ejemplos"]) < 5:
+                        detail["ejemplos"].append(
+                            {
+                                "fila_origen": row_number,
+                                "formula": formula[:300],
+                                "volatil": volatile,
+                            }
+                        )
+                elif cell.value not in (None, ""):
+                    fixed_by_column[header] += 1
+
+        extended = detect_columns_extended(headers)
+        for header, detail in formula_by_column.items():
+            detail["valores_fijos"] = fixed_by_column[header]
+            formula_report["total"] += detail["total"]
+            formula_report["volatiles"] += detail["volatiles"]
+            match = extended.get(header)
+            is_identifier = bool(match and match.grupo == "identificador")
+            detail["columna_identificadora"] = is_identifier
+            if detail["total"] and detail["valores_fijos"]:
+                report["avisos"].append(
+                    f"La columna '{header}' tiene {detail['total']} celda(s) calculadas "
+                    "por fórmula mezcladas con valores fijos; sus resultados pueden "
+                    "cambiar al reabrir el archivo de origen."
+                )
+            elif detail["total"]:
+                report["avisos"].append(
+                    f"La columna '{header}' contiene {detail['total']} celda(s) "
+                    "calculadas por fórmula; sus resultados pueden cambiar al reabrir "
+                    "el archivo de origen."
+                )
+            if is_identifier and detail["volatiles"]:
+                formula_report["identificadores_volatiles"].append(header)
+                report["avisos"].append(
+                    f"Advertencia fuerte: '{header}' usa {detail['volatiles']} fórmula(s) "
+                    "volátil(es) en un identificador. Ese ID no es estable y nunca se "
+                    "usará como respaldo para decidir duplicados."
+                )
+        formula_report["por_columna"] = formula_by_column
+        workbook.close()
+    except Exception as exc:  # análisis auxiliar: jamás debe romper la carga
+        formula_report.update(
+            {
+                "disponible": False,
+                "error": type(exc).__name__,
+                "por_columna": {},
+            }
+        )
+        report["avisos"].append(
+            "No se pudo auditar las fórmulas del Excel; el archivo se procesó "
+            "normalmente y esta revisión quedó pendiente."
+        )
+
+
 def load_dataframe_with_report(
     filename: str, content: bytes, sheet: str | None = None
 ) -> tuple[pd.DataFrame, dict]:
@@ -288,6 +396,14 @@ def load_dataframe_with_report(
     df = df.reset_index(drop=True)
     df.attrs[SOURCE_ROWS_ATTR] = source_rows
     df.attrs[SOURCE_SHEET_ATTR] = source_sheet
+    if name.endswith(".xlsx"):
+        _scan_xlsx_formulas(
+            content,
+            report["hoja_usada"],
+            [str(column) for column in df.columns],
+            source_rows,
+            report,
+        )
     return df, report
 
 

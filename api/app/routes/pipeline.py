@@ -329,6 +329,7 @@ def _analyze_cached(
         "hoja_usada": load_report.get("hoja_usada"),
         "hojas_disponibles": load_report.get("hojas_disponibles", []),
         "filas_titulo_omitidas": load_report.get("filas_titulo_omitidas", 0),
+        "formulas": load_report.get("formulas"),
     }
 
     # Costura de refinado IA (§5.13): preparada, apagada por flag.
@@ -388,6 +389,7 @@ def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -
             "hoja_usada": load_report.get("hoja_usada"),
             "hojas_disponibles": load_report.get("hojas_disponibles", []),
             "filas_titulo_omitidas": load_report.get("filas_titulo_omitidas", 0),
+            "formulas": load_report.get("formulas"),
         },
         "preview": {
             "columnas": list(df_std.columns),

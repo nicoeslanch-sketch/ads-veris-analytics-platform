@@ -1,6 +1,6 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 3 completos.**
+**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 4 completos.**
 El motor ahora detecta duplicados siempre y conserva todas las filas por defecto.
 Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
 original; las coincidencias creadas por la normalización nunca se borran. La
@@ -12,6 +12,9 @@ de problemas y separa montos cero, negativos e IQR sin modificar valores. El
 Bloque 3 distingue vacíos físicos, placeholders por rol y posibles patrones
 estructurales, además de reparar mojibake únicamente con conversiones strict y
 auditoría completa.
+El Bloque 4 añade diagnósticos no destructivos de coherencia nombre↔ID y una
+auditoría de fórmulas Excel limitada a las filas reales de datos, con especial
+atención a fórmulas volátiles y fórmulas presentes en identificadores.
 
 La Fase 11 ataca la lentitud con bases grandes (>50.000 filas) en su causa raíz:
 el caché del pipeline excluía los archivos grandes y cada módulo reprocesaba
@@ -357,7 +360,7 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 "Estandarizar nuevo documento", retención también al login y contactos de ayuda
 (WhatsApp/Instagram/correo). **129 tests + build + 3 E2E.**
 
-## ✅ Fase 12 — Bloques 1 a 3
+## ✅ Fase 12 — Bloques 1 a 4
 
 - Detección siempre activa y eliminación por defecto en `false`, aunque exista
   una columna cuyo nombre parezca identificador.
@@ -378,7 +381,11 @@ columna de monto; restauración del último trabajo al iniciar sesión,
   patrones estructurales informados por separado, sin imputación.
 - Mojibake reparado solo si latin-1/cp1252 strict mejora inequívocamente el texto;
   original, propuesta, método y confianza quedan auditados.
-- Bloques 4–6: pendientes en la rama de Fase 12 autorizada por el dueño.
+- Incoherencias nombre↔ID detectadas en ambos sentidos, con ejemplos y filas de
+  origen; son observaciones y nunca autorizan cambios automáticos.
+- Fórmulas `.xlsx` auditadas solo en filas reales de datos, separando fórmulas
+  volátiles y fórmulas en identificadores.
+- Bloques 5–6: pendientes en la rama de Fase 12 autorizada por el dueño.
 
 ## ⏳ Pendiente (operación comercial)
 

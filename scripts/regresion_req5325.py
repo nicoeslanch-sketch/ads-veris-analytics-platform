@@ -155,6 +155,7 @@ def run(path: Path) -> dict:
     assert safe["problemas"]["nulos_semanticos"] == EXPECTED["placeholders_sin_nombre"]
     assert safe["estandarizacion"]["placeholders_detectados"] == EXPECTED["placeholders_sin_nombre"]
     assert safe["estandarizacion"]["mojibake_detectado"] == EXPECTED["mojibake"]
+    assert load_report["formulas"]["total"] == EXPECTED["formulas"]
     assert int(safe["_df_limpio"].duplicated(keep="first").sum()) == 593
     assert confirmed["resumen"]["filas_despues"] == 14_324
     assert confirmed["correcciones"]["filas_duplicadas_eliminadas"] == 593

@@ -11,6 +11,7 @@ from app.engine.clean import (
     classify_identifier_kind,
     exclude_from_statistical_outliers,
 )
+from app.engine.loader import load_dataframe_with_report
 from app.engine.standardize import _normalize_text_column, _repair_mojibake
 
 
@@ -373,3 +374,66 @@ def test_mojibake_expone_auditoria_sin_perder_original(client, auth_headers):
     audits = body["mojibake_auditoria"]
     assert any(item["valor_original"] == "JosÃ©" and item["aplicado"] for item in audits)
     assert any(item["valor_original"] == "Texto � incompleto" and not item["aplicado"] for item in audits)
+
+
+def test_identidad_nombre_con_varios_ids_usa_normalizacion_del_motor():
+    df = pd.DataFrame(
+        {
+            "Producto": ["Coca-Cola", "COCA COLA", "Otro"],
+            "SKU": ["SKU-1", "SKU-2", "SKU-3"],
+            "Ventas": ["10", "20", "30"],
+        }
+    )
+
+    result = analyze_and_clean(df, None, apply=True)
+    identity = result["inconsistencias_identidad"]
+
+    assert identity["nombre_con_varios_ids"]["conteo"] == 1
+    example = identity["nombre_con_varios_ids"]["ejemplos"][0]
+    assert example["cantidad_ids"] == 2
+    assert set(example["ids_ejemplo"]) == {"SKU-1", "SKU-2"}
+    assert result["_df_limpio"]["SKU"].tolist() == ["SKU-1", "SKU-2", "SKU-3"]
+
+
+def test_identidad_id_con_varios_nombres_no_fusiona_entidades():
+    df = pd.DataFrame(
+        {
+            "Producto": ["Producto Uno", "Producto Dos"],
+            "Codigo Producto": ["P-1", "P-1"],
+            "Ventas": ["10", "20"],
+        }
+    )
+
+    result = analyze_and_clean(df, None, apply=True)
+    identity = result["inconsistencias_identidad"]
+
+    assert identity["id_con_varios_nombres"]["conteo"] == 1
+    assert identity["id_con_varios_nombres"]["ejemplos"][0]["cantidad_nombres"] == 2
+    assert result["_df_limpio"]["Producto"].nunique() == 2
+
+
+def test_formulas_solo_se_escanean_en_area_real_y_alertan_id_volatil():
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Datos"
+    sheet.append(["=NOW()"])
+    sheet.append(["ID Producto", "Producto", "Ventas"])
+    sheet.append(["P-1", "A", 10])
+    sheet.append(["=RANDBETWEEN(1,999)", "B", 20])
+    sheet.append(["P-3", "C", 30])
+    sheet.append(["Total", "", "=SUM(C3:C5)"])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+
+    frame, report = load_dataframe_with_report("formulas.xlsx", buffer.getvalue())
+
+    assert len(frame) == 3
+    formulas = report["formulas"]
+    assert formulas["total"] == 1
+    assert formulas["volatiles"] == 1
+    assert formulas["identificadores_volatiles"] == ["ID Producto"]
+    detail = formulas["por_columna"]["ID Producto"]
+    assert detail["total"] == 1
+    assert detail["valores_fijos"] == 2
+    assert detail["ejemplos"][0]["fila_origen"] == 4
+    assert any("Advertencia fuerte" in warning for warning in report["avisos"])
