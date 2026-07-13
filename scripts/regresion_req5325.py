@@ -151,6 +151,10 @@ def run(path: Path) -> dict:
     assert safe["problemas"]["montos_cero"] == EXPECTED["montos_cero"]
     assert safe["problemas"]["montos_negativos"] == EXPECTED["montos_negativos"]
     assert safe["problemas"]["outliers_iqr"] == EXPECTED["outliers_iqr"]
+    assert safe["problemas"]["nulos_fisicos"] == EXPECTED["nulos_fisicos"]
+    assert safe["problemas"]["nulos_semanticos"] == EXPECTED["placeholders_sin_nombre"]
+    assert safe["estandarizacion"]["placeholders_detectados"] == EXPECTED["placeholders_sin_nombre"]
+    assert safe["estandarizacion"]["mojibake_detectado"] == EXPECTED["mojibake"]
     assert int(safe["_df_limpio"].duplicated(keep="first").sum()) == 593
     assert confirmed["resumen"]["filas_despues"] == 14_324
     assert confirmed["correcciones"]["filas_duplicadas_eliminadas"] == 593
@@ -162,6 +166,8 @@ def run(path: Path) -> dict:
         **facts,
         "filas_por_defecto": safe["resumen"]["filas_despues"],
         "filas_con_confirmacion": confirmed["resumen"]["filas_despues"],
+        "nulos_estructurales_reportados": safe["problemas"]["posibles_nulos_estructurales"],
+        "mojibake_reparado_por_motor": safe["estandarizacion"]["mojibake_reparado"],
         # Informativo: cambia cuando evolucionan las reglas; no se fija en EXPECTED.
         "celdas_textuales_reportadas_por_motor": safe["problemas"]["textos_inconsistentes"],
     }

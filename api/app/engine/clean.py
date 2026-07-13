@@ -41,10 +41,13 @@ from .mapping import (
 from .loader import SOURCE_ROWS_ATTR, SOURCE_SHEET_ATTR
 from .standardize import (
     is_missing,
+    is_identifier_column,
     map_unique,
     missing_mask,
     parse_date,
     parse_number,
+    physical_missing_mask,
+    semantic_missing_mask,
     standardize_dataframe,
 )
 
@@ -143,12 +146,38 @@ def _safe_int_env(name: str, default: int, minimum: int) -> int:
         return default
 
 
+def _safe_float_env(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        return min(maximum, max(minimum, float(os.getenv(name, str(default)))))
+    except ValueError:
+        return default
+
+
 DUPLICATE_LARGE_GROUP_THRESHOLD = _safe_int_env(
     "DUPLICATE_LARGE_GROUP_THRESHOLD", 3, 2
 )
 MAX_AUDIT_DETAILS_IN_RESPONSE = _safe_int_env(
     "MAX_AUDIT_DETAILS_IN_RESPONSE", 5000, 1
 )
+
+# Heurística provisional de nulos estructurales. Solo observa categorías
+# simples; nunca cambia datos ni combina múltiples variables.
+STRUCTURAL_NULL_GROUP_EMPTY_THRESHOLD = _safe_float_env(
+    "STRUCTURAL_NULL_GROUP_EMPTY_THRESHOLD", 0.98, 0.5, 1.0
+)
+STRUCTURAL_NULL_OUTSIDE_FILLED_THRESHOLD = _safe_float_env(
+    "STRUCTURAL_NULL_OUTSIDE_FILLED_THRESHOLD", 0.95, 0.5, 1.0
+)
+STRUCTURAL_NULL_MIN_GROUP_SIZE = _safe_int_env(
+    "STRUCTURAL_NULL_MIN_GROUP_SIZE", 20, 2
+)
+STRUCTURAL_NULL_MAX_GROUP_CARDINALITY = _safe_int_env(
+    "STRUCTURAL_NULL_MAX_GROUP_CARDINALITY", 50, 2
+)
+STRUCTURAL_NULL_MAX_PATTERNS = _safe_int_env(
+    "STRUCTURAL_NULL_MAX_PATTERNS", 20, 1
+)
+_STRUCTURAL_GROUP_ROLES = {None, "producto", "categoria", "canal", "sucursal", "vendedor"}
 
 
 def _quality(problem_cells: int, total_cells: int) -> float:
@@ -300,21 +329,113 @@ def _resolve_scope(columns: list[str], scope: dict | None) -> tuple[set[str], bo
 
 
 def _column_caches(
-    df: pd.DataFrame, column_types: dict[str, str]
-) -> tuple[dict[str, pd.Series], dict[str, pd.Series], dict[str, pd.Series]]:
-    """Parseos por columna calculados UNA vez (§5.8): missing, fechas y números."""
+    df: pd.DataFrame,
+    column_types: dict[str, str],
+    roles_by_col: dict[str, str],
+) -> tuple[dict[str, pd.Series], dict[str, pd.Series], dict[str, pd.Series], dict[str, pd.Series], dict[str, pd.Series]]:
+    """Máscaras y parseos por columna calculados una sola vez."""
     missing: dict[str, pd.Series] = {}
+    physical: dict[str, pd.Series] = {}
+    semantic: dict[str, pd.Series] = {}
     dates: dict[str, pd.Series] = {}
     numbers: dict[str, pd.Series] = {}
     for col in df.columns:
         miss = missing_mask(df[col])
         missing[col] = miss
+        physical[col] = physical_missing_mask(df[col])
+        semantic[col] = semantic_missing_mask(df[col], roles_by_col.get(col))
         ctype = column_types.get(col, "texto")
         if ctype == "fecha":
             dates[col] = map_unique(df[col], lambda v: parse_date(v))
         elif ctype == "numero":
             numbers[col] = map_unique(df[col], lambda v: parse_number(v))
-    return missing, dates, numbers
+    return missing, physical, semantic, dates, numbers
+
+
+def _structural_null_patterns(
+    df: pd.DataFrame,
+    physical_cache: dict[str, pd.Series],
+    column_types: dict[str, str],
+    roles_by_col: dict[str, str],
+    source_rows: list[int],
+) -> list[dict]:
+    """Detecta vacíos probablemente no aplicables según una categoría simple."""
+    if len(df) < STRUCTURAL_NULL_MIN_GROUP_SIZE * 2:
+        return []
+    physical = pd.DataFrame(physical_cache, index=df.index)
+    total_empty = physical.sum(axis=0)
+    patterns: list[dict] = []
+
+    for group_col in df.columns:
+        role = roles_by_col.get(group_col)
+        if (
+            column_types.get(group_col) != "texto"
+            or role not in _STRUCTURAL_GROUP_ROLES
+            or is_identifier_column(group_col, df[group_col])
+        ):
+            continue
+        valid_group = ~missing_mask(df[group_col])
+        cardinality = int(df.loc[valid_group, group_col].nunique(dropna=False))
+        if not 2 <= cardinality <= STRUCTURAL_NULL_MAX_GROUP_CARDINALITY:
+            continue
+
+        normalized_group = df[group_col].astype(str).str.strip()
+        for group_value, indices in normalized_group[valid_group].groupby(
+            normalized_group[valid_group], sort=False
+        ).groups.items():
+            positions = list(indices)
+            group_size = len(positions)
+            outside_size = len(df) - group_size
+            if group_size < STRUCTURAL_NULL_MIN_GROUP_SIZE or outside_size <= 0:
+                continue
+            empty_in_group = physical.loc[positions].sum(axis=0)
+            group_empty_rate = empty_in_group / group_size
+            outside_empty = total_empty - empty_in_group
+            outside_filled_rate = 1 - (outside_empty / outside_size)
+
+            for target_col in df.columns:
+                if target_col == group_col:
+                    continue
+                empty_rate = float(group_empty_rate[target_col])
+                filled_rate = float(outside_filled_rate[target_col])
+                if (
+                    empty_rate < STRUCTURAL_NULL_GROUP_EMPTY_THRESHOLD
+                    or filled_rate < STRUCTURAL_NULL_OUTSIDE_FILLED_THRESHOLD
+                ):
+                    continue
+                empty_positions = [
+                    int(index)
+                    for index in positions
+                    if bool(physical_cache[target_col].loc[index])
+                ]
+                patterns.append(
+                    {
+                        "columna": target_col,
+                        "agrupado_por": group_col,
+                        "grupo": str(group_value)[:160],
+                        "filas_grupo": group_size,
+                        "vacio_en_grupo_pct": round(empty_rate * 100, 1),
+                        "informado_fuera_pct": round(filled_rate * 100, 1),
+                        "filas_origen_ejemplo": [
+                            source_rows[position] for position in empty_positions[:5]
+                        ],
+                        "mensaje": (
+                            f"Posible patrón estructural: la columna {target_col} está vacía "
+                            f"en {round(empty_rate * 100, 1)}% de las filas de "
+                            f"{group_col}={group_value}, pero informada en "
+                            f"{round(filled_rate * 100, 1)}% fuera; puede representar "
+                            "un campo no aplicable."
+                        ),
+                    }
+                )
+
+    patterns.sort(
+        key=lambda item: (
+            item["filas_grupo"], item["vacio_en_grupo_pct"], item["informado_fuera_pct"]
+        ),
+        reverse=True,
+    )
+    return patterns[:STRUCTURAL_NULL_MAX_PATTERNS]
 
 
 def _detect_problems(
@@ -325,13 +446,17 @@ def _detect_problems(
     scoped_cols: set[str],
     exact_duplicate_mask: pd.Series | None = None,
     normalized_only_mask: pd.Series | None = None,
+    source_rows: list[int] | None = None,
 ) -> dict:
-    miss_cache, date_cache, num_cache = _column_caches(df, column_types)
+    miss_cache, physical_cache, semantic_cache, date_cache, num_cache = _column_caches(
+        df, column_types, roles_by_col
+    )
     empty_columns = [col for col in df.columns if bool(miss_cache[col].all())]
     if exact_duplicate_mask is None or normalized_only_mask is None:
         exact_duplicate_mask, normalized_only_mask = _dedup_masks(df, df)
 
-    nulls = 0
+    physical_nulls = 0
+    semantic_nulls = 0
     invalid_dates = 0
     wrong_types = 0
     out_of_range = 0
@@ -345,15 +470,19 @@ def _detect_problems(
             "tipo": column_types.get(col, "texto"),
             "en_alcance": col in scoped_cols,
         }
+        miss = miss_cache[col]
+        col_physical = int(physical_cache[col].sum())
+        col_semantic = int(semantic_cache[col].sum())
+        physical_nulls += col_physical
+        semantic_nulls += col_semantic
+        info["nulos"] = col_physical
+        info["nulos_fisicos"] = col_physical
+        info["nulos_semanticos"] = col_semantic
+        info["nulos_pct"] = round(col_physical / max(len(df), 1) * 100, 1)
         if col in empty_columns:
             info["vacia"] = True
             per_column[col] = info
             continue
-        miss = miss_cache[col]
-        col_nulls = int(miss.sum())
-        nulls += col_nulls
-        info["nulos"] = col_nulls
-        info["nulos_pct"] = round(col_nulls / max(len(df), 1) * 100, 1)
         ctype = column_types.get(col, "texto")
         if ctype == "fecha":
             invalid_mask = ~miss & date_cache[col].isna()
@@ -404,12 +533,28 @@ def _detect_problems(
                         }
         per_column[col] = info
 
+    origin_rows = source_rows or list(range(2, len(df) + 2))
+    structural_patterns = _structural_null_patterns(
+        df, physical_cache, column_types, roles_by_col, origin_rows
+    )
+    for pattern in structural_patterns:
+        column_info = per_column.get(pattern["columna"])
+        if column_info is not None:
+            column_info["posibles_nulos_estructurales"] = (
+                column_info.get("posibles_nulos_estructurales", 0) + 1
+            )
+
     return {
         # Semántica estable: exactos del archivo original vs coincidencias
         # adicionales tras normalización. Nunca dependen del nombre de un ID.
         "duplicados": int(exact_duplicate_mask.sum()),
         "duplicados_probables": int(normalized_only_mask.sum()),
-        "valores_nulos": nulls,
+        # Alias histórico corregido: ahora representa exclusivamente celdas
+        # físicamente vacías, no placeholders semánticos.
+        "valores_nulos": physical_nulls,
+        "nulos_fisicos": physical_nulls,
+        "nulos_semanticos": semantic_nulls,
+        "posibles_nulos_estructurales": len(structural_patterns),
         "fechas_invalidas": invalid_dates,
         "textos_inconsistentes": text_changes,
         "tipos_incorrectos": wrong_types,
@@ -423,7 +568,10 @@ def _detect_problems(
         "_duplicados_mask": exact_duplicate_mask,
         "_duplicados_normalizados_mask": normalized_only_mask,
         "_por_columna": per_column,
-        "_caches": (miss_cache, date_cache, num_cache),
+        "_patrones_estructurales": structural_patterns,
+        "_caches": (
+            miss_cache, physical_cache, semantic_cache, date_cache, num_cache
+        ),
     }
 
 
@@ -436,7 +584,7 @@ def _preview_with_issues(
 ) -> dict:
     """Primeras filas + coordenadas de celdas problemáticas para resaltarlas."""
     preview = df.head(PREVIEW_ROWS)
-    miss_cache, date_cache, num_cache = caches
+    miss_cache, _physical_cache, semantic_cache, date_cache, num_cache = caches
     issues: list[dict] = []
     for row_index in range(len(preview)):
         fila_origen = source_rows[row_index]
@@ -450,6 +598,16 @@ def _preview_with_issues(
                 }
             )
         for col in preview.columns:
+            if bool(semantic_cache[col].iloc[row_index]):
+                issues.append(
+                    {
+                        "fila": row_index,
+                        "fila_origen": fila_origen,
+                        "columna": col,
+                        "tipo": "nulo_semantico",
+                    }
+                )
+                continue
             if bool(miss_cache[col].iloc[row_index]):
                 issues.append(
                     {
@@ -499,7 +657,7 @@ def analyze_and_clean(
     # Conservamos la identidad cargada ANTES de estandarizar. Dos filas que se
     # vuelven iguales por mayúsculas, espacios o formato son solo candidatas a
     # revisión y jamás entran en la máscara eliminable.
-    df, std_report = standardize_dataframe(df_original)
+    df, std_report = standardize_dataframe(df_original, mapping=mapping)
     loaded_original = df_original.copy()
     loaded_original.columns = df.columns
     source_rows = _source_rows(df_original)
@@ -524,11 +682,13 @@ def analyze_and_clean(
         scoped_cols,
         exact_original_mask,
         normalized_only_mask,
+        source_rows,
     )
     empty_columns: list[str] = problems.pop("_columnas_vacias_nombres")
     duplicated_mask: pd.Series = problems.pop("_duplicados_mask")
     problems.pop("_duplicados_normalizados_mask")
     per_column: dict = problems.pop("_por_columna")
+    structural_patterns: list[dict] = problems.pop("_patrones_estructurales")
     caches = problems.pop("_caches")
 
     preview = _preview_with_issues(df, column_types, duplicated_mask, caches, source_rows)
@@ -604,6 +764,13 @@ def analyze_and_clean(
             f"Se detectaron {conflicts_id} identificador(es) de fila repetido(s) con "
             "contenido distinto. Son conflictos de origen, no duplicados eliminables."
         )
+    if problems["nulos_semanticos"]:
+        avisos.append(
+            f"Se detectaron {problems['nulos_semanticos']} placeholder(s) dependientes "
+            "del rol. Se conservaron literalmente y se señalan como nulos semánticos, "
+            "separados de las celdas físicamente vacías."
+        )
+    avisos.extend(pattern["mensaje"] for pattern in structural_patterns)
     fusiones = std_report.get("fusiones_texto", {})
     if fusiones.get("total"):
         ejemplos = ", ".join(f"{a} → {b}" for a, b in fusiones.get("ejemplos", [])[:3])
@@ -655,7 +822,7 @@ def analyze_and_clean(
     remaining_normalized_mask = normalized_only_mask.reset_index(drop=True)
 
     if apply:
-        miss_cache, date_cache, num_cache = caches
+        miss_cache, _physical_cache, _semantic_cache, date_cache, num_cache = caches
         if active["columnas_vacias"] and empty_columns:
             df = df.drop(columns=empty_columns)
         if eliminar_duplicados:
@@ -716,11 +883,13 @@ def analyze_and_clean(
             scoped_cols=scoped_cols,
             exact_duplicate_mask=remaining_exact_mask,
             normalized_only_mask=remaining_normalized_mask,
+            source_rows=clean_source_rows,
         )
         remaining.pop("_columnas_vacias_nombres")
         remaining.pop("_duplicados_mask")
         remaining.pop("_duplicados_normalizados_mask")
         remaining.pop("_por_columna")
+        remaining.pop("_patrones_estructurales")
         remaining.pop("_caches")
         # Los nulos preservados por diseño ya están catalogados por columna en el
         # reporte de calidad: la calidad post-limpieza mide problemas ESTRUCTURALES
@@ -747,6 +916,11 @@ def analyze_and_clean(
         "reglas_activas": active,
         "opciones_aplicacion": {"eliminar_duplicados": bool(eliminar_duplicados)},
         "duplicados_detalle": duplicate_detail,
+        "nulos_detalle": {
+            "fisicos": problems["nulos_fisicos"],
+            "semanticos": problems["nulos_semanticos"],
+            "posibles_estructurales": structural_patterns,
+        },
         "preview": preview,
         "estandarizacion": std_report["cambios"],
         "column_types": column_types,
@@ -755,6 +929,7 @@ def analyze_and_clean(
         "avisos": avisos,
         "duplicados_criterio": duplicados_criterio,
         "fusiones_texto": fusiones,
+        "mojibake_auditoria": std_report.get("mojibake_auditoria", []),
         "_df_limpio": df if apply else None,
         "_source_rows_limpio": clean_source_rows if apply else source_rows,
         "_filas_duplicadas_eliminadas": removed_duplicate_rows,

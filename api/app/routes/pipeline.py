@@ -382,6 +382,7 @@ def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -
         "mapeo": detect_column_roles(list(df_std.columns)),
         "mapeo_extendido": {col: match.to_dict() for col, match in extended.items()},
         "cambios": report["cambios"],
+        "mojibake_auditoria": report.get("mojibake_auditoria", []),
         "avisos": list(load_report.get("avisos", [])) + list(report.get("avisos", [])),
         "carga": {
             "hoja_usada": load_report.get("hoja_usada"),

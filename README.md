@@ -111,6 +111,10 @@ python -m pytest tests/ -v
 | `AI_MONTHLY_LIMIT_GOLD` | Cupo mensual de consultas IA del plan Gold (default: 200) |
 | `ALLOWED_ORIGINS` | Orígenes CORS permitidos, separados por coma |
 | `DEV_AUTH_BYPASS` | Solo desarrollo local sin Supabase (default: `false`) |
+| `STRUCTURAL_NULL_GROUP_EMPTY_THRESHOLD` | Proporción vacía dentro del grupo para señalar un posible nulo estructural (default: `0.98`) |
+| `STRUCTURAL_NULL_OUTSIDE_FILLED_THRESHOLD` | Proporción informada fuera del grupo (default: `0.95`) |
+| `STRUCTURAL_NULL_MIN_GROUP_SIZE` | Tamaño mínimo del grupo estructural (default: `20`) |
+| `STRUCTURAL_NULL_MAX_GROUP_CARDINALITY` | Máximo de categorías de la variable agrupadora (default: `50`) |
 
 ## Deploy
 
@@ -162,11 +166,12 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
   limpia solo para Plan Analista y export seguro contra formula injection.
   Pendiente (operación comercial): checkout Analista, conector SQL, alertas continuas y
   reportes generados en backend.
-- [x] **Fase 12, Bloques 1–2 — motor no destructivo y conteos honestos**: detección automática,
+- [x] **Fase 12, Bloques 1–3 — motor no destructivo y semántica segura**: detección automática,
   eliminación desactivada por defecto y disponible solo mediante confirmación explícita;
   exactos originales separados de coincidencias normalizadas, diagnóstico de IDs,
   fila física de origen y decisión persistida; categorías con unidades separadas,
-  contador textual sin duplicación y controles independientes de cero/negativos/IQR.
+  contador textual sin duplicación, controles independientes de cero/negativos/IQR,
+  placeholders por rol, nulos estructurales y reparación strict de mojibake.
 
 ## Regla de flujo no negociable
 

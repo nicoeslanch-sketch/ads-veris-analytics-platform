@@ -11,7 +11,7 @@ from app.engine.clean import (
     classify_identifier_kind,
     exclude_from_statistical_outliers,
 )
-from app.engine.standardize import _normalize_text_column
+from app.engine.standardize import _normalize_text_column, _repair_mojibake
 
 
 def _clean(client, auth_headers, csv: str, **data):
@@ -254,7 +254,7 @@ def test_respuesta_conserva_campos_anteriores_y_agrega_detalle(client, auth_head
 def test_contador_textual_no_cuenta_dos_veces_la_misma_celda():
     values = pd.Series(["JUAN  PEREZ"] + ["Juan Perez"] * 10)
 
-    unified, detail, _ = _normalize_text_column(values)
+    unified, detail, _, _ = _normalize_text_column(values)
 
     assert unified.eq("Juan Perez").all()
     assert detail["celdas_con_espacios_normalizados"] == 1
@@ -290,3 +290,86 @@ def test_respuesta_no_inventa_total_unico_de_categorias(client, auth_headers):
     assert not {
         "total_problemas", "problemas_totales", "incidencias_totales"
     } & set(body)
+
+
+def test_placeholder_cliente_se_conserva_y_no_se_unifica_como_nombre():
+    values = pd.Series(["Sin Nombre", "SIN NOMBRE", "Juan Pérez"])
+
+    clients, client_detail, _, _ = _normalize_text_column(values, role="cliente")
+    categories, category_detail, _, _ = _normalize_text_column(values, role="categoria")
+
+    assert clients.tolist()[:2] == ["Sin Nombre", "SIN NOMBRE"]
+    assert client_detail["placeholders_detectados"] == 2
+    assert all(value != "" for value in clients)
+    assert category_detail["placeholders_detectados"] == 0
+    assert all(value != "" for value in categories)
+
+
+def test_nulos_fisicos_y_semanticos_se_reportan_separados(client, auth_headers):
+    csv = "Razon Social;Ventas\n;10\nSin Nombre;20\nCliente Real;30\n"
+
+    body = _clean(client, auth_headers, csv).json()
+
+    assert body["problemas"]["nulos_fisicos"] == 1
+    assert body["problemas"]["nulos_semanticos"] == 1
+    assert body["nulos_detalle"]["fisicos"] == 1
+    assert body["nulos_detalle"]["semanticos"] == 1
+    assert body["preview"]["filas"][1][0] == "Sin Nombre"
+    assert any(issue["tipo"] == "nulo_semantico" for issue in body["preview"]["issues"])
+
+
+def test_cliente_placeholder_no_cuenta_como_dimension_valida(client, auth_headers):
+    csv = "Razon Social;Ventas\nSin Nombre;10\nCliente desconocido;20\n"
+    response = client.post(
+        "/metrics",
+        files={"file": ("clientes.csv", csv.encode("utf-8"), "text/csv")},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["dimensiones"]["cliente"] is False
+
+
+def test_nulo_estructural_se_detecta_sin_modificar():
+    df = pd.DataFrame(
+        {
+            "Categoria": ["A"] * 20 + ["B"] * 20,
+            "Detalle": [""] * 20 + [f"Dato {index}" for index in range(20)],
+            "Ventas": [str(index + 1) for index in range(40)],
+        }
+    )
+
+    result = analyze_and_clean(df, None, apply=True)
+
+    patterns = result["nulos_detalle"]["posibles_estructurales"]
+    pattern = next(item for item in patterns if item["columna"] == "Detalle")
+    assert pattern["agrupado_por"] == "Categoria"
+    assert pattern["vacio_en_grupo_pct"] == 100.0
+    assert pattern["informado_fuera_pct"] == 100.0
+    assert result["_df_limpio"]["Detalle"].iloc[:20].eq("").all()
+
+
+def test_mojibake_strict_latin1_cp1252_y_ambiguo():
+    latin, latin_audit = _repair_mojibake("JosÃ©")
+    cp1252, cp_audit = _repair_mojibake("Lâ€™Oréal")
+    ambiguous, ambiguous_audit = _repair_mojibake("Texto � incompleto")
+
+    assert latin == "José"
+    assert latin_audit and latin_audit["aplicado"] is True
+    assert cp1252 == "L’Oréal"
+    assert cp_audit and cp_audit["aplicado"] is True
+    assert "cp1252" in cp_audit["metodo"]
+    assert ambiguous == "Texto � incompleto"
+    assert ambiguous_audit and ambiguous_audit["aplicado"] is False
+
+
+def test_mojibake_expone_auditoria_sin_perder_original(client, auth_headers):
+    csv = "Cliente;Ventas\nJosÃ©;10\nTexto � incompleto;20\n"
+
+    body = _clean(client, auth_headers, csv).json()
+
+    assert body["estandarizacion"]["mojibake_detectado"] == 2
+    assert body["estandarizacion"]["mojibake_reparado"] == 1
+    audits = body["mojibake_auditoria"]
+    assert any(item["valor_original"] == "JosÃ©" and item["aplicado"] for item in audits)
+    assert any(item["valor_original"] == "Texto � incompleto" and not item["aplicado"] for item in audits)

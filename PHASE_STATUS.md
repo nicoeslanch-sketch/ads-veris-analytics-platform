@@ -1,6 +1,6 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 y 2 completos.**
+**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 3 completos.**
 El motor ahora detecta duplicados siempre y conserva todas las filas por defecto.
 Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
 original; las coincidencias creadas por la normalización nunca se borran. La
@@ -8,7 +8,10 @@ decisión se propaga a métricas, descarga, IA, caché e historial, y las incide
 usan la fila física del archivo como trazabilidad. La migración local `0012`
 persiste esa opción, pero debe aplicarse al proyecto remoto después de validar el
 bloque. El Bloque 2 corrige el doble conteo textual, elimina el total engañoso
-de problemas y separa montos cero, negativos e IQR sin modificar valores.
+de problemas y separa montos cero, negativos e IQR sin modificar valores. El
+Bloque 3 distingue vacíos físicos, placeholders por rol y posibles patrones
+estructurales, además de reparar mojibake únicamente con conversiones strict y
+auditoría completa.
 
 La Fase 11 ataca la lentitud con bases grandes (>50.000 filas) en su causa raíz:
 el caché del pipeline excluía los archivos grandes y cada módulo reprocesaba
@@ -354,7 +357,7 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 "Estandarizar nuevo documento", retención también al login y contactos de ayuda
 (WhatsApp/Instagram/correo). **129 tests + build + 3 E2E.**
 
-## ✅ Fase 12 — Bloques 1 y 2
+## ✅ Fase 12 — Bloques 1 a 3
 
 - Detección siempre activa y eliminación por defecto en `false`, aunque exista
   una columna cuyo nombre parezca identificador.
@@ -371,7 +374,11 @@ columna de monto; restauración del último trabajo al iniciar sesión,
   una sola vez aunque pase por varias normalizaciones.
 - Montos cero, negativos y atípicos IQR separados y solo señalizados, con
   parámetros estadísticos por columna.
-- Bloques 3–6: pendientes en la rama de Fase 12 autorizada por el dueño.
+- Placeholders de cliente preservados como nulos semánticos; vacíos físicos y
+  patrones estructurales informados por separado, sin imputación.
+- Mojibake reparado solo si latin-1/cp1252 strict mejora inequívocamente el texto;
+  original, propuesta, método y confianza quedan auditados.
+- Bloques 4–6: pendientes en la rama de Fase 12 autorizada por el dueño.
 
 ## ⏳ Pendiente (operación comercial)
 

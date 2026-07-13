@@ -60,6 +60,8 @@ const PROBLEM_LABELS: Array<{
   { key: 'duplicados', label: 'Filas idénticas repetidas', unit: 'filas', icon: Copy },
   { key: 'duplicados_probables', label: 'Coincidencias tras normalización', unit: 'filas', icon: Copy },
   { key: 'valores_nulos', label: 'Celdas físicamente vacías', unit: 'celdas', icon: FileWarning },
+  { key: 'nulos_semanticos', label: 'Placeholders según el rol', unit: 'celdas', icon: FileWarning },
+  { key: 'posibles_nulos_estructurales', label: 'Posibles patrones estructurales', unit: 'patrones', icon: FileWarning },
   { key: 'fechas_invalidas', label: 'Fechas que requieren revisión', unit: 'celdas', icon: CalendarClock },
   { key: 'textos_inconsistentes', label: 'Textos que cambiarían', unit: 'celdas', icon: Type },
   { key: 'tipos_incorrectos', label: 'Tipos incompatibles', unit: 'celdas', icon: Settings2 },

@@ -15,7 +15,14 @@ import re
 import pandas as pd
 
 from .mapping import detect_column_roles, resolve_mapping
-from .standardize import is_missing, map_unique, parse_date, parse_number
+from .standardize import (
+    is_missing,
+    map_unique,
+    missing_mask,
+    parse_date,
+    parse_number,
+    semantic_missing_mask,
+)
 
 FINANCIAL_RATIOS = [
     "roa",
@@ -344,7 +351,10 @@ def compute_metrics(
     # ── Agrupaciones sobre la selección ──
     def _has_data(role: str) -> bool:
         col = roles.get(role)
-        return bool(col is not None and df[col].map(lambda v: not is_missing(v)).any())
+        if col is None:
+            return False
+        semantic = semantic_missing_mask(df[col], role)
+        return bool((~missing_mask(df[col]) & ~semantic).any())
 
     moneda, aviso_moneda = (
         currency_hint

@@ -21,10 +21,18 @@ import warnings
 
 import pandas as pd
 
-from .mapping import norm_key, strip_accents_lower
+from .mapping import norm_key, resolve_mapping, strip_accents_lower
 
 # Valores que se consideran "sin dato" además del string vacío.
 MISSING_TOKENS = {"", "-", "--", "n/a", "na", "null", "none", "s/i", "sin dato"}
+
+# Placeholders dependientes del significado de la columna. Se conservan en el
+# DataFrame para distinguirlos de una celda físicamente vacía.
+PLACEHOLDERS_BY_ROLE = {
+    "cliente": {
+        "sin nombre", "cliente desconocido", "sin identificar", "no informa",
+    },
+}
 
 DATE_HINTS = ("fecha", "date", "periodo", "emision", "vencimiento")
 _DATE_SHAPE = re.compile(r"^\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\s*$")
@@ -77,6 +85,27 @@ def missing_mask(series: pd.Series) -> pd.Series:
     """Máscara vectorizada de valores 'sin dato' (mucho más rápida que .map)."""
     normalized = series.astype(str).str.strip().str.lower()
     return normalized.isin(MISSING_TOKENS)
+
+
+def physical_missing_mask(series: pd.Series) -> pd.Series:
+    """Celdas realmente vacías; no incluye placeholders ni tokens como N/A."""
+    return series.astype(str).str.strip().eq("")
+
+
+def is_semantic_placeholder(value: str, role: str | None) -> bool:
+    placeholders = PLACEHOLDERS_BY_ROLE.get(role or "", set())
+    normalized = " ".join(strip_accents_lower(value).split())
+    return normalized in placeholders
+
+
+def semantic_missing_mask(series: pd.Series, role: str | None) -> pd.Series:
+    """Placeholders válidos solo para un rol, sin modificar su valor original."""
+    placeholders = PLACEHOLDERS_BY_ROLE.get(role or "", set())
+    if not placeholders:
+        return pd.Series(False, index=series.index)
+    return map_unique(
+        series.astype(str), lambda value: is_semantic_placeholder(value, role)
+    ).astype(bool)
 
 
 def map_unique(series: pd.Series, func) -> pd.Series:
@@ -350,6 +379,99 @@ def _levenshtein_leq(a: str, b: str, max_distance: int) -> bool:
 _FUZZY_MAX_UNIQUE_KEYS = 400
 _FUZZY_MIN_KEY_LEN = 4
 
+_MOJIBAKE_MARKERS = ("Ã", "Â", "�", "â€", "ð")
+_UNEXPECTED_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+_MOJIBAKE_SEGMENT_RE = re.compile(r"(?:Ã.|Â.|â..|ð...)")
+
+
+def _mojibake_score(value: str) -> int:
+    text = str(value)
+    return sum(text.count(marker) for marker in _MOJIBAKE_MARKERS) + len(
+        _UNEXPECTED_CONTROL_RE.findall(text)
+    )
+
+
+def _repair_mojibake(value: str) -> tuple[str, dict | None]:
+    """Propone una reparación solo cuando una conversión strict es inequívoca.
+
+    Nunca descarta bytes ni caracteres. Si latin-1 y cp1252 producen propuestas
+    distintas con la misma evidencia, se conserva el original y se audita como
+    ambiguo.
+    """
+    original = str(value)
+    original_score = _mojibake_score(original)
+    if original_score == 0:
+        return original, None
+
+    proposals: dict[str, list[str]] = {}
+    for encoding in ("latin-1", "cp1252"):
+        candidates: list[str] = []
+        try:
+            candidates.append(original.encode(encoding, errors="strict").decode(
+                "utf-8", errors="strict"
+            ))
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+
+        # Una cadena puede mezclar un segmento dañado con Unicode legítimo
+        # ("Lâ€™Oréal"). Se repara solo cada secuencia sospechosa, siempre strict.
+        repaired_segment = False
+
+        def _replace_segment(match: re.Match) -> str:
+            nonlocal repaired_segment
+            segment = match.group(0)
+            try:
+                proposed_segment = segment.encode(encoding, errors="strict").decode(
+                    "utf-8", errors="strict"
+                )
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                return segment
+            if _mojibake_score(proposed_segment) < _mojibake_score(segment):
+                repaired_segment = True
+                return proposed_segment
+            return segment
+
+        segmented = _MOJIBAKE_SEGMENT_RE.sub(_replace_segment, original)
+        if repaired_segment:
+            candidates.append(segmented)
+
+        for proposed in candidates:
+            if proposed != original and _mojibake_score(proposed) < original_score:
+                proposals.setdefault(proposed, []).append(encoding)
+
+    if not proposals:
+        return original, {
+            "valor_original": original,
+            "valor_propuesto": None,
+            "metodo": None,
+            "confianza": 0.0,
+            "aplicado": False,
+            "motivo": "No existe una reparación strict inequívoca.",
+        }
+
+    best_score = min(_mojibake_score(proposed) for proposed in proposals)
+    best = [proposed for proposed in proposals if _mojibake_score(proposed) == best_score]
+    if len(best) != 1:
+        return original, {
+            "valor_original": original,
+            "valor_propuesto": None,
+            "metodo": "ambiguo",
+            "confianza": 0.0,
+            "aplicado": False,
+            "motivo": "latin-1 y cp1252 producen propuestas distintas equivalentes.",
+        }
+
+    proposed = best[0]
+    methods = proposals[proposed]
+    return proposed, {
+        "valor_original": original,
+        "valor_propuesto": proposed,
+        "metodo": methods[0] if len(methods) == 1 else "+".join(methods),
+        "confianza": 0.98 if best_score == 0 else 0.8,
+        "aplicado": True,
+        "motivo": "La propuesta reduce las secuencias sospechosas sin descartar caracteres.",
+    }
+
 # Fase 10 §6.1: la fusión fuzzy JAMÁS se aplica a identificadores — un typo de
 # distancia 1 puede ser un SKU/folio/RUT legítimamente distinto ("SKU-1001" vs
 # "SKU-100I"). La normalización segura (espacios/mayúsculas/tildes) sí aplica.
@@ -408,8 +530,8 @@ def _fuzzy_merge_keys(frequencies: dict[str, dict[str, int]]) -> dict[str, str]:
 
 
 def _normalize_text_column(
-    series: pd.Series, allow_fuzzy: bool = True
-) -> tuple[pd.Series, dict[str, int], list[list[str]]]:
+    series: pd.Series, allow_fuzzy: bool = True, role: str | None = None
+) -> tuple[pd.Series, dict[str, int], list[list[str]], list[dict]]:
     """Recorta espacios, limpia placeholders y unifica variantes de un mismo texto.
 
     Devuelve (serie, desglose, ejemplos_de_fusiones_fuzzy). Las variantes que
@@ -417,12 +539,39 @@ def _normalize_text_column(
     frecuente; los typos cercanos se fusionan con Levenshtein acotado —
     SOLO si `allow_fuzzy` (jamás en columnas identificadoras, Fase 10 §6.1)."""
     original = series.map(str)
-    stripped = map_unique(series, lambda v: "" if is_missing(v) else re.sub(r"\s+", " ", str(v)).strip())
+    semantic_mask = semantic_missing_mask(original, role)
+
+    value_counts = original.value_counts(dropna=False)
+    repaired_values: dict[str, str] = {}
+    mojibake_audit: list[dict] = []
+    mojibake_detected = mojibake_repaired = 0
+    for value, count in value_counts.items():
+        text = str(value)
+        if is_semantic_placeholder(text, role):
+            repaired_values[text] = text
+            continue
+        repaired, audit = _repair_mojibake(text)
+        repaired_values[text] = repaired
+        if audit:
+            occurrences = int(count)
+            mojibake_detected += occurrences
+            if audit["aplicado"]:
+                mojibake_repaired += occurrences
+            if len(mojibake_audit) < 100:
+                mojibake_audit.append({**audit, "ocurrencias": occurrences})
+
+    repaired = original.map(repaired_values)
+    stripped = map_unique(
+        repaired,
+        lambda v: "" if is_missing(v) else re.sub(r"\s+", " ", str(v)).strip(),
+    )
+    # Un placeholder semántico conserva exactamente el texto entregado.
+    stripped = stripped.where(~semantic_mask, original)
     spacing_changes = int((stripped != original).sum())
 
     frequencies: dict[str, dict[str, int]] = {}
     for value in stripped:
-        if not value:
+        if not value or is_semantic_placeholder(value, role):
             continue
         # norm_key agrupa variantes que solo difieren en mayúsculas, tildes
         # o puntuación de formato (ej: "76.123.456-7" y "76123456-7").
@@ -473,7 +622,15 @@ def _normalize_text_column(
                         canonical[minor] = canonical[major]
                         break
 
-    unified = map_unique(stripped, lambda v: canonical[norm_key(v)] if v else v)
+    unified = map_unique(
+        stripped,
+        lambda v: (
+            v
+            if not v or is_semantic_placeholder(v, role)
+            else canonical[norm_key(v)]
+        ),
+    )
+    unified = unified.where(~semantic_mask, original)
     variant_changes = int((unified != stripped).sum())
     # Una celda puede pasar por ambas etapas. El contador visible compara
     # únicamente el resultado final con el original para no contarla dos veces.
@@ -482,20 +639,23 @@ def _normalize_text_column(
         "celdas_con_espacios_normalizados": spacing_changes,
         "celdas_con_variantes_unificadas": variant_changes,
         "celdas_textuales_unicas_modificadas": unique_changes,
-        # Bloque 3 completa estos campos; se declaran aditivamente desde ahora.
-        "placeholders_detectados": 0,
-        "mojibake_detectado": 0,
-        "mojibake_reparado": 0,
-    }, fuzzy_examples
+        "placeholders_detectados": int(semantic_mask.sum()),
+        "mojibake_detectado": mojibake_detected,
+        "mojibake_reparado": mojibake_repaired,
+    }, fuzzy_examples, mojibake_audit
 
 
 # ── Pipeline de estandarización ──────────────────────────────────────────────
 
 
-def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def standardize_dataframe(
+    df: pd.DataFrame, mapping: dict | None = None
+) -> tuple[pd.DataFrame, dict]:
     """Devuelve (df_estandarizado, reporte de cambios, tipos y confianza)."""
     result = df.copy()
     renamed_headers = normalize_headers(result)
+    roles = resolve_mapping(list(result.columns), mapping)
+    roles_by_col = {column: role for role, column in roles.items()}
 
     column_types: dict[str, str] = {}
     column_confidence: dict[str, float] = {}
@@ -504,6 +664,7 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     fuzzy_total = 0
     fuzzy_examples: list[list[str]] = []
     date_avisos: list[str] = []
+    mojibake_audit: list[dict] = []
     text_changes = date_changes = number_changes = 0
     text_detail = {
         "celdas_con_espacios_normalizados": 0,
@@ -523,8 +684,8 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             # Fase 10 §6.1: nada de fuzzy sobre identificadores (SKU, folio,
             # RUT, email…) — un typo de distancia 1 puede ser otro código real.
             allow_fuzzy = not is_identifier_column(col, result[col])
-            result[col], detail, examples = _normalize_text_column(
-                result[col], allow_fuzzy=allow_fuzzy
+            result[col], detail, examples, column_mojibake = _normalize_text_column(
+                result[col], allow_fuzzy=allow_fuzzy, role=roles_by_col.get(col)
             )
             for key in text_detail:
                 text_detail[key] += detail[key]
@@ -532,6 +693,10 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             if examples:
                 fuzzy_total += len(examples)
                 fuzzy_examples.extend(examples[: max(0, 5 - len(fuzzy_examples))])
+            for audit in column_mojibake:
+                if len(mojibake_audit) >= 5000:
+                    break
+                mojibake_audit.append({"columna": col, **audit})
         elif ctype == "fecha":
             profile = column_date_profile(result[col])
             dayfirst = profile["dayfirst"]
@@ -572,6 +737,14 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             number_changes += int((new != result[col].map(str)).sum())
             result[col] = new
 
+    if text_detail["mojibake_detectado"]:
+        pending = text_detail["mojibake_detectado"] - text_detail["mojibake_reparado"]
+        date_avisos.append(
+            f"Se detectaron {text_detail['mojibake_detectado']} celda(s) con texto "
+            f"posiblemente mal codificado; {text_detail['mojibake_reparado']} se "
+            f"repararon con conversión strict y {pending} quedaron para revisión."
+        )
+
     report = {
         "column_types": column_types,
         "column_confidence": column_confidence,
@@ -579,6 +752,7 @@ def standardize_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "fechas_dayfirst": date_dayfirst,
         "avisos": date_avisos,
         "fusiones_texto": {"total": fuzzy_total, "ejemplos": fuzzy_examples},
+        "mojibake_auditoria": mojibake_audit,
         "cambios": {
             "encabezados_normalizados": renamed_headers,
             "textos_normalizados": text_changes,

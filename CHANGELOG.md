@@ -50,6 +50,16 @@ aparecen únicamente después de normalizar permanecen como candidatas a revisi�
   Ninguno modifica datos. El detalle IQR por columna incluye cuartiles, rango,
   límites y conteos bajo/sobre esos límites.
 
+### Bloque 3 — semántica y codificación segura
+- Los placeholders de cliente (`Sin Nombre`, `cliente desconocido`, etc.) se
+  conservan literalmente, no se fusionan con nombres reales y se reportan como
+  nulos semánticos separados de los vacíos físicos.
+- El motor señala patrones estructurales mediante categorías simples y umbrales
+  configurables; nunca imputa ni borra esos valores.
+- El mojibake se repara solo con conversiones latin-1/cp1252 strict que reduzcan
+  evidencia sospechosa. Cada propuesta conserva original, método, confianza y
+  estado aplicado; los casos ambiguos quedan intactos.
+
 ## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
 
 La lentitud reportada con bases de >50.000 filas tenía una causa raíz medible:

@@ -12,6 +12,7 @@ export interface StandardizeResult {
   carga?: LoadInfo
   mapeo: Record<string, string>
   mapeo_extendido?: Record<string, DictionaryMatch>
+  mojibake_auditoria?: MojibakeAudit[]
   cambios: {
     encabezados_normalizados: number
     textos_normalizados: number
@@ -35,7 +36,7 @@ export interface CleanIssue {
   fila: number
   fila_origen?: number
   columna: string
-  tipo: 'duplicado' | 'nulo' | 'fecha_invalida' | 'tipo_incorrecto'
+  tipo: 'duplicado' | 'nulo' | 'nulo_semantico' | 'fecha_invalida' | 'tipo_incorrecto'
 }
 
 export interface CleanResult {
@@ -54,6 +55,9 @@ export interface CleanResult {
     /** Fase 10: duplicados con misma clave pero montos distintos (revisión manual). */
     duplicados_probables?: number
     valores_nulos: number
+    nulos_fisicos?: number
+    nulos_semanticos?: number
+    posibles_nulos_estructurales?: number
     fechas_invalidas: number
     textos_inconsistentes: number
     tipos_incorrectos: number
@@ -76,6 +80,7 @@ export interface CleanResult {
   reglas_activas: CleaningRules
   opciones_aplicacion?: CleaningOptions
   duplicados_detalle?: DuplicateDetails
+  nulos_detalle?: NullDetails
   preview: {
     columnas: string[]
     filas: string[][]
@@ -88,6 +93,7 @@ export interface CleanResult {
   avisos?: string[]
   duplicados_criterio?: string
   fusiones_texto?: { total: number; ejemplos: string[][] }
+  mojibake_auditoria?: MojibakeAudit[]
   carga?: LoadInfo
   dirigida?: DirectedInfo
 }
@@ -105,6 +111,34 @@ export interface DuplicateDetails {
   filas_eliminadas: number
   posible_granularidad_omitida?: boolean
   auditoria_truncada?: boolean
+}
+
+export interface StructuralNullPattern {
+  columna: string
+  agrupado_por: string
+  grupo: string
+  filas_grupo: number
+  vacio_en_grupo_pct: number
+  informado_fuera_pct: number
+  filas_origen_ejemplo: number[]
+  mensaje: string
+}
+
+export interface NullDetails {
+  fisicos: number
+  semanticos: number
+  posibles_estructurales: StructuralNullPattern[]
+}
+
+export interface MojibakeAudit {
+  columna?: string
+  valor_original: string
+  valor_propuesto: string | null
+  metodo: string | null
+  confianza: number
+  aplicado: boolean
+  motivo: string
+  ocurrencias: number
 }
 
 /* ── Fase 7: reporte de calidad, carga y limpieza dirigida ── */
@@ -134,6 +168,9 @@ export interface ColumnQuality {
   en_alcance: boolean
   vacia?: boolean
   nulos?: number
+  nulos_fisicos?: number
+  nulos_semanticos?: number
+  posibles_nulos_estructurales?: number
   nulos_pct?: number
   fechas_invalidas?: number
   tipos_incorrectos?: number
