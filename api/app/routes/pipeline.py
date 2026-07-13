@@ -21,6 +21,7 @@ Fase 7:
 - Costura de refinado IA (§5.13) cableada tras la limpieza, apagada por flag.
 """
 
+import copy
 import hashlib
 import io
 import json
@@ -38,7 +39,7 @@ from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import Capability, require_capability_for_user
 from ..config import Settings, get_settings
 from ..engine.ai_refine import refine_with_ai
-from ..engine.clean import analyze_and_clean
+from ..engine.clean import DEFAULT_RULES, analyze_and_clean
 from ..engine.directed import (
     MAX_INSTRUCTIONS_CHARS,
     interpret_cleaning_instructions,
@@ -55,6 +56,57 @@ router = APIRouter()
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # multipart es solo para archivos pequeños
 PREVIEW_ROWS = 5
+
+# Carga y estandarización son etapas inmutables compartidas por /standardize,
+# /clean, /metrics y descargas. Un presupuesto único evita duplicar memoria sin
+# límite: una base grande desplaza las entradas antiguas por LRU.
+_FRAME_CACHE_LOCK = threading.Lock()
+_FRAME_CACHE: "OrderedDict[tuple, tuple[object, dict]]" = OrderedDict()
+_FRAME_CACHE_CELL_BUDGET = 1_600_000
+_FRAME_CACHE_MAX_ENTRY_CELLS = 1_200_000
+
+
+def _clone_frame(df):
+    cloned = df.copy(deep=True)
+    cloned.attrs = copy.deepcopy(df.attrs)
+    return cloned
+
+
+def _frame_cache_get(key: tuple):
+    with _FRAME_CACHE_LOCK:
+        cached = _FRAME_CACHE.get(key)
+        if cached is None:
+            return None
+        _FRAME_CACHE.move_to_end(key)
+        frame, report = cached
+    return _clone_frame(frame), copy.deepcopy(report)
+
+
+def _frame_cache_store(key: tuple, frame, report: dict) -> None:
+    cells = len(frame) * max(len(frame.columns), 1)
+    if cells > _FRAME_CACHE_MAX_ENTRY_CELLS:
+        return
+    stored = (_clone_frame(frame), copy.deepcopy(report))
+    with _FRAME_CACHE_LOCK:
+        _FRAME_CACHE[key] = stored
+        _FRAME_CACHE.move_to_end(key)
+        total = sum(
+            len(item[0]) * max(len(item[0].columns), 1)
+            for item in _FRAME_CACHE.values()
+        )
+        while len(_FRAME_CACHE) > 1 and total > _FRAME_CACHE_CELL_BUDGET:
+            _, removed = _FRAME_CACHE.popitem(last=False)
+            total -= len(removed[0]) * max(len(removed[0].columns), 1)
+
+
+def _frame_key(kind: str, filename: str, content: bytes, sheet: str | None, extra: str = "") -> tuple:
+    return (
+        kind,
+        hashlib.sha1(content).digest(),
+        os.path.splitext(filename)[1].lower(),
+        sheet or "",
+        extra,
+    )
 
 
 def _normalize_user_storage_path(storage_path: str, user: AuthenticatedUser) -> str:
@@ -87,10 +139,35 @@ async def _read_input(
 
 
 def _load_or_400(filename: str, content: bytes, sheet: str | None = None):
+    key = _frame_key("raw", filename, content, sheet)
+    cached = _frame_cache_get(key)
+    if cached is not None:
+        return cached
     try:
-        return load_dataframe_with_report(filename, content, sheet=sheet)
+        frame, report = load_dataframe_with_report(filename, content, sheet=sheet)
     except UnsupportedFileError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    _frame_cache_store(key, frame, report)
+    return frame, report
+
+
+def _standardize_frame_cached(
+    filename: str,
+    content: bytes,
+    sheet: str | None,
+    mapping: dict | None,
+    original=None,
+):
+    mapping_key = json.dumps(mapping or {}, sort_keys=True)
+    key = _frame_key("standardized", filename, content, sheet, mapping_key)
+    cached = _frame_cache_get(key)
+    if cached is not None:
+        return cached
+    if original is None:
+        original, _ = _load_or_400(filename, content, sheet=sheet)
+    standardized, report = standardize_dataframe(original, mapping=mapping)
+    _frame_cache_store(key, standardized, report)
+    return standardized, report
 
 
 def _clean_sheet_param(sheet: str | None) -> str | None:
@@ -337,9 +414,10 @@ def _cache_key(
     sheet: str | None = None,
     eliminar_duplicados: bool = False,
 ) -> tuple:
+    effective_rules = {**DEFAULT_RULES, **(rules or {})}
     return (
         hashlib.sha1(content).digest(),
-        json.dumps(rules or {}, sort_keys=True),
+        json.dumps(effective_rules, sort_keys=True),
         apply,
         json.dumps(mapping or {}, sort_keys=True),
         json.dumps(scope or {}, sort_keys=True),
@@ -376,6 +454,13 @@ def _analyze_cached(
     raw_roles = {**detect_column_roles(list(df.columns)), **(mapping or {})}
     monto_col = raw_roles.get("monto")
     currency = detect_currency(df[monto_col] if monto_col in df.columns else None)
+    standardized = _standardize_frame_cached(
+        filename,
+        content,
+        sheet,
+        mapping,
+        original=df,
+    )
 
     result = analyze_and_clean(
         df,
@@ -384,6 +469,7 @@ def _analyze_cached(
         mapping=mapping,
         scope=scope,
         eliminar_duplicados=eliminar_duplicados,
+        standardized=standardized,
     )
     result["_moneda"] = currency
     result["avisos"] = list(load_report.get("avisos", [])) + list(result.get("avisos", []))
@@ -420,7 +506,13 @@ def _public_clean_response(result: dict, filename: str, extra: dict | None = Non
 
 def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -> dict:
     df_original, load_report = _load_or_400(filename, content, sheet=sheet)
-    df_std, report = standardize_dataframe(df_original)
+    df_std, report = _standardize_frame_cached(
+        filename,
+        content,
+        sheet,
+        mapping=None,
+        original=df_original,
+    )
 
     # Fase 9: mapeo universal — rol extendido (64 roles) por columna según el
     # diccionario de palabras clave, con método y confianza del match.

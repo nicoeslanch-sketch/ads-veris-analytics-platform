@@ -178,7 +178,9 @@ variables `VITE_*` en el proyecto de Vercel. El rewrite SPA ya está en `fronten
   incoherencias nombre↔ID, auditoría conservadora de fórmulas Excel y descarga
   multihoja gobernada por un manifiesto explícito (combinación solo con
   encabezados idénticos y confirmación); eliminación recuperable desde Historial
-  y mapeo progresivo basado en confianza semántica.
+  y mapeo progresivo basado en confianza semántica. El pipeline comparte etapas
+  con cachés LRU acotados, optimiza Excel sin fórmulas y carga el frontend por
+  rutas para reducir tanto el procesamiento repetido como el bundle inicial.
 
 ## Regla de flujo no negociable
 

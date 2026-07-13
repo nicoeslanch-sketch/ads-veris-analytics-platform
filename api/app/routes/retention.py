@@ -25,6 +25,7 @@ from fastapi.concurrency import run_in_threadpool
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import get_profile_flags
 from ..config import Settings, get_settings
+from ..storage import invalidate_storage_cache
 
 router = APIRouter(prefix="/storage")
 
@@ -107,6 +108,8 @@ def _delete_files(user_id: str, names: list[str], settings: Settings) -> None:
         timeout=_TIMEOUT,
     )
     response.raise_for_status()
+    for name in names:
+        invalidate_storage_cache(f"{user_id}/{name}")
 
 
 def _unlink_datasets(user_id: str, names: list[str], settings: Settings) -> None:

@@ -1,20 +1,37 @@
+import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import { AuthProvider } from './auth/AuthContext'
 import { DatasetProvider } from './data/DatasetContext'
 import ProtectedRoute from './auth/ProtectedRoute'
 import AppShell from './components/layout/AppShell'
 import Login from './pages/Login'
-import Resumen from './pages/Resumen'
-import Explorar from './pages/Explorar'
-import Estandarizacion from './pages/Estandarizacion'
-import Limpieza from './pages/Limpieza'
-import Historial from './pages/Historial'
-import Conectores from './pages/Conectores'
-import Alertas from './pages/Alertas'
-import Reportes from './pages/Reportes'
-import Planes from './pages/Planes'
-import Configuracion from './pages/Configuracion'
-import AdminCuentas from './pages/AdminCuentas'
+
+const Resumen = lazy(() => import('./pages/Resumen'))
+const Explorar = lazy(() => import('./pages/Explorar'))
+const Estandarizacion = lazy(() => import('./pages/Estandarizacion'))
+const Limpieza = lazy(() => import('./pages/Limpieza'))
+const Historial = lazy(() => import('./pages/Historial'))
+const Conectores = lazy(() => import('./pages/Conectores'))
+const Alertas = lazy(() => import('./pages/Alertas'))
+const Reportes = lazy(() => import('./pages/Reportes'))
+const Planes = lazy(() => import('./pages/Planes'))
+const Configuracion = lazy(() => import('./pages/Configuracion'))
+const AdminCuentas = lazy(() => import('./pages/AdminCuentas'))
+
+function lazyPage(Page: LazyExoticComponent<ComponentType>) {
+  return (
+    <Suspense
+      fallback={(
+        <div className="flex min-h-56 items-center justify-center gap-2 text-sm text-navy/60">
+          <Loader2 className="h-5 w-5 animate-spin text-teal" /> Cargando módulo…
+        </div>
+      )}
+    >
+      <Page />
+    </Suspense>
+  )
+}
 
 export default function App() {
   return (
@@ -25,17 +42,17 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
-              <Route path="/" element={<Resumen />} />
-              <Route path="/explorar" element={<Explorar />} />
-              <Route path="/estandarizacion" element={<Estandarizacion />} />
-              <Route path="/limpieza" element={<Limpieza />} />
-              <Route path="/historial" element={<Historial />} />
-              <Route path="/conectores" element={<Conectores />} />
-              <Route path="/alertas" element={<Alertas />} />
-              <Route path="/reportes" element={<Reportes />} />
-              <Route path="/planes" element={<Planes />} />
-              <Route path="/configuracion" element={<Configuracion />} />
-              <Route path="/admin" element={<AdminCuentas />} />
+              <Route path="/" element={lazyPage(Resumen)} />
+              <Route path="/explorar" element={lazyPage(Explorar)} />
+              <Route path="/estandarizacion" element={lazyPage(Estandarizacion)} />
+              <Route path="/limpieza" element={lazyPage(Limpieza)} />
+              <Route path="/historial" element={lazyPage(Historial)} />
+              <Route path="/conectores" element={lazyPage(Conectores)} />
+              <Route path="/alertas" element={lazyPage(Alertas)} />
+              <Route path="/reportes" element={lazyPage(Reportes)} />
+              <Route path="/planes" element={lazyPage(Planes)} />
+              <Route path="/configuracion" element={lazyPage(Configuracion)} />
+              <Route path="/admin" element={lazyPage(AdminCuentas)} />
             </Route>
           </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

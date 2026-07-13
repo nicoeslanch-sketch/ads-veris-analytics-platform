@@ -75,6 +75,31 @@ _MAX_TRAILING_TOTAL_ROWS = 3
 _VOLATILE_FORMULA_RE = re.compile(
     r"(?i)(?:ALEATORIO(?:\.ENTRE)?|RAND(?:BETWEEN)?|RANDBETWEEN|AHORA|NOW|HOY|TODAY|INDIRECTO|INDIRECT)\s*\("
 )
+_FORMULA_XML_TAG_RE = re.compile(rb"<(?:[A-Za-z_][\w.-]*:)?f(?:\s|/?>)")
+
+
+def _xlsx_contains_formulas(content: bytes) -> bool:
+    """Detecta nodos de formula sin materializar otra vez todo el workbook.
+
+    La busqueda es binaria, acotada por bloques y sobre XML de hojas solamente.
+    Si encuentra una formula, la auditoria detallada con openpyxl sigue intacta.
+    """
+    overlap = 96
+    with zipfile.ZipFile(io.BytesIO(content)) as workbook:
+        sheet_files = (
+            name
+            for name in workbook.namelist()
+            if name.startswith("xl/worksheets/") and name.endswith(".xml")
+        )
+        for name in sheet_files:
+            tail = b""
+            with workbook.open(name) as worksheet:
+                while chunk := worksheet.read(256 * 1024):
+                    sample = tail + chunk
+                    if _FORMULA_XML_TAG_RE.search(sample):
+                        return True
+                    tail = sample[-overlap:]
+    return False
 
 
 def _strip_accents_lower(text: str) -> str:
@@ -189,6 +214,11 @@ def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.Da
             report["avisos"].append(
                 f"Se usó la hoja '{best_sheet}' (elegida por ti)."
             )
+    elif len(sheet_names) == 1:
+        # No hay nada que comparar: evita leer una muestra de la misma hoja
+        # antes de cargarla completa.
+        best_sheet = sheet_names[0]
+        report["hoja_usada"] = best_sheet
     else:
         best_sheet = sheet_names[0]
         best_score = -1
@@ -240,6 +270,12 @@ def _scan_xlsx_formulas(
     }
     report["formulas"] = formula_report
     if not source_rows or not headers:
+        return
+
+    # La enorme mayoria de las bases no contiene formulas. Revisar los tags
+    # del XML evita un segundo recorrido celda por celda; cuando hay formulas,
+    # conservamos abajo el analisis detallado y sus alertas.
+    if not _xlsx_contains_formulas(content):
         return
 
     try:
@@ -376,6 +412,10 @@ def load_dataframe_with_report(
     # Fase 11: vectorizado por columna (antes era fila por fila con apply).
     source_rows = list(df.attrs.get(SOURCE_ROWS_ATTR, range(2, len(df) + 2)))
     source_sheet = df.attrs.get(SOURCE_SHEET_ATTR)
+    # pandas propaga attrs con deepcopy en muchas operaciones. Apartar esta
+    # lista mientras filtramos evita copiar miles de numeros por cada columna;
+    # se restaura completa antes de devolver el DataFrame.
+    df.attrs = {}
     non_empty_mask = pd.Series(False, index=df.index)
     for col in df.columns:
         non_empty_mask |= df[col].astype(str).str.strip() != ""

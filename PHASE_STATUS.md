@@ -5,9 +5,9 @@ El motor ahora detecta duplicados siempre y conserva todas las filas por defecto
 Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
 original; las coincidencias creadas por la normalización nunca se borran. La
 decisión se propaga a métricas, descarga, IA, caché e historial, y las incidencias
-usan la fila física del archivo como trazabilidad. La migración local `0012`
-persiste esa opción, pero debe aplicarse al proyecto remoto después de validar el
-bloque. El Bloque 2 corrige el doble conteo textual, elimina el total engañoso
+usan la fila física del archivo como trazabilidad. Las migraciones `0012` y
+`0013` persisten esa opción y la saga recuperable de eliminación. El Bloque 2
+corrige el doble conteo textual, elimina el total engañoso
 de problemas y separa montos cero, negativos e IQR sin modificar valores. El
 Bloque 3 distingue vacíos físicos, placeholders por rol y posibles patrones
 estructurales, además de reparar mojibake únicamente con conversiones strict y
@@ -17,6 +17,10 @@ auditoría de fórmulas Excel limitada a las filas reales de datos, con especial
 atención a fórmulas volátiles y fórmulas presentes en identificadores.
 El Bloque 5 procesa hojas bajo demanda y usa un manifiesto de sesión explícito
 para la descarga completa; el caché nunca funciona como fuente de verdad.
+El cierre de rendimiento comparte carga/estandarización/limpieza entre módulos,
+acelera Excel sin fórmulas, invalida el caché de Storage al eliminar y divide el
+frontend por rutas. En la base REQ5325 (14.917×16), el flujo frío completo midió
+9,4 s y los pasos repetidos quedaron entre 2 ms y ~0,5 s según la etapa.
 
 La Fase 11 ataca la lentitud con bases grandes (>50.000 filas) en su causa raíz:
 el caché del pipeline excluía los archivos grandes y cada módulo reprocesaba
@@ -373,8 +377,8 @@ columna de monto; restauración del último trabajo al iniciar sesión,
 - Decisión coherente en limpieza, métricas, descarga, IA, caché e historial.
 - Fila física y hoja de origen conservadas como metadatos, sin añadir columnas al
   dataset del usuario; exportadas en `Observaciones`.
-- Migración local `0012_cleaning_job_options.sql`; no aplicada remotamente en este
-  bloque. Script de regresión real versionado, archivo REQ5325 fuera del repositorio.
+- Migración `0012_cleaning_job_options.sql` para persistir la decisión explícita.
+  Script de regresión real versionado, archivo REQ5325 fuera del repositorio.
 - Conteos por categoría con unidades honestas; una celda textual se contabiliza
   una sola vez aunque pase por varias normalizaciones.
 - Montos cero, negativos y atípicos IQR separados y solo señalizados, con
@@ -394,7 +398,7 @@ columna de monto; restauración del último trabajo al iniciar sesión,
   requieren que el usuario declare una clave común y la cardinalidad esperada.
 - Bloque 6A completo: eliminación confirmada desde Historial mediante una saga
   reintentable Storage→PostgreSQL; la fase de base es una RPC transaccional y el
-  trabajo sobrevive al dataset. Requiere la migración `0013`.
+  trabajo sobrevive al dataset mediante la migración `0013`.
 - Bloque 6B completo: mapeo colapsado por defecto, chips de asignaciones, panel
   de roles relevantes, confianza semántica y CTA directo desde Resumen. La
   desasignación se conserva como override explícito.

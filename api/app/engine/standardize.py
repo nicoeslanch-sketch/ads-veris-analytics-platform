@@ -570,14 +570,16 @@ def _normalize_text_column(
     spacing_changes = int((stripped != original).sum())
 
     frequencies: dict[str, dict[str, int]] = {}
-    for value in stripped:
+    # La frecuencia contiene la misma informacion que recorrer cada fila,
+    # pero permite normalizar cada variante una sola vez.
+    for value, count in stripped.value_counts(dropna=False).items():
         if not value or is_semantic_placeholder(value, role):
             continue
         # norm_key agrupa variantes que solo difieren en mayúsculas, tildes
         # o puntuación de formato (ej: "76.123.456-7" y "76123456-7").
         key = norm_key(value)
         bucket = frequencies.setdefault(key, {})
-        bucket[value] = bucket.get(value, 0) + 1
+        bucket[value] = int(count)
 
     def _pick_canonical(variants: dict[str, int]) -> str:
         # Más frecuente; ante empate, prefiere la forma con mayúscula inicial.
@@ -653,6 +655,11 @@ def standardize_dataframe(
 ) -> tuple[pd.DataFrame, dict]:
     """Devuelve (df_estandarizado, reporte de cambios, tipos y confianza)."""
     result = df.copy()
+    # SOURCE_ROWS_ATTR puede contener cientos de miles de enteros. pandas
+    # copia attrs al crear Series/resultados; lo guardamos una vez y lo
+    # restauramos al final para mantener trazabilidad sin ese costo repetido.
+    source_attrs = dict(result.attrs)
+    result.attrs = {}
     renamed_headers = normalize_headers(result)
     roles = resolve_mapping(list(result.columns), mapping)
     roles_by_col = {column: role for role, column in roles.items()}
@@ -761,4 +768,5 @@ def standardize_dataframe(
             **text_detail,
         },
     }
+    result.attrs.update(source_attrs)
     return result, report

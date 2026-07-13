@@ -109,6 +109,25 @@ aparecen únicamente después de normalizar permanecen como candidatas a revisi�
   manuales se distinguen por rol, persisten con `saveColumnMapping` y una
   desasignación explícita ya no es revertida por la detección automática.
 
+### Rendimiento del flujo completo
+- Carga, estandarización y limpieza comparten etapas inmutables mediante un LRU
+  acotado por 1,6 M de celdas; las reglas efectivas forman parte de la clave y
+  `/metrics` reutiliza la limpieza ya aplicada en vez de repetir el motor.
+- Las descargas repetidas desde Supabase Storage usan un caché de 5 minutos y
+  45 MB, invalidado al eliminar o purgar el objeto. No cambia la autorización ni
+  la validación del `storage_path`.
+- Excel de una sola hoja deja de leer una muestra redundante. Una preinspección
+  binaria del XML evita recorrer todas las celdas con `openpyxl` cuando no hay
+  fórmulas; si existen, la auditoría detallada se conserva completa.
+- La normalización textual agrupa por valor único y aparta temporalmente los
+  metadatos de filas físicas para impedir copias profundas repetidas de pandas,
+  restaurando la trazabilidad antes de devolver el resultado.
+- Las páginas protegidas se cargan por ruta. El bundle inicial bajó de 1.044 kB
+  (293 kB gzip) a 467 kB (135 kB gzip), sin retirar módulos ni controles.
+- Medición local con `REQ5325` (14.917×16): flujo frío estandarizar → analizar →
+  aplicar → métricas en 9,4 s; repeticiones de estandarización/limpieza en
+  2–187 ms y recálculo de KPIs en ~0,5 s.
+
 ## [0.12.0] - 2026-07-11 - Fase 11: Rendimiento con datos grandes, motor más preciso y continuidad de sesión
 
 La lentitud reportada con bases de >50.000 filas tenía una causa raíz medible:

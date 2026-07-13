@@ -169,3 +169,110 @@ def test_cache_reutiliza_el_pipeline_entre_llamadas(client, auth_headers, monkey
         )
         assert response.status_code == 200
     assert llamadas["n"] == 1
+
+
+def test_standardize_y_clean_reutilizan_carga_y_estandarizacion(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline as pl
+
+    with pl._CACHE_LOCK:
+        pl._CLEAN_CACHE.clear()
+    with pl._FRAME_CACHE_LOCK:
+        pl._FRAME_CACHE.clear()
+
+    calls = {"load": 0, "standardize": 0}
+    real_load = pl.load_dataframe_with_report
+    real_standardize = pl.standardize_dataframe
+
+    def counted_load(*args, **kwargs):
+        calls["load"] += 1
+        return real_load(*args, **kwargs)
+
+    def counted_standardize(*args, **kwargs):
+        calls["standardize"] += 1
+        return real_standardize(*args, **kwargs)
+
+    monkeypatch.setattr(pl, "load_dataframe_with_report", counted_load)
+    monkeypatch.setattr(pl, "standardize_dataframe", counted_standardize)
+    csv = "Fecha;Ventas\n01/05/2026;9181\n02/05/2026;9182\n".encode()
+    files = {"file": ("etapas-cache.csv", csv, "text/csv")}
+
+    standardized = client.post("/standardize", files=files, headers=auth_headers)
+    cleaned = client.post("/clean", files=files, headers=auth_headers)
+
+    assert standardized.status_code == cleaned.status_code == 200
+    assert calls == {"load": 1, "standardize": 1}
+
+
+def test_reglas_default_explicitas_comparten_cache_con_metricas(
+    client, auth_headers, monkeypatch
+):
+    from app.engine.clean import DEFAULT_RULES
+    from app.routes import pipeline as pl
+
+    with pl._CACHE_LOCK:
+        pl._CLEAN_CACHE.clear()
+    with pl._FRAME_CACHE_LOCK:
+        pl._FRAME_CACHE.clear()
+    calls = {"analyze": 0}
+    real_analyze = pl.analyze_and_clean
+
+    def counted(*args, **kwargs):
+        calls["analyze"] += 1
+        return real_analyze(*args, **kwargs)
+
+    monkeypatch.setattr(pl, "analyze_and_clean", counted)
+    csv = "Fecha;Ventas\n01/05/2026;771\n02/05/2026;772\n".encode()
+    files = {"file": ("defaults-cache.csv", csv, "text/csv")}
+
+    cleaned = client.post(
+        "/clean",
+        files=files,
+        data={"apply": "true", "rules": json.dumps(DEFAULT_RULES)},
+        headers=auth_headers,
+    )
+    metrics = client.post("/metrics", files=files, headers=auth_headers)
+
+    assert cleaned.status_code == metrics.status_code == 200
+    assert calls["analyze"] == 1
+
+
+def test_cache_storage_tiene_ttl_y_se_invalida_al_eliminar(monkeypatch):
+    from app import storage
+    from app.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "supabase_url", "https://cache-test.supabase.co")
+    monkeypatch.setattr(settings, "supabase_service_role_key", "service-role-test")
+    with storage._CACHE_LOCK:
+        storage._DOWNLOAD_CACHE.clear()
+    calls = {"stream": 0}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-length": "4"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def iter_bytes(self):
+            yield b"data"
+
+    def fake_stream(*args, **kwargs):
+        calls["stream"] += 1
+        return FakeResponse()
+
+    monkeypatch.setattr(storage.httpx, "stream", fake_stream)
+    path = "user-test-123/cache-performance.csv"
+
+    assert storage.download_from_storage(path) == b"data"
+    assert storage.download_from_storage(path) == b"data"
+    assert calls["stream"] == 1
+
+    storage.invalidate_storage_cache(path)
+    assert storage.download_from_storage(path) == b"data"
+    assert calls["stream"] == 2

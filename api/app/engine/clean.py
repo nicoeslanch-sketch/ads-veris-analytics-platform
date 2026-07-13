@@ -26,6 +26,7 @@ Cambios profesionales Fase 7 (§5):
   la IA de refinado (costura §5.13).
 """
 
+import copy
 import os
 import re
 
@@ -555,6 +556,7 @@ def _detect_problems(
     exact_duplicate_mask: pd.Series | None = None,
     normalized_only_mask: pd.Series | None = None,
     source_rows: list[int] | None = None,
+    include_structural_patterns: bool = True,
 ) -> dict:
     miss_cache, physical_cache, semantic_cache, date_cache, num_cache = _column_caches(
         df, column_types, roles_by_col
@@ -642,8 +644,12 @@ def _detect_problems(
         per_column[col] = info
 
     origin_rows = source_rows or list(range(2, len(df) + 2))
-    structural_patterns = _structural_null_patterns(
-        df, physical_cache, column_types, roles_by_col, origin_rows
+    structural_patterns = (
+        _structural_null_patterns(
+            df, physical_cache, column_types, roles_by_col, origin_rows
+        )
+        if include_structural_patterns
+        else []
     )
     for pattern in structural_patterns:
         column_info = per_column.get(pattern["columna"])
@@ -759,13 +765,21 @@ def analyze_and_clean(
     mapping: dict | None = None,
     scope: dict | None = None,
     eliminar_duplicados: bool = False,
+    standardized: tuple[pd.DataFrame, dict] | None = None,
 ) -> dict:
     active = {**DEFAULT_RULES, **(rules or {})}
 
     # Conservamos la identidad cargada ANTES de estandarizar. Dos filas que se
     # vuelven iguales por mayúsculas, espacios o formato son solo candidatas a
     # revisión y jamás entran en la máscara eliminable.
-    df, std_report = standardize_dataframe(df_original, mapping=mapping)
+    if standardized is None:
+        df, std_report = standardize_dataframe(df_original, mapping=mapping)
+    else:
+        # El caché comparte un resultado inmutable entre endpoints. Cada run
+        # recibe copias para que drop/asignaciones nunca contaminen otra sesión.
+        df = standardized[0].copy(deep=True)
+        df.attrs = copy.deepcopy(standardized[0].attrs)
+        std_report = copy.deepcopy(standardized[1])
     loaded_original = df_original.copy()
     loaded_original.columns = df.columns
     source_rows = _source_rows(df_original)
@@ -1006,6 +1020,9 @@ def analyze_and_clean(
             exact_duplicate_mask=remaining_exact_mask,
             normalized_only_mask=remaining_normalized_mask,
             source_rows=clean_source_rows,
+            # Ya fueron auditados antes de aplicar. Esta segunda pasada solo
+            # calcula calidad residual y no debe repetir el análisis grupal.
+            include_structural_patterns=False,
         )
         remaining.pop("_columnas_vacias_nombres")
         remaining.pop("_duplicados_mask")

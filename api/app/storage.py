@@ -9,6 +9,9 @@ proteger la memoria del servidor: se revisa Content-Length y, como respaldo,
 se corta la descarga en streaming si el archivo lo supera.
 """
 
+import threading
+import time
+from collections import OrderedDict
 from urllib.parse import quote, unquote
 
 import httpx
@@ -17,6 +20,48 @@ from fastapi import HTTPException, status
 from .config import get_settings
 
 MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
+_CACHE_TTL_SECONDS = 5 * 60
+_CACHE_MAX_BYTES = 45 * 1024 * 1024
+_CACHE_LOCK = threading.Lock()
+_DOWNLOAD_CACHE: "OrderedDict[tuple[str, str, str], tuple[float, bytes]]" = OrderedDict()
+
+
+def _storage_cache_key(storage_path: str) -> tuple[str, str, str]:
+    settings = get_settings()
+    return (settings.supabase_url.rstrip("/"), settings.supabase_storage_bucket, storage_path)
+
+
+def _get_cached_download(storage_path: str) -> bytes | None:
+    key = _storage_cache_key(storage_path)
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        cached = _DOWNLOAD_CACHE.get(key)
+        if cached is None:
+            return None
+        created_at, content = cached
+        if now - created_at > _CACHE_TTL_SECONDS:
+            _DOWNLOAD_CACHE.pop(key, None)
+            return None
+        _DOWNLOAD_CACHE.move_to_end(key)
+        return content
+
+
+def _store_cached_download(storage_path: str, content: bytes) -> None:
+    key = _storage_cache_key(storage_path)
+    with _CACHE_LOCK:
+        _DOWNLOAD_CACHE[key] = (time.monotonic(), content)
+        _DOWNLOAD_CACHE.move_to_end(key)
+        total = sum(len(item[1]) for item in _DOWNLOAD_CACHE.values())
+        while len(_DOWNLOAD_CACHE) > 1 and total > _CACHE_MAX_BYTES:
+            _, removed = _DOWNLOAD_CACHE.popitem(last=False)
+            total -= len(removed[1])
+
+
+def invalidate_storage_cache(storage_path: str) -> None:
+    """Evita servir bytes de un objeto que acaba de eliminarse o purgarse."""
+    with _CACHE_LOCK:
+        for key in [key for key in _DOWNLOAD_CACHE if key[2] == storage_path]:
+            _DOWNLOAD_CACHE.pop(key, None)
 
 
 def normalize_user_storage_path(storage_path: str, user_id: str) -> str:
@@ -72,6 +117,9 @@ def download_from_storage(storage_path: str) -> bytes:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="El servidor no tiene configurado el acceso a Supabase Storage.",
         )
+    cached = _get_cached_download(storage_path)
+    if cached is not None:
+        return cached
     url = _storage_object_url(storage_path)
     headers = {
         "Authorization": f"Bearer {settings.supabase_service_role_key}",
@@ -101,7 +149,9 @@ def download_from_storage(storage_path: str) -> bytes:
                 if received > MAX_DOWNLOAD_BYTES:
                     raise _too_large()
                 chunks.append(chunk)
-            return b"".join(chunks)
+            content = b"".join(chunks)
+            _store_cached_download(storage_path, content)
+            return content
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -139,6 +189,7 @@ def delete_from_storage(storage_path: str) -> None:
             detail=f"No se pudo contactar a Supabase Storage: {exc.__class__.__name__}",
         )
     if response.status_code in {200, 204, 404}:
+        invalidate_storage_cache(storage_path)
         return
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
