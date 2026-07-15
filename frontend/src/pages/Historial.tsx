@@ -299,13 +299,13 @@ export default function Historial() {
       {deleteNotice && (
         <div className="mb-5 flex items-start gap-2 rounded-lg border border-green/30 bg-green/[0.08] px-4 py-3 text-sm text-navy">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" />
-          <p>{deleteNotice}</p>
+          <p className="min-w-0 [overflow-wrap:anywhere] lg:[overflow-wrap:normal]">{deleteNotice}</p>
         </div>
       )}
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid w-full min-w-0 max-w-full items-start gap-6 overflow-x-hidden lg:overflow-x-visible xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Archivos cargados */}
-        <Card className="h-fit min-w-0">
+        <Card className="h-fit min-w-0 max-w-full overflow-hidden lg:overflow-visible">
           <h2 ref={listHeadingRef} tabIndex={-1} className="text-base font-semibold text-navy outline-none">
             Archivos cargados
           </h2>
@@ -315,10 +315,10 @@ export default function Historial() {
           {resumeError && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-3 py-2 text-xs text-coral">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <p>{resumeError}</p>
+              <p className="min-w-0 [overflow-wrap:anywhere] lg:[overflow-wrap:normal]">{resumeError}</p>
             </div>
           )}
-          <div className="mt-4 space-y-3 md:hidden">
+          <div className="mt-4 min-w-0 max-w-full space-y-3 lg:hidden">
             {(datasets ?? []).map((dataset) => {
               const badge = STATUS_BADGE[dataset.status]
               const source = sourceBadge(dataset.source)
@@ -334,30 +334,27 @@ export default function Historial() {
                     </p>
                   </div>
 
-                  <dl className="mt-3 grid min-w-0 grid-cols-2 gap-x-3 gap-y-3 text-xs">
-                    <div className="min-w-0">
-                      <dt className="mb-1 text-navy/45">Fuente</dt>
-                      <dd><Badge tone={source.tone}>{source.label}</Badge></dd>
-                    </div>
-                    <div className="min-w-0">
-                      <dt className="mb-1 text-navy/45">Estado</dt>
-                      <dd><Badge tone={badge.tone}>{badge.label}</Badge></dd>
-                    </div>
-                    <div className="min-w-0">
-                      <dt className="text-navy/45">Fecha</dt>
-                      <dd className="mt-0.5 break-words text-navy/75">
+                  <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                    <Badge tone={source.tone}>{source.label}</Badge>
+                    <Badge tone={badge.tone}>{badge.label}</Badge>
+                  </div>
+
+                  <dl className="mt-3 min-w-0 divide-y divide-navy/5 border-y border-navy/5 text-xs">
+                    <div className="flex min-w-0 items-start justify-between gap-3 py-2">
+                      <dt className="shrink-0 text-navy/45">Fecha</dt>
+                      <dd className="min-w-0 break-words text-right text-navy/75">
                         {formatDateTime(new Date(dataset.created_at))}
                       </dd>
                     </div>
-                    <div className="min-w-0">
-                      <dt className="text-navy/45">Filas</dt>
-                      <dd className="mt-0.5 text-navy/75">
+                    <div className="flex min-w-0 items-start justify-between gap-3 py-2">
+                      <dt className="shrink-0 text-navy/45">Filas</dt>
+                      <dd className="min-w-0 text-right text-navy/75">
                         {dataset.rows != null ? formatNumber(dataset.rows) : '—'}
                       </dd>
                     </div>
-                    <div className="min-w-0">
-                      <dt className="text-navy/45">Calidad</dt>
-                      <dd className="mt-0.5 text-navy/75">
+                    <div className="flex min-w-0 items-start justify-between gap-3 py-2">
+                      <dt className="shrink-0 text-navy/45">Calidad</dt>
+                      <dd className="min-w-0 text-right text-navy/75">
                         {dataset.quality != null ? `${formatNumber(dataset.quality)}%` : '—'}
                       </dd>
                     </div>
@@ -405,7 +402,7 @@ export default function Historial() {
             )}
           </div>
 
-          <div className="mt-4 hidden overflow-x-auto md:block">
+          <div className="mt-4 hidden overflow-x-auto lg:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-navy/10 text-left text-xs font-semibold uppercase tracking-wide text-navy/50">
@@ -491,7 +488,7 @@ export default function Historial() {
         </Card>
 
         {/* Actividad */}
-        <Card className="h-fit">
+        <Card className="h-fit min-w-0 max-w-full overflow-hidden lg:overflow-visible">
           <h2 className="text-base font-semibold text-navy">Actividad reciente</h2>
           <ul className="mt-4 space-y-4">
             {(activity ?? []).map((item) => {
@@ -540,11 +537,11 @@ export default function Historial() {
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-coral/10 text-coral">
                 <Trash2 className="h-5 w-5" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h2 id="delete-dataset-title" className="text-base font-semibold text-navy">
                   Eliminar archivo definitivamente
                 </h2>
-                <p id="delete-dataset-description" className="mt-2 text-sm leading-relaxed text-navy/65">
+                <p id="delete-dataset-description" className="mt-2 min-w-0 text-sm leading-relaxed text-navy/65 [overflow-wrap:anywhere] lg:[overflow-wrap:normal]">
                   ¿Estás seguro de que quieres eliminar “{deleteTarget.name}”? Se borrará el
                   archivo de tu almacenamiento y su historial de limpieza. Esta acción no se
                   puede deshacer.

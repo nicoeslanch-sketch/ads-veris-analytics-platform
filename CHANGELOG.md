@@ -6,8 +6,9 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
 
 - Estandarización mantiene las acciones del dataset activo dentro del recuadro
   y las apila únicamente en pantallas pequeñas.
-- Historial usa fichas móviles completas en vez de una tabla con desplazamiento
-  horizontal; la tabla original se conserva desde `md` hacia arriba.
+- Historial usa fichas móviles de una columna en vez de una tabla con
+  desplazamiento horizontal; la tabla original se conserva desde `lg` hacia
+  arriba, igual que la navegación de escritorio.
 - Reportes permite partir nombres de archivo largos únicamente en móvil para
   que nunca desborden el recuadro de contenido.
 
