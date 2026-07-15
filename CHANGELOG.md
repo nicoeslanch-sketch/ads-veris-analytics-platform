@@ -2,6 +2,33 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.14.0] - 2026-07-15 - Exactitud auditada e indicadores PyME
+
+### Exactitud y transparencia
+- El margen por categoría, canal y producto usa únicamente filas con ingreso y
+  costo pareados, igual que el KPI global. Si un grupo no tiene costos
+  comparables, no se inventa un margen cero.
+- La evolución mensual conserva costos de filas fechadas aunque el monto sea
+  ilegible, y advierte cuando ventas sin fecha suman al total pero no pueden
+  aparecer en el gráfico o en filtros mensuales.
+- `dimensiones.monto` exige al menos un monto legible; una columna de puro texto
+  vuelve a mostrar la guía de mapeo en lugar de un dashboard engañoso en $0.
+- Los Excel con encabezados repetidos conservan todas las columnas y renombran
+  las repeticiones con sufijos compatibles con pandas (`Total.1`, `Total.2`).
+
+### Nuevos indicadores
+- Resumen incorpora mejor día de venta y clientes únicos; Explorar señala
+  concentración de clientes y el día de mayor venta cuando hay evidencia.
+- `/metrics` expone ventas por día de la semana, concentración/top de clientes,
+  y utilidad/margen pareados para categorías, canales y productos.
+- Placeholders como `Sin Nombre` o `cliente desconocido` quedan fuera del conteo
+  de clientes y de la concentración comercial.
+
+### Verificación
+- Se añadieron 13 pruebas de verdad calculada a mano para totales, cobertura,
+  márgenes parciales, evolución, fechas ausentes, dimensiones, encabezados
+  repetidos, clientes, días de venta y comparación mensual.
+
 ## [0.13.0] - 2026-07-13 - Fase 12: motor no destructivo e identidad de datos
 
 Este bloque cambia deliberadamente la política de seguridad del motor: los

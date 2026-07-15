@@ -367,6 +367,10 @@ export interface MetricsResult {
   por_categoria?: GroupRow[]
   ventas_por_canal?: GroupRow[]
   top_productos?: GroupRow[]
+  /** Fase 12: concentración de clientes (riesgo de dependencia) — solo si hay columna cliente. */
+  clientes?: { unicos: number; top: GroupRow[]; concentracion_top_pct: number | null }
+  /** Fase 12: en qué días de la semana se concentra la venta — solo si hay fechas. */
+  por_dia_semana?: Array<{ dia: string; ingresos: number; transacciones: number }>
   proyeccion: {
     crecimiento_pct: number
     crecimiento_trimestre_pct: number | null

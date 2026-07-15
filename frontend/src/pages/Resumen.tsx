@@ -87,7 +87,28 @@ function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; va
       hint: 'utilidad / ingresos',
     })
   }
-  return items.slice(0, 7)
+  // Fase 12: indicadores accionables de PyME — mejor día para dotación/horarios
+  // y concentración de clientes (riesgo de depender de uno).
+  const dias = m.por_dia_semana ?? []
+  if (dias.length >= 2) {
+    const mejorDia = dias.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
+    items.push({
+      label: 'Mejor día de venta',
+      value: mejorDia.dia.charAt(0).toUpperCase() + mejorDia.dia.slice(1),
+      hint: `${formatCLP(mejorDia.ingresos)} en el periodo`,
+    })
+  }
+  if (m.clientes) {
+    items.push({
+      label: 'Clientes únicos',
+      value: formatNumber(m.clientes.unicos),
+      hint:
+        m.clientes.concentracion_top_pct != null && m.clientes.unicos > 1
+          ? `el principal es el ${formatNumber(m.clientes.concentracion_top_pct)}% de las ventas`
+          : undefined,
+    })
+  }
+  return items.slice(0, 9)
 }
 
 function Variation({

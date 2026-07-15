@@ -244,10 +244,33 @@ def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.Da
             f"Se omitieron {header_row} fila(s) de título sobre los encabezados."
         )
     headers = [str(v).strip() for v in raw.iloc[header_row].tolist()]
+    # Encabezados repetidos hacen que df[col] devuelva un DataFrame. Se usa la
+    # misma convención de pandas para CSV y se conservan todas las columnas.
+    next_suffix: dict[str, int] = {}
+    used_headers: set[str] = set()
+    unique_headers: list[str] = []
+    renamed = 0
+    for header in headers:
+        base = header or "Columna"
+        candidate = base
+        suffix = next_suffix.get(base, 1)
+        while candidate in used_headers:
+            candidate = f"{base}.{suffix}"
+            suffix += 1
+        next_suffix[base] = suffix
+        used_headers.add(candidate)
+        unique_headers.append(candidate)
+        renamed += int(candidate != base)
+    if renamed:
+        report["avisos"].append(
+            f"El archivo tiene {renamed} encabezado(s) repetidos: se renombraron "
+            "(ej: 'Total.1') para conservar todas las columnas."
+        )
+
     data_index = raw.index[header_row + 1 :]
     source_rows = [int(index) + 1 for index in data_index]
     df = raw.iloc[header_row + 1 :].reset_index(drop=True)
-    df.columns = headers
+    df.columns = unique_headers
     df.attrs[SOURCE_ROWS_ATTR] = source_rows
     df.attrs[SOURCE_SHEET_ATTR] = best_sheet
     return df

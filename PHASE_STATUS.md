@@ -1,6 +1,6 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 6 completos.**
+**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 6 y auditoría de indicadores completas.**
 El motor ahora detecta duplicados siempre y conserva todas las filas por defecto.
 Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
 original; las coincidencias creadas por la normalización nunca se borran. La
@@ -21,6 +21,11 @@ El cierre de rendimiento comparte carga/estandarización/limpieza entre módulos
 acelera Excel sin fórmulas, invalida el caché de Storage al eliminar y divide el
 frontend por rutas. En la base REQ5325 (14.917×16), el flujo frío completo midió
 9,4 s y los pasos repetidos quedaron entre 2 ms y ~0,5 s según la etapa.
+La auditoría posterior del dashboard corrigió márgenes por grupo con costos
+parciales, reconcilió gastos mensuales, exige montos legibles para habilitar el
+dashboard y conserva encabezados Excel repetidos. También añadió concentración
+de clientes, clientes únicos y ventas por día de la semana sin debilitar las
+reglas no destructivas, multihoja ni la trazabilidad de la Fase 12.
 
 La Fase 11 ataca la lentitud con bases grandes (>50.000 filas) en su causa raíz:
 el caché del pipeline excluía los archivos grandes y cada módulo reprocesaba

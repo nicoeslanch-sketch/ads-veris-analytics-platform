@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
+  CalendarDays,
   CheckCircle2,
   Layers,
   Lightbulb,
@@ -25,6 +26,7 @@ import {
   Sparkles,
   Store,
   TrendingUp,
+  Users,
   type LucideIcon,
 } from 'lucide-react'
 import {
@@ -200,6 +202,37 @@ function computeFindings(m: MetricsResult): Finding[] {
         icon: Store,
         title: `"${dominante.nombre}" genera el ${formatPct(dominante.porcentaje)} de tus ventas`,
         detail: 'Más de la mitad de tus ingresos depende de un solo canal. Fortalecer los demás reduce riesgo.',
+      })
+    }
+  }
+
+  // Fase 12: concentración de clientes — el riesgo silencioso clásico de PyME
+  if (
+    m.clientes?.concentracion_top_pct != null &&
+    m.clientes.concentracion_top_pct > 40 &&
+    m.clientes.unicos >= 2
+  ) {
+    const topCliente = m.clientes.top[0]
+    findings.push({
+      tone: 'gold',
+      icon: Users,
+      title: `Un solo cliente concentra el ${formatPct(m.clientes.concentracion_top_pct)} de tus ventas`,
+      detail: `"${topCliente?.nombre ?? 'Tu cliente principal'}" pesa demasiado en tus ingresos: si se va, el negocio lo siente. Diversificar tu cartera reduce ese riesgo.`,
+    })
+  }
+
+  // Fase 12: día de la semana con más venta (dotación, horarios, promociones)
+  const dias = m.por_dia_semana ?? []
+  if (dias.length >= 3) {
+    const mejorDia = dias.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
+    const totalSemana = dias.reduce((sum, d) => sum + d.ingresos, 0)
+    if (totalSemana > 0) {
+      const pct = (mejorDia.ingresos / totalSemana) * 100
+      findings.push({
+        tone: 'teal',
+        icon: CalendarDays,
+        title: `El ${mejorDia.dia} es tu mejor día (${formatPct(pct)} de la venta)`,
+        detail: `Concentra tu dotación, horarios y promociones donde está la venta: ese día generaste ${formatCLP(mejorDia.ingresos)} en el periodo.`,
       })
     }
   }

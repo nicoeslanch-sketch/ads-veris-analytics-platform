@@ -14,7 +14,11 @@ import re
 
 import pandas as pd
 
-from .mapping import detect_column_roles, resolve_mapping
+from .mapping import (
+    detect_column_roles,
+    resolve_mapping,
+    strip_accents_lower,
+)
 from .standardize import (
     is_missing,
     map_unique,
@@ -100,31 +104,41 @@ def _kpi(value: float, previous: float | None) -> dict:
 
 
 def _group_sum(
-    groups: pd.Series, amounts: pd.Series, profits: pd.Series | None
+    groups: pd.Series, amounts: pd.Series, costs: pd.Series | None
 ) -> list[dict]:
+    """Ingresos por grupo; con costos, utilidad y margen SOLO sobre filas
+    pareadas (ingreso Y costo) — misma regla que el KPI global (Fase 12: antes
+    el margen por grupo dividía por los ingresos totales del grupo, y con
+    cobertura parcial de costos quedaba subestimado)."""
     frame = pd.DataFrame({"grupo": groups, "monto": amounts})
-    if profits is not None:
-        frame["utilidad"] = profits
+    has_costs = costs is not None
+    if has_costs:
+        frame["costo"] = costs
     frame = frame.dropna(subset=["monto"])
     if frame.empty:
         return []
-    aggregated = frame.groupby("grupo", dropna=False).sum(numeric_only=True)
-    aggregated = aggregated.sort_values("monto", ascending=False)
-    total = float(aggregated["monto"].sum()) or 1.0
+    total = float(frame["monto"].sum()) or 1.0
     rows: list[dict] = []
-    for name, row in aggregated.iterrows():
+    for name, g in frame.groupby("grupo", dropna=False):
+        ingresos = float(g["monto"].sum())
         item = {
             "nombre": str(name) if str(name).strip() else "Sin clasificar",
-            "ingresos": round(float(row["monto"]), 2),
-            "porcentaje": round(float(row["monto"]) / total * 100, 1),
+            "ingresos": round(ingresos, 2),
+            "porcentaje": round(ingresos / total * 100, 1),
         }
-        if profits is not None:
-            utilidad = float(row["utilidad"]) if pd.notna(row["utilidad"]) else 0.0
-            item["utilidad"] = round(utilidad, 2)
-            item["margen_pct"] = (
-                round(utilidad / float(row["monto"]) * 100, 1) if row["monto"] else None
-            )
+        if has_costs:
+            paired = g.dropna(subset=["costo"])
+            if len(paired):
+                ing_par = float(paired["monto"].sum())
+                utilidad = ing_par - float(paired["costo"].sum())
+                item["utilidad"] = round(utilidad, 2)
+                item["margen_pct"] = (
+                    round(utilidad / ing_par * 100, 1) if ing_par else None
+                )
+            # Grupo sin ninguna fila pareada: sin utilidad/margen (la UI
+            # muestra "—" en vez de un 0 falso).
         rows.append(item)
+    rows.sort(key=lambda r: r["ingresos"], reverse=True)
     return rows
 
 
@@ -192,6 +206,17 @@ def compute_metrics(
     has_dates = roles.get("fecha") is not None and dates_all.notna().any()
     if not has_dates:
         warnings.append("No se detectó una columna de fecha; sin evolución mensual ni proyección.")
+    else:
+        # Fase 12: transparencia — ninguna fila se pierde en silencio. Las
+        # ventas sin fecha legible SÍ suman al total del periodo completo,
+        # pero no pueden ubicarse en la evolución mensual ni en filtros por mes.
+        sin_fecha = int((amounts_all.notna() & dates_all.isna()).sum())
+        if sin_fecha:
+            warnings.append(
+                f"{sin_fecha} venta(s) no tienen fecha válida: se incluyen en los "
+                "totales del periodo completo, pero no aparecen en la evolución "
+                "mensual ni al filtrar por mes."
+            )
 
     # ── Evolución mensual (siempre sobre el periodo completo) ──
     monthly = pd.DataFrame()
@@ -205,8 +230,11 @@ def compute_metrics(
         if has_costs:
             frame["gastos"] = costs_all
             frame["utilidad"] = profits_all
+        # Fase 12: solo se exige la fecha — una fila con costo legible pero
+        # monto ilegible aportaba su gasto al KPI total y DESAPARECÍA del
+        # gráfico mensual (el gráfico y el KPI no cuadraban).
         monthly = (
-            frame.dropna(subset=["mes", "ingresos"]).groupby("mes").sum(numeric_only=True).sort_index()
+            frame.dropna(subset=["mes"]).groupby("mes").sum(numeric_only=True).sort_index()
         )
 
     evolucion = [
@@ -371,7 +399,10 @@ def compute_metrics(
         # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
         "dimensiones": {
             "fecha": bool(has_dates),
-            "monto": _has_data("monto"),
+            # Fase 12: "monto" exige montos LEGIBLES, no solo texto en la
+            # columna — si nada parsea, el frontend debe mostrar la guía de
+            # mapeo, no un dashboard en $0.
+            "monto": bool(amounts_all.notna().any()),
             "costo": bool(has_costs),
             "cantidad": _has_data("cantidad"),
             "categoria": _has_data("categoria"),
@@ -390,16 +421,64 @@ def compute_metrics(
         "evolucion_mensual": evolucion,
     }
 
+    group_costs = costs if has_costs else None
     if roles.get("categoria"):
         result["por_categoria"] = _group_sum(
-            selection[roles["categoria"]], amounts, profits
+            selection[roles["categoria"]], amounts, group_costs
         )
     canal_role = "canal" if roles.get("canal") else ("sucursal" if roles.get("sucursal") else None)
     result["agrupado_por_canal"] = canal_role
     if canal_role:
-        result["ventas_por_canal"] = _group_sum(selection[roles[canal_role]], amounts, None)
+        # Fase 12: canal y producto también reciben utilidad/margen pareados
+        # cuando hay costos — "qué canal/producto deja margen" es una de las
+        # decisiones más citadas para una PyME.
+        result["ventas_por_canal"] = _group_sum(
+            selection[roles[canal_role]], amounts, group_costs
+        )
     if roles.get("producto"):
-        result["top_productos"] = _group_sum(selection[roles["producto"]], amounts, None)[:5]
+        result["top_productos"] = _group_sum(
+            selection[roles["producto"]], amounts, group_costs
+        )[:5]
+
+    # ── Fase 12: clientes (unicidad y concentración) ──
+    # Riesgo clásico de PyME: depender de un cliente. Solo con columna cliente.
+    if roles.get("cliente"):
+        clientes_raw = selection[roles["cliente"]]
+        no_identificado = {"sin nombre", "sin identificar", "cliente desconocido", "no informa"}
+        valid_mask = clientes_raw.map(
+            lambda v: not is_missing(v)
+            and strip_accents_lower(str(v).strip()) not in no_identificado
+        )
+        if valid_mask.any():
+            top = _group_sum(clientes_raw[valid_mask], amounts[valid_mask], None)
+            result["clientes"] = {
+                "unicos": int(clientes_raw[valid_mask].nunique()),
+                "top": top[:5],
+                # % del cliente principal sobre las ventas CON cliente identificado
+                "concentracion_top_pct": top[0]["porcentaje"] if top else None,
+            }
+
+    # ── Fase 12: ventas por día de la semana ──
+    # Con qué días se concentra la venta se decide dotación y horarios.
+    if has_dates:
+        dias_semana = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        sel_dates = dates_all[mask]
+        wd = pd.DataFrame(
+            {
+                "dia": sel_dates.map(lambda d: d.weekday() if pd.notna(d) else None),
+                "monto": amounts,
+            }
+        ).dropna(subset=["dia"])
+        if not wd.empty:
+            agg = wd.groupby("dia").agg(ingresos=("monto", "sum"), transacciones=("monto", "size"))
+            result["por_dia_semana"] = [
+                {
+                    "dia": dias_semana[int(idx)],
+                    "ingresos": round(float(row["ingresos"]), 2),
+                    "transacciones": int(row["transacciones"]),
+                }
+                for idx, row in agg.sort_index().iterrows()
+            ]
 
     result["proyeccion"] = _projection(monthly) if has_dates and not monthly.empty else None
     result["indicadores_financieros"] = {
