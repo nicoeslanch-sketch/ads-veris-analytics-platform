@@ -161,10 +161,10 @@ export default function Estandarizacion() {
               continuar con él o partir con un documento nuevo.
             </p>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:flex-wrap sm:items-center">
             <Link
               to="/limpieza"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-teal/90"
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-teal/90 sm:w-auto"
             >
               Continuar <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -173,9 +173,9 @@ export default function Estandarizacion() {
                 reset()
                 inputRef.current?.click()
               }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-navy/20 bg-white px-4 py-2 text-xs font-semibold text-navy transition-colors hover:border-teal/60"
+              className="inline-flex w-full min-w-0 items-center justify-center gap-1.5 whitespace-normal rounded-lg border border-navy/20 bg-white px-3 py-2 text-center text-xs font-semibold text-navy transition-colors hover:border-teal/60 sm:w-auto sm:px-4"
             >
-              <UploadCloud className="h-3.5 w-3.5" /> Estandarizar nuevo documento
+              <UploadCloud className="h-3.5 w-3.5 shrink-0" /> Estandarizar nuevo documento
             </button>
           </div>
         </div>

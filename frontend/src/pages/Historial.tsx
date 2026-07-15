@@ -318,7 +318,94 @@ export default function Historial() {
               <p>{resumeError}</p>
             </div>
           )}
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4 space-y-3 md:hidden">
+            {(datasets ?? []).map((dataset) => {
+              const badge = STATUS_BADGE[dataset.status]
+              const source = sourceBadge(dataset.source)
+              return (
+                <article
+                  key={dataset.id}
+                  className="min-w-0 rounded-lg border border-navy/10 bg-navy/[0.015] p-3"
+                >
+                  <div className="flex min-w-0 items-start gap-2">
+                    <FileSpreadsheet className="mt-0.5 h-4.5 w-4.5 shrink-0 text-green" />
+                    <p className="min-w-0 [overflow-wrap:anywhere] text-sm font-semibold leading-snug text-navy">
+                      {dataset.name}
+                    </p>
+                  </div>
+
+                  <dl className="mt-3 grid min-w-0 grid-cols-2 gap-x-3 gap-y-3 text-xs">
+                    <div className="min-w-0">
+                      <dt className="mb-1 text-navy/45">Fuente</dt>
+                      <dd><Badge tone={source.tone}>{source.label}</Badge></dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="mb-1 text-navy/45">Estado</dt>
+                      <dd><Badge tone={badge.tone}>{badge.label}</Badge></dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-navy/45">Fecha</dt>
+                      <dd className="mt-0.5 break-words text-navy/75">
+                        {formatDateTime(new Date(dataset.created_at))}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-navy/45">Filas</dt>
+                      <dd className="mt-0.5 text-navy/75">
+                        {dataset.rows != null ? formatNumber(dataset.rows) : '—'}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="text-navy/45">Calidad</dt>
+                      <dd className="mt-0.5 text-navy/75">
+                        {dataset.quality != null ? `${formatNumber(dataset.quality)}%` : '—'}
+                      </dd>
+                    </div>
+                  </dl>
+
+                  <div className="mt-3 flex min-w-0 items-center gap-2 border-t border-navy/10 pt-3">
+                    {dataset.storage_path ? (
+                      <button
+                        onClick={() => void handleResume(dataset)}
+                        disabled={resuming !== null || deleting}
+                        className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-teal/50 px-3 py-2 text-xs font-semibold text-teal transition-colors hover:bg-teal hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {resuming === dataset.id ? (
+                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                        Retomar
+                      </button>
+                    ) : (
+                      <span className="min-w-0 flex-1 text-xs text-navy/40">
+                        Sin archivo en Storage
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        returnFocusRef.current = event.currentTarget
+                        setDeleteError(null)
+                        setDeleteTarget(dataset)
+                      }}
+                      disabled={resuming !== null || deleting}
+                      aria-label={`Eliminar archivo ${dataset.name}`}
+                      title={`Eliminar archivo ${dataset.name}`}
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-coral/35 text-coral transition-colors hover:bg-coral/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
+            {(datasets?.length ?? 0) === 0 && (
+              <p className="text-sm text-navy/50">Aún no hay archivos guardados.</p>
+            )}
+          </div>
+
+          <div className="mt-4 hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-navy/10 text-left text-xs font-semibold uppercase tracking-wide text-navy/50">

@@ -2,6 +2,15 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.15.2] - 2026-07-15 - Ajustes móviles sin cambios en escritorio
+
+- Estandarización mantiene las acciones del dataset activo dentro del recuadro
+  y las apila únicamente en pantallas pequeñas.
+- Historial usa fichas móviles completas en vez de una tabla con desplazamiento
+  horizontal; la tabla original se conserva desde `md` hacia arriba.
+- Reportes permite partir nombres de archivo largos únicamente en móvil para
+  que nunca desborden el recuadro de contenido.
+
 ## [0.15.1] - 2026-07-15 - Restauracion persistente de datasets
 
 - La reapertura del ultimo trabajo usa `POST /restore/latest`: una sola llamada
