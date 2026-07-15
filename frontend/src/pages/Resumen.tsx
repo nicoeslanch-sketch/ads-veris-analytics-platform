@@ -415,15 +415,15 @@ export default function Resumen() {
             icon: Coins,
             color: CHART.utilidad,
             value: formatCLP(kpis.ticket_promedio),
-            variation: <p className="text-xs text-navy/40">por transacción</p>,
+            variation: <p className="text-xs text-navy/40">por registro con monto</p>,
             spark: sparkOf('ingresos'),
           },
           {
-            label: 'Transacciones',
+            label: 'Registros',
             icon: Receipt,
             color: CHART.gastos,
             value: formatNumber(kpis.transacciones),
-            variation: <p className="text-xs text-navy/40">en el periodo</p>,
+            variation: <p className="text-xs text-navy/40">filas en el periodo</p>,
             spark: sparkOf('ingresos'),
           },
           {
@@ -454,10 +454,10 @@ export default function Resumen() {
           className="!mb-0"
           title={firstName ? `Bienvenido, ${firstName} 👋` : 'Bienvenido 👋'}
           subtitle={`Este es el resumen general de tu negocio — ${period.label.toLowerCase()}${
-            // Fase 12b §19: si el mes seleccionado es el mes en curso, los
-            // datos son parciales y la comparación "vs mes anterior" cojea.
-            period.from?.slice(0, 7) === new Date().toISOString().slice(0, 7)
-              ? ' (mes en curso: datos parciales)'
+            // Fase 13 (P0.4): lo decide el BACKEND con los datos (no el reloj):
+            // si el mes está incompleto, la variación compara días equivalentes.
+            metrics?.periodo.mes_parcial
+              ? ' (mes incompleto: variación por días equivalentes)'
               : ''
           }.`}
         />
@@ -539,8 +539,9 @@ export default function Resumen() {
             <div className="mt-4 flex items-start gap-2 rounded-lg border border-teal/25 bg-teal/[0.05] px-4 py-2.5 text-xs text-navy/65">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" />
               <p>
-                Tu archivo no trae una columna de <strong>costos</strong>: agrégala (o asígnala en
-                el mapeo de Limpieza) para ver utilidad bruta, margen y resultado del periodo.
+                {metrics?.dimensiones?.costo
+                  ? 'Tu archivo trae una columna de costos, pero ninguna venta tiene su costo asociado en este periodo: la utilidad y el margen no se pueden calcular.'
+                  : 'Tu archivo no trae una columna de costos: agrégala (o asígnala en el mapeo de Limpieza) para ver utilidad bruta y margen.'}
               </p>
             </div>
           )}

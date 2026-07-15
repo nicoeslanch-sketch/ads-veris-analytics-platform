@@ -12,15 +12,20 @@ import {
   uploadToStorage,
   type DatasetSource,
 } from '../lib/datasets'
+import { PLAN_ENFORCEMENT, normalizePlan } from '../lib/plans'
+import { usePlan } from '../lib/usePlan'
 import { supabaseConfigured } from '../lib/supabase'
 import type { StandardizeResult } from '../lib/types'
 import { useDataset } from './DatasetContext'
 
 export function useFileImport() {
   const { setUploaded, setStandardization } = useDataset()
+  const { plan, isAdmin } = usePlan()
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
+  // Fase 13: cuentas sin plan — cada intento de subir abre el panel de planes.
+  const [planBlocked, setPlanBlocked] = useState(false)
 
   const importFile = async (
     selected: File,
@@ -28,6 +33,10 @@ export function useFileImport() {
   ): Promise<boolean> => {
     setError(null)
     setPersistWarning(null)
+    if (PLAN_ENFORCEMENT && !isAdmin && normalizePlan(plan) === 'sin_plan') {
+      setPlanBlocked(true)
+      return false
+    }
     if (!/\.(csv|xlsx)$/i.test(selected.name)) {
       setError('Formato no soportado. Sube un Excel moderno (.xlsx) o CSV (.csv); si tienes un .xls antiguo, guárdalo como .xlsx primero.')
       return false
@@ -72,5 +81,13 @@ export function useFileImport() {
     }
   }
 
-  return { importing, error, persistWarning, importFile, setError }
+  return {
+    importing,
+    error,
+    persistWarning,
+    importFile,
+    setError,
+    planBlocked,
+    dismissPlanBlocked: () => setPlanBlocked(false),
+  }
 }

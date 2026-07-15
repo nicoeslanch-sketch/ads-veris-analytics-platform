@@ -1,6 +1,14 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 12 completas (incluida la 12b) + restauración persistente 0.15.1.**
+**Estado actual: Fases 0 a 13 completas.**
+La Fase 13 (`CHANGELOG` [0.16.0]) introduce el modelo de cuentas nuevas SIN
+plan (migración **0015**: navegar sí, subir archivos no — panel con CTA a
+Planes; las cuentas existentes conservan su plan), contraseña reforzada en el
+registro (8+ caracteres, letras y números), y corrige el triage verificado del
+tercer informe externo MÁS dos hallazgos propios: las fechas ISO de Excel se
+VOLTEABAN (1 de mayo → 5 de enero: la evolución mensual de la base real
+mostraba 12 meses donde solo hay dos) y una clave pegada de StrictMode que
+impedía que Explorar se adaptara al archivo. **224 tests + build + 2 E2E.**
 La reapertura del último trabajo ya no reconstruye pandas en cada inicio: la
 API recupera un snapshot versionado con estandarización, limpieza y métricas en
 una sola llamada. Cuando no existe, lo calcula una vez y lo deja listo para las
@@ -499,7 +507,8 @@ python -m pytest tests/ -v
 #   supabase/migrations/0011_lock_privileged_columns.sql (Fase 10: P0 — plan/is_admin solo backend)
 #   supabase/migrations/0012_cleaning_job_options.sql (Fase 12 B1: decisión explícita de duplicados)
 #   supabase/migrations/0013_dataset_deletion_saga.sql (Fase 12 B6A: eliminación recuperable)
-#   supabase/migrations/0014_restore_snapshots.sql (restauración persistente y segura)
+#   supabase/migrations/0014_restore_snapshots.sql
+#   supabase/migrations/0015_sin_plan_nuevas_cuentas.sql (Fase 13: cuentas nuevas sin plan) (restauración persistente y segura)
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

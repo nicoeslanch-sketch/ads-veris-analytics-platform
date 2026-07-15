@@ -382,7 +382,8 @@ def test_convencion_decimal_por_columna(client, auth_headers):
         headers=auth_headers,
     )
     despues = [fila[1] for fila in response.json()["preview"]["despues"]]
-    assert "3.13" in despues or "3.12" in despues  # 3.125 formateado a 2 decimales
+    # Fase 13 (P0.6): la precisión se CONSERVA — antes se truncaba a 2 decimales
+    assert "3.125" in despues
     assert "3125" not in despues
 
 

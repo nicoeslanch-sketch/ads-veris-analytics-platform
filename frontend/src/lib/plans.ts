@@ -10,7 +10,7 @@
  * (profiles.is_admin) pasa todas las puertas.
  */
 
-export type PlanCode = 'basico' | 'analista' | 'gold'
+export type PlanCode = 'sin_plan' | 'basico' | 'analista' | 'gold'
 
 export type Capability =
   | 'standardize'
@@ -33,13 +33,18 @@ const ANALISTA: Capability[] = [...BASICO, 'download_clean_dataset', 'ai_cleanin
 const GOLD: Capability[] = [...ANALISTA, 'connect_sql', 'community_access']
 
 export const PLAN_CAPABILITIES: Record<PlanCode, ReadonlySet<Capability>> = {
+  // Fase 13: cuentas nuevas sin plan — navegan, pero no procesan archivos.
+  sin_plan: new Set<Capability>(),
   basico: new Set(BASICO),
   analista: new Set(ANALISTA),
   gold: new Set(GOLD),
 }
 
 export function normalizePlan(plan: string | null | undefined): PlanCode {
+  // Sin fila en profiles (cuentas antiguas) → 'basico': quienes ya tienen
+  // cuenta conservan su plan y no notan el cambio.
   const value = (plan ?? 'basico').trim().toLowerCase()
+  if (value === 'sin_plan' || value === 'ninguno' || value === 'none' || value === 'free') return 'sin_plan'
   if (value === 'analista' || value === 'analyst') return 'analista'
   if (value === 'gold') return 'gold'
   return 'basico'
@@ -56,6 +61,7 @@ export function capabilityUnlocked(plan: string | null | undefined, cap: Capabil
 
 export function planLabel(plan: string | null | undefined): string {
   const labels: Record<PlanCode, string> = {
+    sin_plan: 'Sin plan',
     basico: 'Plan Básico',
     analista: 'Plan Analista',
     gold: 'Plan Gold',
@@ -75,7 +81,9 @@ export type FeatureAvailability = 'si' | 'no' | 'construccion' | 'limitado'
 
 export interface PlanFeatureRow {
   label: string
-  availability: Record<PlanCode, FeatureAvailability>
+  // La tabla comparativa de Planes muestra solo los planes CONTRATABLES —
+  // "sin_plan" no es una columna, es la ausencia de plan.
+  availability: Record<Exclude<PlanCode, 'sin_plan'>, FeatureAvailability>
 }
 
 /** Matriz de la página Planes (Fase 8). */
@@ -137,7 +145,8 @@ export function startCheckout(plan: PlanCode): CheckoutResult {
 }
 
 export interface PlanCard {
-  code: PlanCode
+  // Solo planes contratables: "sin_plan" no es una tarjeta.
+  code: Exclude<PlanCode, 'sin_plan'>
   nombre: string
   tagline: string
   enConstruccion: boolean

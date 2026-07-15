@@ -1026,11 +1026,13 @@ def analyze_and_clean(
         remaining.pop("_por_columna")
         remaining.pop("_patrones_estructurales")
         remaining.pop("_caches")
-        # Los nulos preservados por diseño ya están catalogados por columna en el
-        # reporte de calidad: la calidad post-limpieza mide problemas ESTRUCTURALES
-        # pendientes (fechas/tipos irreparables no tratados, duplicados restantes).
+        # Fase 13 (P0.1): la calidad DESPUÉS usa la MISMA base que la calidad
+        # ANTES (nulos + fechas + tipos + duplicados). Antes excluía los nulos
+        # preservados y una base con 10.000 celdas vacías podía "subir a 100%"
+        # sin que se corrigiera nada — una mejora falsa.
         remaining_cells = (
-            remaining["fechas_invalidas"]
+            remaining["valores_nulos"]
+            + remaining["fechas_invalidas"]
             + remaining["tipos_incorrectos"]
             + remaining["duplicados"] * max(cols_after, 1)
         )

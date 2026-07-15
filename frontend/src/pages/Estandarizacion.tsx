@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
+import { PlanRequiredModal } from '../components/ui/PlanGate'
 import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
@@ -72,7 +73,7 @@ export default function Estandarizacion() {
   const [changingSheet, setChangingSheet] = useState(false)
   const [sheetError, setSheetError] = useState<string | null>(null)
   // Flujo compartido con Conectores: Storage + datasets + /standardize
-  const { importing: processing, error, persistWarning, importFile } = useFileImport()
+  const { importing: processing, error, persistWarning, importFile, planBlocked, dismissPlanBlocked } = useFileImport()
 
   const handleFile = async (selected: File) => {
     await importFile(selected)
@@ -132,6 +133,7 @@ export default function Estandarizacion() {
 
   return (
     <>
+      <PlanRequiredModal open={planBlocked} onClose={dismissPlanBlocked} />
       <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <PageHeader
           className="!mb-0"

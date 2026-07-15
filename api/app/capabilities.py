@@ -64,6 +64,10 @@ _GOLD = {
 }
 
 PLAN_CAPABILITIES: dict[str, set[Capability]] = {
+    # Fase 13: las cuentas NUEVAS nacen sin plan (migración 0015) — pueden
+    # navegar la plataforma pero no procesar archivos. Las cuentas existentes
+    # conservan 'basico' y no notan el cambio.
+    "sin_plan": set(),
     "basico": _BASICO,
     "analista": _ANALISTA,
     "gold": _GOLD,
@@ -73,7 +77,11 @@ PLAN_ORDER = ("basico", "analista", "gold")
 
 
 def normalize_plan(plan: str | None) -> str:
+    # Sin fila en profiles (cuentas antiguas / entorno local) → 'basico':
+    # las cuentas existentes quedan protegidas por diseño.
     value = (plan or "basico").strip().lower()
+    if value in {"sin_plan", "ninguno", "none", "free"}:
+        return "sin_plan"
     if value in {"analista", "analyst"}:
         return "analista"
     if value == "gold":
@@ -82,7 +90,12 @@ def normalize_plan(plan: str | None) -> str:
 
 
 def display_plan(plan: str | None) -> str:
-    return {"basico": "Básico", "analista": "Analista", "gold": "Gold"}[normalize_plan(plan)]
+    return {
+        "sin_plan": "Sin plan",
+        "basico": "Básico",
+        "analista": "Analista",
+        "gold": "Gold",
+    }[normalize_plan(plan)]
 
 
 def plan_allows(plan: str | None, capability: Capability | str) -> bool:
@@ -167,6 +180,12 @@ def require_capability_for_user(
         ) from exc
     if is_admin or plan_allows(plan, capability):
         return plan
+    if plan == "sin_plan":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Necesitas un plan activo para usar esta función. "
+            "Contrata un plan en la página Planes para comenzar.",
+        )
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail=f"Esta función requiere el Plan {display_plan(min_plan_for(capability))}. "

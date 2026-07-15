@@ -47,6 +47,12 @@ export default function Login() {
     e.preventDefault()
     setError(null)
     setNotice(null)
+    // Fase 13: contraseña reforzada al crear cuenta — mínimo 8 caracteres
+    // con al menos una letra y un número.
+    if (mode === 'register' && !/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(password)) {
+      setError('La contraseña debe tener al menos 8 caracteres e incluir letras y números.')
+      return
+    }
     setSubmitting(true)
     try {
       if (mode === 'login') {
@@ -226,7 +232,7 @@ export default function Login() {
                 minLength={mode === 'register' ? 8 : 6}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={mode === 'register' ? 'Mínimo 8 caracteres' : 'Tu contraseña'}
+                placeholder={mode === 'register' ? 'Mínimo 8 caracteres, letras y números' : 'Tu contraseña'}
                 className={inputClass}
               />
             </div>

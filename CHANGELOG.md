@@ -2,6 +2,73 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.16.0] - 2026-07-15 - Fase 13: cuentas sin plan, contraseña reforzada y triage verificado del 3er informe
+
+### Modelo comercial (pedido del dueño)
+- **Las cuentas NUEVAS nacen sin plan** (migración `0015` — ejecutarla en
+  Supabase): pueden navegar toda la plataforma, pero al intentar subir o
+  importar un archivo aparece el panel "Necesitas un plan activo" con CTA
+  directo a Planes. El backend refuerza lo mismo (403 en /standardize, /clean
+  y el conector de Sheets para plan `sin_plan`). **Las cuentas existentes no
+  se tocan: conservan su plan actual y funcionan exactamente igual.**
+- **Contraseña reforzada al registrarse**: mínimo 8 caracteres con letras y
+  números (validación con mensaje claro en el formulario).
+
+### Hallazgo propio (no estaba en ningún informe): fechas ISO volteadas
+- pandas con `dayfirst=True` interpretaba "2026-05-01" (año-mes-día, el
+  formato con que Excel serializa fechas) como año-DÍA-mes: **el 1 de mayo se
+  convertía en 5 de enero**. En la base real de regresión, la evolución
+  mensual mostraba 12 meses fabricados donde los datos reales tienen SOLO
+  abril y mayo. Corregido en `parse_date` (año-primero = ISO siempre) y las
+  columnas datetime de Excel ahora se clasifican y estandarizan como fecha.
+
+### P0 del informe externo, verificados y corregidos
+- **Porcentajes con devoluciones** (§P0.3): la participación por producto/
+  cliente/categoría/canal se calcula sobre ventas BRUTAS positivas — dividir
+  por el neto mostraba "1.000%" con una devolución grande.
+- **Mes incompleto** (§P0.4): si el mes seleccionado tiene datos solo hasta
+  el día N, la variación compara los primeros N días del mes anterior (con
+  aviso y flag `periodo.mes_parcial`) — antes comparaba 15 días contra 30 y
+  mostraba caídas falsas. Lo decide el backend con los DATOS, no el reloj.
+- **Monedas** (§P0.5): UF, ARS, PEN, COP, MXN y GBP ahora se detectan (el
+  estandarizador ya quitaba sus tokens y quedaban como CLP silencioso).
+- **Precisión numérica** (§P0.6): se eliminó el truncado a 2 decimales
+  (0,0049 se convertía en 0,00) — la precisión se conserva; redondear es de
+  la capa de presentación.
+- **Horas conservadas** (§P0.7): "15/07/2026 08:15" mantiene su hora al
+  estandarizar (la medianoche de Excel "00:00:00" no se conserva).
+- **Calidad con la MISMA base antes/después** (§P0.1): los nulos preservados
+  vuelven a contar en la calidad post-limpieza — una base con 10.000 celdas
+  vacías ya no puede "subir a 100%" sin que se corrigiera nada.
+- **Utilidad mensual desconocida ≠ $0**: un mes sin filas pareadas entrega
+  utilidad null (antes la suma de NaN daba 0).
+- **Conteo real de fusiones fuzzy**: el total ya no es la cantidad de
+  ejemplos capados a 5.
+- **"Total Energies" con dos columnas** ya no se elimina: la etiqueta de
+  fila-total exige coincidencia EXACTA ("Total", "Subtotal"…).
+- **CSV con comas entrecomilladas**: el detector de separador ignora lo
+  citado ('ACME,"Servicio, instalación",100').
+- **Copys coherentes**: "Registros" también en la rama sin costos; "sin
+  columna de costos" ≠ "con costos pero sin ventas pareadas" (se distinguen);
+  concentración de clientes dice "ventas identificadas" también en Explorar;
+  cerrar sesión ya no impide restaurar el último trabajo al reingresar.
+- **StrictMode (2º hallazgo propio)**: el camino que reutiliza métricas del
+  contexto en Explorar quedaba con la clave pegada tras el doble montaje y
+  los presets no se adaptaban al archivo — corregido con liberación de clave.
+
+### Rechazado o postergado del informe (con razón)
+- Retirar el porcentaje único de calidad (se corrigió su base; el rediseño
+  multidimensional sigue en backlog), eliminar toggles de reglas (rotulados
+  honestos por ahora; decisión de producto), bloquear KPIs con monedas
+  mixtas (advertencia prominente; decisión de producto), fuzzy como
+  sugerencia, versionado/invalidación de snapshots y restauración multihoja
+  completa, auditoría CSV en ZIP, severidades estructuradas, Vitest,
+  literales "nan"/"None" (el reemplazo del loader cubre NaN reales de
+  pandas; distinguirlos exige refactor de carga).
+
+### Verificación
+- 224 pruebas backend (16 nuevas), build de producción y 2 suites E2E.
+
 ## [0.15.2] - 2026-07-15 - Ajustes móviles sin cambios en escritorio
 
 - Estandarización mantiene las acciones del dataset activo dentro del recuadro

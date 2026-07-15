@@ -72,7 +72,9 @@ def _guard_xlsx_zip(content: bytes) -> None:
 # Fila-resumen al final de la planilla: su primera celda con texto es una
 # etiqueta de total. Solo se revisan las ÚLTIMAS filas (nunca datos del medio).
 _TOTAL_ROW_RE = re.compile(
-    r"^(sub)?total(es)?( general(es)?)?\b|^suma(s|torias?)?\b|^gran total\b"
+    # Fase 13: coincidencia EXACTA de la etiqueta — "Total Energies" o "Suma
+    # Servicios" son datos (una empresa), no un resumen.
+    r"^((sub)?total(es)?( general(es)?)?|suma(s|torias?)?|gran total)$"
 )
 _MAX_TRAILING_TOTAL_ROWS = 3
 
@@ -151,6 +153,19 @@ class UnsupportedFileError(ValueError):
     pass
 
 
+def _count_outside_quotes(line: str, sep: str) -> int:
+    """Cuenta el separador IGNORANDO lo entrecomillado (Fase 13): en
+    'ACME,"Servicio, instalación",100' la coma interna no es separador."""
+    count = 0
+    in_quotes = False
+    for ch in line:
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif ch == sep and not in_quotes:
+            count += 1
+    return count
+
+
 def _detect_separator(sample: str) -> str:
     """Separador más consistente en las primeras líneas con contenido."""
     lines = [line for line in sample.splitlines() if line.strip()][:8]
@@ -158,7 +173,7 @@ def _detect_separator(sample: str) -> str:
         return ","
     scores: dict[str, int] = {}
     for sep in (";", ",", "\t"):
-        counts = [line.count(sep) for line in lines]
+        counts = [_count_outside_quotes(line, sep) for line in lines]
         if counts[0] > 0 and len(set(counts)) == 1:
             # Mismo número de separadores en todas las líneas → muy confiable.
             scores[sep] = counts[0] * 100

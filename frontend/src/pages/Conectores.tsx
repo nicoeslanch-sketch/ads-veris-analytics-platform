@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
+import { PlanRequiredModal } from '../components/ui/PlanGate'
 import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
@@ -36,7 +37,7 @@ interface SheetsImportResponse {
 export default function Conectores() {
   const navigate = useNavigate()
   const { file, cleaning } = useDataset()
-  const { importing, error: importError, persistWarning, importFile } = useFileImport()
+  const { importing, error: importError, persistWarning, importFile, planBlocked, dismissPlanBlocked } = useFileImport()
 
   const [sheetUrl, setSheetUrl] = useState('')
   const [fetching, setFetching] = useState(false)
@@ -66,6 +67,7 @@ export default function Conectores() {
 
   return (
     <>
+      <PlanRequiredModal open={planBlocked} onClose={dismissPlanBlocked} />
       <PageHeader
         title="Conectores"
         subtitle="Conecta tus fuentes de datos: archivos Excel/CSV, Google Sheets y próximamente bases SQL."

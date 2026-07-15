@@ -1031,7 +1031,12 @@ async def standardize(
     storage_path: str | None = Form(None),
     sheet: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
+    # Fase 13: las cuentas nuevas nacen SIN plan — pueden navegar, pero
+    # procesar archivos requiere un plan activo (las cuentas existentes
+    # conservan su plan básico y no notan el cambio).
+    require_capability_for_user(user.id, Capability.STANDARDIZE, settings)
     filename, content = await _read_input(file, storage_path, user)
     return await run_in_threadpool(
         _standardize_sync, filename, content, _clean_sheet_param(sheet)
@@ -1050,7 +1055,9 @@ async def clean(
     mapping: str | None = Form(None),
     sheet: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
+    require_capability_for_user(user.id, Capability.CLEAN, settings)
     filename, content = await _read_input(file, storage_path, user)
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)

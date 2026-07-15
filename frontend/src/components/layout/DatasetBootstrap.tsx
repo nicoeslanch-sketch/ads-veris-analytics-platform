@@ -24,6 +24,12 @@ export default function DatasetBootstrap() {
   const cancelledRef = useRef(false)
   const restoreAbortRef = useRef<AbortController | null>(null)
 
+  // Fase 13: al cerrar sesión se limpia el intento — reingresar con la
+  // misma cuenta vuelve a restaurar el último trabajo.
+  useEffect(() => {
+    if (!user) attemptedUsers.clear()
+  }, [user])
+
   useEffect(() => {
     if (!supabaseConfigured || !user) return
     if (file || attemptedUsers.has(user.id)) return

@@ -17,6 +17,8 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
+from ..capabilities import Capability, require_capability_for_user
+from ..config import Settings, get_settings
 from ..storage import MAX_DOWNLOAD_BYTES
 
 router = APIRouter(prefix="/connectors", dependencies=[Depends(get_current_user)])
@@ -113,8 +115,14 @@ def _download_sheet_csv(sheet_id: str, gid: str) -> tuple[str, bytes]:
 
 
 @router.post("/sheets")
-async def import_google_sheet(body: SheetsImportRequest) -> dict:
+async def import_google_sheet(
+    body: SheetsImportRequest,
+    user=Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
     """Importa una hoja pública de Google Sheets como CSV."""
+    # Fase 13: importar datos es procesar archivos — requiere plan activo.
+    require_capability_for_user(user.id, Capability.STANDARDIZE, settings)
     sheet_id, gid = _parse_sheet_url(body.url)
     filename, content = await run_in_threadpool(_download_sheet_csv, sheet_id, gid)
     try:

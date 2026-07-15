@@ -50,10 +50,19 @@ def _numeric_series(df: pd.DataFrame, column: str | None) -> pd.Series:
 # ── Moneda (Fase 10 §4.4): detección por tokens en la columna de montos ─────
 # El parser acepta "$ 1.200", "US$1.500", "€200"… pero el dashboard debe saber
 # QUÉ moneda está mostrando, y jamás sumar monedas distintas en silencio.
+# Fase 13 (P0.5): TODAS las monedas cuyo token elimina el estandarizador —
+# antes UF/ARS/PEN/COP/MXN perdían su token y el dashboard las mostraba
+# como pesos chilenos sin aviso.
 _CURRENCY_SIGNALS = {
     "USD": re.compile(r"(?i)(us\$|usd)"),
     "EUR": re.compile(r"(?i)(€|eur)"),
     "CLP": re.compile(r"(?i)(clp)"),
+    "UF": re.compile(r"(?i)\buf\b"),
+    "ARS": re.compile(r"(?i)\bars\b"),
+    "PEN": re.compile(r"(?i)(\bpen\b|s/\.?\s?\d)"),
+    "COP": re.compile(r"(?i)\bcop\b"),
+    "MXN": re.compile(r"(?i)\bmxn\b"),
+    "GBP": re.compile(r"(?i)(£|gbp)"),
 }
 
 
@@ -117,7 +126,11 @@ def _group_sum(
     frame = frame.dropna(subset=["monto"])
     if frame.empty:
         return []
-    total = float(frame["monto"].sum()) or 1.0
+    # Fase 13 (P0.3): la participación se calcula sobre las ventas BRUTAS
+    # positivas — con devoluciones, dividir por el neto disparaba porcentajes
+    # absurdos (100.000 sobre un neto de 10.000 = "1.000%").
+    positivos = float(frame.loc[frame["monto"] > 0, "monto"].sum())
+    total = positivos if positivos > 0 else (abs(float(frame["monto"].sum())) or 1.0)
     rows: list[dict] = []
     for name, g in frame.groupby("grupo", dropna=False):
         ingresos = float(g["monto"].sum())
@@ -255,9 +268,18 @@ def compute_metrics(
         if not has_costs:
             return {}
         ing_par = float(row.get("ingresos_pareados", 0.0) or 0.0)
-        utilidad_mes = float(row["utilidad"])
         con_ingreso = int(row.get("_filas_con_ingreso", 0) or 0)
         pareadas = int(row.get("_filas_pareadas", 0) or 0)
+        # Fase 13: un mes SIN filas pareadas no tiene utilidad conocida — la
+        # suma de puros NaN daba 0.0 y "sin costos" se veía como "utilidad $0".
+        if not pareadas:
+            return {
+                "gastos": round(float(row["gastos"]), 2),
+                "utilidad": None,
+                "margen_pareado_pct": None,
+                "cobertura_costos_pct": 0.0 if con_ingreso else None,
+            }
+        utilidad_mes = float(row["utilidad"])
         return {
             "gastos": round(float(row["gastos"]), 2),
             "utilidad": round(utilidad_mes, 2),
@@ -308,8 +330,29 @@ def compute_metrics(
         month_end = start + pd.offsets.MonthEnd(0)
         is_full_month = start.day == 1 and end.normalize() == month_end.normalize()
         if is_full_month:
-            prev_end = start - pd.Timedelta(days=1)
-            prev_start = prev_end.replace(day=1)
+            # Fase 13 (P0.4): si el mes seleccionado está INCOMPLETO (el último
+            # dato del archivo cae dentro de este mes antes de fin de mes), se
+            # compara contra los DÍAS EQUIVALENTES del mes anterior — comparar
+            # 15 días contra 30 mostraba caídas falsas.
+            max_data = dates_all.max()
+            prev_end_full = start - pd.Timedelta(days=1)
+            prev_start = prev_end_full.replace(day=1)
+            mes_parcial_sel = bool(
+                pd.notna(max_data)
+                and start <= max_data < month_end.normalize()
+                and max_data.strftime("%Y-%m") == start.strftime("%Y-%m")
+            )
+            if mes_parcial_sel:
+                eq_day = min(int(max_data.day), int(prev_end_full.day))
+                prev_end = prev_start + pd.Timedelta(days=eq_day - 1)
+                warnings.append(
+                    f"El mes seleccionado está incompleto (datos hasta el "
+                    f"{max_data.strftime('%d/%m/%Y')}): la variación se compara "
+                    f"con los primeros {eq_day} días del mes anterior, no con el "
+                    "mes completo."
+                )
+            else:
+                prev_end = prev_end_full
             prev_mask = dates_all.map(
                 lambda d: bool(pd.notna(d) and prev_start <= d <= prev_end)
             )
@@ -464,6 +507,7 @@ def compute_metrics(
         "periodo": {
             "desde": date_from,
             "hasta": date_to,
+            "mes_parcial": bool(locals().get("mes_parcial_sel", False)),
             "meses_disponibles": [str(m) for m in monthly.index] if has_dates else [],
         },
         "kpis": kpis,
@@ -505,13 +549,17 @@ def compute_metrics(
             # Fase 12b §21: el % del cliente principal es sobre las ventas CON
             # cliente identificado — si la mitad de las ventas no tiene
             # cliente, ese % NO es sobre el total y la UI debe decirlo.
-            ingresos_identificados = float(amounts[valid_mask].dropna().sum())
+            # Fase 13 (P0.3): la cobertura se mide sobre ventas BRUTAS
+            # positivas — con devoluciones, el neto daba coberturas >100% o
+            # negativas, ambas sin sentido.
+            brutos_total = float(amounts[amounts > 0].sum())
+            brutos_ident = float(amounts[valid_mask & (amounts > 0)].sum())
             result["clientes"] = {
                 "unicos": int(clientes_raw[valid_mask].nunique()),
                 "top": top[:5],
                 "concentracion_top_pct": top[0]["porcentaje"] if top else None,
                 "cobertura_identificacion_pct": (
-                    round(ingresos_identificados / ingresos * 100, 1) if ingresos else None
+                    round(brutos_ident / brutos_total * 100, 1) if brutos_total else None
                 ),
             }
 

@@ -356,7 +356,13 @@ export interface MetricsResult {
   mapeo: Record<string, string>
   dimensiones?: DatasetDimensions
   agrupado_por_canal: 'canal' | 'sucursal' | null
-  periodo: { desde: string | null; hasta: string | null; meses_disponibles: string[] }
+  periodo: {
+    desde: string | null
+    hasta: string | null
+    meses_disponibles: string[]
+    /** Fase 13 (P0.4): el mes seleccionado esta incompleto — la variacion compara dias equivalentes. */
+    mes_parcial?: boolean
+  }
   kpis: {
     ingresos_totales: KpiValue
     transacciones: number

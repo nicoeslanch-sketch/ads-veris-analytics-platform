@@ -152,9 +152,13 @@ def _sample_values(series: pd.Series) -> list[str]:
 
 
 def _looks_like_date(value: str) -> bool:
-    return bool(
-        _DATE_SHAPE.match(value) or _DATE_TEXT_SHAPE.match(strip_accents_lower(value))
-    )
+    if _DATE_SHAPE.match(value) or _DATE_TEXT_SHAPE.match(strip_accents_lower(value)):
+        return True
+    # Fase 13: "2026-05-01 00:00:00" (datetime de Excel) también ES una fecha —
+    # antes estas columnas quedaban clasificadas como texto y jamás se
+    # estandarizaban, aunque las métricas sí las parseaban por rol.
+    head = str(value).strip().split(" ")[0]
+    return bool(head != str(value).strip() and _DATE_SHAPE.match(head))
 
 
 def detect_value_type_confidence(series: pd.Series, column_name: str) -> tuple[str, float]:
@@ -279,6 +283,11 @@ def parse_date(value: str, dayfirst: bool = True) -> pd.Timestamp | None:
     # MM/DD y ya no se descarta ni se interpreta al revés.
     evidence = _value_dayfirst_evidence(text)
     effective_dayfirst = dayfirst if evidence is None else evidence
+    # Fase 13: una fecha AÑO-primero ("2026-05-01", ISO) es SIEMPRE
+    # año-mes-día — pandas con dayfirst=True la volteaba a año-DÍA-mes y
+    # el 1 de mayo se convertía en 5 de enero.
+    if re.match(r"^\d{4}[-/.]", text):
+        effective_dayfirst = False
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         parsed = pd.to_datetime(text, dayfirst=effective_dayfirst, errors="coerce")
@@ -396,7 +405,10 @@ def parse_number(
 def format_number(number: float) -> str:
     if number == int(number):
         return str(int(number))
-    return f"{number:.2f}"
+    # Fase 13 (P0.6): ":.2f" destruía precisión (0.0049 → "0.00"). Se conservan
+    # hasta 9 decimales sin ceros colgantes — el redondeo es asunto de la capa
+    # de presentación, jamás del dataset limpio.
+    return f"{number:.9f}".rstrip("0").rstrip(".")
 
 
 # ── Textos: unificación por frecuencia + fuzzy matching ──────────────────────
@@ -634,11 +646,13 @@ def _normalize_text_column(
 
     # Fuzzy: claves raras que son typos de una clave frecuente (§5.11).
     fuzzy_examples: list[list[str]] = []
+    fuzzy_merges = 0  # Fase 13: conteo REAL (los ejemplos van capados a 5)
     if allow_fuzzy:
         for rare_key, canon_key in _fuzzy_merge_keys(frequencies).items():
             if len(fuzzy_examples) < 5:
                 fuzzy_examples.append([canonical[rare_key], canonical[canon_key]])
             canonical[rare_key] = canonical[canon_key]
+            fuzzy_merges += 1
 
         # Fase 11 §8: variantes MORFOLÓGICAS en categóricas de baja
         # cardinalidad — "pagada" (5) → "pagado" (55). El fuzzy clásico no las
@@ -667,6 +681,7 @@ def _normalize_text_column(
                         if len(fuzzy_examples) < 5:
                             fuzzy_examples.append([canonical[minor], canonical[major]])
                         canonical[minor] = canonical[major]
+                        fuzzy_merges += 1
                         break
 
     unified = map_unique(
@@ -689,6 +704,7 @@ def _normalize_text_column(
         "placeholders_detectados": int(semantic_mask.sum()),
         "mojibake_detectado": mojibake_detected,
         "mojibake_reparado": mojibake_repaired,
+        "fusiones_fuzzy": fuzzy_merges,
     }, fuzzy_examples, mojibake_audit
 
 
@@ -725,6 +741,7 @@ def standardize_dataframe(
         "placeholders_detectados": 0,
         "mojibake_detectado": 0,
         "mojibake_reparado": 0,
+        "fusiones_fuzzy": 0,
     }
 
     for col in result.columns:
@@ -743,7 +760,8 @@ def standardize_dataframe(
                 text_detail[key] += detail[key]
             text_changes += detail["celdas_textuales_unicas_modificadas"]
             if examples:
-                fuzzy_total += len(examples)
+                # Conteo real de variantes fusionadas (no los ejemplos capados)
+                fuzzy_total += detail["fusiones_fuzzy"]
                 fuzzy_examples.extend(examples[: max(0, 5 - len(fuzzy_examples))])
             for audit in column_mojibake:
                 if len(mojibake_audit) >= 5000:
@@ -770,7 +788,16 @@ def standardize_dataframe(
                 if is_missing(value):
                     return ""
                 parsed = parse_date(value, dayfirst=dayfirst)
-                return str(value).strip() if parsed is None else parsed.strftime("%d/%m/%Y")
+                if parsed is None:
+                    return str(value).strip()
+                # Fase 13 (P0.7): si el valor original traía HORA distinta de
+                # medianoche, se conserva — dos eventos del mismo día no deben
+                # volverse indistinguibles (Excel serializa fechas puras como
+                # "00:00:00": esa medianoche NO se conserva).
+                time_match = re.search(r"\b(\d{1,2}:\d{2}(?::\d{2})?)\b", str(value))
+                if time_match and time_match.group(1) not in ("0:00", "00:00", "00:00:00", "0:00:00"):
+                    return f"{parsed.strftime('%d/%m/%Y')} {time_match.group(1)}"
+                return parsed.strftime("%d/%m/%Y")
 
             new = map_unique(result[col], _standardize_date)
             date_changes += int((new != result[col].map(str)).sum())

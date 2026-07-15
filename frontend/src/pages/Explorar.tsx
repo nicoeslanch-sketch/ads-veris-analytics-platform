@@ -234,7 +234,7 @@ function computeFindings(m: MetricsResult): Finding[] {
     findings.push({
       tone: 'gold',
       icon: Users,
-      title: `Un solo cliente concentra el ${formatPct(m.clientes.concentracion_top_pct)} de tus ventas`,
+      title: `Un solo cliente concentra el ${formatPct(m.clientes.concentracion_top_pct)} de tus ventas identificadas`,
       detail: `"${topCliente?.nombre ?? 'Tu cliente principal'}" pesa demasiado en tus ingresos: si se va, el negocio lo siente. Diversificar tu cartera reduce ese riesgo.`,
     })
   }
@@ -346,7 +346,12 @@ export default function Explorar() {
       }
       setError(null)
       setLoading(false)
-      return
+      // Fase 13: este camino también libera su clave al desmontar — con el
+      // doble montaje de StrictMode la clave quedaba "ya pedida" mientras otro
+      // efecto vaciaba las métricas, y los presets no se adaptaban al archivo.
+      return () => {
+        if (lastFetchKey.current === key) lastFetchKey.current = null
+      }
     }
     const controller = new AbortController()
     const requestId = latestRequest.current + 1

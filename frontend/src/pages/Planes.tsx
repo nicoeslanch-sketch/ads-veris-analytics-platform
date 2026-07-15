@@ -42,7 +42,7 @@ import {
 import { formatNumber } from '../lib/format'
 import type { PlansUsage } from '../lib/types'
 
-const PLAN_ICONS: Record<PlanCode, typeof Sparkles> = {
+const PLAN_ICONS: Record<Exclude<PlanCode, 'sin_plan'>, typeof Sparkles> = {
   basico: Sparkles,
   analista: Crown,
   gold: Gem,
@@ -94,7 +94,7 @@ export default function Planes() {
   /** Botón "Contratar": costura de la pasarela de pago (Fase 9). Hoy el
    * checkout no redirige, así que la contratación queda como solicitud y el
    * administrador activa el plan desde Administrar cuentas. */
-  const contratar = (code: PlanCode, nombre: string) => {
+  const contratar = (code: Exclude<PlanCode, 'sin_plan'>, nombre: string) => {
     const checkout = startCheckout(code)
     if (!checkout.redirected) {
       void sendRequest(`upgrade_${code}`, `Quiero contratar el Plan ${nombre}.`)
