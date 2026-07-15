@@ -395,14 +395,15 @@ export default function Resumen() {
 
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <PageHeader
+          className="!mb-0"
           title={firstName ? `Bienvenido, ${firstName} 👋` : 'Bienvenido 👋'}
           subtitle={`Este es el resumen general de tu negocio — ${period.label.toLowerCase()}.`}
         />
         <Link
           to="/estandarizacion"
-          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-gold px-4 py-2.5 text-sm font-semibold text-navy-deep transition-colors hover:bg-gold/90"
+          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg bg-gold px-4 py-2.5 text-sm font-semibold text-navy-deep transition-colors hover:bg-gold/90 sm:w-auto"
         >
           <Upload className="h-4 w-4" /> Importar datos
         </Link>
@@ -504,7 +505,7 @@ export default function Resumen() {
           )}
 
           {/* Evolución + Indicadores clave */}
-          <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">
                 Evolución de Ingresos, Gastos y Utilidad
@@ -615,7 +616,7 @@ export default function Resumen() {
 
           {/* Categorías + Estado financiero (solo si el archivo trae categorías) */}
           <div
-            className={`mt-6 grid gap-6 ${
+            className={`mt-6 grid items-start gap-6 ${
               (metrics.por_categoria ?? []).length > 0
                 ? 'xl:grid-cols-[minmax(0,1fr)_340px]'
                 : 'xl:grid-cols-2'
@@ -709,7 +710,7 @@ export default function Resumen() {
 
           {/* Canal + Top productos + Proyección — solo las tarjetas con datos
               reales del archivo (Fase 8: nada de recuadros vacíos) */}
-          <div className="mt-6 grid gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+          <div className="mt-6 grid items-start gap-6 lg:grid-cols-2 2xl:grid-cols-3">
             {canal.length > 0 && (
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>

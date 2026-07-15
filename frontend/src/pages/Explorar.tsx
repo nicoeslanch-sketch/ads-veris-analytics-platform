@@ -135,6 +135,17 @@ function formatPct(value: number): string {
   return `${value.toLocaleString('es-CL', { maximumFractionDigits: 1 })}%`
 }
 
+function trendVariationTone(value: number | null): string {
+  if (value == null) return 'text-navy/40'
+  if (value > 0) return 'text-green'
+  if (value < 0) return 'text-coral'
+  return 'text-navy/60'
+}
+
+function formatVariation(value: number): string {
+  return `${value > 0 ? '+' : ''}${formatPct(value)}`
+}
+
 function computeFindings(m: MetricsResult): Finding[] {
   const findings: Finding[] = []
   const evo = m.evolucion_mensual
@@ -427,6 +438,20 @@ export default function Explorar() {
     mes: formatMonthShort(m.mes),
     valor: metric === 'utilidad' ? m.utilidad ?? 0 : m.ingresos,
   }))
+  const trendTotal = trendRows.reduce((sum, row) => sum + row.valor, 0)
+  const monthlyDetailRows = trendRows
+    .map((row, index) => {
+      const previous = trendRows[index - 1]?.valor
+      return {
+        ...row,
+        variacion:
+          previous === undefined || previous === 0
+            ? null
+            : ((row.valor - previous) / Math.abs(previous)) * 100,
+        participacion: trendTotal === 0 ? null : (row.valor / trendTotal) * 100,
+      }
+    })
+    .slice(-8)
 
   const analysisLabel = `${METRIC_LABEL[metric]} por ${GROUP_LABEL[groupBy]} · ${rango.label}`
 
@@ -467,19 +492,20 @@ export default function Explorar() {
   }
 
   const selectClass =
-    'rounded-lg border border-navy/20 bg-white px-3 py-2 text-sm font-medium text-navy outline-none transition-colors focus:border-teal'
+    'w-full rounded-lg border border-navy/20 bg-white px-3 py-2 text-sm font-medium text-navy outline-none transition-colors focus:border-teal sm:w-auto'
 
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <PageHeader
+          className="!mb-0"
           title="Explorar datos 🔍"
           subtitle="Encuentra respuestas, descubre patrones y entiende qué está pasando en tu negocio."
         />
         <button
           onClick={() => void guardarAnalisis()}
           disabled={saveState === 'saving' || !metrics}
-          className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
         >
           {saveState === 'saving' ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -537,11 +563,11 @@ export default function Explorar() {
       {/* Define tu análisis */}
       <Card className="mt-8">
         <div className="flex flex-wrap items-end gap-4">
-          <div className="flex items-center gap-2 pb-2 pr-2">
+          <div className="flex w-full items-center gap-2 pb-2 pr-2 sm:w-auto">
             <SlidersHorizontal className="h-4.5 w-4.5 text-teal" />
             <h2 className="text-base font-semibold text-navy">Define tu análisis</h2>
           </div>
-          <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-navy/50">
+          <label className="flex w-full flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-navy/50 sm:w-auto">
             Rango
             <select
               value={rango.label}
@@ -559,7 +585,7 @@ export default function Explorar() {
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-navy/50">
+          <label className="flex w-full flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-navy/50 sm:w-auto">
             Agrupar por
             <select
               value={groupBy}
@@ -575,7 +601,7 @@ export default function Explorar() {
                 ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-navy/50">
+          <label className="flex w-full flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-navy/50 sm:w-auto">
             Métrica
             <select
               value={metric}
@@ -607,7 +633,7 @@ export default function Explorar() {
           </div>
         </Card>
       ) : (
-        <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
           <div className="flex min-w-0 flex-col gap-6">
             {/* Gráfico principal */}
             <Card>
@@ -704,6 +730,77 @@ export default function Explorar() {
                 </div>
               )}
             </Card>
+
+            {groupBy === 'mes' && monthlyDetailRows.length > 0 && (
+              <Card className="min-w-0">
+                <h2 className="text-base font-semibold text-navy">Detalle mensual</h2>
+                <p className="mt-0.5 text-sm text-navy/60">
+                  Comparación contra el mes anterior y peso dentro del período seleccionado.
+                </p>
+
+                <ul className="mt-4 divide-y divide-navy/5 sm:hidden">
+                  {monthlyDetailRows.map((row) => (
+                      <li
+                        key={row.mes}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 py-3 text-sm"
+                      >
+                        <span className="font-semibold text-navy">{row.mes}</span>
+                        <span className="text-right font-semibold text-navy">
+                          {formatCLP(row.valor)}
+                        </span>
+                        <span className={`text-xs font-medium ${trendVariationTone(row.variacion)}`}>
+                          {row.variacion == null
+                            ? 'Mes base'
+                            : `${formatVariation(row.variacion)} vs. anterior`}
+                        </span>
+                        <span className="text-right text-xs text-navy/50">
+                          {row.participacion == null
+                            ? 'Sin participación'
+                            : `${formatPct(row.participacion)} del período`}
+                        </span>
+                      </li>
+                  ))}
+                </ul>
+
+                <div className="mt-4 hidden overflow-x-auto sm:block">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-navy/10 text-left text-xs font-semibold uppercase tracking-wide text-navy/50">
+                        <th className="pb-2 pr-4">Mes</th>
+                        <th className="pb-2 pr-4 text-right">{METRIC_LABEL[metric]}</th>
+                        <th className="pb-2 pr-4 text-right">Variación</th>
+                        <th className="pb-2 text-right">% del período</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {monthlyDetailRows.map((row) => (
+                          <tr key={row.mes} className="border-b border-navy/5">
+                            <td className="py-2.5 pr-4 font-medium text-navy">{row.mes}</td>
+                            <td className="py-2.5 pr-4 text-right text-navy/80">
+                              {formatCLP(row.valor)}
+                            </td>
+                            <td
+                              className={`py-2.5 pr-4 text-right font-medium ${trendVariationTone(row.variacion)}`}
+                            >
+                              {row.variacion == null
+                                ? 'Base'
+                                : formatVariation(row.variacion)}
+                            </td>
+                            <td className="py-2.5 text-right text-navy/60">
+                              {row.participacion == null ? '—' : formatPct(row.participacion)}
+                            </td>
+                          </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {trendRows.length > monthlyDetailRows.length && (
+                  <p className="mt-3 text-xs text-navy/45">
+                    Se muestran los 8 meses más recientes del período.
+                  </p>
+                )}
+              </Card>
+            )}
 
             {/* Profundiza */}
             {groupBy !== 'mes' && chartRows.length > 0 && (

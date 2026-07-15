@@ -132,14 +132,15 @@ export default function Estandarizacion() {
 
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <PageHeader
+          className="!mb-0"
           title="Estandarización ✨"
           subtitle="Prepara tus datos unificando formatos, nombres y valores para que la limpieza funcione de mejor manera."
         />
         <Link
           to="/historial"
-          className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5"
+          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 sm:w-auto"
         >
           <History className="h-4 w-4" /> Historial de estandarizaciones
         </Link>
@@ -181,7 +182,7 @@ export default function Estandarizacion() {
       )}
 
       {/* Zona de carga + qué hace */}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div
           onDragOver={(e) => {
             e.preventDefault()
@@ -380,7 +381,7 @@ export default function Estandarizacion() {
       )}
 
       {/* Archivos recientes + seguridad */}
-      <div className="mt-10 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="mt-10 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="min-w-0">
           <h2 className="text-base font-semibold text-navy">
             Archivos estandarizados recientes

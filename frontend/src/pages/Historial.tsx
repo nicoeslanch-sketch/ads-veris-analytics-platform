@@ -303,7 +303,7 @@ export default function Historial() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Archivos cargados */}
         <Card className="h-fit min-w-0">
           <h2 ref={listHeadingRef} tabIndex={-1} className="text-base font-semibold text-navy outline-none">

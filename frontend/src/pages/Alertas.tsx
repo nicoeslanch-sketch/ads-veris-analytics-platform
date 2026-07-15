@@ -265,7 +265,7 @@ export default function Alertas() {
         </Card>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-6">
           {/* Alertas activas */}
           <div>
@@ -293,7 +293,7 @@ export default function Alertas() {
                   const meta = SEVERITY_META[alert.severity]
                   return (
                     <Card key={alert.id} className={`border-l-4 ${meta.border}`}>
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
                         <div className="flex items-start gap-3">
                           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-navy/5">
                             <alert.icon className="h-4.5 w-4.5 text-navy/70" />
@@ -313,7 +313,7 @@ export default function Alertas() {
                         </div>
                         <button
                           onClick={() => setResolved((prev) => [...prev, alert.id])}
-                          className="shrink-0 rounded-lg border border-navy/20 px-3 py-1.5 text-xs font-medium text-navy/70 transition-colors hover:bg-navy/5"
+                          className="w-full shrink-0 rounded-lg border border-navy/20 px-3 py-1.5 text-xs font-medium text-navy/70 transition-colors hover:bg-navy/5 sm:w-auto"
                         >
                           Marcar revisada
                         </button>

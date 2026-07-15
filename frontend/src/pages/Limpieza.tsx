@@ -534,22 +534,23 @@ export default function Limpieza() {
 
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <PageHeader
+          className="!mb-0"
           title="Limpieza de datos ✨"
           subtitle="Revisa, ajusta y limpia tus datos para que estén listos para el análisis."
         />
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
           {/* Fase 11 §6.2: salida explícita para estandarizar OTRO documento */}
           <Link
             to="/estandarizacion"
-            className="inline-flex items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 sm:w-auto"
           >
             <Upload className="h-4 w-4" /> Procesar otro archivo
           </Link>
           <Link
             to="/historial"
-            className="inline-flex items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 sm:w-auto"
           >
             <CalendarClock className="h-4 w-4" /> Historial de cargas
           </Link>
@@ -933,7 +934,7 @@ export default function Limpieza() {
 
             {/* Problemas / correcciones / reglas — tres columnas a lo ancho */}
             {result && (
-              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid items-start gap-6 md:grid-cols-2 xl:grid-cols-3">
                 <Card className="bg-gradient-to-br from-coral/[0.05] to-transparent">
                   <div className="flex items-center gap-2">
                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-coral/10">

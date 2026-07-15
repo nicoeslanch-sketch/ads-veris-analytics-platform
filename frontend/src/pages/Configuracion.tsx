@@ -137,7 +137,7 @@ export default function Configuracion() {
         subtitle="Tu perfil, tu empresa y las preferencias de datos de la plataforma."
       />
 
-      <div className="grid max-w-5xl gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid max-w-5xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         {/* Perfil y cuenta */}
         <Card className="h-fit">
           <div className="mb-4 flex items-center justify-between">

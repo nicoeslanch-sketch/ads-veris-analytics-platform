@@ -198,15 +198,16 @@ export default function AdminCuentas() {
 
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <PageHeader
+          className="!mb-0"
           title="Administrar cuentas 🛡️"
           subtitle="Todas las cuentas de ADS Veris: estado, plan, solicitudes y activación manual."
         />
         <button
           onClick={refresh}
           disabled={loading}
-          className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 disabled:opacity-60"
+          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 disabled:opacity-60 sm:w-auto"
         >
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Actualizar
         </button>
@@ -272,7 +273,7 @@ export default function AdminCuentas() {
         </div>
       ) : (
         data && (
-          <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
             {/* Lista de cuentas */}
             <Card className="min-w-0">
               <h2 className="text-base font-semibold text-navy">Cuentas</h2>

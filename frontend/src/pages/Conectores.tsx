@@ -85,7 +85,7 @@ export default function Conectores() {
         </Card>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid items-start gap-6 md:grid-cols-2">
         {/* Google Sheets — funcional */}
         <Card className="md:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2">

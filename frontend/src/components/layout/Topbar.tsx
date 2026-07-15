@@ -39,6 +39,12 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
 
   const displayName =
     (user?.user_metadata?.full_name as string | undefined) ?? user?.email ?? 'Invitado'
+  const compactPeriodLabel =
+    monthsAvailable.length > 0
+      ? period.from
+        ? formatMonthShort(period.from.slice(0, 7))
+        : 'Todo'
+      : 'Periodo'
 
   const handleLogout = async () => {
     await logout()
@@ -46,7 +52,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
   }
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-end gap-4 border-b border-white/10 bg-navy px-4 text-white sm:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-end gap-1 border-b border-white/10 bg-navy px-2 text-white sm:gap-4 sm:px-6">
       {/* Menú móvil (Fase 10 §15.1): abre el sidebar deslizante */}
       {onMenuClick && (
         <button
@@ -62,7 +68,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
         <button
           onClick={() => monthsAvailable.length > 0 && setPeriodOpen((v) => !v)}
           disabled={monthsAvailable.length === 0}
-          className="flex items-center gap-2 rounded-lg border border-white/20 px-3.5 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex items-center gap-1 rounded-lg border border-white/20 px-2 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60 sm:gap-2 sm:px-3.5"
           title={
             monthsAvailable.length === 0
               ? 'El filtro de fechas se habilita cuando cargas datos'
@@ -70,7 +76,10 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
           }
         >
           <Calendar className="h-4 w-4" />
-          {monthsAvailable.length > 0 ? period.label : currentMonthRange()}
+          <span className="sm:hidden">{compactPeriodLabel}</span>
+          <span className="hidden sm:inline">
+            {monthsAvailable.length > 0 ? period.label : currentMonthRange()}
+          </span>
           <ChevronDown className="h-4 w-4 text-white/60" />
         </button>
 
@@ -116,7 +125,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-teal text-sm font-bold">
             {displayName.charAt(0).toUpperCase()}
           </span>
-          <span className="max-w-40 truncate text-sm font-medium">{displayName}</span>
+          <span className="hidden max-w-40 truncate text-sm font-medium sm:inline">{displayName}</span>
           <ChevronDown className="h-4 w-4 text-white/60" />
         </button>
 
