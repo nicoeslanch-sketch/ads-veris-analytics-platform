@@ -1,11 +1,7 @@
-/** Restaura el último trabajo del usuario al iniciar sesión (Fase 11 §6).
+/** Fast, best-effort restoration of the user's latest dataset.
  *
- * Al entrar con la sesión vacía, se busca el dataset más reciente del
- * Historial y se rehidrata el pipeline usando storage_path (el archivo NO se
- * descarga al navegador: el backend lo lee directo de Storage y el resto de
- * módulos sale del caché del servidor). Es una cortesía best-effort:
- * cualquier fallo se silencia y el usuario siempre puede partir de cero con
- * "Empezar con otro documento".
+ * The backend returns a small, versioned snapshot in one request. It only
+ * rebuilds the pipeline with pandas when the snapshot is missing or stale.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -13,18 +9,16 @@ import { Link } from 'react-router-dom'
 import { AlertTriangle, Loader2 } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { useDataset } from '../../data/DatasetContext'
-import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../../lib/api'
-import { fetchDatasets, fetchLatestCleaningConfig } from '../../lib/history'
+import { ApiError, apiPostJson } from '../../lib/api'
 import { supabaseConfigured } from '../../lib/supabase'
-import { DEFAULT_RULES, type CleanResult, type StandardizeResult } from '../../lib/types'
+import type { RestoreLatestResult } from '../../lib/types'
 
-// Un intento por usuario por sesión del navegador (no por navegación).
 const attemptedUsers = new Set<string>()
 const AUTO_RESTORE_TIMEOUT_MS = 90_000
 
 export default function DatasetBootstrap() {
   const { user } = useAuth()
-  const { file, setUploaded, setStandardization, setCleaning } = useDataset()
+  const { file, restoreDataset } = useDataset()
   const [restoring, setRestoring] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState<string | null>(null)
   const cancelledRef = useRef(false)
@@ -38,53 +32,31 @@ export default function DatasetBootstrap() {
     const controller = new AbortController()
     restoreAbortRef.current = controller
 
-    // La retención de Storage también corre al iniciar sesión (Fase 11 §6.3):
-    // los archivos antiguos se podan aunque el usuario no cargue nada nuevo.
-    void apiPostJson('/storage/retention', {}).catch(() => undefined)
-
     const run = async () => {
-      const datasets = await fetchDatasets(10)
-      if (!active || cancelledRef.current) return
-      if (!Array.isArray(datasets)) {
-        attemptedUsers.add(user.id)
-        return
-      }
-      const latest = datasets.find((d) => d.storage_path && d.status !== 'error')
-      if (!latest?.storage_path) {
-        attemptedUsers.add(user.id)
-        return
-      }
-      setRestoring(latest.name)
+      setRestoring('documento reciente')
       setRestoreError(null)
       try {
-        // Placeholder sin bytes: solo aporta el nombre; la data viaja por storage_path.
-        const placeholder = new File([], latest.name, { type: 'application/octet-stream' })
-        const std = await apiPost<StandardizeResult>(
-          '/standardize',
-          buildDatasetForm(placeholder, latest.storage_path),
+        const restored = await apiPostJson<RestoreLatestResult>(
+          '/restore/latest',
+          {},
           { timeoutMs: AUTO_RESTORE_TIMEOUT_MS, signal: controller.signal },
         )
         if (!active || cancelledRef.current) return
-        let cleaned: CleanResult | null = null
-        if (latest.status === 'limpio') {
-          const config = await fetchLatestCleaningConfig(latest.id)
-          cleaned = await apiPost<CleanResult>(
-            '/clean',
-            buildDatasetForm(placeholder, latest.storage_path, {
-              apply: 'true',
-              rules: JSON.stringify(config?.rules ?? DEFAULT_RULES),
-              eliminar_duplicados: String(
-                config?.options.eliminar_duplicados ?? false,
-              ),
-            }),
-            { timeoutMs: AUTO_RESTORE_TIMEOUT_MS, signal: controller.signal },
-          )
-          if (!active || cancelledRef.current) return
-        }
-        // El contexto se toca UNA sola vez, al final: jamás queda a medias.
-        setUploaded(placeholder, latest.id, latest.storage_path)
-        setStandardization(std)
-        if (cleaned) setCleaning(cleaned)
+        if (!restored.dataset || !restored.standardization) return
+
+        const placeholder = new File([], restored.dataset.name, {
+          type: 'application/octet-stream',
+        })
+        restoreDataset(
+          placeholder,
+          restored.dataset.id,
+          restored.dataset.storage_path,
+          restored.standardization,
+          restored.cleaning ?? null,
+          restored.metrics ?? null,
+          restored.mapping ?? null,
+          Boolean(restored.eliminar_duplicados),
+        )
       } catch (err) {
         if (active && !cancelledRef.current) {
           setRestoreError(
@@ -97,6 +69,8 @@ export default function DatasetBootstrap() {
         if (active) {
           attemptedUsers.add(user.id)
           setRestoring(null)
+          // Retention stays off the critical path of the visible restoration.
+          void apiPostJson('/storage/retention', {}).catch(() => undefined)
         }
       }
     }
@@ -105,8 +79,7 @@ export default function DatasetBootstrap() {
       active = false
       controller.abort()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, file])
+  }, [user, file, restoreDataset])
 
   if (!restoring && restoreError) {
     return (

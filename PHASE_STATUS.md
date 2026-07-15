@@ -1,6 +1,10 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 12 completas (incluida la 12b: triage verificado del informe de calidad externo).**
+**Estado actual: Fases 0 a 12 completas (incluida la 12b) + restauración persistente 0.15.1.**
+La reapertura del último trabajo ya no reconstruye pandas en cada inicio: la
+API recupera un snapshot versionado con estandarización, limpieza y métricas en
+una sola llamada. Cuando no existe, lo calcula una vez y lo deja listo para las
+siguientes aperturas. La migración `0014` restringe su escritura al backend.
 La Fase 12b (`CHANGELOG` [0.15.0]) corrige los P0 confirmados del informe: los
 valores no interpretables se CONSERVAN (la calidad ya no "mejora" destruyendo
 evidencia), "1,234" se decide por evidencia de columna con aviso, el margen
@@ -494,6 +498,8 @@ python -m pytest tests/ -v
 #   supabase/migrations/0010_admin_support.sql  (Fase 8: admin, soporte y auditoría)
 #   supabase/migrations/0011_lock_privileged_columns.sql (Fase 10: P0 — plan/is_admin solo backend)
 #   supabase/migrations/0012_cleaning_job_options.sql (Fase 12 B1: decisión explícita de duplicados)
+#   supabase/migrations/0013_dataset_deletion_saga.sql (Fase 12 B6A: eliminación recuperable)
+#   supabase/migrations/0014_restore_snapshots.sql (restauración persistente y segura)
 ```
 
 **Modo desarrollo sin Supabase**: levanta la API con `DEV_AUTH_BYPASS=true` (y sin

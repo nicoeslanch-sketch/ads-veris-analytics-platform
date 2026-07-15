@@ -197,7 +197,7 @@ function ChartTooltip({
 export default function Resumen() {
   const { user } = useAuth()
   const location = useLocation()
-  const { file, datasetId, storagePath, cleaning, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, eliminarDuplicados } = useDataset()
+  const { file, datasetId, storagePath, cleaning, metrics: contextMetrics, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, eliminarDuplicados } = useDataset()
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -235,6 +235,22 @@ export default function Resumen() {
     const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
+    const snapshotMatchesPeriod = Boolean(
+      contextMetrics &&
+      !period.from &&
+      !period.to &&
+      !contextMetrics.periodo.desde &&
+      !contextMetrics.periodo.hasta,
+    )
+    if (snapshotMatchesPeriod && contextMetrics) {
+      defaultPeriodSet.current = true
+      setMetrics(contextMetrics)
+      setActiveCurrency(contextMetrics.moneda)
+      setMonthsAvailable(contextMetrics.periodo.meses_disponibles)
+      setError(null)
+      setLoading(false)
+      return
+    }
     const controller = new AbortController()
     const requestId = latestRequest.current + 1
     latestRequest.current = requestId
@@ -282,7 +298,7 @@ export default function Resumen() {
       // queda "ya pedida" con la petición abortada, la página no carga jamás.
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
-  }, [file, datasetId, storagePath, cleaning, uploadedAt, period, sheet, mappingOverride, eliminarDuplicados, retryTick, setMonthsAvailable, setPeriod])
+  }, [file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable, setPeriod])
 
   if (!ready) {
     return (

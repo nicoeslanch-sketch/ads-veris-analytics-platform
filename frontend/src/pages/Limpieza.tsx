@@ -462,6 +462,7 @@ export default function Limpieza() {
           apply: 'true',
           rules: JSON.stringify(rules),
           eliminar_duplicados: String(removeExactDuplicates),
+          ...(datasetId ? { dataset_id: datasetId } : {}),
           ...mappingFields(),
         }),
       )
@@ -496,6 +497,7 @@ export default function Limpieza() {
           rules: JSON.stringify(rules),
           // El texto libre nunca autoriza eliminación de filas.
           eliminar_duplicados: 'false',
+          ...(datasetId ? { dataset_id: datasetId } : {}),
           ...mappingFields(),
         }),
       )

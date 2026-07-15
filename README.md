@@ -59,6 +59,8 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    - `supabase/migrations/0013_dataset_deletion_saga.sql` (**Fase 12, Bloque 6A**:
      eliminación recuperable de Storage + PostgreSQL, trabajos reintentables y
      finalización transaccional con historial retenido)
+   - `supabase/migrations/0014_restore_snapshots.sql` (snapshot versionado y
+     privado para restaurar el último trabajo sin reprocesar el archivo)
 3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend

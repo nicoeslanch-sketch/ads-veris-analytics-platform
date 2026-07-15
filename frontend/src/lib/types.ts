@@ -407,3 +407,20 @@ export interface MetricsResult {
   }
   advertencias: string[]
 }
+
+/** Compact response from POST /restore/latest. */
+export interface RestoreLatestResult {
+  dataset: {
+    id: string
+    name: string
+    source: string
+    storage_path: string
+    status: 'cargado' | 'estandarizado' | 'limpio' | 'error'
+  } | null
+  standardization?: StandardizeResult
+  cleaning?: CleanResult | null
+  metrics?: MetricsResult | null
+  mapping?: Record<string, string> | null
+  eliminar_duplicados?: boolean
+  source: 'snapshot' | 'computed' | 'empty'
+}

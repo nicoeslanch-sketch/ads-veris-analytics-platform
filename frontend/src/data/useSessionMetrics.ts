@@ -35,8 +35,11 @@ export function useSessionMetrics(): {
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Hoja y mapeo en la clave: si el usuario los cambia, se recalcula (Fase 11)
     const key = `${datasetKey}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}`
-    if (isFullPeriod(metrics) && fetchedFor.current === key) return
-    if (fetchedFor.current === key) return
+    if (metrics && isFullPeriod(metrics)) {
+      fetchedFor.current = key
+      setActiveCurrency(metrics.moneda)
+      return
+    }
     fetchedFor.current = key
     const controller = new AbortController()
     const requestId = latestRequest.current + 1

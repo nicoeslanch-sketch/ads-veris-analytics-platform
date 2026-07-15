@@ -76,6 +76,16 @@ interface DatasetState {
   combineSheets: boolean
   setSheet: (sheet: string | null) => void
   setUploaded: (file: File, datasetId: string | null, storagePath: string | null) => void
+  restoreDataset: (
+    file: File,
+    datasetId: string,
+    storagePath: string,
+    standardization: StandardizeResult,
+    cleaning: CleanResult | null,
+    metrics: MetricsResult | null,
+    mappingOverride: Record<string, string> | null,
+    eliminarDuplicados: boolean,
+  ) => void
   setStandardization: (result: StandardizeResult) => void
   setCleaning: (result: CleanResult) => void
   setMetrics: (result: MetricsResult) => void
@@ -214,6 +224,46 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  /** Rehydrate the complete pipeline in one render. */
+  const restoreDataset = useCallback((
+    restoredFile: File,
+    restoredDatasetId: string,
+    restoredStoragePath: string,
+    restoredStandardization: StandardizeResult,
+    restoredCleaning: CleanResult | null,
+    restoredMetrics: MetricsResult | null,
+    restoredMapping: Record<string, string> | null,
+    restoredEliminarDuplicados: boolean,
+  ) => {
+    const activeSheet =
+      restoredCleaning?.carga?.hoja_usada ??
+      restoredStandardization.carga?.hoja_usada ??
+      null
+    const sheets = restoredStandardization.carga?.hojas_disponibles ?? []
+    const restoredSession: SheetSession = {
+      standardization: restoredStandardization,
+      cleaning: restoredCleaning,
+      mappingOverride: restoredMapping,
+      eliminarDuplicados: restoredEliminarDuplicados,
+    }
+
+    setFile(restoredFile)
+    setDatasetId(restoredDatasetId)
+    setStoragePath(restoredStoragePath)
+    setStandardizationState(restoredStandardization)
+    setCleaningState(restoredCleaning)
+    setMetricsState(restoredMetrics)
+    setUploadedAt(new Date())
+    setPeriod(ALL_PERIOD)
+    setMonthsAvailable(restoredMetrics?.periodo.meses_disponibles ?? [])
+    setMappingOverrideState(restoredMapping)
+    setSheetState(activeSheet)
+    setEliminarDuplicados(restoredEliminarDuplicados)
+    setAvailableSheets(sheets)
+    setSheetSessions(activeSheet ? { [activeSheet]: restoredSession } : {})
+    setCombineSheets(false)
+  }, [])
+
   const reset = useCallback(() => {
     setFile(null)
     setDatasetId(null)
@@ -284,6 +334,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       combineSheets,
       setSheet,
       setUploaded,
+      restoreDataset,
       setStandardization,
       setCleaning,
       setMetrics: setMetricsState,
@@ -313,6 +364,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       combineSheets,
       setSheet,
       setUploaded,
+      restoreDataset,
       setStandardization,
       setMappingOverride,
       setCleaning,

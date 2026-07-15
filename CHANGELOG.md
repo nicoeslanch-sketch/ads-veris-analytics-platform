@@ -2,6 +2,21 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.15.1] - 2026-07-15 - Restauracion persistente de datasets
+
+- La reapertura del ultimo trabajo usa `POST /restore/latest`: una sola llamada
+  devuelve estandarizacion, limpieza y metricas desde un snapshot versionado.
+- Si el snapshot falta o queda obsoleto, el backend reconstruye el pipeline con
+  pandas una vez y guarda el resultado; la exactitud del motor no cambia.
+- Los snapshots solo pueden ser escritos por el backend con `service_role` y
+  tienen un limite de tamano. El navegador conserva acceso solo a las columnas
+  operativas de `datasets` mediante la migracion `0014_restore_snapshots.sql`.
+- Resumen, Explorar, Alertas, Reportes e IA reutilizan las metricas restauradas
+  en vez de iniciar otro procesamiento al montar la pagina.
+- La retencion de Storage sale de la ruta critica y corre despues de restaurar.
+- Verificacion: build de produccion y 208 pruebas backend, incluidas las de
+  snapshot, fallback, propiedad y autenticacion.
+
 ## [0.15.0] - 2026-07-15 - Fase 12b: triage verificado del informe de calidad externo
 
 Cada afirmación del informe se verificó contra el código antes de aceptarla;

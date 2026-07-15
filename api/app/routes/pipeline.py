@@ -30,7 +30,16 @@ import re
 import threading
 from collections import OrderedDict
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
@@ -50,6 +59,14 @@ from ..engine.ai_classifier import classify_columns_with_ai
 from ..engine.mapping import detect_column_roles, detect_columns_extended
 from ..engine.metrics import compute_metrics, detect_currency
 from ..engine.standardize import normalize_headers, standardize_dataframe
+from ..restore_cache import (
+    build_restore_snapshot,
+    fetch_dataset_mapping,
+    fetch_latest_cleaning_config,
+    fetch_latest_restore_record,
+    store_restore_snapshot,
+    valid_restore_snapshot,
+)
 from ..storage import download_from_storage, normalize_user_storage_path
 
 router = APIRouter()
@@ -901,7 +918,111 @@ def _metrics_sync(
     return computed
 
 
+def _restore_response(record: dict, snapshot: dict, source: str) -> dict:
+    return {
+        "dataset": {
+            "id": record["id"],
+            "name": record["name"],
+            "source": record.get("source", "excel_csv"),
+            "storage_path": record["storage_path"],
+            "status": record["status"],
+        },
+        "standardization": snapshot["standardization"],
+        "cleaning": snapshot.get("cleaning"),
+        "metrics": snapshot.get("metrics"),
+        "mapping": snapshot.get("mapping"),
+        "eliminar_duplicados": bool(snapshot.get("eliminar_duplicados", False)),
+        "source": source,
+    }
+
+
+def _build_and_store_restore_snapshot(
+    dataset_id: str,
+    user_id: str,
+    filename: str,
+    content: bytes,
+    cleaning: dict | None,
+    mapping: dict | None,
+    sheet: str | None,
+    eliminar_duplicados: bool,
+) -> dict:
+    """Build a bounded snapshot from server-generated results only."""
+    standardization = _standardize_sync(filename, content, sheet)
+    metrics = (
+        _metrics_sync(
+            filename,
+            content,
+            mapping,
+            None,
+            None,
+            sheet,
+            eliminar_duplicados,
+        )
+        if cleaning is not None
+        else None
+    )
+    snapshot = build_restore_snapshot(
+        standardization,
+        cleaning,
+        metrics,
+        mapping,
+        eliminar_duplicados,
+    )
+    store_restore_snapshot(dataset_id, user_id, snapshot)
+    return snapshot
+
+
+def _restore_latest_sync(user_id: str) -> dict:
+    """Restore from a persistent snapshot, or rebuild once as a fallback."""
+    record = fetch_latest_restore_record(user_id)
+    if record is None:
+        return {"dataset": None, "source": "empty"}
+
+    cached = valid_restore_snapshot(record.get("restore_snapshot"), record["status"])
+    if cached is not None:
+        return _restore_response(record, cached, "snapshot")
+
+    storage_path = normalize_user_storage_path(record["storage_path"], user_id)
+    content = download_from_storage(storage_path)
+    filename = os.path.basename(storage_path)
+    mapping = fetch_dataset_mapping(record["id"])
+    cleaning = None
+    eliminar_duplicados = False
+    if record["status"] == "limpio":
+        rules, eliminar_duplicados = fetch_latest_cleaning_config(record["id"], user_id)
+        cleaning = _clean_sync(
+            filename,
+            content,
+            rules,
+            True,
+            mapping,
+            None,
+            None,
+            None,
+            eliminar_duplicados,
+        )
+    snapshot = _build_and_store_restore_snapshot(
+        record["id"],
+        user_id,
+        filename,
+        content,
+        cleaning,
+        mapping,
+        None,
+        eliminar_duplicados,
+    )
+    return _restore_response(record, snapshot, "computed")
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+
+@router.post("/restore/latest")
+async def restore_latest(
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> dict:
+    """One round-trip restoration; pandas is only used when no snapshot exists."""
+    return await run_in_threadpool(_restore_latest_sync, user.id)
 
 
 @router.post("/standardize")
@@ -919,8 +1040,10 @@ async def standardize(
 
 @router.post("/clean")
 async def clean(
+    background_tasks: BackgroundTasks,
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
     rules: str | None = Form(None),
     apply: bool = Form(False),
     eliminar_duplicados: bool = Form(False),
@@ -931,16 +1054,31 @@ async def clean(
     filename, content = await _read_input(file, storage_path, user)
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
-    return await run_in_threadpool(
+    result = await run_in_threadpool(
         _clean_sync, filename, content, rules_dict, apply, mapping_dict, None, None,
         _clean_sheet_param(sheet), eliminar_duplicados,
     )
+    if apply and dataset_id:
+        background_tasks.add_task(
+            _build_and_store_restore_snapshot,
+            dataset_id,
+            user.id,
+            filename,
+            content,
+            result,
+            mapping_dict,
+            _clean_sheet_param(sheet),
+            eliminar_duplicados,
+        )
+    return result
 
 
 @router.post("/clean/assisted")
 async def clean_assisted(
+    background_tasks: BackgroundTasks,
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
     instructions: str = Form(...),
     rules: str | None = Form(None),
     eliminar_duplicados: bool = Form(False),
@@ -1022,6 +1160,18 @@ async def clean_assisted(
         cupo = {"disponible": False, "usadas_mes": 0, "base": settings.ai_cleaning_monthly_limit, "addons": 0}
 
     result["dirigida"] = {"instrucciones": instructions, **plan.to_dict(), "cupo": cupo}
+    if dataset_id:
+        background_tasks.add_task(
+            _build_and_store_restore_snapshot,
+            dataset_id,
+            user.id,
+            filename,
+            content,
+            result,
+            mapping_dict,
+            sheet_name,
+            eliminar_duplicados,
+        )
     return result
 
 

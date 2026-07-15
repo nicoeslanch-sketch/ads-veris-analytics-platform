@@ -298,7 +298,7 @@ function ChartTooltip({ active, payload, label }: {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function Explorar() {
-  const { file, cleaning, datasetId, storagePath, uploadedAt, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, eliminarDuplicados } = useDataset()
+  const { file, cleaning, datasetId, storagePath, uploadedAt, metrics: contextMetrics, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, eliminarDuplicados } = useDataset()
   const ready = Boolean(file && cleaning)
 
   const [rango, setRango] = useState<Period>(ALL_PERIOD)
@@ -331,6 +331,23 @@ export default function Explorar() {
     const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
+    const snapshotMatchesRange = Boolean(
+      contextMetrics &&
+      !rango.from &&
+      !rango.to &&
+      !contextMetrics.periodo.desde &&
+      !contextMetrics.periodo.hasta,
+    )
+    if (snapshotMatchesRange && contextMetrics) {
+      setMetrics(contextMetrics)
+      setActiveCurrency(contextMetrics.moneda)
+      if (monthsAvailable.length === 0) {
+        setMonthsAvailable(contextMetrics.periodo.meses_disponibles)
+      }
+      setError(null)
+      setLoading(false)
+      return
+    }
     const controller = new AbortController()
     const requestId = latestRequest.current + 1
     latestRequest.current = requestId
@@ -371,7 +388,7 @@ export default function Explorar() {
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, datasetId, storagePath, cleaning, uploadedAt, rango, sheet, mappingOverride, eliminarDuplicados, retryTick])
+  }, [file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, mappingOverride, eliminarDuplicados, retryTick])
 
   // Al cambiar el análisis, la recomendación anterior deja de aplicar
   useEffect(() => {
