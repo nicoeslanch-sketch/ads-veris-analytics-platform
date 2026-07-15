@@ -28,6 +28,7 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import { useAuth } from '../auth/AuthContext'
+import { useDataset } from '../data/DatasetContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
 import { formatCLP, formatNumber } from '../lib/format'
 import { formatMonthShort } from '../lib/charts'
@@ -204,6 +205,14 @@ export default function Alertas() {
   useEffect(() => {
     setRules(loadRules(userId))
   }, [userId])
+
+  // Fase 12b §26: las alertas "revisadas" son POR DATASET — al cargar otro
+  // archivo, una caída nueva compartía el mismo id ("caida_ingresos") y
+  // quedaba oculta por la revisión del archivo anterior.
+  const { datasetId, uploadedAt } = useDataset()
+  useEffect(() => {
+    setResolved([])
+  }, [datasetId, uploadedAt])
 
   useEffect(() => {
     try {

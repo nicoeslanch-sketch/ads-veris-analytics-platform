@@ -29,6 +29,10 @@ import pandas as pd
 
 SUPPORTED_EXTENSIONS = (".csv", ".xlsx")
 MAX_ROWS = 200_000
+# Fase 12b §30: límites de superficie total (el caché por celdas y openpyxl
+# dimensionan la memoria por celdas, no por filas).
+MAX_COLUMNS = 300
+MAX_TOTAL_CELLS = 4_000_000
 _HEADER_SCAN_ROWS = 10
 
 # Metadatos fuera de las columnas del usuario. El motor los usa para auditar
@@ -107,14 +111,30 @@ def _strip_accents_lower(text: str) -> str:
     return "".join(c for c in normalized if unicodedata.category(c) != "Mn").lower()
 
 
+def _looks_like_summary_row(row_values: list[str]) -> bool:
+    """La fila califica como resumen SOLO si, además de la etiqueta, el resto
+    de sus celdas pobladas son numéricas o está casi vacía (Fase 12b §10: una
+    fila de datos real de "Total Energies" o "Suma Servicios" tiene el resto
+    de las columnas con texto y NO debe eliminarse)."""
+    populated = [v for v in row_values if v]
+    others = populated[1:]  # sin la etiqueta
+    if len(others) <= 1:
+        return True
+    numeric_like = sum(
+        1 for v in others if re.fullmatch(r"[-$().,%\d\s]+", v) is not None
+    )
+    return numeric_like == len(others)
+
+
 def _drop_trailing_total_rows(df: pd.DataFrame, report: dict) -> pd.DataFrame:
     """Omite hasta 3 filas de totales al final del archivo (Fase 8)."""
     dropped = 0
     while len(df) > 1 and dropped < _MAX_TRAILING_TOTAL_ROWS:
-        first_text = next(
-            (str(v).strip() for v in df.iloc[-1] if str(v).strip()), ""
-        )
+        row_values = [str(v).strip() for v in df.iloc[-1]]
+        first_text = next((v for v in row_values if v), "")
         if not _TOTAL_ROW_RE.match(_strip_accents_lower(first_text)):
+            break
+        if not _looks_like_summary_row(row_values):
             break
         df = df.iloc[:-1]
         dropped += 1
@@ -430,6 +450,21 @@ def load_dataframe_with_report(
         df.attrs[SOURCE_SHEET_ATTR] = None
     else:
         df = _load_excel(content, report, sheet=sheet)
+
+    # Fase 12b §30: el límite era solo de FILAS — un archivo de 200.000 filas
+    # × 500 columnas era "aceptado" y tumbaba pandas/openpyxl. Límite claro
+    # de columnas y de celdas totales, con mensaje accionable.
+    if len(df.columns) > MAX_COLUMNS:
+        raise UnsupportedFileError(
+            f"El archivo tiene {len(df.columns)} columnas y el máximo es "
+            f"{MAX_COLUMNS}. Elimina columnas que no uses o divide la base."
+        )
+    if len(df) * max(len(df.columns), 1) > MAX_TOTAL_CELLS:
+        raise UnsupportedFileError(
+            "El archivo supera el máximo de "
+            f"{MAX_TOTAL_CELLS:,} celdas (filas × columnas) para esta versión. "
+            "Divide la base en archivos más pequeños.".replace(",", ".")
+        )
 
     # Filas completamente vacías al final (frecuentes en Excel) no son datos.
     # Fase 11: vectorizado por columna (antes era fila por fila con apply).

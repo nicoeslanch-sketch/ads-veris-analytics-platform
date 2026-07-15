@@ -277,7 +277,13 @@ export default function Limpieza() {
       .finally(() => {
         if (detectStartedFor.current === key && !controller.signal.aborted) setDetecting(false)
       })
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      // Fase 12b: sin este reset, el doble montaje de StrictMode (y cualquier
+      // remontaje) dejaba la clave "ya pedida" con la petición ABORTADA — la
+      // página quedaba en "Analizando…" para siempre y el botón deshabilitado.
+      if (detectStartedFor.current === key) detectStartedFor.current = null
+    }
   }, [file, datasetId, storagePath, uploadedAt, cleaning, sheet, mappingOverride])
 
   if (!file || !standardization) {
@@ -997,6 +1003,14 @@ export default function Limpieza() {
                       Reglas automáticas (no eliminan filas)
                     </h3>
                   </div>
+                  {/* Fase 12b §3: contrato honesto — la estandarización de
+                      formatos ocurre SIEMPRE al cargar; estos toggles regulan
+                      las correcciones ADICIONALES de la limpieza. */}
+                  <p className="mt-2 text-[11px] leading-relaxed text-navy/50">
+                    La estandarización de formatos (fechas, números y textos) se aplica
+                    siempre al procesar el archivo. Estas reglas controlan las
+                    correcciones adicionales de la limpieza.
+                  </p>
                   <ul className="mt-4 space-y-3">
                     {RULE_LABELS.map(({ key, label }) => (
                       <li key={key} className="flex items-center justify-between gap-2 text-sm">

@@ -161,6 +161,11 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     if (fetchedForFile.current === fileKey) return
     fetchedForFile.current = fileKey
     void runActivation(file, storagePath, contextMetrics)
+    return () => {
+      // Fase 12b: liberar la clave al desmontar (StrictMode/remontaje) — la
+      // activación abortada quedaba "ya hecha" y el panel en spinner eterno.
+      if (fetchedForFile.current === fileKey) fetchedForFile.current = null
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, file, datasetId, storagePath, uploadedAt, sheet, mappingOverride, eliminarDuplicados])
 

@@ -62,7 +62,10 @@ DEFAULT_RULES = {
     "duplicados": True,
     "tipos": True,             # Convertir tipos de dato
     "nulos": True,             # Normalizar y señalizar valores nulos
-    "columnas_vacias": True,   # Eliminar columnas vacías
+    # Fase 12b §9: detectar sí, eliminar NO por defecto — una columna vacía
+    # puede ser parte del esquema exigido por otro sistema (misma filosofía
+    # conservadora que los duplicados). El usuario la activa si quiere.
+    "columnas_vacias": False,
     "fuera_de_rango": True,    # Validar rangos y outliers (solo roles métricos)
 }
 
@@ -861,7 +864,9 @@ def analyze_and_clean(
         if info.get("rol") in METRIC_ROLES:
             info["politica_nulos"] = "preservados (nunca se imputa 0 en montos)"
 
-    avisos: list[str] = []
+    # Los avisos de la estandarización (fechas mixtas, comas ambiguas,
+    # mojibake) también le llegan a quien solo mira la limpieza.
+    avisos: list[str] = list(std_report.get("avisos", []))
     duplicados_criterio = "fila_exacta_original_con_confirmacion"
     if problems["duplicados"] > 0:
         avisos.append(
@@ -989,24 +994,15 @@ def analyze_and_clean(
             corrections["filas_duplicadas_eliminadas"] = len(removed_positions)
             duplicate_detail["filas_eliminadas"] = len(removed_positions)
 
-        for col in df.columns:
-            if col not in scoped_cols:
-                continue
-            ctype = column_types.get(col, "texto")
-            if ctype == "fecha" and active["fechas"]:
-                # Las fechas irreparables quedan vacías (señalizadas en la
-                # descarga). Fase 11: por valores únicos (antes celda a celda,
-                # el mayor costo del apply con 50.000 filas).
-                df[col] = map_unique(
-                    df[col],
-                    lambda v: "" if not is_missing(v) and parse_date(v) is None else v,
-                )
-            elif ctype == "numero" and active["tipos"]:
-                df[col] = map_unique(
-                    df[col],
-                    lambda v: "" if not is_missing(v) and parse_number(v) is None else v,
-                )
-            # §5.1: sin imputación de nulos — nunca "0" en montos/costos/cantidades.
+        # Fase 12b (P0): las fechas y números NO interpretables se CONSERVAN.
+        # Antes se reemplazaban por "" — se destruía el valor original
+        # ("$ 15.O00", "31/02/2026", "Pendiente confirmar") y la descarga ya no
+        # permitía reconstruirlo, contradiciendo la promesa de datos intactos.
+        # Ahora: se conservan tal cual, quedan marcados en la descarga como
+        # no interpretables, los indicadores los ignoran al calcular (parse →
+        # None) y siguen contando como problema en la calidad post-limpieza —
+        # la calidad ya no puede "mejorar" borrando la evidencia.
+        # §5.1: sin imputación de nulos — nunca "0" en montos/costos/cantidades.
 
         rows_after, cols_after = len(df), len(df.columns)
         df.attrs[SOURCE_ROWS_ATTR] = clean_source_rows

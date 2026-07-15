@@ -65,7 +65,12 @@ export function useSessionMetrics(): {
       .finally(() => {
         if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
       })
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      // Fase 12b: liberar la clave al abortar (StrictMode/remontaje) — si
+      // queda "ya pedida" con la petición abortada, Alertas/Reportes no cargan.
+      if (fetchedFor.current === key) fetchedFor.current = null
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics, sheet, mappingOverride, eliminarDuplicados])
 

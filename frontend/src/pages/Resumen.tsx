@@ -49,8 +49,26 @@ function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; va
   const evo = m.evolucion_mensual
   const items: Array<{ label: string; value: string; hint?: string }> = []
 
-  items.push({ label: 'Ticket promedio', value: formatCLP(kpis.ticket_promedio), hint: 'por venta' })
-  items.push({ label: 'Transacciones', value: formatNumber(kpis.transacciones), hint: 'en el periodo' })
+  // Fase 12b §12: si hay filas sin monto legible, el ticket lo dice — el
+  // promedio se calcula sobre menos registros que el total.
+  const conMonto = kpis.registros_con_monto
+  items.push({
+    label: 'Ticket promedio',
+    value: formatCLP(kpis.ticket_promedio),
+    hint:
+      conMonto != null && conMonto < kpis.transacciones
+        ? `sobre ${formatNumber(conMonto)} de ${formatNumber(kpis.transacciones)} registros con monto`
+        : 'por registro',
+  })
+  // §11: sin una clave de transacción declarada, esto son FILAS del archivo.
+  items.push({ label: 'Registros', value: formatNumber(kpis.transacciones), hint: 'filas en el periodo' })
+  if (kpis.devoluciones) {
+    items.push({
+      label: 'Devoluciones / ajustes',
+      value: formatCLP(kpis.devoluciones.monto),
+      hint: `${formatNumber(kpis.devoluciones.filas)} monto(s) negativo(s) — los ingresos son netos`,
+    })
+  }
   if (kpis.unidades_totales != null) {
     items.push({ label: 'Unidades vendidas', value: formatNumber(kpis.unidades_totales) })
   }
@@ -99,16 +117,22 @@ function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; va
     })
   }
   if (m.clientes) {
+    // Fase 12b §21: el % del principal es sobre las ventas CON cliente
+    // identificado; si la cobertura es parcial, se dice explícito.
+    const cobertura = m.clientes.cobertura_identificacion_pct
+    const parcial = cobertura != null && cobertura < 95
     items.push({
       label: 'Clientes únicos',
       value: formatNumber(m.clientes.unicos),
       hint:
         m.clientes.concentracion_top_pct != null && m.clientes.unicos > 1
-          ? `el principal es el ${formatNumber(m.clientes.concentracion_top_pct)}% de las ventas`
+          ? `principal: ${formatNumber(m.clientes.concentracion_top_pct)}% de las ventas identificadas${
+              parcial ? ` (identificación: ${formatNumber(cobertura)} % de los ingresos)` : ''
+            }`
           : undefined,
     })
   }
-  return items.slice(0, 9)
+  return items.slice(0, 10)
 }
 
 function Variation({
@@ -252,7 +276,12 @@ export default function Resumen() {
       .finally(() => {
         if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
       })
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      // Fase 12b: al abortar (StrictMode/remontaje) la clave se libera — si
+      // queda "ya pedida" con la petición abortada, la página no carga jamás.
+      if (lastFetchKey.current === key) lastFetchKey.current = null
+    }
   }, [file, datasetId, storagePath, cleaning, uploadedAt, period, sheet, mappingOverride, eliminarDuplicados, retryTick, setMonthsAvailable, setPeriod])
 
   if (!ready) {
@@ -288,13 +317,14 @@ export default function Resumen() {
             ? { text: 'Regular', tone: 'gold' as const }
             : { text: 'Crítica', tone: 'coral' as const }
 
+  // Fase 12b §13: el margen mensual viene del backend con el MISMO denominador
+  // pareado que el KPI global — derivarlo aquí como utilidad/ingresos volvía a
+  // subestimarlo cuando parte de las ventas no tiene costo.
   const sparkOf = (key: 'ingresos' | 'gastos' | 'utilidad' | 'margen') =>
     evolution.map((m) => ({
       v:
         key === 'margen'
-          ? m.utilidad !== undefined && m.ingresos
-            ? (m.utilidad / m.ingresos) * 100
-            : null
+          ? (m.margen_pareado_pct ?? null)
           : ((m[key] ?? null) as number | null),
     }))
 
@@ -337,16 +367,22 @@ export default function Resumen() {
             spark: sparkOf('margen'),
           },
           {
-            label: 'Resultado del Periodo',
+            // Fase 12b §15: "Resultado del Periodo" era EXACTAMENTE la misma
+            // Utilidad Bruta repetida. Esta tarjeta ahora muestra la cobertura
+            // de costos: cuánto de la venta respalda el margen que estás viendo.
+            label: 'Cobertura de Costos',
             icon: TrendingUp,
             color: CHART.flujo,
-            value: kpis.flujo_caja ? formatCLP(kpis.flujo_caja.valor) : '—',
-            variation: kpis.flujo_caja ? (
-              <Variation pct={kpis.flujo_caja.variacion_pct} suffix="vs mes anterior" />
+            value: kpis.cobertura_costos ? `${formatNumber(kpis.cobertura_costos.pct)}%` : '—',
+            variation: kpis.cobertura_costos ? (
+              <p className="text-xs text-navy/40">
+                {formatNumber(kpis.cobertura_costos.filas_con_ingreso_y_costo)} de{' '}
+                {formatNumber(kpis.cobertura_costos.filas_con_ingreso)} ventas con costo
+              </p>
             ) : (
               <p className="text-xs text-navy/40">Requiere columna de costos</p>
             ),
-            spark: sparkOf('utilidad'),
+            spark: evolution.map((m) => ({ v: m.cobertura_costos_pct ?? null })),
           },
         ]
       : [
@@ -390,7 +426,9 @@ export default function Resumen() {
   const canal = metrics?.ventas_por_canal ?? []
   const canalLabel = metrics?.agrupado_por_canal === 'sucursal' ? 'Sucursal' : 'Canal'
   const canalTotal = canal.reduce((sum, item) => sum + item.ingresos, 0)
-  const topProducts = metrics?.top_productos ?? []
+  // El backend entrega hasta 12 productos (Explorar los usa); el Resumen
+  // muestra el top 5 clásico.
+  const topProducts = (metrics?.top_productos ?? []).slice(0, 5)
   const maxProduct = topProducts[0]?.ingresos ?? 1
 
   return (
@@ -399,7 +437,13 @@ export default function Resumen() {
         <PageHeader
           className="!mb-0"
           title={firstName ? `Bienvenido, ${firstName} 👋` : 'Bienvenido 👋'}
-          subtitle={`Este es el resumen general de tu negocio — ${period.label.toLowerCase()}.`}
+          subtitle={`Este es el resumen general de tu negocio — ${period.label.toLowerCase()}${
+            // Fase 12b §19: si el mes seleccionado es el mes en curso, los
+            // datos son parciales y la comparación "vs mes anterior" cojea.
+            period.from?.slice(0, 7) === new Date().toISOString().slice(0, 7)
+              ? ' (mes en curso: datos parciales)'
+              : ''
+          }.`}
         />
         <Link
           to="/estandarizacion"
@@ -510,6 +554,12 @@ export default function Resumen() {
               <h2 className="text-base font-semibold text-navy">
                 Evolución de Ingresos, Gastos y Utilidad
               </h2>
+              {(period.from || period.to) && (
+                <p className="mt-0.5 text-xs text-navy/45">
+                  Contexto histórico completo (los KPIs de arriba corresponden al periodo
+                  seleccionado).
+                </p>
+              )}
               <div className="mt-4 h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={evolution} margin={{ top: 8, right: 12, bottom: 0, left: 8 }}>
@@ -696,7 +746,9 @@ export default function Resumen() {
                     <HeartPulse className="h-4.5 w-4.5 text-teal" />
                     <div>
                       <p className="text-sm font-semibold text-navy">Salud Financiera</p>
-                      <p className="text-[11px] text-navy/50">Según el margen del periodo</p>
+                      <p className="text-[11px] text-navy/50">
+                        Según el margen del periodo — referencia general; depende del rubro
+                      </p>
                     </div>
                   </div>
                   <Badge tone={health.tone}>{health.text}</Badge>
@@ -796,11 +848,15 @@ export default function Resumen() {
             )}
 
             <Card className="min-w-0">
-              <h2 className="text-base font-semibold text-navy">Proyección (Próximos 3 meses)</h2>
+              {/* Fase 12b §20: es una EXTRAPOLACIÓN del promedio observado, no
+                  una predicción — el copy no debe prometer más que el método. */}
+              <h2 className="text-base font-semibold text-navy">
+                Extrapolación simple (3 meses)
+              </h2>
               {metrics.proyeccion ? (
                 <>
                   <p className="mt-2 text-sm text-navy/60">
-                    Se proyecta un crecimiento de ingresos del
+                    Si se mantiene el crecimiento promedio observado
                   </p>
                   <p className="text-3xl font-bold text-navy">
                     {metrics.proyeccion.crecimiento_pct >= 0 ? '+' : ''}
@@ -848,8 +904,9 @@ export default function Resumen() {
                     </ResponsiveContainer>
                   </div>
                   <p className="mt-2 text-[11px] text-navy/45">
-                    Proyección simple por crecimiento promedio mensual de tus ingresos históricos.
-                    Línea punteada = proyección.
+                    Extrapolación del crecimiento promedio de {evolution.length} mes(es) de
+                    historia — no considera estacionalidad ni meses incompletos. Línea
+                    punteada = extrapolación.
                   </p>
                 </>
               ) : (

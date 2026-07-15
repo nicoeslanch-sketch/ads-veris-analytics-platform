@@ -94,7 +94,8 @@ def test_clean_aplica_correcciones(client, auth_headers, sample_csv):
     # Fase 12: limpiar ya no elimina filas sin una decisión separada.
     assert resumen["filas_despues"] == resumen["filas_antes"]
     assert body["correcciones"]["filas_duplicadas_a_eliminar"] == 0
-    assert resumen["columnas_despues"] == resumen["columnas_antes"] - 1  # Notas eliminada
+    # Fase 12b §9: la columna vacía se DETECTA pero no se elimina por defecto
+    assert resumen["columnas_despues"] == resumen["columnas_antes"]
     assert resumen["calidad_despues"] >= resumen["calidad_antes"]
 
 
@@ -180,7 +181,8 @@ def test_metrics_calcula_kpis_y_evolucion(client, auth_headers, sample_csv):
     categorias = {c["nombre"] for c in body["por_categoria"]}
     assert "Servicios" in categorias
     assert all("margen_pct" in c for c in body["por_categoria"])
-    assert len(body["top_productos"]) <= 5
+    # Fase 12b §24: hasta 12 productos (el Resumen muestra 5; Explorar, más)
+    assert len(body["top_productos"]) <= 12
     assert body["agrupado_por_canal"] == "sucursal"
     # Proyección a 3 meses a partir de la evolución
     assert len(body["proyeccion"]["meses"]) == 3

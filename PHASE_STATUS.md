@@ -1,6 +1,24 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 11 completas; Fase 12, Bloques 1 a 6 y auditoría de indicadores completas.**
+**Estado actual: Fases 0 a 12 completas (incluida la 12b: triage verificado del informe de calidad externo).**
+La Fase 12b (`CHANGELOG` [0.15.0]) corrige los P0 confirmados del informe: los
+valores no interpretables se CONSERVAN (la calidad ya no "mejora" destruyendo
+evidencia), "1,234" se decide por evidencia de columna con aviso, el margen
+mensual usa denominador pareado desde el backend, y se reparó un cuelgue real
+de StrictMode que dejaba Limpieza/Resumen/Explorar/IA en spinner eterno.
+Además: "Registros" en vez de "Transacciones", devoluciones visibles (ingresos
+netos), tarjeta Cobertura de Costos (reemplaza el "Resultado del Periodo"
+duplicado), cobertura por grupo con umbral para recomendaciones de
+rentabilidad, hasta 12 productos, extrapolación etiquetada, mes en curso
+marcado parcial, columnas vacías detectar-sin-eliminar, protección de filas
+"Total X" legítimas, límites de columnas/celdas y alertas revisadas por
+dataset. **202 tests + build + E2E.**
+
+Pendientes del informe (rechazados/postergados con razón — ver [0.15.0]):
+bloqueo de KPIs con monedas mixtas, puntaje de calidad multidimensional,
+fuzzy de clientes/productos como sugerencia, auditoría CSV en ZIP,
+severidades estructuradas, streaming del export grande, semáforo de
+concurrencia, score combinado de mapeo, pruebas frontend (Vitest).
 El motor ahora detecta duplicados siempre y conserva todas las filas por defecto.
 Solo una confirmación explícita permite eliminar repeticiones exactas del archivo
 original; las coincidencias creadas por la normalización nunca se borran. La

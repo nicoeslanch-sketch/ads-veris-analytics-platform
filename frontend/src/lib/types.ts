@@ -310,7 +310,8 @@ export const DEFAULT_RULES: CleaningRules = {
   duplicados: true,
   tipos: true,
   nulos: true,
-  columnas_vacias: true,
+  // Fase 12b §9: detectar sí, eliminar NO por defecto (filosofía conservadora)
+  columnas_vacias: false,
   fuera_de_rango: true,
 }
 
@@ -327,6 +328,11 @@ export interface GroupRow {
   porcentaje: number
   utilidad?: number
   margen_pct?: number | null
+  /** Fase 12b: base de cálculo del grupo — sin esto una categoría con 1 fila
+   * con costo "competía" en rentabilidad contra otra con mil. */
+  filas?: number
+  filas_pareadas?: number
+  cobertura_costos_pct?: number
 }
 
 /** Fase 8: qué dimensiones reales trae el dataset (adapta Explorar/Resumen). */
@@ -362,13 +368,31 @@ export interface MetricsResult {
     flujo_caja: KpiValue | null
     /** Fase 10: % de filas con ingreso que también traen costo (margen confiable). */
     cobertura_costos?: { filas_con_ingreso: number; filas_con_ingreso_y_costo: number; pct: number }
+    /** Fase 12b §12: filas con monto legible — base real del ticket promedio. */
+    registros_con_monto?: number
+    /** Fase 12b §16: montos negativos (devoluciones/reversas) — los ingresos son netos. */
+    devoluciones?: { monto: number; filas: number }
   }
-  evolucion_mensual: Array<{ mes: string; ingresos: number; gastos?: number; utilidad?: number }>
+  evolucion_mensual: Array<{
+    mes: string
+    ingresos: number
+    gastos?: number
+    utilidad?: number
+    /** Fase 12b §13: margen del mes con el MISMO denominador pareado que el KPI global. */
+    margen_pareado_pct?: number | null
+    cobertura_costos_pct?: number | null
+  }>
   por_categoria?: GroupRow[]
   ventas_por_canal?: GroupRow[]
   top_productos?: GroupRow[]
   /** Fase 12: concentración de clientes (riesgo de dependencia) — solo si hay columna cliente. */
-  clientes?: { unicos: number; top: GroupRow[]; concentracion_top_pct: number | null }
+  clientes?: {
+    unicos: number
+    top: GroupRow[]
+    concentracion_top_pct: number | null
+    /** Fase 12b §21: % de los ingresos que tienen cliente identificado. */
+    cobertura_identificacion_pct?: number | null
+  }
   /** Fase 12: en qué días de la semana se concentra la venta — solo si hay fechas. */
   por_dia_semana?: Array<{ dia: string; ingresos: number; transacciones: number }>
   proyeccion: {

@@ -2,6 +2,83 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.15.0] - 2026-07-15 - Fase 12b: triage verificado del informe de calidad externo
+
+Cada afirmación del informe se verificó contra el código antes de aceptarla;
+lo confirmado se corrigió y lo especulativo o de riesgo quedó registrado como
+pendiente. 202 pruebas backend (15 nuevas), build y E2E completos.
+
+### P0 corregidos (confirmados en el código)
+- **Los valores no interpretables se CONSERVAN**: la limpieza reemplazaba por
+  vacío cualquier fecha o número que no pudiera interpretar ("31/02/2026",
+  "$ 15.O00", "Pendiente confirmar") — destruía el original y la descarga ya
+  no permitía reconstruirlo. Ahora se conservan, se marcan en la descarga
+  ("Fecha/Número no interpretable: se conservó el valor original") y siguen
+  penalizando la calidad post-limpieza: **la calidad ya no puede "mejorar"
+  borrando la evidencia**.
+- **"1,234" por evidencia de columna**: la coma única con 3 decimales es
+  ambigua (decimal es-CL vs miles US). Se decide por evidencia de la MISMA
+  columna ("12,5" o "1.234,56" → decimal; "1,234.56" o "1,234,567" → miles);
+  sin evidencia se mantiene decimal (es-CL) **con aviso explícito** — un error
+  aquí altera ingresos por un factor de mil.
+- **Margen mensual pareado**: el sparkline de margen calculaba utilidad/
+  ingresos del mes (ventas sin costo en el denominador) — reintroducía el bug
+  corregido en el KPI global. El backend ahora entrega `margen_pareado_pct` y
+  `cobertura_costos_pct` por mes y el frontend no deriva el margen.
+- **StrictMode dejaba páginas colgadas** (hallado por E2E, no estaba en el
+  informe): el doble montaje de React abortaba la petición inicial y la clave
+  "ya pedida" impedía reintentar — Limpieza quedaba en "Analizando…" con el
+  botón deshabilitado para siempre. Corregido en Limpieza, Resumen, Explorar,
+  useSessionMetrics y AiPanel: al abortar se libera la clave.
+
+### Exactitud del dashboard
+- "Transacciones" → **"Registros"** (cuenta filas del archivo; sin clave de
+  transacción declarada no se puede afirmar más) + `registros_con_monto` y el
+  ticket promedio muestra su base real cuando difiere.
+- **Devoluciones visibles**: los montos negativos se reportan como KPI
+  (`devoluciones`) con advertencia "los ingresos son NETOS".
+- **"Resultado del Periodo" eliminado**: era exactamente la misma Utilidad
+  Bruta repetida — la 4ª tarjeta ahora muestra **Cobertura de Costos** con su
+  propia evolución mensual.
+- **Concentración de clientes honesta**: % sobre ventas identificadas +
+  `cobertura_identificacion_pct` (si la mitad de las ventas no tiene cliente,
+  el hint lo dice).
+- **Cobertura por grupo**: categorías/canales/productos exponen `filas`,
+  `filas_pareadas` y `cobertura_costos_pct`; Explorar exige cobertura ≥30% y
+  ≥3 filas pareadas antes de recomendar "tu categoría más rentable", y la
+  utilidad desconocida ya no se grafica como $0.
+- `top_productos` hasta 12 (Resumen muestra 5; Explorar tiene qué explorar).
+- Extrapolación etiquetada como tal ("si se mantiene el crecimiento promedio
+  observado", meses usados, sin estacionalidad), "mes en curso: datos
+  parciales" en el subtítulo, gráfico de evolución rotulado "contexto
+  histórico completo", salud financiera "referencia general; depende del rubro".
+
+### Motor y carga
+- Columna con nombre "fecha" ya no se clasifica fecha con UNA celda con forma
+  de fecha: la pista de nombre exige ≥30% real.
+- Columnas vacías: **detectar sí, eliminar NO por defecto** (misma filosofía
+  conservadora que los duplicados; el toggle sigue disponible).
+- "Total Energies" al final del archivo ya no se elimina como fila de totales:
+  la fila debe ser resumen real (resto de celdas numéricas o casi vacía).
+- Límites de superficie: `MAX_COLUMNS` 300 y `MAX_TOTAL_CELLS` 4M con mensaje
+  accionable (antes 200.000 filas × 500 columnas se "aceptaba" y caía).
+- Los avisos de la estandarización (comas ambiguas, fechas mixtas, mojibake)
+  ahora también llegan en la respuesta de limpieza.
+- Alertas "revisadas" son por dataset: cargar otro archivo ya no hereda las
+  revisiones del anterior (misma id de alerta).
+- Copy honesto en reglas de Limpieza: la estandarización de formatos ocurre
+  siempre; los toggles controlan las correcciones adicionales.
+
+### Rechazado o postergado del informe (con razón)
+- Bloquear KPIs con monedas mixtas (decisión de producto — hoy advertencia
+  prominente), rediseño multidimensional del puntaje de calidad (el P0.1 ya
+  eliminó su trampa principal), fuzzy de clientes/productos como sugerencia
+  (cambio de producto mayor), auditoría CSV en ZIP con observaciones.csv,
+  severidades estructuradas de advertencias, streaming del export Excel,
+  semáforo de concurrencia, score combinado de mapeo, pruebas frontend con
+  Vitest y literales "nan"/"None" como texto legítimo (caso borde). Quedan en
+  PHASE_STATUS como backlog priorizado.
+
 ## [0.14.0] - 2026-07-15 - Exactitud auditada e indicadores PyME
 
 ### Exactitud y transparencia

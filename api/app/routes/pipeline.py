@@ -590,7 +590,7 @@ def _extract_columns_sync(
 
 def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     """Marcas visuales y observaciones auditables para una hoja limpia."""
-    from ..engine.standardize import is_missing
+    from ..engine.standardize import is_missing, parse_date, parse_number
 
     role_labels: dict[str, str] = {
         "fecha": "fecha",
@@ -618,10 +618,22 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         vals = list(df[col])
         fill_rate = sum(1 for value in vals if not is_missing(str(value))) / total
         for row_idx, value in enumerate(vals):
-            if not is_missing(str(value)):
+            text = str(value)
+            if not is_missing(text):
+                # Fase 12b (P0): los valores NO interpretables se conservan en
+                # los datos — aquí se marcan para que el cliente pueda revisar
+                # el original en vez de encontrar una celda vaciada.
+                if ctype == "fecha" and parse_date(text) is None:
+                    yellow[(row_idx, col)] = (
+                        "Fecha no interpretable: se conservó el valor original — revisar."
+                    )
+                elif ctype == "numero" and parse_number(text) is None:
+                    yellow[(row_idx, col)] = (
+                        "Número no interpretable: se conservó el valor original — revisar."
+                    )
                 continue
             if ctype == "fecha":
-                yellow[(row_idx, col)] = "Fecha faltante o que no se pudo interpretar: revisar."
+                yellow[(row_idx, col)] = "Fecha faltante: revisar."
             elif fill_rate >= 0.7:
                 label = role_labels.get(role, col) if role else col
                 red[(row_idx, col)] = f"Dato faltante en una columna casi completa ({label})."

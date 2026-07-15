@@ -167,7 +167,10 @@ def detect_value_type_confidence(series: pd.Series, column_name: str) -> tuple[s
     name = strip_accents_lower(column_name)
     date_ratio = date_like / len(values)
     number_ratio = number_like / len(values)
-    if date_ratio >= 0.6 or (any(h in name for h in DATE_HINTS) and date_like > 0):
+    # Fase 12b: el nombre "fecha" ya no basta con UNA celda con forma de fecha
+    # — una columna de texto con encabezado engañoso quedaba clasificada
+    # completa como fecha. Con pista de nombre se exige al menos 30% real.
+    if date_ratio >= 0.6 or (any(h in name for h in DATE_HINTS) and date_ratio >= 0.3):
         return "fecha", round(max(date_ratio, 0.6 if date_like else 0.0), 2)
     if number_ratio >= 0.6:
         return "numero", round(number_ratio, 2)
@@ -312,7 +315,43 @@ def column_dot3_convention(series: pd.Series) -> str:
     return "miles"
 
 
-def parse_number(value: str, dot3_convention: str = "miles") -> float | None:
+def column_comma3_convention(series: pd.Series) -> tuple[str, int]:
+    """Convención para el caso ambiguo "#,###" (Fase 12b §P0.4).
+
+    "1,234" puede ser 1.234 (decimal es-CL) o mil doscientos treinta y cuatro
+    (miles US). Se decide por evidencia de la MISMA columna:
+    - valores con coma y 1–2 decimales ("12,5") o formato "1.234,56" → decimal;
+    - valores con comas múltiples ("1,234,567") o formato "1,234.56" → miles.
+    Devuelve (convención, cantidad_de_valores_ambiguos). Sin evidencia se
+    mantiene 'decimal' (convención es-CL) y el llamador AVISA la ambigüedad."""
+    decimal_votes = miles_votes = ambiguous = 0
+    for value in _sample_values(series):
+        text, _ = _strip_number_decorations(value)
+        text = text.lstrip("-")
+        if not re.match(r"^[\d.,]+$", text) or "," not in text:
+            continue
+        if "." in text:
+            if text.rfind(",") > text.rfind("."):
+                decimal_votes += 1  # 1.234,56
+            else:
+                miles_votes += 1  # 1,234.56
+            continue
+        if text.count(",") > 1:
+            miles_votes += 1  # 1,234,567
+            continue
+        right = text.split(",")[1]
+        if len(right) in (1, 2):
+            decimal_votes += 1  # 12,5
+        elif len(right) == 3:
+            ambiguous += 1  # 1,234 — el caso en disputa
+    if miles_votes and not decimal_votes:
+        return "miles", ambiguous
+    return "decimal", ambiguous
+
+
+def parse_number(
+    value: str, dot3_convention: str = "miles", comma3_convention: str = "decimal"
+) -> float | None:
     text, paren_negative = _strip_number_decorations(value)
     if not text or not _BARE_NUMBER_RE.match(text):
         return None
@@ -331,8 +370,14 @@ def parse_number(value: str, dot3_convention: str = "miles") -> float | None:
             # Solo comas múltiples: separador de miles US (1,234,567).
             text = text.replace(",", "")
         else:
-            # Coma como separador decimal (es-CL)
-            text = text.replace(",", ".")
+            left, right = text.split(",")
+            # "1,234": ambiguo — decide la convención de la COLUMNA (Fase 12b);
+            # sin evidencia se mantiene decimal (es-CL) y la columna avisa.
+            if len(right) == 3 and len(left) >= 1 and comma3_convention == "miles":
+                text = left + right
+            else:
+                # Coma como separador decimal (es-CL)
+                text = text.replace(",", ".")
     elif text.count(".") > 1:
         # Solo puntos de miles: 1.234.567
         text = text.replace(".", "")
@@ -733,11 +778,27 @@ def standardize_dataframe(
         else:
             convention = column_dot3_convention(result[col])
             numeric_conventions[col] = convention
+            comma_convention, ambiguous_commas = column_comma3_convention(result[col])
+            if ambiguous_commas and comma_convention == "decimal":
+                # Fase 12b: sin evidencia en la columna, "1,234" se interpreta
+                # como decimal (es-CL) — pero el usuario DEBE saberlo, porque
+                # en formato US significaría mil doscientos treinta y cuatro.
+                date_avisos.append(
+                    f"La columna '{col}' tiene {ambiguous_commas} valor(es) como "
+                    "'1,234', ambiguos entre decimal (es-CL) y miles (US). Se "
+                    "interpretaron como DECIMAL por convención chilena; si tus "
+                    "datos vienen en formato estadounidense, corrígelo en el "
+                    "origen o revisa esos montos."
+                )
 
             def _standardize_number(value: str) -> str:
                 if is_missing(value):
                     return ""
-                number = parse_number(value, dot3_convention=convention)
+                number = parse_number(
+                    value,
+                    dot3_convention=convention,
+                    comma3_convention=comma_convention,
+                )
                 return str(value).strip() if number is None else format_number(number)
 
             new = map_unique(result[col], _standardize_number)

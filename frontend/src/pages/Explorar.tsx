@@ -191,7 +191,14 @@ function computeFindings(m: MetricsResult): Finding[] {
   }
 
   // Mejor y peor margen por categoría (solo si el archivo trae costos)
-  const conMargen = (m.por_categoria ?? []).filter((c) => c.margen_pct != null)
+  // Fase 12b §22: la comparación de rentabilidad exige una base mínima —
+  // una categoría con UNA fila con costo no puede "ganar" contra una de mil.
+  const conMargen = (m.por_categoria ?? []).filter(
+    (c) =>
+      c.margen_pct != null &&
+      (c.cobertura_costos_pct == null || c.cobertura_costos_pct >= 30) &&
+      (c.filas_pareadas == null || c.filas_pareadas >= 3),
+  )
   if (conMargen.length >= 2) {
     const mejor = conMargen.reduce((a, b) => ((b.margen_pct ?? 0) > (a.margen_pct ?? 0) ? b : a))
     const peor = conMargen.reduce((a, b) => ((b.margen_pct ?? 0) < (a.margen_pct ?? 0) ? b : a))
@@ -357,7 +364,12 @@ export default function Explorar() {
       .finally(() => {
         if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
       })
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      // Fase 12b: liberar la clave al abortar (StrictMode/remontaje) — si
+      // queda "ya pedida" con la petición abortada, la página no carga jamás.
+      if (lastFetchKey.current === key) lastFetchKey.current = null
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, datasetId, storagePath, cleaning, uploadedAt, rango, sheet, mappingOverride, eliminarDuplicados, retryTick])
 
@@ -430,9 +442,16 @@ export default function Explorar() {
           ? metrics?.top_productos ?? []
           : []
 
+  // Fase 12b §23: "sin datos de costo" NO es utilidad cero — un grupo sin
+  // cobertura se excluye del gráfico de utilidad en vez de dibujar una barra $0.
   const valueOf = (row: GroupRow) => (metric === 'utilidad' ? row.utilidad ?? 0 : row.ingresos)
+  const rowHasMetric = (row: GroupRow) => metric !== 'utilidad' || row.utilidad != null
   const barColor = metric === 'utilidad' ? CHART.utilidad : CHART.ingresos
-  const chartRows = [...groupRows].sort((a, b) => valueOf(b) - valueOf(a)).slice(0, 8)
+  const chartRows = [...groupRows]
+    .filter(rowHasMetric)
+    .sort((a, b) => valueOf(b) - valueOf(a))
+    .slice(0, 8)
+  const excludedNoCost = metric === 'utilidad' ? groupRows.length - groupRows.filter(rowHasMetric).length : 0
 
   const trendRows = (metrics?.evolucion_mensual ?? []).map((m) => ({
     mes: formatMonthShort(m.mes),
@@ -683,8 +702,9 @@ export default function Explorar() {
                 )
               ) : chartRows.length === 0 ? (
                 <p className="mt-6 text-sm text-navy/50">
-                  Tu archivo no tiene una columna de {GROUP_LABEL[groupBy].toLowerCase()} que se
-                  pueda agrupar.
+                  {metric === 'utilidad' && excludedNoCost > 0
+                    ? 'Ningún grupo tiene cobertura de costos: no hay utilidad que graficar (elige "Ingresos").'
+                    : `Tu archivo no tiene una columna de ${GROUP_LABEL[groupBy].toLowerCase()} que se pueda agrupar.`}
                 </p>
               ) : (
                 <div className="mt-4" style={{ height: chartRows.length * 44 + 48 }}>
@@ -740,25 +760,25 @@ export default function Explorar() {
 
                 <ul className="mt-4 divide-y divide-navy/5 sm:hidden">
                   {monthlyDetailRows.map((row) => (
-                      <li
-                        key={row.mes}
-                        className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 py-3 text-sm"
-                      >
-                        <span className="font-semibold text-navy">{row.mes}</span>
-                        <span className="text-right font-semibold text-navy">
-                          {formatCLP(row.valor)}
-                        </span>
-                        <span className={`text-xs font-medium ${trendVariationTone(row.variacion)}`}>
-                          {row.variacion == null
-                            ? 'Mes base'
-                            : `${formatVariation(row.variacion)} vs. anterior`}
-                        </span>
-                        <span className="text-right text-xs text-navy/50">
-                          {row.participacion == null
-                            ? 'Sin participación'
-                            : `${formatPct(row.participacion)} del período`}
-                        </span>
-                      </li>
+                    <li
+                      key={row.mes}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 py-3 text-sm"
+                    >
+                      <span className="font-semibold text-navy">{row.mes}</span>
+                      <span className="text-right font-semibold text-navy">
+                        {formatCLP(row.valor)}
+                      </span>
+                      <span className={`text-xs font-medium ${trendVariationTone(row.variacion)}`}>
+                        {row.variacion == null
+                          ? 'Mes base'
+                          : `${formatVariation(row.variacion)} vs. anterior`}
+                      </span>
+                      <span className="text-right text-xs text-navy/50">
+                        {row.participacion == null
+                          ? 'Sin participación'
+                          : `${formatPct(row.participacion)} del período`}
+                      </span>
+                    </li>
                   ))}
                 </ul>
 
@@ -774,22 +794,20 @@ export default function Explorar() {
                     </thead>
                     <tbody>
                       {monthlyDetailRows.map((row) => (
-                          <tr key={row.mes} className="border-b border-navy/5">
-                            <td className="py-2.5 pr-4 font-medium text-navy">{row.mes}</td>
-                            <td className="py-2.5 pr-4 text-right text-navy/80">
-                              {formatCLP(row.valor)}
-                            </td>
-                            <td
-                              className={`py-2.5 pr-4 text-right font-medium ${trendVariationTone(row.variacion)}`}
-                            >
-                              {row.variacion == null
-                                ? 'Base'
-                                : formatVariation(row.variacion)}
-                            </td>
-                            <td className="py-2.5 text-right text-navy/60">
-                              {row.participacion == null ? '—' : formatPct(row.participacion)}
-                            </td>
-                          </tr>
+                        <tr key={row.mes} className="border-b border-navy/5">
+                          <td className="py-2.5 pr-4 font-medium text-navy">{row.mes}</td>
+                          <td className="py-2.5 pr-4 text-right text-navy/80">
+                            {formatCLP(row.valor)}
+                          </td>
+                          <td
+                            className={`py-2.5 pr-4 text-right font-medium ${trendVariationTone(row.variacion)}`}
+                          >
+                            {row.variacion == null ? 'Base' : formatVariation(row.variacion)}
+                          </td>
+                          <td className="py-2.5 text-right text-navy/60">
+                            {row.participacion == null ? '—' : formatPct(row.participacion)}
+                          </td>
+                        </tr>
                       ))}
                     </tbody>
                   </table>

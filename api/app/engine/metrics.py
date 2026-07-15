@@ -126,8 +126,14 @@ def _group_sum(
             "ingresos": round(ingresos, 2),
             "porcentaje": round(ingresos / total * 100, 1),
         }
+        # Fase 12b §22: cada grupo expone su base de cálculo — sin esto, una
+        # categoría con UNA fila con costo competía en "rentabilidad" contra
+        # otra con mil, y nadie podía notarlo.
+        item["filas"] = int(len(g))
         if has_costs:
             paired = g.dropna(subset=["costo"])
+            item["filas_pareadas"] = int(len(paired))
+            item["cobertura_costos_pct"] = round(len(paired) / len(g) * 100, 1)
             if len(paired):
                 ing_par = float(paired["monto"].sum())
                 utilidad = ing_par - float(paired["costo"].sum())
@@ -228,8 +234,16 @@ def compute_metrics(
             }
         )
         if has_costs:
+            paired_all = amounts_all.notna() & costs_all.notna()
             frame["gastos"] = costs_all
             frame["utilidad"] = profits_all
+            # Fase 12b §13: el margen MENSUAL debe usar el mismo denominador
+            # pareado que el KPI global — el frontend calculaba utilidad/
+            # ingresos del mes (con ventas sin costo en el denominador) y el
+            # sparkline quedaba subestimado con cobertura parcial.
+            frame["ingresos_pareados"] = amounts_all.where(paired_all)
+            frame["_filas_con_ingreso"] = amounts_all.notna().astype(int)
+            frame["_filas_pareadas"] = paired_all.astype(int)
         # Fase 12: solo se exige la fecha — una fila con costo legible pero
         # monto ilegible aportaba su gasto al KPI total y DESAPARECÍA del
         # gráfico mensual (el gráfico y el KPI no cuadraban).
@@ -237,18 +251,29 @@ def compute_metrics(
             frame.dropna(subset=["mes"]).groupby("mes").sum(numeric_only=True).sort_index()
         )
 
+    def _month_extra(row) -> dict:
+        if not has_costs:
+            return {}
+        ing_par = float(row.get("ingresos_pareados", 0.0) or 0.0)
+        utilidad_mes = float(row["utilidad"])
+        con_ingreso = int(row.get("_filas_con_ingreso", 0) or 0)
+        pareadas = int(row.get("_filas_pareadas", 0) or 0)
+        return {
+            "gastos": round(float(row["gastos"]), 2),
+            "utilidad": round(utilidad_mes, 2),
+            "margen_pareado_pct": (
+                round(utilidad_mes / ing_par * 100, 1) if ing_par else None
+            ),
+            "cobertura_costos_pct": (
+                round(pareadas / con_ingreso * 100, 1) if con_ingreso else None
+            ),
+        }
+
     evolucion = [
         {
             "mes": str(month),
             "ingresos": round(float(row["ingresos"]), 2),
-            **(
-                {
-                    "gastos": round(float(row["gastos"]), 2),
-                    "utilidad": round(float(row["utilidad"]), 2),
-                }
-                if has_costs
-                else {}
-            ),
+            **_month_extra(row),
         }
         for month, row in monthly.iterrows()
     ]
@@ -300,6 +325,22 @@ def compute_metrics(
 
     ingresos = float(amounts.dropna().sum())
 
+    # ── Devoluciones/ajustes (Fase 12b §16) ──
+    # Los montos negativos (reversas, notas de crédito) restan del total: los
+    # "ingresos" son NETOS y el usuario debe verlo, no descubrirlo.
+    negativos = amounts[amounts.notna() & (amounts < 0)]
+    devoluciones = (
+        {"monto": round(float(negativos.sum()), 2), "filas": int(len(negativos))}
+        if len(negativos)
+        else None
+    )
+    if devoluciones:
+        warnings.append(
+            f"Los ingresos mostrados son NETOS: incluyen {devoluciones['filas']} "
+            f"monto(s) negativo(s) que restan {abs(devoluciones['monto']):,.0f} "
+            "(devoluciones, reversas o ajustes).".replace(",", ".")
+        )
+
     # ── Cobertura de costos (Fase 10 §4.1) ──
     # Utilidad y margen se calculan SOLO sobre las filas que tienen ingreso Y
     # costo. Antes se restaban los costos conocidos del total de ingresos, lo
@@ -344,9 +385,17 @@ def compute_metrics(
 
     kpis: dict = {
         "ingresos_totales": _kpi(ingresos, prev_amounts),
+        # Semántica honesta (Fase 12b §11): esto cuenta FILAS del archivo, no
+        # ventas confirmadas — la UI lo rotula "Registros". Sin una clave de
+        # transacción declarada no se puede afirmar más.
         "transacciones": int(len(selection)),
         "ticket_promedio": round(float(amounts.dropna().mean()), 2) if amounts.notna().any() else 0.0,
+        # §12: el ticket se calcula sobre las filas CON monto — si difiere del
+        # total de registros, la UI muestra la base de cálculo.
+        "registros_con_monto": filas_con_ingreso,
     }
+    if devoluciones:
+        kpis["devoluciones"] = devoluciones
     if roles.get("cantidad"):
         kpis["unidades_totales"] = round(
             float(_numeric_series(selection, roles["cantidad"]).dropna().sum()), 2
@@ -436,9 +485,11 @@ def compute_metrics(
             selection[roles[canal_role]], amounts, group_costs
         )
     if roles.get("producto"):
+        # Fase 12b §24: 12 productos — el Resumen muestra 5 y Explorar hasta
+        # 8+; cortar en 5 dejaba a "Explorar" sin nada que explorar.
         result["top_productos"] = _group_sum(
             selection[roles["producto"]], amounts, group_costs
-        )[:5]
+        )[:12]
 
     # ── Fase 12: clientes (unicidad y concentración) ──
     # Riesgo clásico de PyME: depender de un cliente. Solo con columna cliente.
@@ -451,11 +502,17 @@ def compute_metrics(
         )
         if valid_mask.any():
             top = _group_sum(clientes_raw[valid_mask], amounts[valid_mask], None)
+            # Fase 12b §21: el % del cliente principal es sobre las ventas CON
+            # cliente identificado — si la mitad de las ventas no tiene
+            # cliente, ese % NO es sobre el total y la UI debe decirlo.
+            ingresos_identificados = float(amounts[valid_mask].dropna().sum())
             result["clientes"] = {
                 "unicos": int(clientes_raw[valid_mask].nunique()),
                 "top": top[:5],
-                # % del cliente principal sobre las ventas CON cliente identificado
                 "concentracion_top_pct": top[0]["porcentaje"] if top else None,
+                "cobertura_identificacion_pct": (
+                    round(ingresos_identificados / ingresos * 100, 1) if ingresos else None
+                ),
             }
 
     # ── Fase 12: ventas por día de la semana ──
