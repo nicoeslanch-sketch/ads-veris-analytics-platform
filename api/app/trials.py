@@ -127,11 +127,18 @@ _GENERIC_RUT_MESSAGE = (
 )
 
 _ERROR_RESPONSES: dict[str, tuple[int, str]] = {
-    # Error del PROPIO solicitante → específico (no revela nada de terceros).
+    # Errores del PROPIO solicitante → específicos (no revelan nada de terceros).
     "USER_ALREADY_USED_TRIAL": (
         status.HTTP_409_CONFLICT,
         "Tu cuenta ya utilizó la prueba gratuita de 15 días. "
         "Puedes contratar un plan en la página Planes.",
+    ),
+    # Fase 14b: la RPC re-verifica la elegibilidad como AUTORIDAD FINAL — un
+    # usuario con plan o admin no puede reservar el RUT de otra empresa.
+    "USER_HAS_ACTIVE_PLAN": (
+        status.HTTP_403_FORBIDDEN,
+        "La prueba gratuita es para cuentas nuevas sin plan. "
+        "Tu cuenta ya tiene acceso con su plan actual.",
     ),
     # Involucra a terceros → genérico (anti-enumeración de clientes por RUT).
     "RUT_ALREADY_USED_TRIAL": (status.HTTP_409_CONFLICT, _GENERIC_RUT_MESSAGE),

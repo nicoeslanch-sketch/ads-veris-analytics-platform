@@ -134,10 +134,24 @@ def _group_sum(
     rows: list[dict] = []
     for name, g in frame.groupby("grupo", dropna=False):
         ingresos = float(g["monto"].sum())
+        # Fase 14b: participación BRUTA por grupo — una distribución real que
+        # suma ≈100%. `porcentaje` (neto del grupo / brutas totales) se
+        # conserva para mostrar el efecto de las devoluciones, pero las
+        # afirmaciones de CONCENTRACIÓN ("X concentra el N% de tus ventas")
+        # usan participacion_bruta_pct: con devoluciones, el neto no es una
+        # distribución (A:+100.000 y B:-90.000 daban 100% y -90%).
+        brutas = float(g.loc[g["monto"] > 0, "monto"].sum())
+        devoluciones_grupo = float(g.loc[g["monto"] < 0, "monto"].sum())
         item = {
             "nombre": str(name) if str(name).strip() else "Sin clasificar",
             "ingresos": round(ingresos, 2),
             "porcentaje": round(ingresos / total * 100, 1),
+            "ventas_brutas": round(brutas, 2),
+            "devoluciones": round(devoluciones_grupo, 2),
+            "ventas_netas": round(ingresos, 2),
+            "participacion_bruta_pct": (
+                round(brutas / positivos * 100, 1) if positivos > 0 else None
+            ),
         }
         # Fase 12b §22: cada grupo expone su base de cálculo — sin esto, una
         # categoría con UNA fila con costo competía en "rentabilidad" contra
@@ -341,10 +355,15 @@ def compute_metrics(
 
     if evolucion and evolucion[-1]["parcial"]:
         ult = evolucion[-1]
+        # Fase 14b: el copy NO afirma una causa — el archivo no permite saber
+        # si faltan datos, no hubo ventas o el periodo terminó a propósito.
+        # Solo se declara el hecho (último registro) y la regla conservadora.
         warnings.append(
-            f"El último mes ({ult['mes']}) está incompleto: datos hasta el día "
-            f"{ult['cobertura_hasta_dia']} de {ult['dias_del_mes']}. La proyección "
-            "lo excluye y las alertas no lo comparan contra meses completos."
+            f"El último registro disponible de {ult['mes']} corresponde al día "
+            f"{ult['cobertura_hasta_dia']} de {ult['dias_del_mes']}. Para no "
+            "comparar periodos con distinta cantidad de días registrados, este "
+            "mes no se usa como mes completo: la proyección lo excluye y las "
+            "alertas comparan meses completos."
         )
 
     # ── Selección por rango de fechas ──
@@ -604,7 +623,13 @@ def compute_metrics(
             result["clientes"] = {
                 "unicos": int(clientes_raw[valid_mask].nunique()),
                 "top": top[:5],
-                "concentracion_top_pct": top[0]["porcentaje"] if top else None,
+                # Fase 14b: la concentración es una afirmación de DISTRIBUCIÓN
+                # → usa la participación bruta (suma 100%), no el % neto.
+                "concentracion_top_pct": (
+                    (top[0].get("participacion_bruta_pct") or top[0]["porcentaje"])
+                    if top
+                    else None
+                ),
                 "cobertura_identificacion_pct": (
                     round(brutos_ident / brutos_total * 100, 1) if brutos_total else None
                 ),

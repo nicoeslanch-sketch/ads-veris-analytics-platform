@@ -48,6 +48,7 @@ import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
+import { soloMesesCompletos } from '../lib/partial'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
@@ -150,9 +151,13 @@ function formatVariation(value: number): string {
 
 function computeFindings(m: MetricsResult): Finding[] {
   const findings: Finding[] = []
-  const evo = m.evolucion_mensual
+  // Fase 14b: los hallazgos usan SOLO meses completos — Explorar era el
+  // único módulo que seguía comparando el mes parcial contra uno completo
+  // (informaba una "caída" falsa y lo coronaba peor mes).
+  const evo = soloMesesCompletos(m.evolucion_mensual)
+  const huboParcial = evo.length < m.evolucion_mensual.length
 
-  // Variación del último mes con datos
+  // Variación del último mes COMPLETO con datos
   if (evo.length >= 2) {
     const last = evo[evo.length - 1]
     const prev = evo[evo.length - 2]
@@ -163,7 +168,9 @@ function computeFindings(m: MetricsResult): Finding[] {
         tone: up ? 'green' : 'coral',
         icon: up ? ArrowUpRight : ArrowDownRight,
         title: `Tus ingresos ${up ? 'subieron' : 'cayeron'} ${formatPct(Math.abs(pct))} en ${formatMonthShort(last.mes)}`,
-        detail: `Pasaron de ${formatCLP(prev.ingresos)} en ${formatMonthShort(prev.mes)} a ${formatCLP(last.ingresos)}.`,
+        detail: `Pasaron de ${formatCLP(prev.ingresos)} en ${formatMonthShort(prev.mes)} a ${formatCLP(last.ingresos)}.${
+          huboParcial ? ' El mes con cobertura parcial no se compara como mes completo.' : ''
+        }`,
       })
     }
     const best = evo.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
@@ -178,14 +185,17 @@ function computeFindings(m: MetricsResult): Finding[] {
     }
   }
 
-  // Concentración del producto top
+  // Concentración del producto top — SIEMPRE sobre la participación BRUTA
+  // (una distribución que suma 100%); el % neto muestra devoluciones, pero
+  // no sirve para afirmar dependencia.
   const topProducto = m.top_productos?.[0]
-  if (topProducto) {
-    const alta = topProducto.porcentaje > 40
+  const topProductoPct = topProducto?.participacion_bruta_pct ?? topProducto?.porcentaje
+  if (topProducto && topProductoPct != null) {
+    const alta = topProductoPct > 40
     findings.push({
       tone: alta ? 'gold' : 'teal',
       icon: Package,
-      title: `"${topProducto.nombre}" concentra el ${formatPct(topProducto.porcentaje)} de tus ingresos`,
+      title: `"${topProducto.nombre}" concentra el ${formatPct(topProductoPct)} de tus ventas brutas`,
       detail: alta
         ? 'Alta dependencia de un solo producto: si sus ventas caen, tu negocio lo siente. Conviene diversificar.'
         : 'Concentración sana. Es tu producto más fuerte: hay espacio para potenciarlo aún más.',
@@ -212,16 +222,17 @@ function computeFindings(m: MetricsResult): Finding[] {
     })
   }
 
-  // Canal dominante
+  // Canal dominante (participación bruta: distribución real)
   const canales = m.ventas_por_canal ?? []
   if (canales.length >= 2) {
     const dominante = canales[0]
-    if (dominante.porcentaje > 50) {
+    const dominantePct = dominante.participacion_bruta_pct ?? dominante.porcentaje
+    if (dominantePct > 50) {
       findings.push({
         tone: 'gold',
         icon: Store,
-        title: `"${dominante.nombre}" genera el ${formatPct(dominante.porcentaje)} de tus ventas`,
-        detail: 'Más de la mitad de tus ingresos depende de un solo canal. Fortalecer los demás reduce riesgo.',
+        title: `"${dominante.nombre}" genera el ${formatPct(dominantePct)} de tus ventas brutas`,
+        detail: 'Más de la mitad de tu venta depende de un solo canal. Fortalecer los demás reduce riesgo.',
       })
     }
   }
@@ -484,24 +495,34 @@ export default function Explorar() {
     .slice(0, 8)
   const excludedNoCost = metric === 'utilidad' ? groupRows.length - groupRows.filter(rowHasMetric).length : 0
 
-  const trendRows = (metrics?.evolucion_mensual ?? []).map((m) => ({
+  // Fase 14b: utilidad DESCONOCIDA se mantiene null hasta el final — el
+  // backend se corrigió específicamente para no inventar $0 y aquí un
+  // `?? 0` la volvía a convertir en cero (gráfico, variaciones y
+  // participaciones falsas incluidas).
+  const trendRows: Array<{ mes: string; valor: number | null }> = (
+    metrics?.evolucion_mensual ?? []
+  ).map((m) => ({
     mes: formatMonthShort(m.mes),
-    valor: metric === 'utilidad' ? m.utilidad ?? 0 : m.ingresos,
+    valor: metric === 'utilidad' ? m.utilidad ?? null : m.ingresos,
   }))
-  const trendTotal = trendRows.reduce((sum, row) => sum + row.valor, 0)
+  const trendConDato = trendRows.filter((row): row is { mes: string; valor: number } => row.valor != null)
+  const trendTotal = trendConDato.reduce((sum, row) => sum + row.valor, 0)
   const monthlyDetailRows = trendRows
     .map((row, index) => {
       const previous = trendRows[index - 1]?.valor
       return {
         ...row,
         variacion:
-          previous === undefined || previous === 0
+          row.valor == null || previous == null || previous === 0
             ? null
             : ((row.valor - previous) / Math.abs(previous)) * 100,
-        participacion: trendTotal === 0 ? null : (row.valor / trendTotal) * 100,
+        participacion:
+          row.valor == null || trendTotal === 0 ? null : (row.valor / trendTotal) * 100,
       }
     })
     .slice(-8)
+  const mesesSinUtilidad =
+    metric === 'utilidad' ? trendRows.length - trendConDato.length : 0
 
   const analysisLabel = `${METRIC_LABEL[metric]} por ${GROUP_LABEL[groupBy]} · ${rango.label}`
 
@@ -530,6 +551,10 @@ export default function Explorar() {
   }
 
   const guardarAnalisis = async () => {
+    // Fase 14b (P0): la demo JAMÁS escribe en Supabase — sin este guard, un
+    // clic guardaba hallazgos de la empresa ficticia en analyses/activity_log
+    // e incluso podía asociarlos a un dataset REAL del usuario.
+    if (demo.active) return
     setSaveState('saving')
     const ok = await saveAnalysis(
       datasetId,
@@ -552,22 +577,25 @@ export default function Explorar() {
           title="Explorar datos 🔍"
           subtitle="Encuentra respuestas, descubre patrones y entiende qué está pasando en tu negocio."
         />
-        <button
-          onClick={() => void guardarAnalisis()}
-          disabled={saveState === 'saving' || !metrics}
-          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-        >
-          {saveState === 'saving' ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          {saveState === 'ok'
-            ? 'Análisis guardado ✓'
-            : saveState === 'fail'
-              ? 'No se pudo guardar'
-              : 'Guardar análisis'}
-        </button>
+        {/* Fase 14b: en la demo el botón NO existe — nada ficticio se guarda */}
+        {!demo.active && (
+          <button
+            onClick={() => void guardarAnalisis()}
+            disabled={saveState === 'saving' || !metrics}
+            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-sm font-medium text-navy transition-colors hover:bg-navy/5 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+          >
+            {saveState === 'saving' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            {saveState === 'ok'
+              ? 'Análisis guardado ✓'
+              : saveState === 'fail'
+                ? 'No se pudo guardar'
+                : 'Guardar análisis'}
+          </button>
+        )}
       </div>
 
       <ActiveSheetSelector />
@@ -726,9 +754,18 @@ export default function Explorar() {
                           strokeWidth={2}
                           dot={false}
                           activeDot={{ r: 5, strokeWidth: 2, stroke: '#ffffff' }}
+                          /* Fase 14b: utilidad desconocida = hueco en la línea,
+                             jamás un punto en $0 */
+                          connectNulls={false}
                         />
                       </LineChart>
                     </ResponsiveContainer>
+                    {mesesSinUtilidad > 0 && (
+                      <p className="mt-2 text-xs text-navy/45">
+                        {mesesSinUtilidad} mes(es) sin cobertura de costos: su utilidad se
+                        muestra como hueco (no es $0, es desconocida).
+                      </p>
+                    )}
                   </div>
                 )
               ) : chartRows.length === 0 ? (
@@ -797,12 +834,14 @@ export default function Explorar() {
                     >
                       <span className="font-semibold text-navy">{row.mes}</span>
                       <span className="text-right font-semibold text-navy">
-                        {formatCLP(row.valor)}
+                        {row.valor == null ? '—' : formatCLP(row.valor)}
                       </span>
                       <span className={`text-xs font-medium ${trendVariationTone(row.variacion)}`}>
-                        {row.variacion == null
-                          ? 'Mes base'
-                          : `${formatVariation(row.variacion)} vs. anterior`}
+                        {row.valor == null
+                          ? 'Sin cobertura de costos'
+                          : row.variacion == null
+                            ? 'Mes base'
+                            : `${formatVariation(row.variacion)} vs. anterior`}
                       </span>
                       <span className="text-right text-xs text-navy/50">
                         {row.participacion == null
@@ -828,12 +867,16 @@ export default function Explorar() {
                         <tr key={row.mes} className="border-b border-navy/5">
                           <td className="py-2.5 pr-4 font-medium text-navy">{row.mes}</td>
                           <td className="py-2.5 pr-4 text-right text-navy/80">
-                            {formatCLP(row.valor)}
+                            {row.valor == null ? '—' : formatCLP(row.valor)}
                           </td>
                           <td
                             className={`py-2.5 pr-4 text-right font-medium ${trendVariationTone(row.variacion)}`}
                           >
-                            {row.variacion == null ? 'Base' : formatVariation(row.variacion)}
+                            {row.valor == null
+                              ? '—'
+                              : row.variacion == null
+                                ? 'Base'
+                                : formatVariation(row.variacion)}
                           </td>
                           <td className="py-2.5 text-right text-navy/60">
                             {row.participacion == null ? '—' : formatPct(row.participacion)}

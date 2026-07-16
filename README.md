@@ -64,12 +64,15 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    - `supabase/migrations/0015_sin_plan_nuevas_cuentas.sql` (**Fase 13 — modelo
      comercial**: las cuentas NUEVAS nacen con plan `sin_plan` — navegan pero no
      procesan archivos; las cuentas existentes conservan su plan y no se tocan)
-   - `supabase/migrations/0016_prueba_gratuita_rut.sql` (**Fase 14 — prueba
+   - `supabase/migrations/0016_prueba_gratuita_rut.sql` (**Fase 14/14b — prueba
      gratuita de 15 días + RLS comercial, obligatoria antes de aceptar usuarios
      externos**: `billing_identities` y `account_trials` con unicidad por
      usuario y por RUT en la base, RPC atómica `activate_account_trial` solo
-     service_role, y `can_process_data()` con políticas `AS RESTRICTIVE` en
-     `datasets` y Storage)
+     service_role — con elegibilidad por plan y reversa de identidad al fallar —,
+     `can_process_data()` con políticas `AS RESTRICTIVE` en `datasets` y
+     Storage, y `addon_requests.billing_identity_id` para vincular la
+     contratación al RUT. **Re-ejecutable**: si corriste la versión de la
+     Fase 14, ejecútala de nuevo)
 3. **Política de contraseñas** (Fase 13/14 — la validación del formulario es
    solo UX; la política REAL vive aquí): en **Authentication → Providers →
    Email → Password requirements**, exige mínimo **8 caracteres** con
@@ -83,6 +86,7 @@ cd frontend
 cp .env.example .env    # completa VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY
 npm install
 npm run dev             # http://localhost:5173
+npm run test            # Vitest: paridad del RUT con el backend + meses parciales
 ```
 
 ### 3. API Python (motor de datos)

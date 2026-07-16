@@ -2,6 +2,92 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.17.1] - 2026-07-16 - Fase 14b: estabilización — triage verificado del informe de Fase 14
+
+Los CUATRO P0 del informe externo se verificaron como reales en el código y
+quedan cerrados; se suman correcciones propias que ningún informe mencionó.
+La migración `0016` cambió: si ya la ejecutaste, **vuelve a ejecutarla**
+(es re-ejecutable: `create or replace` + `if not exists`).
+
+### P0 del informe — verificados y corregidos
+- **Elegibilidad del trial** (P0.1): un usuario Básico/Analista/Gold o un
+  administrador podía activar la prueba y RESERVAR el RUT de otra empresa
+  (impidiendo que su titular legítimo probara la plataforma). Ahora la API
+  pre-verifica (403 "la prueba es para cuentas nuevas sin plan") y la RPC
+  re-verifica `profiles.plan`/`is_admin` como AUTORIDAD FINAL
+  (`USER_HAS_ACTIVE_PLAN`). Además: correo confirmado exigido cuando el JWT
+  declara explícitamente `email_verified: false` (lenient: proyectos sin
+  confirmación no se rompen).
+- **Minimización de datos en la activación** (P0.2): si el trial fallaba por
+  RUT ya usado, la identidad recién insertada QUEDABA guardada (la función
+  retornaba normal y la transacción confirmaba). La RPC ahora registra si la
+  identidad se creó en esa llamada y la elimina al fallar el trial — una
+  identidad previa (de una contratación) se conserva intacta.
+- **RUT al contratar** (P0.3): "Contratar este plan" ahora exige la identidad
+  de facturación — si no existe, se abre el MISMO formulario compartido
+  (contexto contratación), se registra vía `POST /me/billing-identity` y la
+  solicitud viaja con `billing_identity_id` (columna nueva en
+  `addon_requests`, con verificación de propiedad en el backend) — jamás el
+  RUT en texto libre. `GET /me/access` expone la identidad enmascarada y la
+  tarjeta del plan la muestra ("Facturación: RUT 12.***.***-5").
+- **La demo jamás escribe** (P0.4): "Guardar análisis" en Explorar guardaba
+  hallazgos FICTICIOS en `analyses`/`activity_log` — incluso asociados a un
+  dataset real del usuario. El botón no existe en demo y el handler tiene
+  guard (verificado por E2E: sin botón en demo, presente con datos reales).
+
+### Exactitud (altas del informe — verificadas)
+- **Explorar y meses parciales**: los hallazgos ("subieron/cayeron", mejor y
+  peor mes) usaban la serie completa — era el único módulo que seguía
+  comparando el mes parcial contra uno completo. Ahora consume el helper
+  único `soloMesesCompletos` (lib/partial.ts) igual que Alertas y Resumen.
+- **Utilidad desconocida ya no vuelve a ser $0**: la tendencia mensual de
+  Explorar hacía `utilidad ?? 0` (gráfico, variaciones y participaciones
+  falsas). Ahora se mantiene `null` hasta el final: hueco en la línea
+  (`connectNulls=false`), "—" en la tabla, sin variación ni participación, y
+  nota "no es $0, es desconocida".
+- **Participación bruta que SÍ suma 100%**: cada grupo expone
+  `ventas_brutas`, `devoluciones`, `ventas_netas` y `participacion_bruta_pct`
+  (invariante: suma ≈100%, con test). Toda afirmación de CONCENTRACIÓN
+  (hallazgos, alertas de producto/canal, concentración de clientes, tablas
+  del Resumen "% Ventas brutas") usa la bruta; el % neto se conserva para
+  mostrar el efecto de las devoluciones.
+- **Copy de parcialidad sin causa inventada**: "El último registro disponible
+  corresponde al día N de D…" — declara el hecho y la regla conservadora,
+  jamás afirma que "faltan datos" (el archivo no permite saber la causa).
+
+### Arquitectura y accesibilidad
+- **AccessProvider sin fuga entre cuentas** (hallazgo propio sobre la
+  observación del informe): al cambiar de usuario en el mismo navegador, el
+  acceso anterior se limpia AL INSTANTE; el "stale-while-revalidate" del
+  refresco por foco aplica SOLO al mismo usuario (sin parpadeo de candados y
+  sin capacidades ajenas).
+- **Rate limiting también por RUT**: alternar cuentas ya no permite sondear
+  el mismo RUT sin límite (ventana por usuario Y por RUT normalizado — el
+  RUT jamás se loguea). El límite compartido multi-instancia queda documentado
+  como pendiente para campañas públicas.
+- **Modales**: TrialModal resetea su estado al reabrirse (antes conservaba
+  error/éxito), cierra con Escape y enfoca el diálogo; PlanRequiredModal y el
+  modal de facturación también cierran con Escape.
+- **Copys de la demo**: "así se ve la plataforma con datos ficticios
+  realistas de un negocio" (antes decía "datos reales", contradiciendo la
+  etiqueta).
+
+### Verificación (respuesta al 3/10 del informe en pruebas)
+- **Backend 269 tests** (17 nuevos): gates probados por HTTP REAL con
+  TestClient — 403 verificado en /ai/*, /metrics y /restore/latest con
+  aserciones de que Anthropic NO se llama, el motor NO procesa y restore NO
+  corre; el trial vigente SÍ pasa /metrics (200 con KPIs) y la IA sigue 403;
+  elegibilidad de activación (plan pagado/admin/correo sin confirmar);
+  identidad ajena 422; invariante de participación bruta; copy sin causa.
+- **Frontend: Vitest estrenado** (`npm run test`, 12 pruebas): paridad del
+  RUT con Python (mismos casos que pytest — si una implementación cambia
+  sola, una suite falla) y la regla de meses parciales.
+- **E2E 21/21**: se agregó "la demo NO ofrece guardar análisis / con datos
+  reales SÍ" y los copys nuevos de parcialidad.
+- Pendiente honesto: la RPC de la 0016 se verifica estructuralmente en tests
+  (elegibilidad + reversa de identidad presentes) — la ejecución real contra
+  PostgreSQL queda para el smoke test operativo en Supabase.
+
 ## [0.17.0] - 2026-07-16 - Fase 14: cierres P0 comerciales, prueba gratuita con RUT, demo ficticia y acceso unificado
 
 Implementa el **análisis de calidad definitivo** consolidado en el debate

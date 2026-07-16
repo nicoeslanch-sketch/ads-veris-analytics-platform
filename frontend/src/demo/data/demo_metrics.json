@@ -1,6 +1,6 @@
 {
  "advertencias": [
-  "El último mes (2026-06) está incompleto: datos hasta el día 15 de 30. La proyección lo excluye y las alertas no lo comparan contra meses completos.",
+  "El último registro disponible de 2026-06 corresponde al día 15 de 30. Para no comparar periodos con distinta cantidad de días registrados, este mes no se usa como mes completo: la proyección lo excluye y las alertas comparan meses completos.",
   "Los ingresos mostrados son NETOS: incluyen 2 monto(s) negativo(s) que restan 29.970 (devoluciones. reversas o ajustes).",
   "24 de 279 ventas no tienen costo asociado (cobertura 91.4%): la utilidad y el margen se calculan solo sobre las ventas con costo — son resultados PARCIALES, no el total del negocio."
  ],
@@ -9,37 +9,57 @@
  "calidad_datos": 96.5,
  "clientes": {
   "cobertura_identificacion_pct": 83.4,
-  "concentracion_top_pct": 22.0,
+  "concentracion_top_pct": 22.2,
   "top": [
    {
+    "devoluciones": -18990.0,
     "filas": 46,
     "ingresos": 1984420.0,
     "nombre": "Distribuidora Norte",
-    "porcentaje": 22.0
+    "participacion_bruta_pct": 22.2,
+    "porcentaje": 22.0,
+    "ventas_brutas": 2003410.0,
+    "ventas_netas": 1984420.0
    },
    {
+    "devoluciones": 0.0,
     "filas": 53,
     "ingresos": 1970940.0,
     "nombre": "Almacén Doña Rosa",
-    "porcentaje": 21.9
+    "participacion_bruta_pct": 21.9,
+    "porcentaje": 21.9,
+    "ventas_brutas": 1970940.0,
+    "ventas_netas": 1970940.0
    },
    {
+    "devoluciones": -10980.0,
     "filas": 55,
     "ingresos": 1883810.0,
     "nombre": "Minimarket El Sol",
-    "porcentaje": 20.9
+    "participacion_bruta_pct": 21.0,
+    "porcentaje": 20.9,
+    "ventas_brutas": 1894790.0,
+    "ventas_netas": 1883810.0
    },
    {
+    "devoluciones": 0.0,
     "filas": 46,
     "ingresos": 1725700.0,
     "nombre": "Café Central",
-    "porcentaje": 19.2
+    "participacion_bruta_pct": 19.2,
+    "porcentaje": 19.2,
+    "ventas_brutas": 1725700.0,
+    "ventas_netas": 1725700.0
    },
    {
+    "devoluciones": 0.0,
     "filas": 40,
     "ingresos": 1414470.0,
     "nombre": "Botillería La Esquina",
-    "porcentaje": 15.7
+    "participacion_bruta_pct": 15.7,
+    "porcentaje": 15.7,
+    "ventas_brutas": 1414470.0,
+    "ventas_netas": 1414470.0
    }
   ],
   "unicos": 5
@@ -199,33 +219,45 @@
  "por_categoria": [
   {
    "cobertura_costos_pct": 92.9,
+   "devoluciones": -18990.0,
    "filas": 154,
    "filas_pareadas": 143,
    "ingresos": 6766860.0,
    "margen_pct": 26.6,
    "nombre": "Abarrotes",
+   "participacion_bruta_pct": 62.8,
    "porcentaje": 62.6,
-   "utilidad": 1750169.0
+   "utilidad": 1750169.0,
+   "ventas_brutas": 6785850.0,
+   "ventas_netas": 6766860.0
   },
   {
    "cobertura_costos_pct": 90.8,
+   "devoluciones": -10980.0,
    "filas": 87,
    "filas_pareadas": 79,
    "ingresos": 3464800.0,
    "margen_pct": 29.4,
    "nombre": "Aseo",
+   "participacion_bruta_pct": 32.2,
    "porcentaje": 32.1,
-   "utilidad": 966548.0
+   "utilidad": 966548.0,
+   "ventas_brutas": 3475780.0,
+   "ventas_netas": 3464800.0
   },
   {
    "cobertura_costos_pct": 86.8,
+   "devoluciones": 0.0,
    "filas": 38,
    "filas_pareadas": 33,
    "ingresos": 540930.0,
    "margen_pct": 24.0,
    "nombre": "Bebidas",
+   "participacion_bruta_pct": 5.0,
    "porcentaje": 5.0,
-   "utilidad": 113020.0
+   "utilidad": 113020.0,
+   "ventas_brutas": 540930.0,
+   "ventas_netas": 540930.0
   }
  ],
  "por_dia_semana": [
@@ -281,105 +313,145 @@
  "top_productos": [
   {
    "cobertura_costos_pct": 97.2,
+   "devoluciones": -18990.0,
    "filas": 36,
    "filas_pareadas": 35,
    "ingresos": 4139820.0,
    "margen_pct": 28.0,
    "nombre": "Harina 25kg",
+   "participacion_bruta_pct": 38.5,
    "porcentaje": 38.3,
-   "utilidad": 1132575.0
+   "utilidad": 1132575.0,
+   "ventas_brutas": 4158810.0,
+   "ventas_netas": 4139820.0
   },
   {
    "cobertura_costos_pct": 93.0,
+   "devoluciones": 0.0,
    "filas": 43,
    "filas_pareadas": 40,
    "ingresos": 1949560.0,
    "margen_pct": 29.0,
    "nombre": "Papel Higiénico 12un",
+   "participacion_bruta_pct": 18.0,
    "porcentaje": 18.0,
-   "utilidad": 551490.0
+   "utilidad": 551490.0,
+   "ventas_brutas": 1949560.0,
+   "ventas_netas": 1949560.0
   },
   {
    "cobertura_costos_pct": 94.7,
+   "devoluciones": 0.0,
    "filas": 38,
    "filas_pareadas": 36,
    "ingresos": 1712550.0,
    "margen_pct": 26.0,
    "nombre": "Arroz Grado 1 5kg",
+   "participacion_bruta_pct": 15.9,
    "porcentaje": 15.9,
-   "utilidad": 434375.0
+   "utilidad": 434375.0,
+   "ventas_brutas": 1712550.0,
+   "ventas_netas": 1712550.0
   },
   {
    "cobertura_costos_pct": 88.6,
+   "devoluciones": -10980.0,
    "filas": 44,
    "filas_pareadas": 39,
    "ingresos": 1515240.0,
    "margen_pct": 30.0,
    "nombre": "Detergente 3L",
+   "participacion_bruta_pct": 14.1,
    "porcentaje": 14.0,
-   "utilidad": 415058.0
+   "utilidad": 415058.0,
+   "ventas_brutas": 1526220.0,
+   "ventas_netas": 1515240.0
   },
   {
    "cobertura_costos_pct": 89.7,
+   "devoluciones": 0.0,
    "filas": 39,
    "filas_pareadas": 35,
    "ingresos": 610050.0,
    "margen_pct": 22.0,
    "nombre": "Aceite Vegetal 1L",
+   "participacion_bruta_pct": 5.6,
    "porcentaje": 5.6,
-   "utilidad": 124911.0
+   "utilidad": 124911.0,
+   "ventas_brutas": 610050.0,
+   "ventas_netas": 610050.0
   },
   {
    "cobertura_costos_pct": 86.8,
+   "devoluciones": 0.0,
    "filas": 38,
    "filas_pareadas": 33,
    "ingresos": 540930.0,
    "margen_pct": 24.0,
    "nombre": "Bebida Cola 3L",
+   "participacion_bruta_pct": 5.0,
    "porcentaje": 5.0,
-   "utilidad": 113020.0
+   "utilidad": 113020.0,
+   "ventas_brutas": 540930.0,
+   "ventas_netas": 540930.0
   },
   {
    "cobertura_costos_pct": 90.2,
+   "devoluciones": 0.0,
    "filas": 41,
    "filas_pareadas": 37,
    "ingresos": 304440.0,
    "margen_pct": 20.0,
    "nombre": "Azúcar 1kg",
+   "participacion_bruta_pct": 2.8,
    "porcentaje": 2.8,
-   "utilidad": 58308.0
+   "utilidad": 58308.0,
+   "ventas_brutas": 304440.0,
+   "ventas_netas": 304440.0
   }
  ],
  "ventas_por_canal": [
   {
    "cobertura_costos_pct": 92.0,
+   "devoluciones": -10980.0,
    "filas": 100,
    "filas_pareadas": 92,
    "ingresos": 3951420.0,
    "margen_pct": 27.5,
    "nombre": "Santiago Centro",
+   "participacion_bruta_pct": 36.7,
    "porcentaje": 36.6,
-   "utilidad": 1063867.0
+   "utilidad": 1063867.0,
+   "ventas_brutas": 3962400.0,
+   "ventas_netas": 3951420.0
   },
   {
    "cobertura_costos_pct": 92.6,
+   "devoluciones": 0.0,
    "filas": 94,
    "filas_pareadas": 87,
    "ingresos": 3616080.0,
    "margen_pct": 27.4,
    "nombre": "Puente Alto",
+   "participacion_bruta_pct": 33.5,
    "porcentaje": 33.5,
-   "utilidad": 957400.0
+   "utilidad": 957400.0,
+   "ventas_brutas": 3616080.0,
+   "ventas_netas": 3616080.0
   },
   {
    "cobertura_costos_pct": 89.4,
+   "devoluciones": -18990.0,
    "filas": 85,
    "filas_pareadas": 76,
    "ingresos": 3205090.0,
    "margen_pct": 27.3,
    "nombre": "Maipú",
+   "participacion_bruta_pct": 29.8,
    "porcentaje": 29.7,
-   "utilidad": 808470.0
+   "utilidad": 808470.0,
+   "ventas_brutas": 3224080.0,
+   "ventas_netas": 3205090.0
   }
  ]
 }

@@ -8,7 +8,7 @@
  * O el hook `usePlanNotice` para dispararlo desde un botón (toast inline).
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Crown, Eye, Lock, Sparkles, X } from 'lucide-react'
 import { useAccess } from '../../lib/access'
@@ -26,6 +26,19 @@ export function PlanRequiredModal({ open, onClose }: { open: boolean; onClose: (
   const demo = useDemo()
   const navigate = useNavigate()
   const [trialOpen, setTrialOpen] = useState(false)
+
+  // Fase 14b: cerrar con Escape (accesibilidad) + estado limpio al reabrir.
+  useEffect(() => {
+    if (open) setTrialOpen(false)
+  }, [open])
+  useEffect(() => {
+    if (!open || trialOpen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, trialOpen, onClose])
 
   if (!open) return null
   if (trialOpen) {

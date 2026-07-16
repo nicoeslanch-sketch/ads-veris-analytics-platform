@@ -117,11 +117,13 @@ def _metrics_context(metrics: dict) -> str:
     evolucion = metrics.get("evolucion_mensual", [])
     if evolucion:
         # Fase 14: la IA recibe la marca de parcialidad — sin ella interpretaba
-        # el mes en curso como una caída real de ventas.
+        # el mes en curso como una caída real de ventas. El copy no afirma
+        # causa: solo declara hasta qué día hay registros.
         meses_str = ", ".join(
             f"{e['mes']} ingresos={fmt(e['ingresos'])}"
             + (
-                f" (mes incompleto: datos hasta el día {e.get('cobertura_hasta_dia')})"
+                f" (cobertura parcial: último registro el día {e.get('cobertura_hasta_dia')}; "
+                "no compararlo como mes completo)"
                 if e.get("parcial")
                 else ""
             )

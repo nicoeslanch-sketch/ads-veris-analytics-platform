@@ -1,6 +1,20 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 14 completas.**
+**Estado actual: Fases 0 a 14 completas + estabilización 14b.**
+La Fase 14b (`CHANGELOG` [0.17.1]) cierra los 4 P0 del informe externo sobre
+la Fase 14 — todos verificados como reales: elegibilidad del trial en API y
+RPC (un plan pagado/admin ya no reserva el RUT de otra empresa), reversa de
+la identidad cuando la activación falla (minimización de datos), RUT
+obligatorio al contratar (solicitud vinculada a `billing_identity_id`) y la
+demo SIN escrituras (el guardar análisis ficticio quedaba en Supabase). Más:
+Explorar respeta meses parciales y utilidad desconocida (null, no $0),
+participación BRUTA que suma 100% para toda afirmación de concentración,
+copy de parcialidad sin causa inventada, AccessProvider sin fuga entre
+cuentas, rate limit también por RUT, modales accesibles (Escape/reset/foco)
+y pruebas de verdad: gates por HTTP real (Anthropic/motor/restore NO corren
+en 403), Vitest estrenado con paridad TS↔Python del RUT.
+**Backend 269 tests + Vitest 12 + build + E2E 21/21.** Migración `0016`
+actualizada: RE-ejecutarla en Supabase (es re-ejecutable).
 La Fase 14 (`CHANGELOG` [0.17.0]) cierra los CUATRO bypasses comerciales
 (gates en `/ai/*` — el más caro, con métricas enviadas por el cliente —,
 `/metrics`, `/restore/latest` y el orden del conector Sheets; cuota `sin_plan`

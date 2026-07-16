@@ -474,7 +474,7 @@ export default function Resumen() {
           title={demo.active ? 'Demo — Comercial Andes SpA' : firstName ? `Bienvenido, ${firstName} 👋` : 'Bienvenido 👋'}
           subtitle={
             demo.active
-              ? 'Datos ficticios de ejemplo — así se ve tu dashboard con datos reales cargados.'
+              ? 'Datos ficticios de ejemplo — así se ve tu dashboard con datos ficticios realistas de un negocio.'
               : `Este es el resumen general de tu negocio — ${period.label.toLowerCase()}${
                   // Fase 13 (P0.4): lo decide el BACKEND con los datos (no el reloj):
                   // si el mes está incompleto, la variación compara días equivalentes.
@@ -684,10 +684,14 @@ export default function Resumen() {
                   ))}
               </div>
               {mesParcial && (
+                /* Fase 14b: el copy declara el HECHO (último registro), no la
+                   causa — el archivo no permite saber si faltan datos o
+                   simplemente no hubo ventas después de ese día. */
                 <p className="mt-1.5 text-[11px] text-navy/45">
-                  * {formatMonthShort(mesParcial.mes)} está incompleto (datos hasta el día{' '}
-                  {mesParcial.cobertura_hasta_dia} de {mesParcial.dias_del_mes}): la
-                  proyección y las alertas no lo comparan contra meses completos.
+                  * {formatMonthShort(mesParcial.mes)}: último registro disponible el día{' '}
+                  {mesParcial.cobertura_hasta_dia} de {mesParcial.dias_del_mes} — para no
+                  comparar coberturas distintas, la proyección y las alertas no lo usan
+                  como mes completo.
                 </p>
               )}
             </Card>
@@ -730,7 +734,8 @@ export default function Resumen() {
                     <tr className="border-b border-navy/10 text-left text-xs font-semibold uppercase tracking-wide text-navy/50">
                       <th className="pb-2 pr-4">Categoría</th>
                       <th className="pb-2 pr-4 text-right">Ingresos</th>
-                      <th className="pb-2 pr-4 text-right">% Ingresos</th>
+                      {/* Fase 14b: participación BRUTA — distribución real que suma 100% */}
+                      <th className="pb-2 pr-4 text-right">% Ventas brutas</th>
                       <th className="pb-2 pr-4 text-right">Utilidad</th>
                       <th className="pb-2">Margen</th>
                     </tr>
@@ -741,7 +746,7 @@ export default function Resumen() {
                         <td className="py-2.5 pr-4 font-medium text-navy">{row.nombre}</td>
                         <td className="py-2.5 pr-4 text-right text-navy/75">{formatCLP(row.ingresos)}</td>
                         <td className="py-2.5 pr-4 text-right text-navy/75">
-                          {formatNumber(row.porcentaje)}%
+                          {formatNumber(row.participacion_bruta_pct ?? row.porcentaje)}%
                         </td>
                         <td className="py-2.5 pr-4 text-right text-navy/75">
                           {row.utilidad !== undefined ? formatCLP(row.utilidad) : '—'}
@@ -856,7 +861,7 @@ export default function Resumen() {
                       <span className="shrink-0 font-semibold text-navy">
                         {formatCLPCompact(entry.ingresos)}
                         <span className="ml-1.5 font-normal text-navy/45">
-                          {formatNumber(entry.porcentaje)}%
+                          {formatNumber(entry.participacion_bruta_pct ?? entry.porcentaje)}%
                         </span>
                       </span>
                     </li>
@@ -877,7 +882,7 @@ export default function Resumen() {
                       <span className="shrink-0 font-semibold text-navy">
                         {formatCLP(product.ingresos)}
                         <span className="ml-2 text-xs font-normal text-navy/45">
-                          {formatNumber(product.porcentaje)}%
+                          {formatNumber(product.participacion_bruta_pct ?? product.porcentaje)}%
                         </span>
                       </span>
                     </div>

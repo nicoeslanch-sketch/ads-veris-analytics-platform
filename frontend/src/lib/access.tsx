@@ -33,12 +33,21 @@ export interface TrialState {
   days_remaining: number
 }
 
+export interface BillingIdentitySummary {
+  id: string
+  rut_type: 'empresa' | 'responsable'
+  rut_masked: string
+}
+
 export interface AccessInfo {
   paid_plan: string
   plan_display: string
   is_admin: boolean
   enforcement: boolean
   trial: TrialState
+  /** Identidad de facturación registrada (enmascarada) — la usa Planes al
+   * contratar; null si el usuario aún no registra su RUT. */
+  billing_identity?: BillingIdentitySummary | null
   capabilities: string[]
 }
 
@@ -114,7 +123,13 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     }
     const seq = requestSeq.current + 1
     requestSeq.current = seq
-    setState((prev) => ({ status: 'loading', access: prev.access }))
+    // Fase 14b: "stale-while-revalidate" SOLO para el MISMO usuario — al
+    // cambiar de cuenta en el mismo navegador, el acceso anterior se limpia
+    // al instante (mantenerlo era mentirle a la UI con capacidades ajenas).
+    setState((prev) => ({
+      status: 'loading',
+      access: cachedUserId === userId ? prev.access : null,
+    }))
     apiGet<AccessInfo>('/me/access')
       .then((info) => {
         if (requestSeq.current !== seq) return
@@ -134,6 +149,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     if (cachedUserId === userId && cachedAccess) {
       setState({ status: 'resolved', access: cachedAccess })
       return
+    }
+    // Usuario distinto al cacheado: nada del acceso anterior debe sobrevivir.
+    if (cachedUserId !== userId) {
+      cachedAccess = null
+      setState({ status: 'loading', access: null })
     }
     fetchAccess()
   }, [userId, fetchAccess])

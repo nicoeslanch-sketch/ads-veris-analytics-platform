@@ -7,7 +7,7 @@
  * involucran a terceros — jamás se revela qué cuenta usó un RUT).
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, Sparkles, X } from 'lucide-react'
 import { ApiError, apiPostJson } from '../../lib/api'
@@ -31,6 +31,28 @@ export function TrialModal({ open, onClose }: { open: boolean; onClose: () => vo
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<TrialActivationResponse | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  // Fase 14b: el modal devuelve null al cerrarse pero NO se desmonta
+  // necesariamente — al reabrirlo, el estado anterior (error/éxito) no debe
+  // sobrevivir. Además: cerrar con Escape y foco inicial en el diálogo.
+  useEffect(() => {
+    if (open) {
+      setSubmitting(false)
+      setError(null)
+      setSuccess(null)
+      requestAnimationFrame(() => dialogRef.current?.focus())
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
 
   if (!open) return null
 
@@ -60,7 +82,9 @@ export function TrialModal({ open, onClose }: { open: boolean; onClose: () => vo
       aria-label="Activar prueba gratuita de 15 días"
     >
       <div
-        className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+        ref={dialogRef}
+        tabIndex={-1}
+        className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <button

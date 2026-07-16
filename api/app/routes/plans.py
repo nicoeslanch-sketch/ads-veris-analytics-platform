@@ -89,10 +89,40 @@ async def plans_usage(
 class AddonRequestBody(BaseModel):
     tipo: str = Field(default="tokens_limpieza", max_length=60)
     mensaje: str = Field(default="", max_length=1000)
+    # Fase 14b: la contratación viaja vinculada a la identidad de facturación
+    # (billing_identities, migración 0016) — jamás el RUT en texto libre.
+    billing_identity_id: str | None = Field(default=None, max_length=64)
+
+
+def _verify_identity_ownership(user_id: str, identity_id: str, settings: Settings) -> bool:
+    """La solicitud solo puede vincular una identidad DEL PROPIO usuario."""
+    try:
+        response = httpx.get(
+            _rest(settings, "billing_identities"),
+            params={
+                "id": f"eq.{identity_id}",
+                "user_id": f"eq.{user_id}",
+                "select": "id",
+                "limit": "1",
+            },
+            headers=_headers(settings),
+            timeout=_TIMEOUT,
+        )
+    except httpx.HTTPError:
+        return False
+    return response.status_code < 400 and bool(response.json())
 
 
 def _insert_request_sync(user_id: str, body: AddonRequestBody, settings: Settings) -> None:
     tipo = body.tipo if body.tipo in REQUEST_TYPES else "otro"
+    identity_id: str | None = None
+    if body.billing_identity_id:
+        if not _verify_identity_ownership(user_id, body.billing_identity_id, settings):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La identidad de facturación no es válida para tu cuenta.",
+            )
+        identity_id = body.billing_identity_id
     # Fase 10 §12.2: sin duplicar una solicitud idéntica que sigue pendiente.
     try:
         pending = httpx.get(
@@ -114,10 +144,13 @@ def _insert_request_sync(user_id: str, body: AddonRequestBody, settings: Setting
             )
     except httpx.HTTPError:
         pass  # fail-open
+    payload: dict = {"user_id": user_id, "tipo": tipo, "mensaje": body.mensaje.strip()}
+    if identity_id:
+        payload["billing_identity_id"] = identity_id
     try:
         response = httpx.post(
             _rest(settings, "addon_requests"),
-            json={"user_id": user_id, "tipo": tipo, "mensaje": body.mensaje.strip()},
+            json=payload,
             headers={**_headers(settings), "Prefer": "return=minimal"},
             timeout=_TIMEOUT,
         )

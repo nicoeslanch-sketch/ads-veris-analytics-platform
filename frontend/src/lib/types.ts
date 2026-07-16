@@ -325,7 +325,15 @@ export interface KpiValue {
 export interface GroupRow {
   nombre: string
   ingresos: number
+  /** Neto del grupo / ventas brutas totales — muestra el efecto de las
+   * devoluciones, pero NO es una distribución (no suma 100%). */
   porcentaje: number
+  /** Fase 14b: distribución REAL — brutas del grupo / brutas totales.
+   * Suma ≈100% y es la base de toda afirmación de CONCENTRACIÓN. */
+  participacion_bruta_pct?: number | null
+  ventas_brutas?: number
+  devoluciones?: number
+  ventas_netas?: number
   utilidad?: number
   margen_pct?: number | null
   /** Fase 12b: base de cálculo del grupo — sin esto una categoría con 1 fila

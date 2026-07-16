@@ -25,14 +25,16 @@ import {
   Send,
   Sparkles,
   Users,
+  X,
 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import { apiGet, apiPostJson, ApiError } from '../lib/api'
-import { useAccess } from '../lib/access'
+import { useAccess, type BillingIdentitySummary } from '../lib/access'
 import { usePlan } from '../lib/usePlan'
 import { TrialModal } from '../components/trial/TrialModal'
+import { BillingIdentityForm, type RutType } from '../components/trial/BillingIdentityForm'
 import {
   PLAN_CARDS,
   PLAN_ENFORCEMENT,
@@ -57,6 +59,100 @@ function FeatureIcon({ availability }: { availability: FeatureAvailability }) {
   if (availability === 'limitado') return <Check className="h-4 w-4 shrink-0 text-teal" />
   if (availability === 'construccion') return <Hammer className="h-4 w-4 shrink-0 text-gold" />
   return <Minus className="h-4 w-4 shrink-0 text-navy/25" />
+}
+
+/** Fase 14b: al CONTRATAR, la solicitud viaja vinculada a la identidad de
+ * facturación (RUT empresa o responsable). Si el usuario aún no la registró,
+ * este modal abre el MISMO formulario compartido en contexto "contratacion";
+ * la solicitud guarda `billing_identity_id`, jamás el RUT en texto libre. */
+function BillingIdentityModal({
+  open,
+  planNombre,
+  onClose,
+  onSaved,
+}: {
+  open: boolean
+  planNombre: string
+  onClose: () => void
+  onSaved: (identity: BillingIdentitySummary) => void
+}) {
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (open) {
+      setSubmitting(false)
+      setError(null)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  const handleSubmit = async (rutType: RutType, rut: string) => {
+    setSubmitting(true)
+    setError(null)
+    try {
+      const result = await apiPostJson<{ guardada: boolean; identity: BillingIdentitySummary }>(
+        '/me/billing-identity',
+        { rut_type: rutType, rut },
+      )
+      onSaved(result.identity)
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : 'No se pudo guardar la identidad. Intenta nuevamente.',
+      )
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-navy-deep/50 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Identidad de facturación"
+    >
+      <div
+        className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Cerrar"
+          className="absolute right-3 top-3 rounded-lg p-1 text-navy/40 transition-colors hover:bg-navy/5 hover:text-navy"
+        >
+          <X className="h-5 w-5" />
+        </button>
+        <h2 className="text-base font-semibold text-navy">
+          Contratar el Plan {planNombre}
+        </h2>
+        <p className="mt-1 text-xs text-navy/55">
+          Para gestionar la contratación y facturación necesitamos el RUT de la
+          empresa o de la persona responsable.
+        </p>
+        <div className="mt-4">
+          <BillingIdentityForm
+            context="contratacion"
+            submitLabel="Guardar y enviar solicitud"
+            submitting={submitting}
+            error={error}
+            onSubmit={(rutType, rut) => void handleSubmit(rutType, rut)}
+          />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function TrialBanner() {
@@ -108,9 +204,14 @@ function TrialBanner() {
 
 export default function Planes() {
   const { plan: currentPlan, loading: planLoading } = usePlan()
+  const { access, applyAccess, refresh } = useAccess()
   const [usage, setUsage] = useState<PlansUsage | null>(null)
   const [requestStates, setRequestStates] = useState<Record<string, RequestState>>({})
   const [requestError, setRequestError] = useState<string | null>(null)
+  // Fase 14b: plan pendiente de contratación mientras se registra el RUT
+  const [identityFlow, setIdentityFlow] = useState<
+    { code: Exclude<PlanCode, 'sin_plan'>; nombre: string } | null
+  >(null)
 
   useEffect(() => {
     let cancelled = false
@@ -126,11 +227,15 @@ export default function Planes() {
     }
   }, [])
 
-  const sendRequest = async (tipo: string, mensaje: string) => {
+  const sendRequest = async (tipo: string, mensaje: string, billingIdentityId?: string) => {
     setRequestStates((prev) => ({ ...prev, [tipo]: 'sending' }))
     setRequestError(null)
     try {
-      await apiPostJson('/addons/request', { tipo, mensaje })
+      await apiPostJson('/addons/request', {
+        tipo,
+        mensaje,
+        ...(billingIdentityId ? { billing_identity_id: billingIdentityId } : {}),
+      })
       setRequestStates((prev) => ({ ...prev, [tipo]: 'ok' }))
     } catch (err) {
       setRequestStates((prev) => ({ ...prev, [tipo]: 'error' }))
@@ -142,11 +247,33 @@ export default function Planes() {
 
   /** Botón "Contratar": costura de la pasarela de pago (Fase 9). Hoy el
    * checkout no redirige, así que la contratación queda como solicitud y el
-   * administrador activa el plan desde Administrar cuentas. */
+   * administrador activa el plan desde Administrar cuentas.
+   * Fase 14b: la solicitud exige la identidad de facturación — si no está
+   * registrada, se abre el formulario de RUT (contexto contratación) y la
+   * solicitud sale vinculada a billing_identity_id. */
   const contratar = (code: Exclude<PlanCode, 'sin_plan'>, nombre: string) => {
     const checkout = startCheckout(code)
-    if (!checkout.redirected) {
-      void sendRequest(`upgrade_${code}`, `Quiero contratar el Plan ${nombre}.`)
+    if (checkout.redirected) return
+    const identity = access?.billing_identity
+    if (identity?.id) {
+      void sendRequest(`upgrade_${code}`, `Quiero contratar el Plan ${nombre}.`, identity.id)
+      return
+    }
+    setIdentityFlow({ code, nombre })
+  }
+
+  const handleIdentitySaved = (identity: BillingIdentitySummary) => {
+    const pending = identityFlow
+    setIdentityFlow(null)
+    // El contexto único conoce la identidad al instante (sin recargar)
+    if (access) applyAccess({ ...access, billing_identity: identity })
+    else refresh()
+    if (pending) {
+      void sendRequest(
+        `upgrade_${pending.code}`,
+        `Quiero contratar el Plan ${pending.nombre}.`,
+        identity.id,
+      )
     }
   }
 
@@ -174,6 +301,14 @@ export default function Planes() {
       {/* Fase 14: prueba gratuita — banner para cuentas sin plan que no la
           usaron, y estado con días restantes mientras está vigente. */}
       <TrialBanner />
+
+      {/* Fase 14b: registro del RUT de facturación al contratar */}
+      <BillingIdentityModal
+        open={identityFlow !== null}
+        planNombre={identityFlow?.nombre ?? ''}
+        onClose={() => setIdentityFlow(null)}
+        onSaved={handleIdentitySaved}
+      />
 
       {/* ── Tarjetas de planes ── */}
       <div className="grid gap-6 lg:grid-cols-3">
@@ -288,6 +423,9 @@ export default function Planes() {
                     </button>
                     <p className="mt-1.5 text-center text-[11px] text-navy/40">
                       Pago en línea próximamente; hoy coordinamos contigo la activación.
+                      {access?.billing_identity
+                        ? ` Facturación: RUT ${access.billing_identity.rut_masked} (${access.billing_identity.rut_type}).`
+                        : ' Al contratar te pediremos el RUT de facturación.'}
                     </p>
                   </>
                 )}

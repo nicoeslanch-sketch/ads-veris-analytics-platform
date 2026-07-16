@@ -37,7 +37,7 @@ export function DemoBanner() {
           <p className="text-sm font-semibold text-navy">{DEMO_LABEL}</p>
           <p className="text-xs text-navy/60">
             Estás viendo a {DEMO_COMPANY}: nada de esto es tuyo ni se guarda en tu
-            cuenta. Así se ve la plataforma con datos reales de un negocio.
+            cuenta. Así se ve la plataforma con datos ficticios realistas de un negocio.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">

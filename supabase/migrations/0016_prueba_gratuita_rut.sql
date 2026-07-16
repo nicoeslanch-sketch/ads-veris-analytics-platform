@@ -205,6 +205,9 @@ declare
   v_uid uuid;
   v_rut text;
   v_identity uuid;
+  v_identity_creada boolean := false;
+  v_is_admin boolean;
+  v_plan text;
   v_started timestamptz;
   v_ends timestamptz;
 begin
@@ -217,6 +220,24 @@ begin
   end if;
   if p_rut_type not in ('empresa', 'responsable') then
     return jsonb_build_object('ok', false, 'error', 'INVALID_RUT');
+  end if;
+
+  -- Fase 14b: elegibilidad COMERCIAL verificada AQUÍ como autoridad final
+  -- (la API pre-verifica, pero la regla vive en la base): la prueba es SOLO
+  -- para cuentas sin plan y no administradoras. Sin esto, un usuario Básico/
+  -- Analista/Gold o un admin podía RESERVAR el RUT de otra empresa e impedir
+  -- que su titular legítimo activara la prueba. Sin fila en profiles =
+  -- cuenta antigua protegida como 'basico' (paridad con normalize_plan) →
+  -- tampoco elegible.
+  select p.is_admin,
+         coalesce(nullif(lower(trim(p.plan)), ''), 'basico')
+    into v_is_admin, v_plan
+    from public.profiles p
+   where p.id = v_uid;
+  if not found
+     or v_is_admin
+     or v_plan not in ('sin_plan', 'ninguno', 'none', 'free') then
+    return jsonb_build_object('ok', false, 'error', 'USER_HAS_ACTIVE_PLAN');
   end if;
 
   v_rut := public.normalize_rut(p_rut);
@@ -232,11 +253,23 @@ begin
 
   -- La unicidad por RUT es SOLO por número normalizado — jamás por
   -- (tipo, número): alternar "empresa"/"responsable" no duplica la prueba.
-  insert into public.billing_identities (user_id, rut_type, rut_normalized, rut_masked)
-  values (v_uid, p_rut_type, v_rut, public.mask_rut(v_rut))
-  on conflict (user_id, rut_normalized)
-  do update set rut_type = excluded.rut_type
-  returning id into v_identity;
+  -- Fase 14b (minimización de datos): se registra si la identidad se CREÓ en
+  -- esta llamada — si el trial falla, una identidad recién creada se elimina
+  -- (una prueba rechazada no deja guardado el RUT); una identidad que ya
+  -- existía (por una contratación previa) se conserva intacta.
+  select bi.id into v_identity
+    from public.billing_identities bi
+   where bi.user_id = v_uid and bi.rut_normalized = v_rut;
+  if v_identity is null then
+    insert into public.billing_identities (user_id, rut_type, rut_normalized, rut_masked)
+    values (v_uid, p_rut_type, v_rut, public.mask_rut(v_rut))
+    returning id into v_identity;
+    v_identity_creada := true;
+  else
+    update public.billing_identities
+       set rut_type = p_rut_type
+     where id = v_identity;
+  end if;
 
   v_started := now();
   v_ends := v_started + interval '15 days';
@@ -248,6 +281,11 @@ begin
   exception
     when unique_violation then
       -- Carrera perdida: otro insert ganó entre el check y el nuestro.
+      -- La identidad creada EN ESTA llamada se revierte a mano (la función
+      -- retorna normal, así que la transacción confirmaría el insert).
+      if v_identity_creada then
+        delete from public.billing_identities where id = v_identity;
+      end if;
       if exists (select 1 from public.account_trials t where t.user_id = v_uid) then
         return jsonb_build_object('ok', false, 'error', 'USER_ALREADY_USED_TRIAL');
       end if;
@@ -269,6 +307,15 @@ revoke all on function public.activate_account_trial(uuid, text, text) from publ
 revoke all on function public.activate_account_trial(uuid, text, text) from anon;
 revoke all on function public.activate_account_trial(uuid, text, text) from authenticated;
 grant execute on function public.activate_account_trial(uuid, text, text) to service_role;
+
+-- ── 4b. Contratación: la solicitud queda vinculada a la identidad ───────────
+-- Fase 14b: al contratar un plan, el frontend registra primero la identidad
+-- de facturación (RUT empresa o responsable) y la solicitud guarda su id —
+-- jamás el RUT en texto libre dentro del mensaje.
+
+alter table public.addon_requests
+  add column if not exists billing_identity_id uuid
+    references public.billing_identities (id);
 
 -- ── 5. can_process_data(): la puerta comercial de RLS ────────────────────────
 -- Sin parámetros y con auth.uid() interno: exponerla parametrizada a

@@ -271,7 +271,8 @@ def test_evolucion_marca_solo_el_ultimo_mes_como_parcial():
     assert evo["2026-06"]["parcial"] is True
     assert evo["2026-06"]["cobertura_hasta_dia"] == 15
     assert evo["2026-06"]["dias_del_mes"] == 30
-    assert any("incompleto" in a for a in m["advertencias"])
+    # Fase 14b: el aviso declara el HECHO (último registro), no una causa
+    assert any("último registro disponible" in a for a in m["advertencias"])
 
 
 def test_proyeccion_excluye_mes_parcial_y_no_se_superpone():

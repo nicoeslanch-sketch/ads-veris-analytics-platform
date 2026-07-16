@@ -142,19 +142,23 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
     })
   }
 
-  // Concentración del producto top
+  // Concentración del producto top — sobre la participación BRUTA (una
+  // distribución que suma 100%): el % neto con devoluciones no sirve para
+  // afirmar dependencia (Fase 14b).
   const topProducto = m.top_productos?.[0]
+  const topProductoPct = topProducto?.participacion_bruta_pct ?? topProducto?.porcentaje
   if (
     rules.concentracion_producto.activa &&
     topProducto &&
-    topProducto.porcentaje > rules.concentracion_producto.umbral_pct
+    topProductoPct != null &&
+    topProductoPct > rules.concentracion_producto.umbral_pct
   ) {
     alerts.push({
       id: 'concentracion_producto',
       severity: 'media',
       area: 'Productos',
       icon: Package,
-      titulo: `"${topProducto.nombre}" concentra el ${formatPct(topProducto.porcentaje)} de tus ingresos`,
+      titulo: `"${topProducto.nombre}" concentra el ${formatPct(topProductoPct)} de tus ventas brutas`,
       detalle: `Supera tu umbral de concentración del ${formatPct(rules.concentracion_producto.umbral_pct)}.`,
       recomendacion:
         'Alta dependencia de un producto: potencia productos secundarios para reducir riesgo.',
@@ -163,18 +167,20 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
 
   // Concentración de canal / sucursal
   const canal = m.ventas_por_canal?.[0]
+  const canalPct = canal?.participacion_bruta_pct ?? canal?.porcentaje
   if (
     rules.concentracion_canal.activa &&
     canal &&
     (m.ventas_por_canal?.length ?? 0) >= 2 &&
-    canal.porcentaje > rules.concentracion_canal.umbral_pct
+    canalPct != null &&
+    canalPct > rules.concentracion_canal.umbral_pct
   ) {
     alerts.push({
       id: 'concentracion_canal',
       severity: 'baja',
       area: 'Canales',
       icon: Store,
-      titulo: `"${canal.nombre}" genera el ${formatPct(canal.porcentaje)} de tus ventas`,
+      titulo: `"${canal.nombre}" genera el ${formatPct(canalPct)} de tus ventas brutas`,
       detalle: `Supera tu umbral del ${formatPct(rules.concentracion_canal.umbral_pct)}: gran parte del negocio depende de un canal.`,
       recomendacion: 'Fortalece los canales secundarios para no depender de uno solo.',
     })

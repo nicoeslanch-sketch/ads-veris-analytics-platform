@@ -25,6 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
+import httpx
+
 from .. import trials
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import (
@@ -66,6 +68,37 @@ def _guard_activation_rate(user_id: str) -> None:
 # ── Contexto de acceso ────────────────────────────────────────────────────────
 
 
+def _rest_headers(settings: Settings) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        "apikey": settings.supabase_service_role_key,
+    }
+
+
+def _billing_identity_sync(user_id: str, settings: Settings) -> dict | None:
+    """Identidad de facturación más reciente del usuario (enmascarada) — la
+    consume Planes para no volver a pedir el RUT al contratar. El RUT completo
+    JAMÁS sale por esta vía."""
+    try:
+        response = httpx.get(
+            f"{settings.supabase_url.rstrip('/')}/rest/v1/billing_identities",
+            params={
+                "user_id": f"eq.{user_id}",
+                "select": "id,rut_type,rut_masked",
+                "order": "updated_at.desc",
+                "limit": "1",
+            },
+            headers=_rest_headers(settings),
+            timeout=10,
+        )
+    except httpx.HTTPError:
+        return None
+    if response.status_code >= 400:
+        return None
+    rows = response.json()
+    return rows[0] if rows else None
+
+
 def _build_access_sync(user_id: str, settings: Settings) -> dict:
     configured = bool(settings.supabase_url and settings.supabase_service_role_key)
     enforcement = bool(settings.plan_enforcement and configured)
@@ -73,6 +106,7 @@ def _build_access_sync(user_id: str, settings: Settings) -> dict:
         # Desarrollo local sin Supabase: fail-open coherente con las puertas.
         plan, is_admin = "basico", False
         trial = dict(trials.EMPTY_TRIAL)
+        identity = None
     else:
         plan, is_admin = get_profile_flags(user_id, settings)
         # El estado del trial solo importa para cuentas sin plan pagado: las
@@ -82,6 +116,7 @@ def _build_access_sync(user_id: str, settings: Settings) -> dict:
             if plan == "sin_plan" and not is_admin
             else dict(trials.EMPTY_TRIAL)
         )
+        identity = _billing_identity_sync(user_id, settings)
     caps = effective_capabilities(plan, is_admin, bool(trial.get("active")), enforcement)
     return {
         "paid_plan": plan,
@@ -89,6 +124,7 @@ def _build_access_sync(user_id: str, settings: Settings) -> dict:
         "is_admin": is_admin,
         "enforcement": enforcement,
         "trial": trial,
+        "billing_identity": identity,
         "capabilities": sorted(str(c) for c in caps),
     }
 
@@ -119,6 +155,31 @@ class TrialActivationBody(BaseModel):
     rut: str = Field(min_length=2, max_length=20)
 
 
+def _guard_trial_eligibility_sync(user: AuthenticatedUser, settings: Settings) -> None:
+    """Elegibilidad COMERCIAL antes de tocar la RPC (que la re-verifica como
+    autoridad final): la prueba es SOLO para cuentas sin plan. Un usuario
+    Básico/Analista/Gold o un administrador no gana nada activándola, pero
+    podía RESERVAR el RUT de otra empresa e impedir que su titular legítimo
+    probara la plataforma."""
+    plan, is_admin = get_profile_flags(user.id, settings)
+    if is_admin or plan != "sin_plan":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La prueba gratuita es para cuentas nuevas sin plan. "
+            "Tu cuenta ya tiene acceso con su plan actual.",
+        )
+    # Correo confirmado (antiabuso): solo bloquea si el claim dice
+    # explícitamente que NO está verificado — proyectos sin confirmación de
+    # correo habilitada no se rompen.
+    metadata = user.claims.get("user_metadata") or {}
+    if metadata.get("email_verified") is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Confirma tu correo electrónico antes de activar la prueba "
+            "gratuita (revisa tu bandeja de entrada).",
+        )
+
+
 @router.post("/trial")
 async def activate_trial(
     body: TrialActivationBody,
@@ -134,6 +195,11 @@ async def activate_trial(
             detail="El RUT ingresado no es válido. Revisa el número y el "
             "dígito verificador.",
         )
+    # El mismo RUT no debe poder sondearse sin límite alternando usuarios:
+    # también hay ventana por RUT normalizado (jamás se loguea el RUT).
+    _guard_activation_rate(f"rut:{normalized}")
+    if settings.supabase_url and settings.supabase_service_role_key:
+        await run_in_threadpool(_guard_trial_eligibility_sync, user, settings)
     trial = await run_in_threadpool(
         trials.activate_trial, user.id, body.rut_type, normalized, settings
     )
@@ -153,3 +219,84 @@ async def activate_trial(
         "rut_confirmado": mask_rut(normalized),
         "access": access,
     }
+
+
+# ── Identidad de facturación (contratación de planes) ────────────────────────
+
+
+class BillingIdentityBody(BaseModel):
+    rut_type: Literal["empresa", "responsable"]
+    rut: str = Field(min_length=2, max_length=20)
+
+
+def _upsert_identity_sync(user_id: str, rut_type: str, normalized: str, settings: Settings) -> dict:
+    """Crea o actualiza la identidad de facturación del usuario (una fila por
+    usuario+RUT — el mismo esquema que usa la RPC del trial). Se usa al
+    CONTRATAR un plan: la solicitud queda vinculada a `billing_identity_id`,
+    nunca al RUT en texto libre."""
+    payload = {
+        "user_id": user_id,
+        "rut_type": rut_type,
+        "rut_normalized": normalized,
+        "rut_masked": mask_rut(normalized),
+    }
+    try:
+        response = httpx.post(
+            f"{settings.supabase_url.rstrip('/')}/rest/v1/billing_identities",
+            params={"on_conflict": "user_id,rut_normalized"},
+            json=payload,
+            headers={
+                **_rest_headers(settings),
+                "Prefer": "resolution=merge-duplicates,return=representation",
+            },
+            timeout=10,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo guardar la identidad de facturación. Intenta nuevamente.",
+        ) from exc
+    if response.status_code == 404:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Falta ejecutar la migración 0016 en Supabase.",
+        )
+    if response.status_code >= 400:
+        print(f"[billing] billing_identities respondió {response.status_code}.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo guardar la identidad de facturación. Intenta nuevamente.",
+        )
+    rows = response.json()
+    row = rows[0] if isinstance(rows, list) and rows else {}
+    return {
+        "id": row.get("id"),
+        "rut_type": row.get("rut_type", rut_type),
+        "rut_masked": row.get("rut_masked", mask_rut(normalized)),
+    }
+
+
+@router.post("/billing-identity")
+async def save_billing_identity(
+    body: BillingIdentityBody,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Registra el RUT de facturación (empresa o responsable) para contratar."""
+    _guard_activation_rate(user.id)
+    normalized = normalize_rut(body.rut)
+    if not normalized or not is_valid_rut(normalized):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El RUT ingresado no es válido. Revisa el número y el "
+            "dígito verificador.",
+        )
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Esta función requiere Supabase configurado en el servidor.",
+        )
+    identity = await run_in_threadpool(
+        _upsert_identity_sync, user.id, body.rut_type, normalized, settings
+    )
+    return {"guardada": True, "identity": identity}
