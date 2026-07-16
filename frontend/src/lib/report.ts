@@ -5,6 +5,7 @@
 */
 
 import { fullRangePeriod } from '../data/DatasetContext'
+import { cleanFilename } from './format'
 import type { MetricsResult } from './types'
 
 function csvNumber(value: number | null | undefined): string {
@@ -31,7 +32,7 @@ export function buildReportCsv(m: MetricsResult): string {
   }
 
   push('Reporte ADS Veris')
-  push('Archivo', m.archivo)
+  push('Archivo', cleanFilename(m.archivo))
   push('Periodo', fullRangePeriod(m.periodo.meses_disponibles).label)
   push('Calidad de datos (%)', m.calidad_datos)
   push()
@@ -115,6 +116,7 @@ function tableHtml(
 }
 
 export function openPrintableReport(m: MetricsResult, empresa: string | null): void {
+  const archivoLimpio = cleanFilename(m.archivo)
   const kpiRows: Array<[string, string]> = [
     ['Ingresos totales', clp(m.kpis.ingresos_totales.valor)],
     ...(m.kpis.gastos_totales ? [['Gastos totales', clp(m.kpis.gastos_totales.valor)] as [string, string]] : []),
@@ -139,7 +141,7 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Reporte ADS Veris — ${escapeHtml(m.archivo)}</title>
+<title>Reporte ADS Veris — ${escapeHtml(archivoLimpio)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1a3a52; padding: 32px; font-size: 13px; }
@@ -167,7 +169,7 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
   <div class="brand">ADS <span>Veris</span></div>
   <div class="meta">
     ${empresa ? `<div><strong>${escapeHtml(empresa)}</strong></div>` : ''}
-    <div>Archivo: ${escapeHtml(m.archivo)}</div>
+    <div>Archivo: ${escapeHtml(archivoLimpio)}</div>
     <div>Periodo: ${escapeHtml(fullRangePeriod(m.periodo.meses_disponibles).label)}</div>
     <div>Generado: ${new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' })}</div>
   </div>

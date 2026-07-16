@@ -42,3 +42,27 @@ export function formatDateTime(date: Date): string {
     minute: '2-digit',
   })
 }
+
+/** "hace 2 horas" / "hace 3 días" — legible para Actividad reciente. Más
+ * allá de un mes cae a la fecha absoluta (una relativa deja de ser útil). */
+export function formatRelativeTime(date: Date): string {
+  const diffMin = Math.round((Date.now() - date.getTime()) / 60_000)
+  if (diffMin < 1) return 'hace un momento'
+  if (diffMin < 60) return `hace ${diffMin} minuto${diffMin === 1 ? '' : 's'}`
+  const diffHour = Math.round(diffMin / 60)
+  if (diffHour < 24) return `hace ${diffHour} hora${diffHour === 1 ? '' : 's'}`
+  const diffDay = Math.round(diffHour / 24)
+  if (diffDay < 30) return `hace ${diffDay} día${diffDay === 1 ? '' : 's'}`
+  return formatDateTime(date)
+}
+
+// El path de Storage antepone Date.now()_ al nombre (lib/datasets.ts) para
+// evitar colisiones; el backend ya devuelve `archivo` limpio
+// (_display_filename en pipeline.py), pero se sanea también aquí como
+// respaldo — por si una sesión quedó con un valor cacheado de antes del fix
+// desplegado, o aparece otro punto que aún no pasa por esa limpieza.
+const STORAGE_TIMESTAMP_PREFIX_RE = /\b\d{10,}_/g
+
+export function cleanFilename(name: string): string {
+  return name.replace(STORAGE_TIMESTAMP_PREFIX_RE, '')
+}

@@ -19,7 +19,7 @@ import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
-import { formatDateTime, formatNumber } from '../lib/format'
+import { cleanFilename, formatDateTime, formatNumber } from '../lib/format'
 import type { StandardizeResult } from '../lib/types'
 
 const BENEFITS = [
@@ -436,7 +436,7 @@ export default function Estandarizacion() {
                       <td className="py-3 pr-4">
                         <div className="flex items-center gap-2 font-medium text-navy">
                           <FileSpreadsheet className="h-4.5 w-4.5 text-green" />
-                          {standardization.archivo}
+                          {cleanFilename(standardization.archivo)}
                         </div>
                       </td>
                       <td className="py-3 pr-4 text-navy/70">
@@ -469,6 +469,19 @@ export default function Estandarizacion() {
                 estandarizadas · {formatNumber(standardization.cambios.numeros_estandarizados)}{' '}
                 números normalizados
               </p>
+              {/* Bug: los avisos del motor (fechas mixtas, comas ambiguas,
+                  posibles abreviaciones sin fusionar) se calculaban pero
+                  nunca se mostraban en esta página. */}
+              {standardization.avisos && standardization.avisos.length > 0 && (
+                <ul className="mt-3 space-y-1.5 border-t border-navy/10 pt-3">
+                  {standardization.avisos.map((aviso) => (
+                    <li key={aviso} className="flex items-start gap-2 text-xs text-navy/65">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+                      {aviso}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           ) : (
             <p className="mt-4 text-sm text-navy/50">

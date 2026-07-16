@@ -44,7 +44,7 @@ const navItems: NavItem[] = [
 const adminItem: NavItem = { to: '/admin', label: 'Administrar cuentas', icon: ShieldCheck }
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
-  const { file, cleaning } = useDataset()
+  const { file, cleaning, restoring } = useDataset()
   const { isAdmin } = usePlan()
   const [helpOpen, setHelpOpen] = useState(false)
 
@@ -88,7 +88,15 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
           <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">
             Fuentes conectadas
           </p>
-          {file ? (
+          {restoring && !file ? (
+            <div className="mt-3 flex items-center gap-2.5 rounded-lg bg-white/5 px-3 py-2.5">
+              <div className="h-4.5 w-4.5 shrink-0 animate-pulse rounded bg-white/15" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="h-2.5 w-16 animate-pulse rounded bg-white/15" />
+                <div className="h-2 w-28 animate-pulse rounded bg-white/10" />
+              </div>
+            </div>
+          ) : file ? (
             <div className="mt-3 flex items-center gap-2.5 rounded-lg bg-white/5 px-3 py-2.5">
               <FileSpreadsheet className="h-4.5 w-4.5 shrink-0 text-green" />
               <div className="min-w-0 flex-1">

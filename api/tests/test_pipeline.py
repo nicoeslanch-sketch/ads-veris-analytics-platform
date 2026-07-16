@@ -331,6 +331,48 @@ def test_ai_summary_sin_api_key_devuelve_503(client, auth_headers):
     assert "ANTHROPIC_API_KEY" in response.json()["detail"]
 
 
+def test_ai_summary_error_del_proveedor_no_expone_detalle_crudo(monkeypatch, client, auth_headers):
+    """Regresión: un fallo de Anthropic (ej. sin saldo) devolvía el texto
+    crudo del proveedor (tipo de error, mensaje, request_id) directo al
+    usuario. Debe verse un mensaje genérico; el detalle real solo va a logs."""
+    import httpx
+    from anthropic import APIStatusError
+
+    from app.routes import ai as ai_routes
+
+    class _FakeMessages:
+        async def create(self, **kwargs):
+            request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            response = httpx.Response(
+                400,
+                request=request,
+                json={"error": {"type": "invalid_request_error", "message": "secret detail"}},
+            )
+            raise APIStatusError(
+                "Your credit balance is too low to access the Anthropic API. "
+                "request_id req_super_secreto_12345",
+                response=response,
+                body=None,
+            )
+
+    class _FakeClient:
+        messages = _FakeMessages()
+
+    monkeypatch.setattr(ai_routes, "_client", lambda settings: _FakeClient())
+    monkeypatch.setattr(ai_routes.quota, "check_quota", lambda user_id, settings: None)
+    monkeypatch.setattr(
+        ai_routes, "require_capability_for_user", lambda user_id, cap, settings: "basico"
+    )
+
+    response = client.post("/ai/summary", json={"metrics": {}}, headers=auth_headers)
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "credit balance" not in detail
+    assert "request_id" not in detail
+    assert "req_super_secreto_12345" not in detail
+    assert detail == "El asistente no está disponible en este momento. Intenta de nuevo más tarde."
+
+
 # ── Conector Google Sheets (Fase 6) ──
 
 

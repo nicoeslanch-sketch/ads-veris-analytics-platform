@@ -96,6 +96,13 @@ interface DatasetState {
   sheetSessions: Record<string, SheetSession>
   sheetManifest: SheetManifest | null
   combineSheets: boolean
+  /** true mientras DatasetBootstrap restaura el último trabajo al iniciar
+   * sesión/recargar — otros componentes (sidebar, selector de periodo,
+   * cupos) lo usan para mostrar un estado de carga en vez de un valor por
+   * defecto que luego cambia (Bug: "Sin fuentes conectadas" parpadeaba
+   * antes de que apareciera el archivo real). */
+  restoring: boolean
+  setRestoring: (value: boolean) => void
   setSheet: (sheet: string | null) => void
   setUploaded: (file: File, datasetId: string | null, storagePath: string | null) => void
   restoreDataset: (
@@ -137,6 +144,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [availableSheets, setAvailableSheets] = useState<string[]>([])
   const [sheetSessions, setSheetSessions] = useState<Record<string, SheetSession>>({})
   const [combineSheets, setCombineSheets] = useState(false)
+  const [restoring, setRestoring] = useState(false)
 
   // Cada hoja mantiene su propia configuración. Al activarla se restaura solo
   // su estado; métricas y periodo siempre se recalculan para evitar mezclas.
@@ -354,6 +362,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       sheetSessions,
       sheetManifest,
       combineSheets,
+      restoring,
+      setRestoring,
       setSheet,
       setUploaded,
       restoreDataset,
@@ -384,6 +394,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       sheetSessions,
       sheetManifest,
       combineSheets,
+      restoring,
       setSheet,
       setUploaded,
       restoreDataset,

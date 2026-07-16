@@ -17,7 +17,7 @@ function currentMonthRange(): string {
 
 export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {}) {
   const { user, logout } = useAuth()
-  const { period, setPeriod, monthsAvailable } = useDataset()
+  const { period, setPeriod, monthsAvailable, restoring } = useDataset()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [periodOpen, setPeriodOpen] = useState(false)
@@ -39,6 +39,11 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
 
   const displayName =
     (user?.user_metadata?.full_name as string | undefined) ?? user?.email ?? 'Invitado'
+  // Bug: mientras se restaura el último trabajo, monthsAvailable todavía
+  // está vacío y el botón mostraba el mes calendario actual como si fuera
+  // el rango real de datos — un valor inventado que luego cambiaba de golpe
+  // al terminar la restauración. Ahora muestra un estado de carga honesto.
+  const periodPending = restoring && monthsAvailable.length === 0
   const compactPeriodLabel =
     monthsAvailable.length > 0
       ? period.from
@@ -70,16 +75,24 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
           disabled={monthsAvailable.length === 0}
           className="flex items-center gap-1 rounded-lg border border-white/20 px-2 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60 sm:gap-2 sm:px-3.5"
           title={
-            monthsAvailable.length === 0
-              ? 'El filtro de fechas se habilita cuando cargas datos'
-              : 'Filtrar por periodo'
+            periodPending
+              ? 'Restaurando tu último trabajo…'
+              : monthsAvailable.length === 0
+                ? 'El filtro de fechas se habilita cuando cargas datos'
+                : 'Filtrar por periodo'
           }
         >
           <Calendar className="h-4 w-4" />
-          <span className="sm:hidden">{compactPeriodLabel}</span>
-          <span className="hidden sm:inline">
-            {monthsAvailable.length > 0 ? period.label : currentMonthRange()}
-          </span>
+          {periodPending ? (
+            <span className="h-3.5 w-16 animate-pulse rounded bg-white/20" />
+          ) : (
+            <>
+              <span className="sm:hidden">{compactPeriodLabel}</span>
+              <span className="hidden sm:inline">
+                {monthsAvailable.length > 0 ? period.label : currentMonthRange()}
+              </span>
+            </>
+          )}
           <ChevronDown className="h-4 w-4 text-white/60" />
         </button>
 

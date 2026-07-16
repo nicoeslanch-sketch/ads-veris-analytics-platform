@@ -232,15 +232,16 @@ async def ai_summary(
         )
     except HTTPException:
         raise
-    except APIConnectionError as exc:
+    except (APIConnectionError, APIStatusError) as exc:
+        # Bug: el detalle de APIStatusError (tipo, texto del proveedor,
+        # request_id — ej. "credit balance is too low") llegaba tal cual al
+        # panel. Al cliente jamás se le filtran detalles internos del
+        # proveedor; el detalle real queda en los logs con un incidente.
+        incident = uuid.uuid4().hex[:8]
+        print(f"[ai] incidente {incident}: {exc.__class__.__name__}: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"No se pudo conectar con el servicio de IA: {exc}",
-        ) from exc
-    except APIStatusError as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=f"Error del servicio de IA ({exc.status_code}): {exc.message}",
+            detail="El asistente no está disponible en este momento. Intenta de nuevo más tarde.",
         ) from exc
     except Exception as exc:
         incident = uuid.uuid4().hex[:8]
@@ -309,15 +310,16 @@ async def ai_recommendation(
         )
     except HTTPException:
         raise
-    except APIConnectionError as exc:
+    except (APIConnectionError, APIStatusError) as exc:
+        # Bug: el detalle de APIStatusError (tipo, texto del proveedor,
+        # request_id — ej. "credit balance is too low") llegaba tal cual al
+        # panel. Al cliente jamás se le filtran detalles internos del
+        # proveedor; el detalle real queda en los logs con un incidente.
+        incident = uuid.uuid4().hex[:8]
+        print(f"[ai] incidente {incident}: {exc.__class__.__name__}: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"No se pudo conectar con el servicio de IA: {exc}",
-        ) from exc
-    except APIStatusError as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=f"Error del servicio de IA ({exc.status_code}): {exc.message}",
+            detail="El asistente no está disponible en este momento. Intenta de nuevo más tarde.",
         ) from exc
     except Exception as exc:
         incident = uuid.uuid4().hex[:8]

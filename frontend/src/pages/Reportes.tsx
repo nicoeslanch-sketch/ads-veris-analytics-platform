@@ -16,7 +16,7 @@ import { useAuth } from '../auth/AuthContext'
 import { fullRangePeriod } from '../data/DatasetContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
 import { downloadReportCsv, openPrintableReport } from '../lib/report'
-import { formatCLP } from '../lib/format'
+import { cleanFilename, formatCLP } from '../lib/format'
 import { fetchProfile } from '../lib/profile'
 import { useCapability } from '../lib/usePlan'
 
@@ -90,7 +90,7 @@ export default function Reportes() {
           <Card className="mb-6 min-w-0">
             <h2 className="text-base font-semibold text-navy">Contenido del reporte</h2>
             <p className="mt-0.5 min-w-0 text-sm text-navy/60">
-              Archivo <span className="font-medium text-navy [overflow-wrap:anywhere] sm:[overflow-wrap:normal]">{metrics.archivo}</span> · periodo{' '}
+              Archivo <span className="font-medium text-navy [overflow-wrap:anywhere] sm:[overflow-wrap:normal]">{cleanFilename(metrics.archivo)}</span> · periodo{' '}
               {fullRangePeriod(metrics.periodo.meses_disponibles).label} · ingresos
               del periodo <span className="font-medium text-navy">{formatCLP(metrics.kpis.ingresos_totales.valor)}</span>.
               Incluye indicadores, evolución mensual, análisis por categoría, canales, top

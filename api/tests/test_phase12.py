@@ -256,7 +256,7 @@ def test_respuesta_conserva_campos_anteriores_y_agrega_detalle(client, auth_head
 def test_contador_textual_no_cuenta_dos_veces_la_misma_celda():
     values = pd.Series(["JUAN  PEREZ"] + ["Juan Perez"] * 10)
 
-    unified, detail, _, _ = _normalize_text_column(values)
+    unified, detail, _, _, _ = _normalize_text_column(values)
 
     assert unified.eq("Juan Perez").all()
     assert detail["celdas_con_espacios_normalizados"] == 1
@@ -297,8 +297,8 @@ def test_respuesta_no_inventa_total_unico_de_categorias(client, auth_headers):
 def test_placeholder_cliente_se_conserva_y_no_se_unifica_como_nombre():
     values = pd.Series(["Sin Nombre", "SIN NOMBRE", "Juan Pérez"])
 
-    clients, client_detail, _, _ = _normalize_text_column(values, role="cliente")
-    categories, category_detail, _, _ = _normalize_text_column(values, role="categoria")
+    clients, client_detail, _, _, _ = _normalize_text_column(values, role="cliente")
+    categories, category_detail, _, _, _ = _normalize_text_column(values, role="categoria")
 
     assert clients.tolist()[:2] == ["Sin Nombre", "SIN NOMBRE"]
     assert client_detail["placeholders_detectados"] == 2

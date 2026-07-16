@@ -76,6 +76,12 @@ export default function Configuracion() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'fail'>('idle')
   const [usage, setUsage] = useState<AiUsage | null>(null)
   const [plansUsage, setPlansUsage] = useState<PlansUsage | null>(null)
+  // Bug: mientras /ai/usage y /plans/usage estaban en vuelo, `usage`/
+  // `plansUsage` seguían en null y las tarjetas mostraban "Disponible
+  // próximamente" — indistinguible de una cuenta administradora sin cupo
+  // ilimitado detectado todavía. Loading explícito en vez de inferirlo de null.
+  const [usageLoading, setUsageLoading] = useState(true)
+  const [plansUsageLoading, setPlansUsageLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -99,12 +105,18 @@ export default function Configuracion() {
       .catch(() => {
         if (!cancelled) setUsage(null)
       })
+      .finally(() => {
+        if (!cancelled) setUsageLoading(false)
+      })
     apiGet<PlansUsage>('/plans/usage')
       .then((info) => {
         if (!cancelled) setPlansUsage(info)
       })
       .catch(() => {
         if (!cancelled) setPlansUsage(null)
+      })
+      .finally(() => {
+        if (!cancelled) setPlansUsageLoading(false)
       })
     return () => {
       cancelled = true
@@ -220,7 +232,12 @@ export default function Configuracion() {
               <Sparkles className="h-4.5 w-4.5 text-gold" />
               <h2 className="text-base font-semibold text-navy">Consultas IA del mes</h2>
             </div>
-            {usage?.disponible ? (
+            {usageLoading ? (
+              <div className="mt-3 space-y-2">
+                <div className="h-7 w-24 animate-pulse rounded bg-navy/10" />
+                <div className="h-2 w-full animate-pulse rounded-full bg-navy/10" />
+              </div>
+            ) : usage?.disponible ? (
               usage.ilimitado ? (
                 <div className="mt-3 rounded-lg border border-gold/35 bg-gold/5 px-3 py-3">
                   <p className="flex items-center gap-2 text-sm font-semibold text-navy">
@@ -262,7 +279,12 @@ export default function Configuracion() {
               <Wand2 className="h-4.5 w-4.5 text-teal" />
               <h2 className="text-base font-semibold text-navy">Limpieza dirigida IA del mes</h2>
             </div>
-            {plansUsage?.disponible ? (
+            {plansUsageLoading ? (
+              <div className="mt-3 space-y-2">
+                <div className="h-7 w-24 animate-pulse rounded bg-navy/10" />
+                <div className="h-2 w-full animate-pulse rounded-full bg-navy/10" />
+              </div>
+            ) : plansUsage?.disponible ? (
               plansUsage.limpieza.ilimitado ? (
                 <div className="mt-3 rounded-lg border border-teal/30 bg-teal/5 px-3 py-3">
                   <p className="flex items-center gap-2 text-sm font-semibold text-navy">

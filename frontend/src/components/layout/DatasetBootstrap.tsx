@@ -20,7 +20,7 @@ const AUTO_RESTORE_TIMEOUT_MS = 90_000
 export default function DatasetBootstrap() {
   const { user } = useAuth()
   const { status: accessStatus, can } = useAccess()
-  const { file, restoreDataset } = useDataset()
+  const { file, restoreDataset, setRestoring: setContextRestoring } = useDataset()
   const [restoring, setRestoring] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState<string | null>(null)
   const cancelledRef = useRef(false)
@@ -50,6 +50,7 @@ export default function DatasetBootstrap() {
 
     const run = async () => {
       setRestoring('documento reciente')
+      setContextRestoring(true)
       setRestoreError(null)
       try {
         const restored = await apiPostJson<RestoreLatestResult>(
@@ -89,6 +90,7 @@ export default function DatasetBootstrap() {
         if (active) {
           attemptedUsers.add(user.id)
           setRestoring(null)
+          setContextRestoring(false)
           // Retention stays off the critical path of the visible restoration.
           void apiPostJson('/storage/retention', {}).catch(() => undefined)
         }
@@ -99,7 +101,7 @@ export default function DatasetBootstrap() {
       active = false
       controller.abort()
     }
-  }, [user, file, restoreDataset, accessStatus, can])
+  }, [user, file, restoreDataset, accessStatus, can, setContextRestoring])
 
   if (!restoring && restoreError) {
     return (
@@ -138,6 +140,7 @@ export default function DatasetBootstrap() {
           cancelledRef.current = true
           restoreAbortRef.current?.abort()
           setRestoring(null)
+          setContextRestoring(false)
         }}
         className="shrink-0 rounded-lg border border-navy/20 bg-white px-3 py-1.5 text-xs font-semibold text-navy transition-colors hover:border-teal/60"
       >

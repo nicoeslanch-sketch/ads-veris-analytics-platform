@@ -44,7 +44,7 @@ import {
   type DatasetRow,
 } from '../lib/history'
 import { supabaseConfigured } from '../lib/supabase'
-import { formatDateTime, formatNumber } from '../lib/format'
+import { formatDateTime, formatNumber, formatRelativeTime } from '../lib/format'
 import { DEFAULT_RULES, type CleanResult, type StandardizeResult } from '../lib/types'
 
 const ACTIVITY_META: Record<ActivityType, { label: string; icon: LucideIcon; tone: string }> = {
@@ -531,8 +531,11 @@ export default function Historial() {
                       <p className="truncate text-sm text-navy" title={description}>
                         {description}
                       </p>
-                      <p className="mt-0.5 text-xs text-navy/50">
-                        {formatDateTime(new Date(item.created_at))}
+                      <p
+                        className="mt-0.5 text-xs text-navy/50"
+                        title={formatDateTime(new Date(item.created_at))}
+                      >
+                        {formatRelativeTime(new Date(item.created_at))}
                       </p>
                     </div>
                   </li>

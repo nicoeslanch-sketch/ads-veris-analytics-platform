@@ -565,6 +565,32 @@ def is_identifier_column(name: str, series: pd.Series | None = None) -> bool:
     return False
 
 
+# Bug: "Santiago Centro"/"Stgo Centro" o "Concepción"/"conce" no se
+# unificaban — el fuzzy por distancia de edición solo cubre typos (1-2
+# caracteres), no abreviaciones ("stgo" vs "santiago" difieren en 5). Estas
+# son abreviaciones chilenas de uso común y no ambiguas: se expanden ANTES de
+# comparar, con confianza alta (fusión directa, no solo sugerencia).
+_CL_PLACE_ABBREVIATIONS: dict[str, str] = {
+    "stgo": "santiago",
+    "valpo": "valparaiso",
+    "conce": "concepcion",
+    "concep": "concepcion",
+    "provi": "providencia",
+    "pto": "puerto",
+    "pta": "punta",
+    "antofa": "antofagasta",
+}
+
+
+def _expand_abbreviations_key(value: str) -> str:
+    """norm_key, pero expandiendo antes cada palabra conocida del diccionario
+    de abreviaciones chilenas ("Stgo Centro" → "santiago centro" → misma
+    clave que "Santiago Centro")."""
+    words = strip_accents_lower(value).split()
+    expanded = " ".join(_CL_PLACE_ABBREVIATIONS.get(w, w) for w in words)
+    return norm_key(expanded)
+
+
 def _fuzzy_merge_keys(frequencies: dict[str, dict[str, int]]) -> dict[str, str]:
     """Fusiona claves raras con typos hacia claves frecuentes cercanas (§5.11).
 
@@ -600,13 +626,17 @@ def _fuzzy_merge_keys(frequencies: dict[str, dict[str, int]]) -> dict[str, str]:
 
 def _normalize_text_column(
     series: pd.Series, allow_fuzzy: bool = True, role: str | None = None
-) -> tuple[pd.Series, dict[str, int], list[list[str]], list[dict]]:
+) -> tuple[pd.Series, dict[str, int], list[list[str]], list[dict], list[tuple[str, str, int]]]:
     """Recorta espacios, limpia placeholders y unifica variantes de un mismo texto.
 
-    Devuelve (serie, desglose, ejemplos_de_fusiones_fuzzy). Las variantes que
-    solo difieren en mayúsculas/tildes/espacios se reemplazan por la forma más
-    frecuente; los typos cercanos se fusionan con Levenshtein acotado —
-    SOLO si `allow_fuzzy` (jamás en columnas identificadoras, Fase 10 §6.1)."""
+    Devuelve (serie, desglose, ejemplos_de_fusiones_fuzzy, auditoría_mojibake,
+    sugerencias_de_fusión). Las variantes que solo difieren en mayúsculas/
+    tildes/espacios se reemplazan por la forma más frecuente; los typos
+    cercanos se fusionan con Levenshtein acotado — SOLO si `allow_fuzzy`
+    (jamás en columnas identificadoras, Fase 10 §6.1). Las sugerencias son
+    truncamientos genéricos (ej. "conce" de "Concepción") que NO se fusionan
+    solos por no ser una abreviación conocida — se avisan para que el
+    usuario confirme, en vez de fusionar a ciegas o dejarlas pasar calladas."""
     original = series.map(str)
     semantic_mask = semantic_missing_mask(original, role)
 
@@ -659,6 +689,7 @@ def _normalize_text_column(
     # Fuzzy: claves raras que son typos de una clave frecuente (§5.11).
     fuzzy_examples: list[list[str]] = []
     fuzzy_merges = 0  # Fase 13: conteo REAL (los ejemplos van capados a 5)
+    suggestions: list[tuple[str, str, int]] = []
     if allow_fuzzy:
         for rare_key, canon_key in _fuzzy_merge_keys(frequencies).items():
             if len(fuzzy_examples) < 5:
@@ -666,14 +697,15 @@ def _normalize_text_column(
             canonical[rare_key] = canonical[canon_key]
             fuzzy_merges += 1
 
+        totals = {key: sum(v.values()) for key, v in frequencies.items()}
+        ordered = sorted(totals, key=lambda k: totals[k], reverse=True)
+
         # Fase 11 §8: variantes MORFOLÓGICAS en categóricas de baja
         # cardinalidad — "pagada" (5) → "pagado" (55). El fuzzy clásico no las
         # toca porque ambas son "frecuentes" (≥3). Guardas: ≤30 categorías,
         # misma raíz, solo vocal final a/o o plural con "s", y la minoritaria
         # es ≤ 1/4 de la dominante (categorías equilibradas jamás se fusionan).
-        totals = {key: sum(v.values()) for key, v in frequencies.items()}
         if 2 <= len(totals) <= 30:
-            ordered = sorted(totals, key=lambda k: totals[k], reverse=True)
             for minor in list(ordered):
                 if canonical[minor] != _pick_canonical(frequencies[minor]):
                     continue  # ya fusionada por el fuzzy
@@ -696,6 +728,45 @@ def _normalize_text_column(
                         fuzzy_merges += 1
                         break
 
+        # Abreviaciones chilenas conocidas (Bug): "Stgo Centro" no se
+        # fusionaba con "Santiago Centro" porque la distancia de edición
+        # entre "stgocentro" y "santiagocentro" es demasiado grande para el
+        # fuzzy clásico. Confianza alta — es un diccionario curado, no una
+        # adivinanza — así que se fusiona directo, sin tope de cardinalidad.
+        for minor in list(ordered):
+            if canonical[minor] != _pick_canonical(frequencies[minor]):
+                continue  # ya fusionada por una pasada anterior
+            sample_value = next(iter(frequencies[minor]))
+            expanded_key = _expand_abbreviations_key(sample_value)
+            if expanded_key == minor or expanded_key not in frequencies:
+                continue
+            major = expanded_key
+            if totals[minor] > totals[major]:
+                continue  # la forma abreviada no puede ser más frecuente que la completa
+            if len(fuzzy_examples) < 5:
+                fuzzy_examples.append([canonical[minor], canonical[major]])
+            canonical[minor] = canonical[major]
+            fuzzy_merges += 1
+
+        # Truncamientos genéricos (Bug): "conce" de "Concepción" no está en
+        # ningún diccionario y podría ser una categoría real distinta (mismo
+        # espíritu que "Ruta" vs "Ruta terreno") — confianza media, así que
+        # NO se fusiona sola: se suma como sugerencia para que el usuario la
+        # confirme, en vez de fusionar a ciegas o dejarla pasar callada.
+        for minor in list(ordered):
+            if canonical[minor] != _pick_canonical(frequencies[minor]):
+                continue  # ya fusionada por una pasada anterior
+            if len(minor) < 4:
+                continue
+            for major in ordered:
+                if major == minor or len(major) <= len(minor):
+                    continue
+                if totals[minor] > max(2, totals[major] // 2):
+                    continue
+                if major.startswith(minor):
+                    suggestions.append((canonical[minor], canonical[major], totals[minor]))
+                    break
+
     unified = map_unique(
         stripped,
         lambda v: (
@@ -717,7 +788,7 @@ def _normalize_text_column(
         "mojibake_detectado": mojibake_detected,
         "mojibake_reparado": mojibake_repaired,
         "fusiones_fuzzy": fuzzy_merges,
-    }, fuzzy_examples, mojibake_audit
+    }, fuzzy_examples, mojibake_audit, suggestions
 
 
 # ── Pipeline de estandarización ──────────────────────────────────────────────
@@ -765,7 +836,7 @@ def standardize_dataframe(
             # Fase 10 §6.1: nada de fuzzy sobre identificadores (SKU, folio,
             # RUT, email…) — un typo de distancia 1 puede ser otro código real.
             allow_fuzzy = not is_identifier_column(col, result[col])
-            result[col], detail, examples, column_mojibake = _normalize_text_column(
+            result[col], detail, examples, column_mojibake, suggestions = _normalize_text_column(
                 result[col], allow_fuzzy=allow_fuzzy, role=roles_by_col.get(col)
             )
             for key in text_detail:
@@ -779,6 +850,15 @@ def standardize_dataframe(
                 if len(mojibake_audit) >= 5000:
                     break
                 mojibake_audit.append({"columna": col, **audit})
+            # Bug: truncamientos como "conce"/"Concepción" no son una
+            # abreviación conocida — se avisan en vez de fusionarse solos o
+            # pasar calladas, para que el usuario confirme manualmente.
+            for rare_display, canon_display, rare_count in suggestions[:3]:
+                date_avisos.append(
+                    f"En '{col}': \"{rare_display}\" ({rare_count} fila(s)) podría ser una "
+                    f"forma abreviada de \"{canon_display}\" — revísalo y corrígelo a mano "
+                    "si corresponde a la misma sucursal o categoría."
+                )
         elif ctype == "fecha":
             profile = column_date_profile(result[col])
             dayfirst = profile["dayfirst"]
