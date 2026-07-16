@@ -2,6 +2,22 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.17.5] - 2026-07-16 - Resumen sin espacios verticales artificiales
+
+### Interfaz
+- **Columnas independientes en escritorio**: las tarjetas del Resumen ya no
+  comparten filas cuya altura dependía de la tarjeta más larga. Evolución y
+  Categoría avanzan por la columna principal; Indicadores y Estado financiero,
+  por la lateral.
+- **Bloque inferior compacto**: Ventas por sucursal conserva su altura real y
+  Top Productos/Proyección forman una segunda subcolumna, sin estirarse ni
+  reservar huecos entre tarjetas.
+- **Móvil sin cambios de orden**: la composición responsive conserva
+  Evolución → Indicadores → Categoría → Estado financiero → bloque inferior.
+
+### Verificación
+- **21 Vitest + build de producción**, todos verdes.
+
 ## [0.17.4] - 2026-07-16 - Carga estable y acceso administrador coherente
 
 ### Acceso y carga de archivos

@@ -1,6 +1,9 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 14 completas + estabilización operativa 0.17.4.**
+**Estado actual: Fases 0 a 14 completas + estabilización operativa 0.17.5.**
+La versión 0.17.5 reemplaza las filas acopladas del Resumen por columnas
+independientes y elimina los espacios verticales artificiales sin volver a
+estirar tarjetas; el orden móvil se conserva.
 La versión 0.17.4 elimina la carrera entre el selector de archivos y la
 revalidación de acceso, sin relajar el control fail-closed, y alinea toda la
 experiencia administrativa: etiqueta de acceso total, capacidades y cuotas IA
