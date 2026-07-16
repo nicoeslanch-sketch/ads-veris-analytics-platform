@@ -81,7 +81,14 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
    solo UX; la política REAL vive aquí): en **Authentication → Providers →
    Email → Password requirements**, exige mínimo **8 caracteres** con
    **letras y dígitos**.
-4. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
+4. **Recuperación de contraseña**: en **Authentication → URL Configuration**,
+   usa como Site URL la URL canónica de producción y agrega estas Redirect URLs:
+   - `https://ads-veris-analytics-platform-pi.vercel.app/restablecer-contrasena`
+   - `http://localhost:5173/restablecer-contrasena`
+   - `http://127.0.0.1:5173/restablecer-contrasena`
+   Si personalizas la plantilla de correo de recuperación, conserva
+   `{{ .ConfirmationURL }}` para que respete el `redirectTo` enviado por la app.
+5. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend
 

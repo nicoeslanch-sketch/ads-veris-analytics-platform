@@ -1,18 +1,16 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
+import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '../auth/password'
+import { buildPasswordRecoveryRedirect } from '../auth/recovery'
 
 type Mode = 'login' | 'register'
 
 const inputClass =
   'w-full rounded-lg border border-navy/20 bg-white px-3.5 py-2.5 text-sm text-navy placeholder-navy/35 outline-none transition-colors focus:border-teal focus:ring-2 focus:ring-teal/20'
-
-// Fase 13/14: política de UX en el registro — la política REAL se configura en
-// Supabase → Authentication → Providers → Email (mínimo 8, letras y números).
-const PASSWORD_POLICY_RE = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/
 
 /** Botón de ojo para mostrar/ocultar la contraseña: accesible por teclado,
  * con aria-label, no borra el valor y conserva el foco en el campo. */
@@ -34,6 +32,7 @@ function EyeToggle({ shown, onToggle }: { shown: boolean; onToggle: () => void }
 export default function Login() {
   const { session, configured, login, register } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
@@ -46,11 +45,15 @@ export default function Login() {
   const [country, setCountry] = useState('Chile')
   const [phone, setPhone] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(() => {
+    const routeState = location.state as { notice?: unknown } | null
+    return typeof routeState?.notice === 'string' ? routeState.notice : null
+  })
   const [submitting, setSubmitting] = useState(false)
+  const [recovering, setRecovering] = useState(false)
 
   // Ticks verdes SOLO cuando la contraseña cumple la política Y ambas coinciden.
-  const passwordOk = PASSWORD_POLICY_RE.test(password)
+  const passwordOk = isValidPassword(password)
   const confirmOk = passwordOk && confirmPassword.length > 0 && confirmPassword === password
   const confirmMismatch = confirmPassword.length > 0 && confirmPassword !== password
 
@@ -65,11 +68,16 @@ export default function Login() {
       return
     }
     if (!supabase) return
-    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: window.location.origin,
-    })
-    if (err) setError(err.message)
-    else setNotice('Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.')
+    setRecovering(true)
+    try {
+      const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: buildPasswordRecoveryRedirect(window.location.origin),
+      })
+      if (err) setError(err.message)
+      else setNotice('Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.')
+    } finally {
+      setRecovering(false)
+    }
   }
 
   const handleSubmit = async (e: FormEvent) => {
@@ -78,8 +86,8 @@ export default function Login() {
     setNotice(null)
     // Fase 13: contraseña reforzada al crear cuenta — mínimo 8 caracteres
     // con al menos una letra y un número.
-    if (mode === 'register' && !PASSWORD_POLICY_RE.test(password)) {
-      setError('La contraseña debe tener al menos 8 caracteres e incluir letras y números.')
+    if (mode === 'register' && !isValidPassword(password)) {
+      setError(PASSWORD_POLICY_MESSAGE)
       return
     }
     // Fase 14: el envío se bloquea si la confirmación no coincide.
@@ -254,9 +262,10 @@ export default function Login() {
                   <button
                     type="button"
                     onClick={() => void handleForgotPassword()}
-                    className="text-xs font-medium text-teal hover:underline"
+                    disabled={recovering}
+                    className="text-xs font-medium text-teal hover:underline disabled:cursor-wait disabled:opacity-60"
                   >
-                    ¿Olvidaste tu contraseña?
+                    {recovering ? 'Enviando enlace...' : '¿Olvidaste tu contraseña?'}
                   </button>
                 )}
               </div>

@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -7,6 +8,7 @@ import {
 } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase, supabaseConfigured } from '../lib/supabase'
+import { hasPasswordRecoveryHint } from './recovery'
 
 interface RegisterData {
   email: string
@@ -21,10 +23,12 @@ interface AuthContextValue {
   session: Session | null
   user: User | null
   loading: boolean
+  recoveryMode: boolean
   configured: boolean
   login: (email: string, password: string) => Promise<{ error: string | null }>
   register: (data: RegisterData) => Promise<{ error: string | null }>
   logout: () => Promise<void>
+  clearRecoveryMode: () => void
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
@@ -44,6 +48,9 @@ function translateAuthError(message: string): string {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [recoveryMode, setRecoveryMode] = useState(() =>
+    typeof window !== 'undefined' ? hasPasswordRecoveryHint(window.location) : false,
+  )
 
   useEffect(() => {
     if (!supabase) {
@@ -56,8 +63,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession)
+      if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true)
+      if (event === 'SIGNED_OUT') setRecoveryMode(false)
     })
     return () => subscription.unsubscribe()
   }, [])
@@ -93,16 +102,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut()
   }
 
+  const clearRecoveryMode = useCallback(() => setRecoveryMode(false), [])
+
   return (
     <AuthContext.Provider
       value={{
         session,
         user: session?.user ?? null,
         loading,
+        recoveryMode,
         configured: supabaseConfigured,
         login,
         register,
         logout,
+        clearRecoveryMode,
       }}
     >
       {children}

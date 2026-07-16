@@ -2,6 +2,23 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.17.3] - 2026-07-16 - Recuperación de contraseña completa
+
+### Autenticación
+- **Panel público de nueva contraseña**: el enlace enviado por Supabase abre
+  `/restablecer-contrasena`, valida dos campos coincidentes y aplica la misma
+  política del registro (mínimo 8 caracteres, letras y números).
+- **Cierre seguro del flujo**: después de actualizar la contraseña se cierra la
+  sesión de recuperación y se redirige al inicio de sesión con confirmación.
+- **Enlaces antiguos compatibles**: los correos ya emitidos con
+  `type=recovery` hacia la raíz se redirigen al panel nuevo; los enlaces
+  inválidos o vencidos muestran una salida clara para solicitar otro.
+- **Supabase Auth alineado**: Site URL de producción, redirects exactos para
+  producción/desarrollo y política remota `8 + letters_digits`.
+
+### Verificación
+- **21 Vitest + build de producción**, todos verdes.
+
 ## [0.17.2] - 2026-07-16 - Fase 14c: cierre comercial y consistencia analítica
 
 Revisión crítica del informe posterior a 14b. Se confirmaron tres defectos

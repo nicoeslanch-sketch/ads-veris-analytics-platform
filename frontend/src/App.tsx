@@ -1,7 +1,8 @@
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
-import { AuthProvider } from './auth/AuthContext'
+import { AuthProvider, useAuth } from './auth/AuthContext'
+import { hasPasswordRecoveryHint, PASSWORD_RECOVERY_PATH } from './auth/recovery'
 import { AccessProvider } from './lib/access'
 import { DatasetProvider } from './data/DatasetContext'
 import { DemoProvider } from './demo/DemoContext'
@@ -20,6 +21,7 @@ const Reportes = lazy(() => import('./pages/Reportes'))
 const Planes = lazy(() => import('./pages/Planes'))
 const Configuracion = lazy(() => import('./pages/Configuracion'))
 const AdminCuentas = lazy(() => import('./pages/AdminCuentas'))
+const RestablecerContrasena = lazy(() => import('./pages/RestablecerContrasena'))
 
 function lazyPage(Page: LazyExoticComponent<ComponentType>) {
   return (
@@ -35,6 +37,50 @@ function lazyPage(Page: LazyExoticComponent<ComponentType>) {
   )
 }
 
+function AppRoutes() {
+  const location = useLocation()
+  const { recoveryMode } = useAuth()
+
+  if (
+    location.pathname !== PASSWORD_RECOVERY_PATH
+    && (recoveryMode || hasPasswordRecoveryHint(location))
+  ) {
+    return (
+      <Navigate
+        to={{
+          pathname: PASSWORD_RECOVERY_PATH,
+          search: location.search,
+          hash: location.hash,
+        }}
+        replace
+      />
+    )
+  }
+
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path={PASSWORD_RECOVERY_PATH} element={lazyPage(RestablecerContrasena)} />
+      <Route element={<ProtectedRoute />}>
+        <Route element={<AppShell />}>
+          <Route path="/" element={lazyPage(Resumen)} />
+          <Route path="/explorar" element={lazyPage(Explorar)} />
+          <Route path="/estandarizacion" element={lazyPage(Estandarizacion)} />
+          <Route path="/limpieza" element={lazyPage(Limpieza)} />
+          <Route path="/historial" element={lazyPage(Historial)} />
+          <Route path="/conectores" element={lazyPage(Conectores)} />
+          <Route path="/alertas" element={lazyPage(Alertas)} />
+          <Route path="/reportes" element={lazyPage(Reportes)} />
+          <Route path="/planes" element={lazyPage(Planes)} />
+          <Route path="/configuracion" element={lazyPage(Configuracion)} />
+          <Route path="/admin" element={lazyPage(AdminCuentas)} />
+        </Route>
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -42,25 +88,7 @@ export default function App() {
       <DatasetProvider>
         <DemoProvider>
         <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route element={<ProtectedRoute />}>
-            <Route element={<AppShell />}>
-              <Route path="/" element={lazyPage(Resumen)} />
-              <Route path="/explorar" element={lazyPage(Explorar)} />
-              <Route path="/estandarizacion" element={lazyPage(Estandarizacion)} />
-              <Route path="/limpieza" element={lazyPage(Limpieza)} />
-              <Route path="/historial" element={lazyPage(Historial)} />
-              <Route path="/conectores" element={lazyPage(Conectores)} />
-              <Route path="/alertas" element={lazyPage(Alertas)} />
-              <Route path="/reportes" element={lazyPage(Reportes)} />
-              <Route path="/planes" element={lazyPage(Planes)} />
-              <Route path="/configuracion" element={lazyPage(Configuracion)} />
-              <Route path="/admin" element={lazyPage(AdminCuentas)} />
-            </Route>
-          </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <AppRoutes />
         </BrowserRouter>
         </DemoProvider>
       </DatasetProvider>

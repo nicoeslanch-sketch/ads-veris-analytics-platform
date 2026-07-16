@@ -1,6 +1,11 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 14 completas + estabilización 14c.**
+**Estado actual: Fases 0 a 14 completas + estabilización 14c y recuperación de contraseña.**
+La versión 0.17.3 completa el circuito de recuperación: correo con redirect
+autorizado, panel público para ingresar y confirmar la nueva contraseña,
+política compartida de 8 caracteres con letras y números, compatibilidad con
+enlaces antiguos, cierre de la sesión temporal y retorno al login.
+**Vitest 21 + build de producción.**
 La Fase 14c (`CHANGELOG` [0.17.2]) cierra el bypass de upgrades sin identidad
 en el backend, usa Supabase Auth como señal autoritativa de correo confirmado,
 separa los rate limits, corrige concentración bruta sin romper el orden neto de
