@@ -5,6 +5,7 @@ import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 import AiPanel from './AiPanel'
 import DatasetBootstrap from './DatasetBootstrap'
+import { DemoBanner } from '../../demo/DemoBanner'
 
 /** Rutas donde vive el panel derecho del Asistente IA (Fase 7 §4):
  * SOLO Resumen y Explorar datos. En el resto, el contenido usa todo el ancho
@@ -78,6 +79,8 @@ export default function AppShell() {
           <main className="min-w-0 flex-1 overflow-y-auto bg-work p-4 sm:p-6 lg:p-8">
             {/* Fase 11 §6: al iniciar sesión se retoma el último trabajo */}
             <DatasetBootstrap />
+            {/* Fase 14: etiqueta persistente mientras la demo ficticia está activa */}
+            <DemoBanner />
             <Outlet />
           </main>
 

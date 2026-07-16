@@ -161,8 +161,15 @@ def _group_sum(
     return rows
 
 
-def _projection(monthly: pd.DataFrame) -> dict | None:
-    """Proyección simple a 3 meses por crecimiento promedio mensual."""
+def _projection(monthly: pd.DataFrame, first_month: pd.Period | None = None) -> dict | None:
+    """Proyección simple a 3 meses por crecimiento promedio mensual.
+
+    Fase 14: cuando el último mes de la serie real está PARCIAL, se pasa aquí
+    la serie SIN ese mes (la tasa y la base usan solo meses completos — el mes
+    a medio llenar deprimía el crecimiento con una caída ficticia) y
+    `first_month` fija el primer mes proyectado DESPUÉS del final real, para
+    que la proyección jamás se superponga con un mes que sí tiene datos.
+    """
     series = monthly["ingresos"].astype(float)
     if len(series) < 2 or series.iloc[:-1].le(0).any():
         return None
@@ -170,16 +177,21 @@ def _projection(monthly: pd.DataFrame) -> dict | None:
     # Acotar tasas extremas para que un mes atípico no dispare la proyección.
     growth = float(growth_rates.clip(-0.5, 0.5).mean())
     last_month = pd.Period(monthly.index[-1], freq="M")
-    last_value = float(series.iloc[-1])
+    start = first_month if first_month is not None else last_month + 1
     projected = []
-    value = last_value
-    for step in range(1, 4):
+    value = float(series.iloc[-1])
+    month = last_month
+    # Puente silencioso hasta el mes previo al primero proyectado (cubre el
+    # mes parcial excluido de la serie).
+    while month + 1 < start:
+        month += 1
         value = value * (1 + growth)
-        projected.append(
-            {"mes": str(last_month + step), "ingresos": round(max(value, 0.0), 2)}
-        )
+    for _ in range(3):
+        month += 1
+        value = value * (1 + growth)
+        projected.append({"mes": str(month), "ingresos": round(max(value, 0.0), 2)})
     base = float(series.tail(3).sum())
-    total_projected = sum(month["ingresos"] for month in projected)
+    total_projected = sum(item["ingresos"] for item in projected)
     return {
         "crecimiento_pct": round(growth * 100, 1),
         "crecimiento_trimestre_pct": _pct_change(total_projected, base if base else None),
@@ -264,6 +276,32 @@ def compute_metrics(
             frame.dropna(subset=["mes"]).groupby("mes").sum(numeric_only=True).sort_index()
         )
 
+    # ── Parcialidad por mes (Fase 14) ──
+    # Cada mes de la evolución declara hasta qué día tiene datos. El flag
+    # `parcial` solo marca el ÚLTIMO mes de la serie (un hueco al final es
+    # cobertura incompleta; un hueco al medio son días sin ventas reales).
+    # Consumidores: la proyección lo excluye, Alertas no compara parcial vs
+    # completo, la IA recibe la marca y el gráfico lo identifica.
+    cobertura_dias: dict[str, int] = {}
+    if has_dates and len(monthly):
+        dias_frame = pd.DataFrame(
+            {
+                "mes": dates_all.map(lambda d: d.strftime("%Y-%m") if pd.notna(d) else None),
+                "dia": dates_all.map(lambda d: int(d.day) if pd.notna(d) else None),
+            }
+        ).dropna(subset=["mes", "dia"])
+        cobertura_dias = dias_frame.groupby("mes")["dia"].max().astype(int).to_dict()
+    ultimo_mes = str(monthly.index[-1]) if len(monthly) else None
+
+    def _mes_meta(mes: str) -> dict:
+        dias_del_mes = int(pd.Period(mes).days_in_month)
+        hasta = int(cobertura_dias.get(mes, dias_del_mes))
+        return {
+            "parcial": bool(mes == ultimo_mes and hasta < dias_del_mes),
+            "cobertura_hasta_dia": hasta,
+            "dias_del_mes": dias_del_mes,
+        }
+
     def _month_extra(row) -> dict:
         if not has_costs:
             return {}
@@ -295,10 +333,19 @@ def compute_metrics(
         {
             "mes": str(month),
             "ingresos": round(float(row["ingresos"]), 2),
+            **_mes_meta(str(month)),
             **_month_extra(row),
         }
         for month, row in monthly.iterrows()
     ]
+
+    if evolucion and evolucion[-1]["parcial"]:
+        ult = evolucion[-1]
+        warnings.append(
+            f"El último mes ({ult['mes']}) está incompleto: datos hasta el día "
+            f"{ult['cobertura_hasta_dia']} de {ult['dias_del_mes']}. La proyección "
+            "lo excluye y las alertas no lo comparan contra meses completos."
+        )
 
     # ── Selección por rango de fechas ──
     start = pd.to_datetime(date_from) if date_from else None
@@ -585,7 +632,21 @@ def compute_metrics(
                 for idx, row in agg.sort_index().iterrows()
             ]
 
-    result["proyeccion"] = _projection(monthly) if has_dates and not monthly.empty else None
+    # Fase 14: la proyección se calcula SOLO sobre meses completos — un mes
+    # parcial al final deprimía la tasa de crecimiento con una caída ficticia.
+    # Los meses proyectados siguen siendo los 3 POSTERIORES al final real de
+    # la serie: la proyección nunca se superpone con un mes que tiene datos.
+    monthly_completos = (
+        monthly.iloc[:-1] if evolucion and evolucion[-1]["parcial"] else monthly
+    )
+    primer_mes_proyectado = (
+        pd.Period(monthly.index[-1], freq="M") + 1 if len(monthly) else None
+    )
+    result["proyeccion"] = (
+        _projection(monthly_completos, first_month=primer_mes_proyectado)
+        if has_dates and not monthly_completos.empty
+        else None
+    )
     result["indicadores_financieros"] = {
         "disponible": False,
         "nota": (

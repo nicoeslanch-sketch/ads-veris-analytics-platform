@@ -30,7 +30,9 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import { apiGet, apiPostJson, ApiError } from '../lib/api'
+import { useAccess } from '../lib/access'
 import { usePlan } from '../lib/usePlan'
+import { TrialModal } from '../components/trial/TrialModal'
 import {
   PLAN_CARDS,
   PLAN_ENFORCEMENT,
@@ -55,6 +57,53 @@ function FeatureIcon({ availability }: { availability: FeatureAvailability }) {
   if (availability === 'limitado') return <Check className="h-4 w-4 shrink-0 text-teal" />
   if (availability === 'construccion') return <Hammer className="h-4 w-4 shrink-0 text-gold" />
   return <Minus className="h-4 w-4 shrink-0 text-navy/25" />
+}
+
+function TrialBanner() {
+  const { access } = useAccess()
+  const [trialOpen, setTrialOpen] = useState(false)
+  if (!access || access.is_admin || access.paid_plan !== 'sin_plan') return null
+
+  const { trial } = access
+  if (trial.active) {
+    return (
+      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-green/40 bg-green/5 px-4 py-3 text-sm text-navy/80">
+        <Sparkles className="h-4 w-4 shrink-0 text-green" />
+        <p className="min-w-0 flex-1">
+          Tu <strong>prueba gratuita</strong> está activa: te quedan{' '}
+          <strong>{trial.days_remaining} día(s)</strong>. Contrata un plan antes de
+          que termine para no interrumpir tu trabajo (tus archivos se conservan).
+        </p>
+      </div>
+    )
+  }
+  if (trial.used) {
+    return (
+      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 text-sm text-navy/80">
+        <Sparkles className="h-4 w-4 shrink-0 text-gold" />
+        <p className="min-w-0 flex-1">
+          Tu prueba gratuita terminó. Contrata un plan para seguir procesando tus
+          datos — tus archivos siguen guardados según la retención de tu cuenta.
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-gold/50 bg-gold/10 px-4 py-3 text-sm text-navy/80">
+      <TrialModal open={trialOpen} onClose={() => setTrialOpen(false)} />
+      <Sparkles className="h-4 w-4 shrink-0 text-gold" />
+      <p className="min-w-0 flex-1">
+        ¿Aún no te decides? Prueba la plataforma <strong>gratis por 15 días</strong>{' '}
+        con tus propios datos (sin tarjeta; no incluye el asistente IA).
+      </p>
+      <button
+        onClick={() => setTrialOpen(true)}
+        className="shrink-0 rounded-lg bg-gold px-4 py-2 text-xs font-semibold text-navy-deep transition-colors hover:bg-gold/90"
+      >
+        Probar demo gratuita (15 días)
+      </button>
+    </div>
+  )
 }
 
 export default function Planes() {
@@ -121,6 +170,10 @@ export default function Planes() {
           </p>
         </div>
       )}
+
+      {/* Fase 14: prueba gratuita — banner para cuentas sin plan que no la
+          usaron, y estado con días restantes mientras está vigente. */}
+      <TrialBanner />
 
       {/* ── Tarjetas de planes ── */}
       <div className="grid gap-6 lg:grid-cols-3">

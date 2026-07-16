@@ -1,6 +1,26 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 13 completas.**
+**Estado actual: Fases 0 a 14 completas.**
+La Fase 14 (`CHANGELOG` [0.17.0]) cierra los CUATRO bypasses comerciales
+(gates en `/ai/*` — el más caro, con métricas enviadas por el cliente —,
+`/metrics`, `/restore/latest` y el orden del conector Sheets; cuota `sin_plan`
+= 0 explícito, antes 500), unifica el acceso en `GET /me/access` (capacidades
+efectivas del SERVIDOR; el frontend ya no arranca optimista), e introduce la
+**prueba gratuita de 15 días con RUT** (migración **0016**: RPC atómica
+`activate_account_trial` solo service_role, unique absoluto por usuario +
+índice único PARCIAL por RUT sobre `revoked_at is null`, `can_process_data()`
+con políticas `AS RESTRICTIVE` en datasets/Storage, fechas del servidor sin
+cron), la **demo ficticia regenerable** ("Comercial Andes SpA": snapshots
+nacidos del motor real con test de contrato, provider aislado que jamás toca
+el DatasetContext), la **interceptación de carga en las tres puertas** (picker,
+drag & drop, Sheets — modal comercial antes de cualquier byte), la
+**parcialidad POR MES** en la evolución (proyección/Alertas/IA/gráfico dejan
+de leer un mes a medio llenar como caída) y el **registro reforzado accesible**
+(confirmar contraseña con aria-live, ojos con aria-label, pegar permitido).
+Recordatorio operativo: ejecutar la migración `0016` y configurar la política
+de contraseñas en Supabase → Authentication (README §Supabase).
+**252 tests + build + E2E 19/19.**
+
 La Fase 13 (`CHANGELOG` [0.16.0]) introduce el modelo de cuentas nuevas SIN
 plan (migración **0015**: navegar sí, subir archivos no — panel con CTA a
 Planes; las cuentas existentes conservan su plan), contraseña reforzada en el

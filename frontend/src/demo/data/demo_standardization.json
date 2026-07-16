@@ -1,0 +1,246 @@
+{
+ "archivo": "demo_empresa_ficticia.csv",
+ "avisos": [],
+ "cambios": {
+  "celdas_con_espacios_normalizados": 1,
+  "celdas_con_variantes_unificadas": 3,
+  "celdas_textuales_unicas_modificadas": 4,
+  "encabezados_normalizados": 0,
+  "fechas_estandarizadas": 0,
+  "fusiones_fuzzy": 0,
+  "mojibake_detectado": 0,
+  "mojibake_reparado": 0,
+  "numeros_estandarizados": 0,
+  "placeholders_detectados": 0,
+  "textos_normalizados": 4
+ },
+ "carga": {
+  "filas_titulo_omitidas": 0,
+  "formulas": null,
+  "hoja_usada": null,
+  "hojas_disponibles": []
+ },
+ "column_confidence": {
+  "Cantidad": 1.0,
+  "Categoría": 1.0,
+  "Cliente": 1.0,
+  "Costo": 1.0,
+  "Fecha": 1.0,
+  "Producto": 1.0,
+  "Sucursal": 1.0,
+  "Ventas": 1.0
+ },
+ "column_types": {
+  "Cantidad": "numero",
+  "Categoría": "texto",
+  "Cliente": "texto",
+  "Costo": "numero",
+  "Fecha": "fecha",
+  "Producto": "texto",
+  "Sucursal": "texto",
+  "Ventas": "numero"
+ },
+ "columnas": 8,
+ "filas": 279,
+ "mapeo": {
+  "cantidad": "Cantidad",
+  "categoria": "Categoría",
+  "cliente": "Cliente",
+  "costo": "Costo",
+  "fecha": "Fecha",
+  "monto": "Ventas",
+  "producto": "Producto",
+  "sucursal": "Sucursal"
+ },
+ "mapeo_extendido": {
+  "Cantidad": {
+   "confianza": 1.0,
+   "grupo": "cantidad",
+   "metodo": "exacto",
+   "palabra_clave": "cantidad",
+   "rol": "cantidad",
+   "rol_motor": "cantidad",
+   "tipo_dato": "numero"
+  },
+  "Categoría": {
+   "confianza": 1.0,
+   "grupo": "catalogo",
+   "metodo": "exacto",
+   "palabra_clave": "categoria",
+   "rol": "categoria",
+   "rol_motor": "categoria",
+   "tipo_dato": "texto"
+  },
+  "Cliente": {
+   "confianza": 1.0,
+   "grupo": "entidad",
+   "metodo": "exacto",
+   "palabra_clave": "cliente",
+   "rol": "cliente",
+   "rol_motor": "cliente",
+   "tipo_dato": "texto"
+  },
+  "Costo": {
+   "confianza": 1.0,
+   "grupo": "dinero",
+   "metodo": "exacto",
+   "palabra_clave": "costo",
+   "rol": "costo",
+   "rol_motor": "costo",
+   "tipo_dato": "numero"
+  },
+  "Fecha": {
+   "confianza": 1.0,
+   "grupo": "tiempo",
+   "metodo": "exacto",
+   "palabra_clave": "fecha",
+   "rol": "fecha",
+   "rol_motor": "fecha",
+   "tipo_dato": "fecha"
+  },
+  "Producto": {
+   "confianza": 1.0,
+   "grupo": "catalogo",
+   "metodo": "exacto",
+   "palabra_clave": "producto",
+   "rol": "producto",
+   "rol_motor": "producto",
+   "tipo_dato": "texto"
+  },
+  "Sucursal": {
+   "confianza": 1.0,
+   "grupo": "ubicacion",
+   "metodo": "exacto",
+   "palabra_clave": "sucursal",
+   "rol": "sucursal",
+   "rol_motor": "sucursal",
+   "tipo_dato": "texto"
+  },
+  "Ventas": {
+   "confianza": 1.0,
+   "grupo": "dinero",
+   "metodo": "exacto",
+   "palabra_clave": "ventas",
+   "rol": "monto",
+   "rol_motor": "monto",
+   "tipo_dato": "numero"
+  }
+ },
+ "mojibake_auditoria": [],
+ "preview": {
+  "antes": [
+   [
+    "02/01/2026",
+    "Aceite Vegetal 1L",
+    "Abarrotes",
+    "Santiago Centro",
+    "Almacén Doña Rosa",
+    "2",
+    "4980",
+    "3884"
+   ],
+   [
+    "02/01/2026",
+    "Papel Higiénico 12un",
+    "Aseo",
+    "Maipú",
+    "Café Central",
+    "11",
+    "87890",
+    "62401"
+   ],
+   [
+    "03/01/2026",
+    "Detergente 3L",
+    "Aseo",
+    "Maipú",
+    "Distribuidora Norte",
+    "8",
+    "43920",
+    "30743"
+   ],
+   [
+    "05/01/2026",
+    "Aceite Vegetal 1L",
+    "Abarrotes",
+    "Maipú",
+    "Distribuidora Norte",
+    "11",
+    "27390",
+    "21364"
+   ],
+   [
+    "05/01/2026",
+    "Detergente 3L",
+    "Aseo",
+    "Puente Alto",
+    "Almacén Doña Rosa",
+    "9",
+    "49410",
+    "34587"
+   ]
+  ],
+  "columnas": [
+   "Fecha",
+   "Producto",
+   "Categoría",
+   "Sucursal",
+   "Cliente",
+   "Cantidad",
+   "Ventas",
+   "Costo"
+  ],
+  "despues": [
+   [
+    "02/01/2026",
+    "Aceite Vegetal 1L",
+    "Abarrotes",
+    "Santiago Centro",
+    "Almacén Doña Rosa",
+    "2",
+    "4980",
+    "3884"
+   ],
+   [
+    "02/01/2026",
+    "Papel Higiénico 12un",
+    "Aseo",
+    "Maipú",
+    "Café Central",
+    "11",
+    "87890",
+    "62401"
+   ],
+   [
+    "03/01/2026",
+    "Detergente 3L",
+    "Aseo",
+    "Maipú",
+    "Distribuidora Norte",
+    "8",
+    "43920",
+    "30743"
+   ],
+   [
+    "05/01/2026",
+    "Aceite Vegetal 1L",
+    "Abarrotes",
+    "Maipú",
+    "Distribuidora Norte",
+    "11",
+    "27390",
+    "21364"
+   ],
+   [
+    "05/01/2026",
+    "Detergente 3L",
+    "Aseo",
+    "Puente Alto",
+    "Almacén Doña Rosa",
+    "9",
+    "49410",
+    "34587"
+   ]
+  ]
+ }
+}

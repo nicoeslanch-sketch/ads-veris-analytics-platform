@@ -36,6 +36,8 @@ import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import { useAuth } from '../auth/AuthContext'
 import { monthPeriod, useDataset } from '../data/DatasetContext'
+import { useDemo } from '../demo/DemoContext'
+import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
@@ -73,19 +75,26 @@ function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; va
     items.push({ label: 'Unidades vendidas', value: formatNumber(kpis.unidades_totales) })
   }
   if (evo.length >= 2) {
-    const best = evo.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
+    // Fase 14: los meses PARCIALES no compiten como "mejor mes" ni definen el
+    // crecimiento del periodo — un mes a medio llenar simulaba una caída.
+    const completos = evo.filter((e) => !e.parcial)
+    const base = completos.length >= 2 ? completos : evo
+    const best = base.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
     items.push({
       label: 'Mejor mes',
       value: formatMonthShort(best.mes),
-      hint: formatCLP(best.ingresos),
+      hint: `${formatCLP(best.ingresos)}${best.parcial ? ' (mes incompleto)' : ''}`,
     })
-    const first = evo[0]
-    if (first.ingresos > 0) {
-      const totalGrowth = ((evo[evo.length - 1].ingresos - first.ingresos) / first.ingresos) * 100
+    const first = base[0]
+    const last = base[base.length - 1]
+    if (first.ingresos > 0 && first !== last) {
+      const totalGrowth = ((last.ingresos - first.ingresos) / first.ingresos) * 100
       items.push({
         label: 'Crecimiento del periodo',
         value: `${totalGrowth >= 0 ? '+' : ''}${formatNumber(Math.round(totalGrowth * 10) / 10)}%`,
-        hint: `${formatMonthShort(first.mes)} → ${formatMonthShort(evo[evo.length - 1].mes)}`,
+        hint: `${formatMonthShort(first.mes)} → ${formatMonthShort(last.mes)}${
+          completos.length < evo.length ? ' (sin el mes incompleto)' : ''
+        }`,
       })
     }
   }
@@ -198,7 +207,11 @@ export default function Resumen() {
   const { user } = useAuth()
   const location = useLocation()
   const { file, datasetId, storagePath, cleaning, metrics: contextMetrics, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, eliminarDuplicados } = useDataset()
-  const [metrics, setMetrics] = useState<MetricsResult | null>(null)
+  // Fase 14: la demo ficticia entrega métricas congeladas del bundle — jamás
+  // escribe en el DatasetContext ni llama al backend.
+  const demo = useDemo()
+  const [fetchedMetrics, setMetrics] = useState<MetricsResult | null>(null)
+  const metrics = demo.active ? demo.metrics : fetchedMetrics
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Fase 11 §9.3: tras un fallo (timeout, red) el usuario puede reintentar sin
@@ -222,6 +235,7 @@ export default function Resumen() {
   }, [sheet])
 
   useEffect(() => {
+    if (demo.active) return // la demo no consulta /metrics: snapshot congelado
     if (!file || !cleaning) return
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
@@ -298,9 +312,9 @@ export default function Resumen() {
       // queda "ya pedida" con la petición abortada, la página no carga jamás.
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
-  }, [file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable, setPeriod])
+  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable, setPeriod])
 
-  if (!ready) {
+  if (!ready && !demo.active) {
     return (
       <>
         <PageHeader
@@ -313,13 +327,18 @@ export default function Resumen() {
           description="Tu dashboard con KPIs, indicadores y ratios aparecerá aquí cuando cargues y limpies tu primer archivo de datos. Todo parte de los datos."
           ctaLabel="Cargar mis datos"
           ctaTo="/estandarizacion"
-        />
+        >
+          {/* Fase 14: conocer la plataforma sin datos propios */}
+          <DemoEmptyActions />
+        </EmptyState>
       </>
     )
   }
 
   const kpis = metrics?.kpis
   const evolution = metrics?.evolucion_mensual ?? []
+  // Fase 14: el gráfico identifica el mes parcial (asterisco + nota al pie)
+  const mesParcial = evolution.find((m) => m.parcial) ?? null
   const hasCosts = Boolean(kpis?.ganancia_neta)
   const margin = kpis?.margen_utilidad_pct?.valor ?? null
   const health =
@@ -452,14 +471,18 @@ export default function Resumen() {
       <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <PageHeader
           className="!mb-0"
-          title={firstName ? `Bienvenido, ${firstName} 👋` : 'Bienvenido 👋'}
-          subtitle={`Este es el resumen general de tu negocio — ${period.label.toLowerCase()}${
-            // Fase 13 (P0.4): lo decide el BACKEND con los datos (no el reloj):
-            // si el mes está incompleto, la variación compara días equivalentes.
-            metrics?.periodo.mes_parcial
-              ? ' (mes incompleto: variación por días equivalentes)'
-              : ''
-          }.`}
+          title={demo.active ? 'Demo — Comercial Andes SpA' : firstName ? `Bienvenido, ${firstName} 👋` : 'Bienvenido 👋'}
+          subtitle={
+            demo.active
+              ? 'Datos ficticios de ejemplo — así se ve tu dashboard con datos reales cargados.'
+              : `Este es el resumen general de tu negocio — ${period.label.toLowerCase()}${
+                  // Fase 13 (P0.4): lo decide el BACKEND con los datos (no el reloj):
+                  // si el mes está incompleto, la variación compara días equivalentes.
+                  metrics?.periodo.mes_parcial
+                    ? ' (mes incompleto: variación por días equivalentes)'
+                    : ''
+                }.`
+          }
         />
         <Link
           to="/estandarizacion"
@@ -583,7 +606,9 @@ export default function Resumen() {
                     <CartesianGrid stroke={GRID_STROKE} vertical={false} />
                     <XAxis
                       dataKey="mes"
-                      tickFormatter={formatMonthShort}
+                      tickFormatter={(v: string) =>
+                        `${formatMonthShort(v)}${v === mesParcial?.mes ? '*' : ''}`
+                      }
                       tick={{ fill: AXIS_INK, fontSize: 12 }}
                       axisLine={{ stroke: GRID_STROKE }}
                       tickLine={false}
@@ -658,6 +683,13 @@ export default function Resumen() {
                     </span>
                   ))}
               </div>
+              {mesParcial && (
+                <p className="mt-1.5 text-[11px] text-navy/45">
+                  * {formatMonthShort(mesParcial.mes)} está incompleto (datos hasta el día{' '}
+                  {mesParcial.cobertura_hasta_dia} de {mesParcial.dias_del_mes}): la
+                  proyección y las alertas no lo comparan contra meses completos.
+                </p>
+              )}
             </Card>
 
             <Card>

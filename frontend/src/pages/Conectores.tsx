@@ -37,7 +37,7 @@ interface SheetsImportResponse {
 export default function Conectores() {
   const navigate = useNavigate()
   const { file, cleaning } = useDataset()
-  const { importing, error: importError, persistWarning, importFile, planBlocked, dismissPlanBlocked } = useFileImport()
+  const { importing, error: importError, persistWarning, importFile, planBlocked, dismissPlanBlocked, checkUploadAllowed } = useFileImport()
 
   const [sheetUrl, setSheetUrl] = useState('')
   const [fetching, setFetching] = useState(false)
@@ -48,6 +48,10 @@ export default function Conectores() {
   const handleImportSheet = async () => {
     const url = sheetUrl.trim()
     if (!url || busy) return
+    // Fase 14: la puerta comercial va ANTES de POST /connectors/sheets —
+    // antes la llamada salía primero y una cuenta sin plan recibía el 403
+    // crudo en vez del modal comercial.
+    if (!checkUploadAllowed()) return
     setError(null)
     setFetching(true)
     try {

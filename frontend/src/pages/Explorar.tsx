@@ -46,6 +46,8 @@ import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../data/DatasetContext'
+import { useDemo } from '../demo/DemoContext'
+import { DemoEmptyActions } from '../demo/DemoBanner'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
@@ -299,13 +301,16 @@ function ChartTooltip({ active, payload, label }: {
 
 export default function Explorar() {
   const { file, cleaning, datasetId, storagePath, uploadedAt, metrics: contextMetrics, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, eliminarDuplicados } = useDataset()
-  const ready = Boolean(file && cleaning)
+  // Fase 14: la demo ficticia sirve métricas congeladas del bundle (sin backend)
+  const demo = useDemo()
+  const ready = Boolean(file && cleaning) || demo.active
 
   const [rango, setRango] = useState<Period>(ALL_PERIOD)
   const [groupBy, setGroupBy] = useState<GroupBy>('mes')
   const [metric, setMetric] = useState<Metric>('ingresos')
 
-  const [metrics, setMetrics] = useState<MetricsResult | null>(null)
+  const [fetchedMetrics, setMetrics] = useState<MetricsResult | null>(null)
+  const metrics = demo.active ? demo.metrics : fetchedMetrics
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Fase 11 §9.3: "Reintentar" tras un timeout o corte de red
@@ -325,6 +330,7 @@ export default function Explorar() {
 
   // Métricas del rango seleccionado (uploadedAt distingue cargas con igual nombre)
   useEffect(() => {
+    if (demo.active) return // la demo no consulta /metrics: snapshot congelado
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Mapeo manual y reintento en la clave: cambiar el mapeo refresca el análisis
@@ -393,7 +399,7 @@ export default function Explorar() {
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, mappingOverride, eliminarDuplicados, retryTick])
+  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, mappingOverride, eliminarDuplicados, retryTick])
 
   // Al cambiar el análisis, la recomendación anterior deja de aplicar
   useEffect(() => {
@@ -433,7 +439,10 @@ export default function Explorar() {
           description="Cuando tengas un dataset limpio podrás hacer análisis guiados, ver hallazgos principales y recibir recomendaciones inteligentes."
           ctaLabel="Cargar mis datos"
           ctaTo="/estandarizacion"
-        />
+        >
+          {/* Fase 14: conocer la plataforma sin datos propios */}
+          <DemoEmptyActions />
+        </EmptyState>
       </>
     )
   }
@@ -961,6 +970,13 @@ export default function Explorar() {
                     {recoLoading ? 'Generando…' : 'Volver a generar'}
                   </button>
                 </>
+              ) : demo.active ? (
+                /* Fase 14: la demo jamás llama a la IA (ni consume tokens) */
+                <p className="mt-2 text-xs leading-relaxed text-navy/60">
+                  En la demo, el asistente con IA está desactivado. Con un plan
+                  activo, aquí recibes una recomendación interpretada de tus
+                  propios datos, con plan de acción.
+                </p>
               ) : (
                 <>
                   <p className="mt-2 text-xs leading-relaxed text-navy/60">

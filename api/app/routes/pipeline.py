@@ -1020,8 +1020,15 @@ def _restore_latest_sync(user_id: str) -> dict:
 @router.post("/restore/latest")
 async def restore_latest(
     user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     """One round-trip restoration; pandas is only used when no snapshot exists."""
+    # Fase 14 (P0): el fallback sin snapshot corre el pipeline completo —
+    # misma puerta comercial que el dashboard. El frontend (DatasetBootstrap)
+    # trata el 403 como "nada que restaurar", sin romper la navegación.
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    )
     return await run_in_threadpool(_restore_latest_sync, user.id)
 
 
@@ -1034,9 +1041,12 @@ async def standardize(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     # Fase 13: las cuentas nuevas nacen SIN plan — pueden navegar, pero
-    # procesar archivos requiere un plan activo (las cuentas existentes
-    # conservan su plan básico y no notan el cambio).
-    require_capability_for_user(user.id, Capability.STANDARDIZE, settings)
+    # procesar archivos requiere un plan activo o la prueba gratuita vigente
+    # (las cuentas existentes conservan su plan básico y no notan el cambio).
+    # threadpool: la puerta consulta Supabase por HTTP y no debe bloquear el loop.
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.STANDARDIZE, settings
+    )
     filename, content = await _read_input(file, storage_path, user)
     return await run_in_threadpool(
         _standardize_sync, filename, content, _clean_sheet_param(sheet)
@@ -1057,7 +1067,9 @@ async def clean(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    require_capability_for_user(user.id, Capability.CLEAN, settings)
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.CLEAN, settings
+    )
     filename, content = await _read_input(file, storage_path, user)
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
@@ -1100,7 +1112,9 @@ async def clean_assisted(
     interpretar instrucciones (costura IA determinista) → correr el motor
     dirigido → registrar el consumo SOLO si corrió OK. Si las instrucciones
     no se reconocen, responde 422 y el intento NO se descuenta."""
-    require_capability_for_user(user.id, Capability.AI_CLEANING, settings)
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.AI_CLEANING, settings
+    )
 
     instructions = (instructions or "").strip()
     if not instructions:
@@ -1199,10 +1213,8 @@ async def clean_download(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Devuelve el dataset con la limpieza aplicada como archivo descargable (xlsx o csv)."""
-    require_capability_for_user(
-        user.id,
-        Capability.DOWNLOAD_CLEAN_DATASET,
-        settings,
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.DOWNLOAD_CLEAN_DATASET, settings
     )
     export_format = (format or fmt).strip().lower()
     if export_format not in {"csv", "xlsx"}:
@@ -1259,7 +1271,13 @@ async def metrics(
     date_to: str | None = Form(None),
     sheet: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
+    # Fase 14 (P0): /metrics reprocesa el archivo completo (caché aparte) —
+    # sin esta puerta, una cuenta sin plan tenía el dashboard gratis.
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    )
     filename, content = await _read_input(file, storage_path, user)
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     return await run_in_threadpool(

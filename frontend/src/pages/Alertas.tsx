@@ -96,10 +96,15 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
   const alerts: Alert[] = []
   const evo = m.evolucion_mensual
 
-  // Caída de ingresos mes a mes
-  if (rules.caida_ingresos.activa && evo.length >= 2) {
-    const last = evo[evo.length - 1]
-    const prev = evo[evo.length - 2]
+  // Caída de ingresos mes a mes.
+  // Fase 14: un mes PARCIAL jamás se compara contra uno completo — el mes en
+  // curso a medio llenar disparaba "caídas" falsas. La regla usa los dos
+  // últimos meses COMPLETOS (el backend marca la parcialidad con los datos).
+  const completos = evo.filter((e) => !e.parcial)
+  const excluidoParcial = completos.length < evo.length
+  if (rules.caida_ingresos.activa && completos.length >= 2) {
+    const last = completos[completos.length - 1]
+    const prev = completos[completos.length - 2]
     if (prev.ingresos > 0) {
       const pct = ((last.ingresos - prev.ingresos) / prev.ingresos) * 100
       if (pct <= -rules.caida_ingresos.umbral_pct) {
@@ -109,7 +114,9 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
           area: 'Ventas',
           icon: ArrowDownRight,
           titulo: `Tus ingresos cayeron ${formatPct(Math.abs(pct))} en ${formatMonthShort(last.mes)}`,
-          detalle: `Pasaron de ${formatCLP(prev.ingresos)} a ${formatCLP(last.ingresos)} (regla: avisar sobre ${formatPct(rules.caida_ingresos.umbral_pct)}).`,
+          detalle: `Pasaron de ${formatCLP(prev.ingresos)} a ${formatCLP(last.ingresos)} (regla: avisar sobre ${formatPct(rules.caida_ingresos.umbral_pct)}).${
+            excluidoParcial ? ' El mes en curso, con datos parciales, no se considera.' : ''
+          }`,
           recomendacion:
             'Revisa qué productos o canales explican la caída en Explorar datos y reactiva promociones donde más pesa.',
         })

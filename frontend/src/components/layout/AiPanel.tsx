@@ -9,8 +9,11 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Loader2, Lock, RefreshCw, Sparkles, Square, Star, TriangleAlert } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ArrowUp, Crown, Loader2, Lock, RefreshCw, Sparkles, Square, Star, TriangleAlert } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
+import { useDemo } from '../../demo/DemoContext'
+import { useAccess } from '../../lib/access'
 import { ApiError, apiPost, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
 import { setActiveCurrency } from '../../lib/format'
 import type { MetricsResult } from '../../lib/types'
@@ -52,6 +55,11 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     setMetrics: setContextMetrics,
   } = useDataset()
   const active = Boolean(cleaning && file)
+  // Fase 14: sin capacidad de IA (sin plan / prueba gratuita / expirada) el
+  // panel muestra el mensaje comercial y NO llama a la API — ni una vez.
+  const demo = useDemo()
+  const { status: accessStatus, access, can } = useAccess()
+  const aiBlocked = demo.active || accessStatus !== 'resolved' || !can('ask_data_ai')
 
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(false)
@@ -151,6 +159,8 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       }
       return
     }
+    // Fase 14: bloqueado por plan/prueba (o acceso sin resolver) → cero llamadas.
+    if (aiBlocked) return
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
     const fileKey = [
       datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0),
@@ -167,7 +177,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       if (fetchedForFile.current === fileKey) fetchedForFile.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, file, datasetId, storagePath, uploadedAt, sheet, mappingOverride, eliminarDuplicados])
+  }, [active, aiBlocked, file, datasetId, storagePath, uploadedAt, sheet, mappingOverride, eliminarDuplicados])
 
   // Si las métricas llegan al contexto después (usuario visitó Resumen),
   // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.
@@ -250,6 +260,44 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       e.preventDefault()
       void sendMessage(input)
     }
+  }
+
+  // ── Render: SIN CAPACIDAD DE IA (sin plan / prueba / expirada / demo) ─────
+  // Fase 14: mensaje comercial claro y CERO llamadas a la API de IA.
+  if (demo.active || (accessStatus === 'resolved' && !can('ask_data_ai'))) {
+    const trial = access?.trial
+    const detalle = demo.active
+      ? 'En la demo el asistente está desactivado. Con un plan activo, aquí conversas con tus propios datos.'
+      : trial?.active
+        ? 'Tu prueba gratuita incluye estandarización, limpieza, dashboard y reportes — el asistente con IA se activa al contratar un plan.'
+        : trial?.used
+          ? 'Tu prueba gratuita terminó. Contrata un plan para analizar tus datos conversando con el asistente.'
+          : 'Contrata un plan en la página Planes para analizar tus datos conversando con el asistente.'
+    return (
+      <aside className={asideClass}>
+        <PanelHeader />
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gold/15">
+            <Lock className="h-6 w-6 text-gold" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white/90">
+              El asistente con IA está disponible desde el Plan Básico
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-white/50">{detalle}</p>
+          </div>
+          {!demo.active && (
+            <Link
+              to="/planes"
+              className="inline-flex items-center gap-2 rounded-lg bg-gold px-4 py-2 text-xs font-semibold text-navy-deep transition-colors hover:bg-gold/90"
+            >
+              <Crown className="h-3.5 w-3.5" /> Ir a Planes
+            </Link>
+          )}
+        </div>
+        <DisabledInput />
+      </aside>
+    )
   }
 
   // ── Render: BLOQUEADO ────────────────────────────────────────────────────

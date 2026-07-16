@@ -73,10 +73,17 @@ export default function Estandarizacion() {
   const [changingSheet, setChangingSheet] = useState(false)
   const [sheetError, setSheetError] = useState<string | null>(null)
   // Flujo compartido con Conectores: Storage + datasets + /standardize
-  const { importing: processing, error, persistWarning, importFile, planBlocked, dismissPlanBlocked } = useFileImport()
+  const { importing: processing, error, persistWarning, importFile, planBlocked, dismissPlanBlocked, checkUploadAllowed } = useFileImport()
 
   const handleFile = async (selected: File) => {
     await importFile(selected)
+  }
+
+  // Fase 14: la puerta comercial se evalúa ANTES de abrir el selector — el
+  // modal compacto intercepta el intento; ningún byte sale del navegador.
+  const openFilePicker = () => {
+    if (!checkUploadAllowed()) return
+    inputRef.current?.click()
   }
 
   // Fase 10 §8.3: el usuario elige la hoja del Excel y se re-estandariza.
@@ -172,6 +179,7 @@ export default function Estandarizacion() {
             </Link>
             <button
               onClick={() => {
+                if (!checkUploadAllowed()) return
                 reset()
                 inputRef.current?.click()
               }}
@@ -195,7 +203,9 @@ export default function Estandarizacion() {
             e.preventDefault()
             setDragOver(false)
             const dropped = e.dataTransfer.files?.[0]
-            if (dropped && !processing) void handleFile(dropped)
+            // Fase 14: la puerta va ANTES de leer el archivo soltado — sin
+            // acceso, se abre el modal comercial y el archivo no se toca.
+            if (dropped && !processing && checkUploadAllowed()) void handleFile(dropped)
           }}
           className={`flex flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed p-10 text-center transition-colors ${
             dragOver
@@ -231,7 +241,7 @@ export default function Estandarizacion() {
             }}
           />
           <button
-            onClick={() => inputRef.current?.click()}
+            onClick={openFilePicker}
             disabled={processing}
             className="inline-flex items-center gap-2 rounded-lg bg-teal px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50"
           >

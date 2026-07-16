@@ -121,8 +121,11 @@ async def import_google_sheet(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Importa una hoja pública de Google Sheets como CSV."""
-    # Fase 13: importar datos es procesar archivos — requiere plan activo.
-    require_capability_for_user(user.id, Capability.STANDARDIZE, settings)
+    # Fase 13: importar datos es procesar archivos — requiere plan activo o
+    # prueba gratuita vigente. threadpool: la puerta consulta Supabase por HTTP.
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.STANDARDIZE, settings
+    )
     sheet_id, gid = _parse_sheet_url(body.url)
     filename, content = await run_in_threadpool(_download_sheet_csv, sheet_id, gid)
     try:

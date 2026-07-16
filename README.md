@@ -61,7 +61,20 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      finalización transaccional con historial retenido)
    - `supabase/migrations/0014_restore_snapshots.sql` (snapshot versionado y
      privado para restaurar el último trabajo sin reprocesar el archivo)
-3. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
+   - `supabase/migrations/0015_sin_plan_nuevas_cuentas.sql` (**Fase 13 — modelo
+     comercial**: las cuentas NUEVAS nacen con plan `sin_plan` — navegan pero no
+     procesan archivos; las cuentas existentes conservan su plan y no se tocan)
+   - `supabase/migrations/0016_prueba_gratuita_rut.sql` (**Fase 14 — prueba
+     gratuita de 15 días + RLS comercial, obligatoria antes de aceptar usuarios
+     externos**: `billing_identities` y `account_trials` con unicidad por
+     usuario y por RUT en la base, RPC atómica `activate_account_trial` solo
+     service_role, y `can_process_data()` con políticas `AS RESTRICTIVE` en
+     `datasets` y Storage)
+3. **Política de contraseñas** (Fase 13/14 — la validación del formulario es
+   solo UX; la política REAL vive aquí): en **Authentication → Providers →
+   Email → Password requirements**, exige mínimo **8 caracteres** con
+   **letras y dígitos**.
+4. Copia de **Settings → API**: la `URL`, la `anon key`, la `service_role key` y el `JWT Secret`.
 
 ### 2. Frontend
 
@@ -192,9 +205,12 @@ Si el usuario no ha cargado y limpiado datos, la plataforma no muestra dashboard
 ## Planes, tokens y administración (Fase 7)
 
 - **Interruptor de planes**: el gating vive tras `PLAN_ENFORCEMENT` (backend) y
-  `VITE_PLAN_ENFORCEMENT` (frontend). En Fase 7 ambos van en `false`: todo queda
-  accesible para probar y las puertas ya están instaladas. Para activar el modelo
-  comercial basta poner ambos en `true` y redeployar — sin tocar código.
+  `VITE_PLAN_ENFORCEMENT` (frontend). **Desde la Fase 8 ambos están ENCENDIDOS
+  por defecto** (`true`): el modelo comercial está activo — cuentas sin plan no
+  procesan archivos, la IA exige plan y la descarga de la base limpia exige
+  Analista. Para abrir todo en un entorno de prueba, pon ambos en `false` y
+  redeploya — sin tocar código. El estado efectivo se puede verificar en
+  `GET /me/access` (campo `enforcement`).
 - **Limpieza dirigida**: 2 intentos base al mes (`AI_CLEANING_MONTHLY_LIMIT`).
   Los intentos extra se venden como **tokens addon**: el usuario los pide desde la
   página Planes (botón "Solicitar más" → tabla `addon_requests`) y ADS Veris los

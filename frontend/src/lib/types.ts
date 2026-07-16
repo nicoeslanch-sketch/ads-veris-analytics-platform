@@ -382,6 +382,11 @@ export interface MetricsResult {
   evolucion_mensual: Array<{
     mes: string
     ingresos: number
+    /** Fase 14: el ÚLTIMO mes con datos hasta antes de fin de mes se marca
+     * parcial — proyección lo excluye y Alertas no lo compara con completos. */
+    parcial?: boolean
+    cobertura_hasta_dia?: number
+    dias_del_mes?: number
     gastos?: number
     utilidad?: number
     /** Fase 12b §13: margen del mes con el MISMO denominador pareado que el KPI global. */

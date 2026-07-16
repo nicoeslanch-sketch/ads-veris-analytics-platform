@@ -1,0 +1,280 @@
+Fecha;Producto;Categoría;Sucursal;Cliente;Cantidad;Ventas;Costo
+02/01/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Almacén Doña Rosa;2;4980;3884
+02/01/2026;Papel Higiénico 12un;Aseo;Maipú;Café Central;11;87890;62401
+03/01/2026;Detergente 3L;Aseo;Maipú;Distribuidora Norte;8;43920;30743
+05/01/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Distribuidora Norte;11;27390;21364
+05/01/2026;Detergente 3L;Aseo;Puente Alto;Almacén Doña Rosa;9;49410;34587
+06/01/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Botillería La Esquina;5;34950;25863
+07/01/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Minimarket El Sol;11;76890;56898
+08/01/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Botillería La Esquina;10;24900;19422
+08/01/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Botillería La Esquina;2;13980;10345
+08/01/2026;Aceite Vegetal 1L;Abarrotes;Maipú;;11;27390;21364
+09/01/2026;Harina 25kg;Abarrotes;santiago centro;;9;170910;123055
+09/01/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Café Central;1;7990;5672
+09/01/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Café Central;9;62910;46553
+10/01/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Botillería La Esquina;3;7470;5826
+12/01/2026;Harina 25kg;Abarrotes;Puente Alto;Distribuidora Norte;8;151920;109382
+12/01/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Minimarket El Sol;4;5160;4128
+12/01/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;;8;55920;41380
+13/01/2026;Harina 25kg;Abarrotes;Santiago Centro;Botillería La Esquina;6;113940;82036
+13/01/2026;Azúcar 1kg;Abarrotes;Maipú;Distribuidora Norte;9;11610;9288
+14/01/2026;Harina 25kg;Abarrotes;Maipú;Almacén Doña Rosa;4;75960;54691
+15/01/2026;Bebida Cola 3L;Bebidas;Maipú;Minimarket El Sol;7;15330;11650
+16/01/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Almacén Doña Rosa;4;31960;22691
+16/01/2026;Harina 25kg;Abarrotes;Maipú;Minimarket El Sol;5;94950;
+16/01/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Distribuidora Norte;6;7740;6192
+17/01/2026;Papel Higiénico 12un;Aseo;Puente Alto;Minimarket El Sol;1;7990;5672
+17/01/2026;Arroz Grado 1 5kg;Abarrotes;SANTIAGO CENTRO;Minimarket El Sol;7;48930;36208
+17/01/2026;Detergente 3L;Aseo;Puente Alto;Café Central;7;38430;26901
+19/01/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Almacén Doña Rosa;1;2190;
+20/01/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Almacén Doña Rosa;2;4380;3328
+20/01/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Minimarket El Sol;3;7470;5826
+21/01/2026;Azúcar 1kg;Abarrotes;Puente Alto;;3;3870;3096
+21/01/2026;Detergente 3L;Aseo;Puente Alto;Minimarket El Sol;3;16470;11529
+21/01/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Minimarket El Sol;2;4380;3328
+21/01/2026;Azúcar 1kg;Abarrotes;Puente Alto;;3;3870;3096
+22/01/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Almacén Doña Rosa;5;12450;
+23/01/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Distribuidora Norte;3;20970;15517
+24/01/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Café Central;7;17430;13595
+24/01/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Distribuidora Norte;6;41940;31035
+26/01/2026;Detergente 3L;Aseo;Puente Alto;Café Central;8;43920;30743
+26/01/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Distribuidora Norte;8;55920;41380
+26/01/2026;Harina 25kg;Abarrotes;Puente Alto;Almacén Doña Rosa;3;56970;41018
+27/01/2026;Detergente 3L;Aseo;Maipu;Café Central;10;54900;38430
+27/01/2026;Detergente 3L;Aseo;Maipú;;5;27450;19215
+28/01/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Almacén Doña Rosa;8;63920;45383
+28/01/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Café Central;6;47940;34037
+29/01/2026;Azúcar 1kg;Abarrotes;Maipú;Almacén Doña Rosa;6;7740;6192
+30/01/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Café Central;7;48930;36208
+31/01/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Minimarket El Sol;8;19920;15537
+31/01/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Café Central;6;7740;6192
+02/02/2026;Papel Higiénico 12un;Aseo;Puente Alto;Minimarket El Sol;8;63920;45383
+02/02/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Minimarket El Sol;4;9960;7768
+02/02/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Distribuidora Norte;8;55920;41380
+03/02/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Almacén Doña Rosa;1;2490;1942
+03/02/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Almacén Doña Rosa;6;41940;31035
+03/02/2026;Detergente 3L;Aseo;Santiago Centro;Minimarket El Sol;11;60390;42273
+04/02/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Minimarket El Sol;1;2190;1664
+05/02/2026;Azúcar 1kg;Abarrotes;Puente Alto;N/A;1;1290;
+06/02/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Almacén Doña Rosa;3;3870;3096
+06/02/2026;Azúcar 1kg;Abarrotes;Puente Alto;Botillería La Esquina;6;7740;6192
+07/02/2026;Detergente 3L;Aseo;Puente Alto;Minimarket El Sol;7;38430;26901
+07/02/2026;Bebida Cola 3L;Bebidas;Maipú;Café Central;5;10950;8322
+07/02/2026;Harina 25kg;Abarrotes;Santiago Centro;Almacén Doña Rosa;7;132930;95709
+09/02/2026;Bebida Cola 3L;Bebidas;Maipú;Botillería La Esquina;3;6570;4993
+10/02/2026;Papel Higiénico 12un;Aseo;Santiago Centro;;10;79900;56729
+10/02/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Distribuidora Norte;3;3870;3096
+11/02/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Café Central;5;34950;25863
+11/02/2026;Harina 25kg;Abarrotes;Santiago Centro;Minimarket El Sol;3;56970;41018
+11/02/2026;Detergente 3L;Aseo;Maipú;Botillería La Esquina;4;21960;15371
+12/02/2026;Detergente 3L;Aseo;Maipú;Almacén Doña Rosa;4;21960;15371
+13/02/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Café Central;10;24900;19422
+13/02/2026;Papel Higiénico 12un;Aseo;Maipú;;1;7990;5672
+14/02/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Minimarket El Sol;3;20970;15517
+14/02/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Almacén Doña Rosa;2;4980;3884
+14/02/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Minimarket El Sol;5;6450;5160
+16/02/2026;Harina 25kg;Abarrotes;Puente Alto;Almacén Doña Rosa;10;189900;136728
+16/02/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Café Central;10;24900;19422
+17/02/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Botillería La Esquina;7;17430;13595
+17/02/2026;Detergente 3L;Aseo;Santiago Centro;;12;65880;46116
+17/02/2026;Harina 25kg;Abarrotes;Puente Alto;Minimarket El Sol;8;151920;109382
+17/02/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Botillería La Esquina;7;17430;13595
+18/02/2026;Bebida Cola 3L;Bebidas;Maipú;Minimarket El Sol;8;17520;13315
+18/02/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Almacén Doña Rosa;8;19920;
+19/02/2026;Detergente 3L;Aseo;Puente Alto;;7;38430;
+20/02/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Botillería La Esquina;4;5160;4128
+20/02/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Café Central;5;12450;9711
+21/02/2026;Detergente 3L;Aseo;Santiago Centro;;9;49410;34587
+23/02/2026;Bebida Cola 3L;Bebidas;Maipú;Distribuidora Norte;2;4380;3328
+24/02/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Botillería La Esquina;2;15980;11345
+25/02/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Minimarket El Sol;9;22410;17479
+25/02/2026;Detergente 3L;Aseo;Maipú;Minimarket El Sol;5;27450;19215
+26/02/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Distribuidora Norte;8;63920;45383
+26/02/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Botillería La Esquina;7;17430;13595
+27/02/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Minimarket El Sol;6;47940;34037
+27/02/2026;Harina 25kg;Abarrotes;Santiago Centro;;7;132930;95709
+27/02/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Minimarket El Sol;2;4380;
+28/02/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Almacén Doña Rosa;12;83880;62071
+28/02/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Almacén Doña Rosa;6;13140;9986
+28/02/2026;Papel Higiénico 12un;Aseo;Maipú;Almacén Doña Rosa;2;15980;
+02/03/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Almacén Doña Rosa;9;11610;9288
+02/03/2026;Harina 25kg;Abarrotes;Maipú;Minimarket El Sol;7;132930;95709
+02/03/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Café Central;2;4980;3884
+03/03/2026;Harina 25kg;Abarrotes;Santiago Centro;Almacén Doña Rosa;5;94950;68364
+04/03/2026;Detergente 3L;Aseo;Santiago Centro;Minimarket El Sol;6;32940;23058
+05/03/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Almacén Doña Rosa;4;27960;
+06/03/2026;Harina 25kg;Abarrotes;Puente Alto;;2;37980;27345
+07/03/2026;Harina 25kg;Abarrotes;Santiago Centro;Distribuidora Norte;12;227880;164073
+07/03/2026;Azúcar 1kg;Abarrotes;Puente Alto;Distribuidora Norte;3;3870;3096
+07/03/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Distribuidora Norte;1;1290;1032
+09/03/2026;Detergente 3L;Aseo;Santiago Centro;Almacén Doña Rosa;6;32940;23058
+10/03/2026;Bebida Cola 3L;Bebidas;Puente Alto;Almacén Doña Rosa;2;4380;3328
+10/03/2026;Bebida Cola 3L;Bebidas;Puente Alto;Distribuidora Norte;6;13140;9986
+10/03/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Botillería La Esquina;2;4980;3884
+11/03/2026;Bebida Cola 3L;Bebidas;Maipú;Botillería La Esquina;7;15330;11650
+11/03/2026;Papel Higiénico 12un;Aseo;Puente Alto;Almacén Doña Rosa;8;63920;45383
+12/03/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Botillería La Esquina;8;63920;45383
+13/03/2026;Papel Higiénico 12un;Aseo;Puente Alto;;10;79900;56729
+13/03/2026;Detergente 3L;Aseo;Puente Alto;;1;5490;3842
+13/03/2026;Detergente 3L;Aseo;Maipú;;1;5490;3842
+14/03/2026;Detergente 3L;Aseo;Puente Alto;Almacén Doña Rosa;4;21960;15371
+16/03/2026;Azúcar 1kg;Abarrotes;Maipú;;11;14190;11352
+16/03/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Botillería La Esquina;8;55920;41380
+16/03/2026;Detergente 3L;Aseo;Maipú;Almacén Doña Rosa;11;60390;42273
+17/03/2026;Detergente 3L;Aseo;Puente Alto;Café Central;8;43920;30743
+18/03/2026;Detergente 3L;Aseo;Puente Alto;Minimarket El Sol;10;54900;38430
+18/03/2026;Harina 25kg;Abarrotes;Maipú;Distribuidora Norte;8;151920;109382
+18/03/2026;Harina 25kg;Abarrotes;Maipú;Distribuidora Norte;1;-18990;-13672
+19/03/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Minimarket El Sol;7;15330;11650
+19/03/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Botillería La Esquina;10;69900;51726
+20/03/2026;Bebida Cola 3L;Bebidas;Puente Alto;Distribuidora Norte;10;21900;16644
+20/03/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Minimarket El Sol;2;15980;11345
+21/03/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Café Central;6;41940;31035
+23/03/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Botillería La Esquina;5;12450;9711
+23/03/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Almacén Doña Rosa;1;6990;5172
+23/03/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Minimarket El Sol;8;19920;15537
+24/03/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Distribuidora Norte;1;2490;
+25/03/2026;Detergente 3L;Aseo;Santiago Centro;Minimarket El Sol;5;27450;
+25/03/2026;Bebida Cola 3L;Bebidas;Puente Alto;Botillería La Esquina;7;15330;
+25/03/2026;Bebida Cola 3L;Bebidas;Maipú;Minimarket El Sol;9;19710;14979
+26/03/2026;Harina 25kg;Abarrotes;Maipú;Minimarket El Sol;10;189900;136728
+26/03/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Almacén Doña Rosa;7;48930;36208
+27/03/2026;Azúcar 1kg;Abarrotes;Maipú;Almacén Doña Rosa;5;6450;5160
+27/03/2026;Bebida Cola 3L;Bebidas;Puente Alto;Botillería La Esquina;9;19710;14979
+27/03/2026;Bebida Cola 3L;Bebidas;Puente Alto;Botillería La Esquina;6;13140;9986
+28/03/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;;12;83880;62071
+30/03/2026;Detergente 3L;Aseo;Santiago Centro;Almacén Doña Rosa;8;43920;30743
+30/03/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Minimarket El Sol;5;6450;5160
+30/03/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Café Central;9;11610;9288
+31/03/2026;Harina 25kg;Abarrotes;Puente Alto;;4;75960;54691
+31/03/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Almacén Doña Rosa;10;24900;19422
+01/04/2026;Bebida Cola 3L;Bebidas;Puente Alto;Almacén Doña Rosa;10;21900;16644
+01/04/2026;Detergente 3L;Aseo;Santiago Centro;Café Central;11;60390;42273
+02/04/2026;Azúcar 1kg;Abarrotes;Puente Alto;Café Central;7;9030;7224
+02/04/2026;Harina 25kg;Abarrotes;Santiago Centro;Minimarket El Sol;1;18990;13672
+02/04/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Almacén Doña Rosa;8;19920;15537
+03/04/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Minimarket El Sol;11;27390;21364
+04/04/2026;Azúcar 1kg;Abarrotes;Puente Alto;Minimarket El Sol;9;11610;9288
+04/04/2026;Bebida Cola 3L;Bebidas;Puente Alto;Café Central;11;24090;18308
+06/04/2026;Papel Higiénico 12un;Aseo;Maipú;Café Central;11;87890;62401
+06/04/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Café Central;12;26280;19972
+06/04/2026;Azúcar 1kg;Abarrotes;Puente Alto;Almacén Doña Rosa;7;9030;7224
+07/04/2026;Detergente 3L;Aseo;Santiago Centro;Minimarket El Sol;3;16470;11529
+08/04/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Minimarket El Sol;4;27960;20690
+08/04/2026;Papel Higiénico 12un;Aseo;Puente Alto;Almacén Doña Rosa;7;55930;39710
+08/04/2026;Harina 25kg;Abarrotes;Santiago Centro;Botillería La Esquina;4;75960;54691
+09/04/2026;Harina 25kg;Abarrotes;Santiago Centro;Minimarket El Sol;10;189900;136728
+09/04/2026;Harina 25kg;Abarrotes;Maipú;Almacén Doña Rosa;4;75960;54691
+09/04/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Café Central;6;47940;34037
+10/04/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Café Central;6;41940;31035
+10/04/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Botillería La Esquina;9;22410;17479
+10/04/2026;Azúcar 1kg;Abarrotes;Puente Alto;Minimarket El Sol;5;6450;5160
+11/04/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Botillería La Esquina;10;79900;56729
+11/04/2026;Bebida Cola 3L;Bebidas;Maipú;Almacén Doña Rosa;12;26280;19972
+13/04/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Distribuidora Norte;9;62910;46553
+13/04/2026;Bebida Cola 3L;Bebidas;Puente Alto;;3;6570;4993
+14/04/2026;Papel Higiénico 12un;Aseo;Puente Alto;Almacén Doña Rosa;5;39950;28364
+15/04/2026;Bebida Cola 3L;Bebidas;Maipú;Almacén Doña Rosa;11;24090;
+16/04/2026;Harina 25kg;Abarrotes;Santiago Centro;Café Central;12;227880;164073
+17/04/2026;Azúcar 1kg;Abarrotes;Maipú;;2;2580;
+17/04/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Botillería La Esquina;2;13980;10345
+18/04/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Café Central;3;7470;
+20/04/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Café Central;6;14940;11653
+21/04/2026;Bebida Cola 3L;Bebidas;Maipú;Café Central;12;26280;19972
+21/04/2026;Papel Higiénico 12un;Aseo;Maipú;;4;31960;22691
+21/04/2026;Papel Higiénico 12un;Aseo;Puente Alto;Almacén Doña Rosa;6;47940;34037
+22/04/2026;Azúcar 1kg;Abarrotes;Puente Alto;Café Central;12;15480;12384
+22/04/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Minimarket El Sol;8;19920;15537
+22/04/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Botillería La Esquina;8;17520;13315
+23/04/2026;Azúcar 1kg;Abarrotes;Puente Alto;Distribuidora Norte;9;11610;9288
+23/04/2026;Detergente 3L;Aseo;Santiago Centro;Café Central;3;16470;11529
+24/04/2026;Detergente 3L;Aseo;Santiago Centro;Café Central;6;32940;23058
+24/04/2026;Bebida Cola 3L;Bebidas;Puente Alto;Café Central;8;17520;13315
+24/04/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Distribuidora Norte;4;27960;20690
+25/04/2026;Papel Higiénico 12un;Aseo;Puente Alto;;3;23970;
+27/04/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Botillería La Esquina;4;8760;6657
+27/04/2026;Papel Higiénico 12un;Aseo;Maipú;Botillería La Esquina;8;63920;45383
+28/04/2026;Harina 25kg;Abarrotes;Puente Alto;Botillería La Esquina;10;189900;136728
+28/04/2026;Harina 25kg;Abarrotes;Maipú;;5;94950;68364
+28/04/2026;Azúcar 1kg;Abarrotes;Maipú;Botillería La Esquina;2;2580;2064
+29/04/2026;Azúcar 1kg;Abarrotes;Puente Alto;Café Central;11;14190;11352
+30/04/2026;Azúcar 1kg;Abarrotes;Puente Alto;Distribuidora Norte;7;9030;7224
+30/04/2026;Aceite Vegetal 1L;Abarrotes;Puente Alto;Minimarket El Sol;5;12450;9711
+30/04/2026;Harina 25kg;Abarrotes;Maipú;Distribuidora Norte;8;151920;109382
+01/05/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Botillería La Esquina;4;8760;6657
+01/05/2026;Harina 25kg;Abarrotes;Maipú;Distribuidora Norte;3;56970;41018
+02/05/2026;Harina 25kg;Abarrotes;Puente Alto;;8;151920;109382
+04/05/2026;Detergente 3L;Aseo;Puente Alto;Distribuidora Norte;11;60390;42273
+05/05/2026;Bebida Cola 3L;Bebidas;Maipú;Almacén Doña Rosa;8;17520;13315
+05/05/2026;Detergente 3L;Aseo;Puente Alto;Botillería La Esquina;4;21960;15371
+06/05/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;Almacén Doña Rosa;11;76890;56898
+07/05/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Café Central;11;27390;21364
+07/05/2026;Harina 25kg;Abarrotes;Puente Alto;Distribuidora Norte;1;18990;13672
+08/05/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Almacén Doña Rosa;2;2580;2064
+08/05/2026;Detergente 3L;Aseo;Puente Alto;;2;10980;7685
+08/05/2026;Detergente 3L;Aseo;Maipú;;11;60390;
+09/05/2026;Bebida Cola 3L;Bebidas;Maipú;Café Central;5;10950;8322
+09/05/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Café Central;12;29880;23306
+09/05/2026;Bebida Cola 3L;Bebidas;Puente Alto;Distribuidora Norte;12;26280;19972
+11/05/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Botillería La Esquina;11;24090;
+12/05/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Minimarket El Sol;3;7470;5826
+12/05/2026;Bebida Cola 3L;Bebidas;Maipú;Almacén Doña Rosa;4;8760;6657
+13/05/2026;Papel Higiénico 12un;Aseo;Puente Alto;Botillería La Esquina;1;7990;5672
+14/05/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Café Central;2;13980;
+15/05/2026;Papel Higiénico 12un;Aseo;Santiago Centro;Minimarket El Sol;2;15980;11345
+15/05/2026;Detergente 3L;Aseo;Santiago Centro;Distribuidora Norte;1;5490;3842
+15/05/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Café Central;6;14940;11653
+16/05/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Almacén Doña Rosa;1;1290;
+16/05/2026;Aceite Vegetal 1L;Abarrotes;Maipú;Minimarket El Sol;4;9960;7768
+16/05/2026;Azúcar 1kg;Abarrotes;Santiago Centro;Distribuidora Norte;5;6450;5160
+18/05/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Minimarket El Sol;7;15330;11650
+18/05/2026;Papel Higiénico 12un;Aseo;Santiago Centro;;8;63920;45383
+19/05/2026;Harina 25kg;Abarrotes;Santiago Centro;Botillería La Esquina;4;75960;54691
+19/05/2026;Azúcar 1kg;Abarrotes;Maipú;Distribuidora Norte;8;10320;8256
+19/05/2026;Papel Higiénico 12un;Aseo;Maipú;Café Central;7;55930;39710
+20/05/2026;Detergente 3L;Aseo;Santiago Centro;Distribuidora Norte;3;16470;
+20/05/2026;Azúcar 1kg;Abarrotes;Maipú;Café Central;12;15480;12384
+20/05/2026;Arroz Grado 1 5kg;Abarrotes;Puente Alto;;1;6990;5172
+21/05/2026;Detergente 3L;Aseo;Maipú;Almacén Doña Rosa;5;27450;19215
+22/05/2026;Papel Higiénico 12un;Aseo;Maipú;Distribuidora Norte;3;23970;17018
+22/05/2026;Harina 25kg;Abarrotes;Puente Alto;Minimarket El Sol;4;75960;54691
+23/05/2026;Detergente 3L;Aseo;Puente Alto;Botillería La Esquina;11;60390;42273
+23/05/2026;Detergente 3L;Aseo;Santiago Centro;;2;10980;7685
+25/05/2026;Papel Higiénico 12un;Aseo;Santiago Centro;;6;47940;34037
+26/05/2026;Papel Higiénico 12un;Aseo;Maipú;Distribuidora Norte;2;15980;11345
+27/05/2026;Papel Higiénico 12un;Aseo;Maipú;Minimarket El Sol;1;7990;5672
+27/05/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Café Central;2;13980;10345
+28/05/2026;Detergente 3L;Aseo;Puente Alto;Distribuidora Norte;5;27450;19215
+28/05/2026;Azúcar 1kg;Abarrotes;Santiago Centro;;6;7740;6192
+28/05/2026;Azúcar 1kg;Abarrotes;Maipú;;1;1290;1032
+29/05/2026;Azúcar 1kg;Abarrotes;Maipú;Distribuidora Norte;6;7740;
+30/05/2026;Papel Higiénico 12un;Aseo;Puente Alto;;11;87890;62401
+30/05/2026;Azúcar 1kg;Abarrotes;Maipú;Minimarket El Sol;2;2580;2064
+01/06/2026;Detergente 3L;Aseo;Santiago Centro;;4;21960;15371
+02/06/2026;Papel Higiénico 12un;Aseo;Puente Alto;Café Central;7;55930;39710
+02/06/2026;Harina 25kg;Abarrotes;Puente Alto;Distribuidora Norte;10;189900;136728
+02/06/2026;Harina 25kg;Abarrotes;Maipú;;9;170910;123055
+03/06/2026;Papel Higiénico 12un;Aseo;Maipú;;1;7990;5672
+03/06/2026;Harina 25kg;Abarrotes;Maipú;Minimarket El Sol;1;18990;13672
+04/06/2026;Papel Higiénico 12un;Aseo;Puente Alto;Almacén Doña Rosa;10;79900;56729
+04/06/2026;Bebida Cola 3L;Bebidas;Santiago Centro;Minimarket El Sol;3;6570;4993
+05/06/2026;Detergente 3L;Aseo;Puente Alto;Distribuidora Norte;11;60390;42273
+05/06/2026;Papel Higiénico 12un;Aseo;Puente Alto;Minimarket El Sol;3;23970;17018
+06/06/2026;Papel Higiénico 12un;Aseo;Puente Alto;Distribuidora Norte;1;7990;
+08/06/2026;Detergente 3L;Aseo;Puente Alto;Café Central;10;54900;38430
+08/06/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Almacén Doña Rosa;9;62910;46553
+08/06/2026;Azúcar 1kg;Abarrotes;Puente Alto;Distribuidora Norte;9;11610;9288
+09/06/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Minimarket El Sol;5;34950;25863
+09/06/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Distribuidora Norte;8;55920;41380
+09/06/2026;Detergente 3L;Aseo;Santiago Centro;Minimarket El Sol;2;-10980;
+10/06/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Distribuidora Norte;9;62910;46553
+10/06/2026;Arroz Grado 1 5kg;Abarrotes;Maipú;Distribuidora Norte;6;41940;31035
+11/06/2026;Papel Higiénico 12un;Aseo;Maipú;Distribuidora Norte;11;87890;62401
+11/06/2026;Detergente 3L;Aseo;Santiago Centro;Distribuidora Norte;6;32940;23058
+12/06/2026;Aceite Vegetal 1L;Abarrotes;Santiago Centro;Almacén Doña Rosa;1;2490;1942
+12/06/2026;Papel Higiénico 12un;Aseo;Maipú;Botillería La Esquina;4;31960;22691
+13/06/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Botillería La Esquina;8;55920;41380
+13/06/2026;Papel Higiénico 12un;Aseo;Maipú;Almacén Doña Rosa;10;79900;56729
+13/06/2026;Harina 25kg;Abarrotes;Maipú;Café Central;7;132930;95709
+15/06/2026;Azúcar 1kg;Abarrotes;Puente Alto;;11;14190;11352
+15/06/2026;Arroz Grado 1 5kg;Abarrotes;Santiago Centro;Botillería La Esquina;11;76890;56898

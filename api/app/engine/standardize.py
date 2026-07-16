@@ -15,6 +15,7 @@ Mejoras profesionales Fase 7 (§5):
   Levenshtein acotada, además de la unificación por frecuencia.
 """
 
+import math
 import random
 import re
 import warnings
@@ -403,12 +404,19 @@ def parse_number(
 
 
 def format_number(number: float) -> str:
+    # Fase 14: repr() es el texto MÁS CORTO que reconstruye exactamente el
+    # mismo float64 — no trunca nada que el motor conozca (el ".9f" de la Fase
+    # 13 aún cortaba colas legítimas). La promesa es "no truncar más allá de
+    # la precisión disponible en float64", no preservar el texto original.
+    # Solo aplica a valores que vienen DIRECTO del parseo (aquí el float nació
+    # de un texto corto y repr lo devuelve tal cual); los agregados calculados
+    # de metrics.py mantienen sus round() — la aritmética binaria produce
+    # artefactos (0.30000000000000004) que repr mostraría tal cual.
+    if not math.isfinite(number):
+        return str(number)
     if number == int(number):
         return str(int(number))
-    # Fase 13 (P0.6): ":.2f" destruía precisión (0.0049 → "0.00"). Se conservan
-    # hasta 9 decimales sin ceros colgantes — el redondeo es asunto de la capa
-    # de presentación, jamás del dataset limpio.
-    return f"{number:.9f}".rstrip("0").rstrip(".")
+    return repr(number)
 
 
 # ── Textos: unificación por frecuencia + fuzzy matching ──────────────────────

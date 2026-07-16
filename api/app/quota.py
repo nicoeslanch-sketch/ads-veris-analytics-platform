@@ -82,6 +82,10 @@ def count_month_usage(
 
 def limit_for(plan: str, settings: Settings) -> int:
     limits = {
+        # Fase 14: sin plan (y prueba gratuita, que mantiene plan sin_plan) no
+        # incluye IA — límite 0 explícito. Antes esto era un KeyError → 500 en
+        # /ai/usage para cualquier cuenta nueva.
+        "sin_plan": 0,
         "basico": settings.ai_monthly_limit_basico,
         "analista": settings.ai_monthly_limit_analista,
         "gold": settings.ai_monthly_limit_gold,
@@ -105,6 +109,14 @@ def check_quota(user_id: str, settings: Settings) -> dict | None:
         print(f"[quota] No se pudo verificar el cupo de IA ({exc.__class__.__name__}); se permite la consulta.")
         return None
     limite = limit_for(plan, settings)
+    if limite <= 0:
+        # Fase 14: sin plan / prueba gratuita — la IA no está incluida. Es una
+        # restricción de plan (403 con CTA), no un cupo agotado (429).
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El asistente con IA está disponible desde el Plan Básico. "
+            "Contrata un plan en la página Planes para activarlo.",
+        )
     if usadas >= limite:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

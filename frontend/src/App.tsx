@@ -2,7 +2,9 @@ import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from 're
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { AuthProvider } from './auth/AuthContext'
+import { AccessProvider } from './lib/access'
 import { DatasetProvider } from './data/DatasetContext'
+import { DemoProvider } from './demo/DemoContext'
 import ProtectedRoute from './auth/ProtectedRoute'
 import AppShell from './components/layout/AppShell'
 import Login from './pages/Login'
@@ -36,7 +38,9 @@ function lazyPage(Page: LazyExoticComponent<ComponentType>) {
 export default function App() {
   return (
     <AuthProvider>
+      <AccessProvider>
       <DatasetProvider>
+        <DemoProvider>
         <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -58,7 +62,9 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
+        </DemoProvider>
       </DatasetProvider>
+      </AccessProvider>
     </AuthProvider>
   )
 }

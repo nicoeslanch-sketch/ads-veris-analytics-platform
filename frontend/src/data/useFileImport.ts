@@ -12,20 +12,42 @@ import {
   uploadToStorage,
   type DatasetSource,
 } from '../lib/datasets'
-import { PLAN_ENFORCEMENT, normalizePlan } from '../lib/plans'
-import { usePlan } from '../lib/usePlan'
+import { useAccess } from '../lib/access'
 import { supabaseConfigured } from '../lib/supabase'
 import type { StandardizeResult } from '../lib/types'
 import { useDataset } from './DatasetContext'
 
 export function useFileImport() {
   const { setUploaded, setStandardization } = useDataset()
-  const { plan, isAdmin } = usePlan()
+  // Fase 14: la puerta lee el AccessContext ÚNICO (capacidades del servidor,
+  // trial incluido). Sin acceso optimista: mientras carga, no se sube nada.
+  const { status: accessStatus, can } = useAccess()
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
-  // Fase 13: cuentas sin plan — cada intento de subir abre el panel de planes.
+  // Fase 13: cuentas sin acceso — cada intento de subir abre el panel comercial.
   const [planBlocked, setPlanBlocked] = useState(false)
+
+  /** Puerta previa a CUALQUIER byte o llamada: las páginas la consultan antes
+   * de abrir el selector de archivos, leer un drop o llamar a la API
+   * (Conectores/Sheets). `importFile` la vuelve a aplicar por defensa en
+   * profundidad. Regla: ningún byte sale del navegador y ninguna llamada de
+   * procesamiento comienza sin el contexto de acceso resuelto y aprobado. */
+  const checkUploadAllowed = (): boolean => {
+    if (accessStatus === 'loading') {
+      setError('Estamos verificando tu acceso. Intenta nuevamente en unos segundos.')
+      return false
+    }
+    if (accessStatus === 'error') {
+      setError('No se pudo verificar tu acceso. Revisa tu conexión e intenta nuevamente.')
+      return false
+    }
+    if (!can('standardize')) {
+      setPlanBlocked(true)
+      return false
+    }
+    return true
+  }
 
   const importFile = async (
     selected: File,
@@ -33,10 +55,7 @@ export function useFileImport() {
   ): Promise<boolean> => {
     setError(null)
     setPersistWarning(null)
-    if (PLAN_ENFORCEMENT && !isAdmin && normalizePlan(plan) === 'sin_plan') {
-      setPlanBlocked(true)
-      return false
-    }
+    if (!checkUploadAllowed()) return false
     if (!/\.(csv|xlsx)$/i.test(selected.name)) {
       setError('Formato no soportado. Sube un Excel moderno (.xlsx) o CSV (.csv); si tienes un .xls antiguo, guárdalo como .xlsx primero.')
       return false
@@ -89,5 +108,6 @@ export function useFileImport() {
     setError,
     planBlocked,
     dismissPlanBlocked: () => setPlanBlocked(false),
+    checkUploadAllowed,
   }
 }

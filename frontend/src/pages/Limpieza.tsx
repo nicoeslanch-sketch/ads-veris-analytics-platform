@@ -31,6 +31,8 @@ import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import { PlanUpsell } from '../components/ui/PlanGate'
 import { useDataset } from '../data/DatasetContext'
+import { useDemo } from '../demo/DemoContext'
+import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiGet, apiPost, apiDownload, buildDatasetForm, ApiError } from '../lib/api'
 import { saveCleaningJob, saveColumnMapping } from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
@@ -137,6 +139,7 @@ function QualityRing({ quality }: { quality: number }) {
 
 export default function Limpieza() {
   const location = useLocation()
+  const demo = useDemo()
   const {
     file,
     datasetId,
@@ -287,6 +290,54 @@ export default function Limpieza() {
   }, [file, datasetId, storagePath, uploadedAt, cleaning, sheet, mappingOverride])
 
   if (!file || !standardization) {
+    // Fase 14: en modo demo se muestra un resumen READ-ONLY de la limpieza
+    // ficticia (snapshot del motor real) — sin tocar el flujo interactivo.
+    if (demo.active) {
+      const d = demo.cleaning
+      const demoProblemas: Array<{ label: string; valor: number }> = [
+        { label: 'Duplicados detectados', valor: d.problemas.duplicados },
+        { label: 'Valores nulos', valor: d.problemas.valores_nulos },
+        { label: 'Fechas inválidas', valor: d.problemas.fechas_invalidas },
+        { label: 'Textos inconsistentes', valor: d.problemas.textos_inconsistentes },
+        { label: 'Tipos incorrectos', valor: d.problemas.tipos_incorrectos },
+        { label: 'Montos negativos (devoluciones)', valor: d.problemas.montos_negativos ?? 0 },
+      ]
+      return (
+        <>
+          <PageHeader
+            title="Limpieza de datos — demo"
+            subtitle="Datos ficticios de ejemplo: así se ve el diagnóstico de limpieza de un archivo real."
+          />
+          <Card>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-navy">{d.archivo}</h2>
+                <p className="mt-0.5 text-xs text-navy/55">
+                  {d.resumen.filas_antes} filas · {d.resumen.columnas_antes} columnas ·
+                  calidad {d.resumen.calidad_antes}% → {d.resumen.calidad_despues}%
+                </p>
+              </div>
+              <Badge tone="green">
+                <CheckCircle2 className="h-3 w-3" /> Limpieza aplicada (demo)
+              </Badge>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {demoProblemas.map(({ label, valor }) => (
+                <div key={label} className="rounded-lg border border-navy/10 bg-navy/[0.02] px-3 py-2.5">
+                  <p className="text-lg font-bold text-navy">{valor}</p>
+                  <p className="text-xs text-navy/60">{label}</p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-xs leading-relaxed text-navy/55">
+              Con tus propios datos, aquí puedes revisar cada problema en detalle,
+              corregir el mapeo de columnas, decidir si eliminar duplicados y
+              descargar el reporte — la demo solo muestra el resultado.
+            </p>
+          </Card>
+        </>
+      )
+    }
     return (
       <>
         <PageHeader
@@ -299,7 +350,10 @@ export default function Limpieza() {
           description="Primero estandariza un archivo. Después podrás revisar los problemas detectados (duplicados, nulos, formatos inválidos) y aplicar la limpieza."
           ctaLabel="Ir a Estandarización"
           ctaTo="/estandarizacion"
-        />
+        >
+          {/* Fase 14: conocer la plataforma sin datos propios */}
+          <DemoEmptyActions />
+        </EmptyState>
       </>
     )
   }

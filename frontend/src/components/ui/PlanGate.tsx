@@ -8,17 +8,55 @@
  * O el hook `usePlanNotice` para dispararlo desde un botón (toast inline).
  */
 
-import { Link } from 'react-router-dom'
-import { Crown, Lock, X } from 'lucide-react'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Crown, Eye, Lock, Sparkles, X } from 'lucide-react'
+import { useAccess } from '../../lib/access'
+import { useDemo } from '../../demo/DemoContext'
+import { TrialModal } from '../trial/TrialModal'
 
-/** Fase 13: panel modal para cuentas SIN plan que intentan subir archivos.
- * Aparece cada vez que lo intentan; el CTA lleva directo a Planes. */
+/** Fase 13/14: panel modal comercial para cuentas SIN acceso de procesamiento.
+ * Es la interceptación COMPACTA que aparece ANTES del selector de archivos,
+ * del drag & drop y de cualquier llamada a la API. Tres estados:
+ *  - sin plan y sin prueba usada → activar prueba gratuita / Planes / demo;
+ *  - prueba expirada → Planes / demo;
+ *  - (con prueba vigente o plan, este modal nunca se abre). */
 export function PlanRequiredModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { access } = useAccess()
+  const demo = useDemo()
+  const navigate = useNavigate()
+  const [trialOpen, setTrialOpen] = useState(false)
+
   if (!open) return null
+  if (trialOpen) {
+    return (
+      <TrialModal
+        open
+        onClose={() => {
+          setTrialOpen(false)
+          onClose()
+        }}
+      />
+    )
+  }
+
+  const trial = access?.trial
+  const trialExpired = Boolean(trial?.used && !trial?.active)
+  const canOfferTrial = Boolean(access && !access.trial.used)
+
+  const verDemo = () => {
+    demo.enter()
+    onClose()
+    navigate('/')
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-navy-deep/50 p-4"
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Necesitas un plan activo"
     >
       <div
         className="relative w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl"
@@ -34,20 +72,42 @@ export function PlanRequiredModal({ open, onClose }: { open: boolean; onClose: (
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gold/15">
           <Lock className="h-6 w-6 text-gold" />
         </div>
-        <h2 className="mt-3 text-base font-semibold text-navy">Necesitas un plan activo</h2>
+        <h2 className="mt-3 text-base font-semibold text-navy">
+          {trialExpired ? 'Tu prueba gratuita terminó' : 'Necesitas un plan activo'}
+        </h2>
         <p className="mt-1.5 text-sm leading-relaxed text-navy/60">
-          Para subir y procesar tus archivos, contrata uno de nuestros planes. El Plan
-          Básico incluye estandarización, limpieza y tu dashboard de indicadores.
+          {trialExpired
+            ? 'Tus archivos siguen guardados según la retención de tu cuenta. Para seguir procesando datos, contrata uno de nuestros planes.'
+            : 'Para subir y procesar tus archivos, contrata uno de nuestros planes o activa la prueba gratuita de 15 días. El Plan Básico incluye estandarización, limpieza, dashboard y asistente IA.'}
         </p>
+        {canOfferTrial && !trialExpired && (
+          <button
+            onClick={() => setTrialOpen(true)}
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gold px-5 py-2.5 text-sm font-semibold text-navy-deep transition-colors hover:bg-gold/90"
+          >
+            <Sparkles className="h-4 w-4" /> Probar demo gratuita (15 días)
+          </button>
+        )}
         <Link
           to="/planes"
-          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gold px-5 py-2.5 text-sm font-semibold text-navy-deep transition-colors hover:bg-gold/90"
+          onClick={onClose}
+          className={`mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors ${
+            canOfferTrial && !trialExpired
+              ? 'border border-navy/20 text-navy hover:border-gold/60 hover:text-navy'
+              : 'bg-gold text-navy-deep hover:bg-gold/90'
+          }`}
         >
           <Crown className="h-4 w-4" /> Ir a Planes
         </Link>
         <button
+          onClick={verDemo}
+          className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg px-5 py-2 text-xs font-semibold text-teal transition-colors hover:bg-teal/5"
+        >
+          <Eye className="h-3.5 w-3.5" /> Ver demo ficticia
+        </button>
+        <button
           onClick={onClose}
-          className="mt-2 block w-full text-xs font-medium text-navy/50 transition-colors hover:text-navy"
+          className="mt-1 block w-full text-xs font-medium text-navy/50 transition-colors hover:text-navy"
         >
           Ahora no
         </button>

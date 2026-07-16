@@ -2,6 +2,139 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.17.0] - 2026-07-16 - Fase 14: cierres P0 comerciales, prueba gratuita con RUT, demo ficticia y acceso unificado
+
+Implementa el **análisis de calidad definitivo** consolidado en el debate
+técnico (réplicas incluidas). Requiere ejecutar la migración **`0016`** en
+Supabase y configurar la política de contraseñas en el Dashboard (ver README).
+
+### Cierres P0 — los cuatro bypasses comerciales quedan cerrados
+- **`/ai/summary`, `/ai/chat`, `/ai/recommendation`** ahora exigen la
+  capacidad `ask_data_ai`. Era el bypass MÁS CARO: el cliente envía las
+  métricas como JSON, así que una cuenta sin plan podía consumir tokens de
+  Anthropic sin haber procesado jamás un archivo.
+- **`/metrics`** exige `view_dashboard` (reprocesaba el archivo completo sin
+  puerta) y **`/restore/latest`** también (su fallback reconstruye el
+  pipeline). El frontend trata el 403 de restauración como "nada que
+  restaurar", sin romper la navegación.
+- **Cuota de IA**: `sin_plan` tiene límite 0 EXPLÍCITO — antes era un
+  `KeyError` → 500 en `/ai/usage` para toda cuenta nueva. Sin plan la IA
+  responde 403 con CTA ("disponible desde el Plan Básico"), no un 429.
+- **Conector de Sheets**: la puerta comercial va ANTES de
+  `POST /connectors/sheets` — antes la llamada salía primero y el usuario
+  bloqueado veía un 403 crudo en vez del modal. Además, todas las puertas
+  de capacidad corren en threadpool (no bloquean el event loop).
+
+### Contexto de acceso ÚNICO (servidor como fuente de verdad)
+- Nuevo **`GET /me/access`**: plan pagado, admin, estado de la prueba
+  gratuita y **capacidades efectivas calculadas en el servidor**. El
+  frontend (nuevo `AccessProvider`, tres estados loading/resolved/error) ya
+  no reconstruye capacidades desde el plan ni arranca "optimista" como
+  Básico mientras carga — la carrera del `usePlan` quedó cerrada: ninguna
+  puerta se abre sin el acceso resuelto.
+- `usePlan`/`useCapability` son adaptadores compatibles sobre el contexto.
+
+### Prueba gratuita de 15 días (Básico sin IA) con RUT
+- **Migración `0016`**: `billing_identities` (RUT empresa o responsable,
+  reutilizable para contratación) y `account_trials` con **una prueba por
+  usuario (unique absoluto, para siempre)** y **una prueba VIGENTE por RUT
+  (índice único PARCIAL sobre `revoked_at is null`)** — revocar una prueba
+  apropiada libera el RUT para su titular legítimo, pero quien abusó no
+  reactiva jamás.
+- **Activación 100% atómica en Postgres**: RPC `activate_account_trial`
+  (SECURITY DEFINER, search_path fijo, ejecutable SOLO por la service_role
+  — el rate limiting de la API es insoslayable y ningún cliente pasa un
+  user_id ajeno). Fechas del SERVIDOR (`now() + 15 días`); la vigencia se
+  evalúa contra `now()`: **sin cron, sin campo "activo" mantenido a mano**.
+- **RUT**: normalización idéntica en frontend, backend y SQL (puntos/
+  espacios/guiones fuera, K mayúscula, canónico `CUERPO-DV`), módulo 11 en
+  las tres capas, SIN piso arbitrario de cuerpo (hay RUN legítimos antiguos
+  bajo 1.000.000). Jamás en URLs/logs/JWT; se muestra enmascarado
+  (`12.***.***-5`). El formulario declara la finalidad según el contexto
+  (prueba vs contratación) y cómo pedir corrección.
+- **Privacidad de errores**: los del PROPIO usuario son específicos ("Tu
+  cuenta ya utilizó la prueba"); los que involucran a terceros colapsan a
+  un mensaje genérico — el RUT no es un oráculo para enumerar clientes.
+  Rate limiting de activación (5 intentos / 10 min).
+- **`TRIAL_CAPABILITIES`** = estandarizar, limpiar, dashboard y reportes
+  (incluye Sheets/Explorar/Alertas/Historial). Excluidos: asistente IA,
+  limpieza dirigida, descarga de base limpia, SQL y comunidad — la IA es la
+  diferencia comercial entre probar y contratar. `profiles.plan` NO se toca.
+- Al expirar: los archivos se conservan según retención, el procesamiento
+  nuevo se bloquea (mensaje propio "Tu prueba gratuita terminó") y Planes/
+  Configuración/Historial siguen navegables.
+- **RLS restrictiva**: nueva función `can_process_data()` (STABLE,
+  `auth.uid()` interno — parametrizarla sería un oráculo) y políticas
+  **`AS RESTRICTIVE`** en `datasets` y `storage.objects` (solo bucket
+  datasets): las políticas permisivas de propiedad se combinan con OR, por
+  lo que agregar otra permisiva no habría cerrado nada.
+
+### Demo ficticia regenerable ("Comercial Andes SpA")
+- CSV ficticio versionado (`api/demo/demo_empresa_ficticia.csv`) con
+  devoluciones, costos incompletos, duplicados, textos inconsistentes y un
+  mes parcial A PROPÓSITO — la demo muestra la plataforma explicando datos
+  imperfectos, que es el caso real de una PyME.
+- Los snapshots del frontend **nacen del motor real**
+  (`api/scripts/generate_demo.py` → `frontend/src/demo/data/*.json`) y un
+  test de contrato los regenera y compara: si el esquema cambia, falla
+  ruidosamente — la demo no puede desincronizarse en silencio.
+- **`DemoProvider` independiente**: la demo jamás escribe en el
+  DatasetContext, no llama al backend, no toca Storage ni historial; salir
+  restaura el estado vacío exacto. Etiqueta persistente "Datos ficticios de
+  ejemplo" en todas las páginas.
+- Botones **"Ver demo ficticia"** y **"Probar demo gratuita (15 días)"** en
+  los estados vacíos de Resumen, Explorar y Limpieza (el de prueba solo
+  para cuentas sin plan que no la usaron). En la demo, la IA queda
+  desactivada con mensaje claro (cero llamadas).
+
+### Interceptación de carga (las TRES puertas, antes de cualquier byte)
+- **Selector de archivos**: el modal comercial aparece ANTES de abrir el
+  picker (también en "Estandarizar nuevo documento").
+- **Drag & drop**: `preventDefault` + puerta antes de leer el archivo.
+- **Sheets**: puerta antes del POST. Regla general: ningún byte sale del
+  navegador y ninguna llamada de procesamiento comienza sin el contexto de
+  acceso resuelto y aprobado; `useFileImport` re-verifica por defensa en
+  profundidad. El modal ofrece activar la prueba, ir a Planes o ver la demo
+  (y distingue "prueba expirada").
+
+### Parcialidad POR MES en la evolución (Alertas/proyección/IA/gráfico)
+- Cada mes de `evolucion_mensual` declara `parcial`, `cobertura_hasta_dia`
+  y `dias_del_mes` (el flag global de la Fase 13 solo existía al filtrar).
+- **La proyección excluye el mes parcial** de la tasa y la base (un mes a
+  medio llenar simulaba una caída) y sus meses proyectados empiezan DESPUÉS
+  del final real — sin superposición con meses que tienen datos.
+- **Alertas** ya no compara un mes parcial contra uno completo (usa los dos
+  últimos completos y lo dice). "Mejor mes" y "Crecimiento del periodo"
+  excluyen o identifican el parcial. **La IA recibe la marca** ("mes
+  incompleto: datos hasta el día N") y el gráfico lo señala con asterisco y
+  nota al pie.
+
+### Registro reforzado (accesible)
+- Campo **"Confirmar contraseña"** con tick verde SOLO cuando coincide Y
+  cumple la política; aviso `aria-live` ("Las contraseñas [no] coinciden");
+  envío bloqueado si difieren. **Ojos** para mostrar/ocultar en ambos
+  campos (aria-label, operables por teclado, sin borrar el valor ni robar
+  el foco). `autocomplete="new-password"`; pegar SIGUE permitido (bloquear
+  el pegado castiga a quien usa gestor de contraseñas). Recordatorio: la
+  política REAL se configura en Supabase → Authentication → Providers →
+  Email (mínimo 8, letras y números) — la validación del formulario es UX.
+
+### Precisión numérica: promesa exacta de float64
+- `format_number` usa `repr()` (el texto MÁS CORTO que reconstruye el mismo
+  float64) con guarda de finitud — el `.9f` de la Fase 13 aún cortaba colas
+  legítimas. Aplica a valores parseados (estandarización); los agregados de
+  métricas mantienen sus `round()` (la aritmética binaria produce
+  artefactos que `repr` mostraría).
+
+### Verificación
+- **252 tests** (28 nuevos: RUT/módulo 11/idempotencia/enmascarado, trial
+  vigente/expirado/revocado, capacidades efectivas, gates estructurales de
+  /ai + /metrics + /restore, cuota sin_plan, rate limiting, privacidad de
+  errores, parcialidad por mes, proyección sin superposición, repr(), y el
+  contrato de regeneración de la demo) + build + **E2E 19/19** (demo
+  completa entrar/navegar/salir, pipeline real intacto con las puertas
+  nuevas, mes parcial marcado, registro reforzado con aria-live y ojos).
+
 ## [0.16.0] - 2026-07-15 - Fase 13: cuentas sin plan, contraseña reforzada y triage verificado del 3er informe
 
 ### Modelo comercial (pedido del dueño)

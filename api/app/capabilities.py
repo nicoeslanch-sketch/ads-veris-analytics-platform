@@ -73,6 +73,19 @@ PLAN_CAPABILITIES: dict[str, set[Capability]] = {
     "gold": _GOLD,
 }
 
+# Fase 14: prueba gratuita de 15 días = Plan Básico SIN el asistente IA.
+# Cubre el flujo completo de valor (subir → estandarizar → limpiar → dashboard
+# → reporte, incluidos Sheets/Explorar/Alertas/Historial que viajan sobre
+# STANDARDIZE y VIEW_DASHBOARD). Quedan fuera: ASK_DATA_AI, AI_CLEANING,
+# DOWNLOAD_CLEAN_DATASET, CONNECT_SQL y COMMUNITY_ACCESS — la IA es la
+# diferencia comercial entre probar gratis y contratar.
+TRIAL_CAPABILITIES: set[Capability] = {
+    Capability.STANDARDIZE,
+    Capability.CLEAN,
+    Capability.VIEW_DASHBOARD,
+    Capability.DOWNLOAD_REPORTS,
+}
+
 PLAN_ORDER = ("basico", "analista", "gold")
 
 
@@ -166,7 +179,11 @@ def require_capability_for_user(
     """Puerta de capacidad. Con PLAN_ENFORCEMENT apagado deja pasar todo sin
     consultar la red. El administrador (profiles.is_admin) pasa siempre.
     Sin Supabase configurado (desarrollo local) no hay dónde mirar el plan:
-    fail-open, igual que las cuotas."""
+    fail-open, igual que las cuotas.
+
+    Fase 14: la prueba gratuita de 15 días desbloquea TRIAL_CAPABILITIES
+    mientras esté vigente. La consulta del trial solo ocurre cuando el plan no
+    alcanza (los usuarios con plan pagado no pagan la latencia extra)."""
     if not settings.plan_enforcement:
         return "sin_enforcement"
     if not settings.supabase_url or not settings.supabase_service_role_key:
@@ -180,14 +197,45 @@ def require_capability_for_user(
         ) from exc
     if is_admin or plan_allows(plan, capability):
         return plan
+    trial = {"used": False, "active": False}
+    if capability in TRIAL_CAPABILITIES:
+        from .trials import get_trial_state  # import tardío: evita ciclos
+
+        trial = get_trial_state(user_id, settings)
+        if trial.get("active"):
+            return "trial"
     if plan == "sin_plan":
+        if trial.get("used") and not trial.get("active"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tu prueba gratuita de 15 días terminó. Contrata un plan "
+                "en la página Planes para seguir procesando tus datos.",
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Necesitas un plan activo para usar esta función. "
-            "Contrata un plan en la página Planes para comenzar.",
+            "Contrata un plan en la página Planes o activa la prueba gratuita "
+            "de 15 días para comenzar.",
         )
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail=f"Esta función requiere el Plan {display_plan(min_plan_for(capability))}. "
         "Puedes contratarlo en la página Planes.",
     )
+
+
+def effective_capabilities(
+    plan: str,
+    is_admin: bool,
+    trial_active: bool,
+    enforcement: bool,
+) -> set[Capability]:
+    """Capacidades EFECTIVAS del usuario — la única fuente que consume el
+    frontend vía GET /me/access (el cliente no reconstruye nada desde el plan).
+    Sin enforcement todo queda abierto, igual que las puertas del backend."""
+    if not enforcement or is_admin:
+        return set(Capability)
+    caps = set(PLAN_CAPABILITIES[normalize_plan(plan)])
+    if trial_active:
+        caps |= TRIAL_CAPABILITIES
+    return caps

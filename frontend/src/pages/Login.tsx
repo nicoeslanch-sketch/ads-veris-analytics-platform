@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
@@ -10,6 +10,27 @@ type Mode = 'login' | 'register'
 const inputClass =
   'w-full rounded-lg border border-navy/20 bg-white px-3.5 py-2.5 text-sm text-navy placeholder-navy/35 outline-none transition-colors focus:border-teal focus:ring-2 focus:ring-teal/20'
 
+// Fase 13/14: política de UX en el registro — la política REAL se configura en
+// Supabase → Authentication → Providers → Email (mínimo 8, letras y números).
+const PASSWORD_POLICY_RE = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/
+
+/** Botón de ojo para mostrar/ocultar la contraseña: accesible por teclado,
+ * con aria-label, no borra el valor y conserva el foco en el campo. */
+function EyeToggle({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => e.preventDefault() /* no robar el foco del input */}
+      onClick={onToggle}
+      aria-label={shown ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+      aria-pressed={shown}
+      className="absolute inset-y-0 right-0 flex items-center px-3 text-navy/40 transition-colors hover:text-navy"
+    >
+      {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+    </button>
+  )
+}
+
 export default function Login() {
   const { session, configured, login, register } = useAuth()
   const navigate = useNavigate()
@@ -17,6 +38,9 @@ export default function Login() {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [fullName, setFullName] = useState('')
   const [company, setCompany] = useState('')
   const [country, setCountry] = useState('Chile')
@@ -24,6 +48,11 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+
+  // Ticks verdes SOLO cuando la contraseña cumple la política Y ambas coinciden.
+  const passwordOk = PASSWORD_POLICY_RE.test(password)
+  const confirmOk = passwordOk && confirmPassword.length > 0 && confirmPassword === password
+  const confirmMismatch = confirmPassword.length > 0 && confirmPassword !== password
 
   if (session) return <Navigate to="/" replace />
 
@@ -49,8 +78,13 @@ export default function Login() {
     setNotice(null)
     // Fase 13: contraseña reforzada al crear cuenta — mínimo 8 caracteres
     // con al menos una letra y un número.
-    if (mode === 'register' && !/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(password)) {
+    if (mode === 'register' && !PASSWORD_POLICY_RE.test(password)) {
       setError('La contraseña debe tener al menos 8 caracteres e incluir letras y números.')
+      return
+    }
+    // Fase 14: el envío se bloquea si la confirmación no coincide.
+    if (mode === 'register' && password !== confirmPassword) {
+      setError('Las contraseñas no coinciden. Revísalas antes de continuar.')
       return
     }
     setSubmitting(true)
@@ -226,16 +260,63 @@ export default function Login() {
                   </button>
                 )}
               </div>
-              <input
-                required
-                type="password"
-                minLength={mode === 'register' ? 8 : 6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={mode === 'register' ? 'Mínimo 8 caracteres, letras y números' : 'Tu contraseña'}
-                className={inputClass}
-              />
+              <div className="relative">
+                <input
+                  required
+                  type={showPassword ? 'text' : 'password'}
+                  minLength={mode === 'register' ? 8 : 6}
+                  autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={mode === 'register' ? 'Mínimo 8 caracteres, letras y números' : 'Tu contraseña'}
+                  className={`${inputClass} pr-16`}
+                />
+                {mode === 'register' && passwordOk && (
+                  <CheckCircle2
+                    aria-hidden
+                    className="absolute inset-y-0 right-9 my-auto h-4 w-4 text-green"
+                  />
+                )}
+                <EyeToggle shown={showPassword} onToggle={() => setShowPassword((v) => !v)} />
+              </div>
             </div>
+
+            {mode === 'register' && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-navy">
+                  Confirmar contraseña
+                </label>
+                <div className="relative">
+                  <input
+                    required
+                    type={showConfirm ? 'text' : 'password'}
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Repite tu contraseña"
+                    aria-invalid={confirmMismatch}
+                    aria-describedby="confirmacion-estado"
+                    className={`${inputClass} pr-16 ${confirmMismatch ? '!border-coral' : confirmOk ? '!border-green/60' : ''}`}
+                  />
+                  {confirmOk && (
+                    <CheckCircle2
+                      aria-hidden
+                      className="absolute inset-y-0 right-9 my-auto h-4 w-4 text-green"
+                    />
+                  )}
+                  <EyeToggle shown={showConfirm} onToggle={() => setShowConfirm((v) => !v)} />
+                </div>
+                {/* aria-live: el lector de pantalla anuncia el cambio de estado */}
+                <p id="confirmacion-estado" aria-live="polite" className="mt-1 min-h-4 text-xs">
+                  {confirmOk ? (
+                    <span className="text-green">Las contraseñas coinciden.</span>
+                  ) : confirmMismatch ? (
+                    <span className="text-coral">Las contraseñas no coinciden.</span>
+                  ) : null}
+                </p>
+              </div>
+            )}
 
             {error && (
               <div className="flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
@@ -264,6 +345,9 @@ export default function Login() {
                 setMode(mode === 'login' ? 'register' : 'login')
                 setError(null)
                 setNotice(null)
+                setConfirmPassword('')
+                setShowPassword(false)
+                setShowConfirm(false)
               }}
               className="font-semibold text-teal hover:underline"
             >

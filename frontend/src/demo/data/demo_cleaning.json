@@ -1,0 +1,425 @@
+{
+ "archivo": "demo_empresa_ficticia.csv",
+ "avisos": [
+  "Se detectaron 2 repetición(es) exacta(s) en el archivo original. Se conservarán mientras no confirmes explícitamente su eliminación."
+ ],
+ "carga": {
+  "filas_titulo_omitidas": 0,
+  "formulas": null,
+  "hoja_usada": null,
+  "hojas_disponibles": []
+ },
+ "column_types": {
+  "Cantidad": "numero",
+  "Categoría": "texto",
+  "Cliente": "texto",
+  "Costo": "numero",
+  "Fecha": "fecha",
+  "Producto": "texto",
+  "Sucursal": "texto",
+  "Ventas": "numero"
+ },
+ "correcciones": {
+  "columnas_vacias_a_eliminar": 0,
+  "fechas_a_estandarizar": 0,
+  "filas_duplicadas_a_eliminar": 0,
+  "filas_duplicadas_eliminadas": 0,
+  "textos_a_unificar": 4,
+  "tipos_a_corregir": 0,
+  "valores_fuera_de_rango_a_revisar": 4,
+  "valores_nulos_normalizados": 63
+ },
+ "duplicados_criterio": "fila_exacta_original_con_confirmacion",
+ "duplicados_detalle": {
+  "conflictos_id": 0,
+  "ejemplos_conflictos_id": [],
+  "ejemplos_grupos": [
+   {
+    "filas_origen": [
+     32,
+     35
+    ],
+    "filas_origen_truncadas": false,
+    "tamano": 2
+   },
+   {
+    "filas_origen": [
+     78,
+     81
+    ],
+    "filas_origen_truncadas": false,
+    "tamano": 2
+   }
+  ],
+  "eliminacion_habilitada": false,
+  "exactos": 2,
+  "filas_eliminadas": 0,
+  "filas_involucradas": 4,
+  "filas_seleccionadas_para_eliminar": 0,
+  "grupos": 2,
+  "grupos_contiguos": 0,
+  "identificadores_fila": [],
+  "normalizados": 0,
+  "posible_granularidad_omitida": false,
+  "tamano_maximo_grupo": 2
+ },
+ "estandarizacion": {
+  "celdas_con_espacios_normalizados": 1,
+  "celdas_con_variantes_unificadas": 3,
+  "celdas_textuales_unicas_modificadas": 4,
+  "encabezados_normalizados": 0,
+  "fechas_estandarizadas": 0,
+  "fusiones_fuzzy": 0,
+  "mojibake_detectado": 0,
+  "mojibake_reparado": 0,
+  "numeros_estandarizados": 0,
+  "placeholders_detectados": 0,
+  "textos_normalizados": 4
+ },
+ "fusiones_texto": {
+  "ejemplos": [],
+  "total": 0
+ },
+ "inconsistencias_identidad": {
+  "id_con_varios_nombres": {
+   "conteo": 0,
+   "ejemplos": []
+  },
+  "nombre_con_varios_ids": {
+   "conteo": 0,
+   "ejemplos": []
+  },
+  "pares_analizados": []
+ },
+ "mapeo": {
+  "cantidad": "Cantidad",
+  "categoria": "Categoría",
+  "cliente": "Cliente",
+  "costo": "Costo",
+  "fecha": "Fecha",
+  "monto": "Ventas",
+  "producto": "Producto",
+  "sucursal": "Sucursal"
+ },
+ "mojibake_auditoria": [],
+ "nulos_detalle": {
+  "fisicos": 63,
+  "posibles_estructurales": [],
+  "semanticos": 0
+ },
+ "opciones_aplicacion": {
+  "eliminar_duplicados": false
+ },
+ "preview": {
+  "columnas": [
+   "Fecha",
+   "Producto",
+   "Categoría",
+   "Sucursal",
+   "Cliente",
+   "Cantidad",
+   "Ventas",
+   "Costo"
+  ],
+  "filas": [
+   [
+    "02/01/2026",
+    "Aceite Vegetal 1L",
+    "Abarrotes",
+    "Santiago Centro",
+    "Almacén Doña Rosa",
+    "2",
+    "4980",
+    "3884"
+   ],
+   [
+    "02/01/2026",
+    "Papel Higiénico 12un",
+    "Aseo",
+    "Maipú",
+    "Café Central",
+    "11",
+    "87890",
+    "62401"
+   ],
+   [
+    "03/01/2026",
+    "Detergente 3L",
+    "Aseo",
+    "Maipú",
+    "Distribuidora Norte",
+    "8",
+    "43920",
+    "30743"
+   ],
+   [
+    "05/01/2026",
+    "Aceite Vegetal 1L",
+    "Abarrotes",
+    "Maipú",
+    "Distribuidora Norte",
+    "11",
+    "27390",
+    "21364"
+   ],
+   [
+    "05/01/2026",
+    "Detergente 3L",
+    "Aseo",
+    "Puente Alto",
+    "Almacén Doña Rosa",
+    "9",
+    "49410",
+    "34587"
+   ],
+   [
+    "06/01/2026",
+    "Arroz Grado 1 5kg",
+    "Abarrotes",
+    "Puente Alto",
+    "Botillería La Esquina",
+    "5",
+    "34950",
+    "25863"
+   ],
+   [
+    "07/01/2026",
+    "Arroz Grado 1 5kg",
+    "Abarrotes",
+    "Santiago Centro",
+    "Minimarket El Sol",
+    "11",
+    "76890",
+    "56898"
+   ],
+   [
+    "08/01/2026",
+    "Aceite Vegetal 1L",
+    "Abarrotes",
+    "Puente Alto",
+    "Botillería La Esquina",
+    "10",
+    "24900",
+    "19422"
+   ]
+  ],
+  "issues": []
+ },
+ "problemas": {
+  "columnas_vacias": 0,
+  "duplicados": 2,
+  "duplicados_probables": 0,
+  "fechas_invalidas": 0,
+  "montos_cero": 0,
+  "montos_negativos": 2,
+  "nulos_fisicos": 63,
+  "nulos_semanticos": 0,
+  "outliers_iqr": 4,
+  "posibles_nulos_estructurales": 0,
+  "textos_inconsistentes": 4,
+  "tipos_incorrectos": 0,
+  "valores_fuera_de_rango": 4,
+  "valores_nulos": 63
+ },
+ "reglas_activas": {
+  "columnas_vacias": false,
+  "duplicados": true,
+  "fechas": true,
+  "fuera_de_rango": true,
+  "nulos": true,
+  "textos": true,
+  "tipos": true
+ },
+ "reporte_calidad": {
+  "Cantidad": {
+   "confianza_tipo": 1.0,
+   "convencion_numerica": "miles",
+   "en_alcance": true,
+   "grupo_rol": "cantidad",
+   "match_diccionario": {
+    "confianza": 1.0,
+    "metodo": "exacto",
+    "palabra_clave": "cantidad"
+   },
+   "nulos": 0,
+   "nulos_fisicos": 0,
+   "nulos_pct": 0.0,
+   "nulos_semanticos": 0,
+   "outliers": 0,
+   "outliers_iqr": {
+    "bajo_limite": 0,
+    "iqr": 6.0,
+    "limite_inferior": -15.0,
+    "limite_superior": 27.0,
+    "q1": 3.0,
+    "q3": 9.0,
+    "sobre_limite": 0,
+    "total": 0
+   },
+   "politica_nulos": "preservados (nunca se imputa 0 en montos)",
+   "rol": "cantidad",
+   "rol_extendido": "cantidad",
+   "tipo": "numero",
+   "tipos_incorrectos": 0
+  },
+  "Categoría": {
+   "confianza_tipo": 1.0,
+   "en_alcance": true,
+   "grupo_rol": "catalogo",
+   "match_diccionario": {
+    "confianza": 1.0,
+    "metodo": "exacto",
+    "palabra_clave": "categoria"
+   },
+   "nulos": 0,
+   "nulos_fisicos": 0,
+   "nulos_pct": 0.0,
+   "nulos_semanticos": 0,
+   "rol": "categoria",
+   "rol_extendido": "categoria",
+   "tipo": "texto"
+  },
+  "Cliente": {
+   "confianza_tipo": 1.0,
+   "en_alcance": true,
+   "grupo_rol": "entidad",
+   "match_diccionario": {
+    "confianza": 1.0,
+    "metodo": "exacto",
+    "palabra_clave": "cliente"
+   },
+   "nulos": 39,
+   "nulos_fisicos": 39,
+   "nulos_pct": 14.0,
+   "nulos_semanticos": 0,
+   "rol": "cliente",
+   "rol_extendido": "cliente",
+   "tipo": "texto"
+  },
+  "Costo": {
+   "confianza_tipo": 1.0,
+   "convencion_numerica": "miles",
+   "en_alcance": true,
+   "grupo_rol": "dinero",
+   "match_diccionario": {
+    "confianza": 1.0,
+    "metodo": "exacto",
+    "palabra_clave": "costo"
+   },
+   "nulos": 24,
+   "nulos_fisicos": 24,
+   "nulos_pct": 8.6,
+   "nulos_semanticos": 0,
+   "outliers": 2,
+   "outliers_iqr": {
+    "bajo_limite": 0,
+    "iqr": 32575.0,
+    "limite_inferior": -88920.0,
+    "limite_superior": 139105.0,
+    "q1": 8805.0,
+    "q3": 41380.0,
+    "sobre_limite": 2,
+    "total": 2
+   },
+   "politica_nulos": "preservados (nunca se imputa 0 en montos)",
+   "rol": "costo",
+   "rol_extendido": "costo",
+   "tipo": "numero",
+   "tipos_incorrectos": 0
+  },
+  "Fecha": {
+   "confianza_tipo": 1.0,
+   "en_alcance": true,
+   "fechas_invalidas": 0,
+   "grupo_rol": "tiempo",
+   "match_diccionario": {
+    "confianza": 1.0,
+    "metodo": "exacto",
+    "palabra_clave": "fecha"
+   },
+   "nulos": 0,
+   "nulos_fisicos": 0,
+   "nulos_pct": 0.0,
+   "nulos_semanticos": 0,
+   "rol": "fecha",
+   "rol_extendido": "fecha",
+   "tipo": "fecha"
+  },
+  "Producto": {
+   "confianza_tipo": 1.0,
+   "en_alcance": true,
+   "grupo_rol": "catalogo",
+   "match_diccionario": {
+    "confianza": 1.0,
+    "metodo": "exacto",
+    "palabra_clave": "producto"
+   },
+   "nulos": 0,
+   "nulos_fisicos": 0,
+   "nulos_pct": 0.0,
+   "nulos_semanticos": 0,
+   "rol": "producto",
+   "rol_extendido": "producto",
+   "tipo": "texto"
+  },
+  "Sucursal": {
+   "confianza_tipo": 1.0,
+   "en_alcance": true,
+   "grupo_rol": "ubicacion",
+   "match_diccionario": {
+    "confianza": 1.0,
+    "metodo": "exacto",
+    "palabra_clave": "sucursal"
+   },
+   "nulos": 0,
+   "nulos_fisicos": 0,
+   "nulos_pct": 0.0,
+   "nulos_semanticos": 0,
+   "rol": "sucursal",
+   "rol_extendido": "sucursal",
+   "tipo": "texto"
+  },
+  "Ventas": {
+   "confianza_tipo": 1.0,
+   "convencion_numerica": "miles",
+   "en_alcance": true,
+   "grupo_rol": "dinero",
+   "match_diccionario": {
+    "confianza": 1.0,
+    "metodo": "exacto",
+    "palabra_clave": "ventas"
+   },
+   "montos_cero": 0,
+   "montos_negativos": 2,
+   "nulos": 0,
+   "nulos_fisicos": 0,
+   "nulos_pct": 0.0,
+   "nulos_semanticos": 0,
+   "outliers": 2,
+   "outliers_iqr": {
+    "bajo_limite": 0,
+    "iqr": 45285.0,
+    "limite_inferior": -125220.0,
+    "limite_superior": 191775.0,
+    "q1": 10635.0,
+    "q3": 55920.0,
+    "sobre_limite": 2,
+    "total": 2
+   },
+   "politica_nulos": "preservados (nunca se imputa 0 en montos)",
+   "rol": "monto",
+   "rol_extendido": "monto",
+   "tipo": "numero",
+   "tipos_incorrectos": 0
+  }
+ },
+ "resumen": {
+  "aplicado": true,
+  "calidad_antes": 96.5,
+  "calidad_despues": 96.5,
+  "columnas_antes": 8,
+  "columnas_despues": 8,
+  "filas_antes": 279,
+  "filas_despues": 279
+ }
+}

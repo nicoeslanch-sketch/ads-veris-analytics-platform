@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from .. import quota
 from ..auth import AuthenticatedUser, get_current_user
+from ..capabilities import Capability, require_capability_for_user
 from ..config import Settings, get_settings
 
 router = APIRouter(prefix="/ai", dependencies=[Depends(get_current_user)])
@@ -115,8 +116,16 @@ def _metrics_context(metrics: dict) -> str:
 
     evolucion = metrics.get("evolucion_mensual", [])
     if evolucion:
+        # Fase 14: la IA recibe la marca de parcialidad — sin ella interpretaba
+        # el mes en curso como una caída real de ventas.
         meses_str = ", ".join(
-            f"{e['mes']} ingresos={fmt(e['ingresos'])}" for e in evolucion[-6:]
+            f"{e['mes']} ingresos={fmt(e['ingresos'])}"
+            + (
+                f" (mes incompleto: datos hasta el día {e.get('cobertura_hasta_dia')})"
+                if e.get("parcial")
+                else ""
+            )
+            for e in evolucion[-6:]
         )
         parts.append(f"Evolución últimos meses: {meses_str}")
 
@@ -194,6 +203,12 @@ async def ai_summary(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Genera resumen automático del negocio + preguntas sugeridas."""
+    # Fase 14 (P0): la IA era el bypass más caro — el cliente manda las
+    # métricas como JSON, así que sin esta puerta una cuenta sin plan podía
+    # consumir tokens de Anthropic sin haber procesado jamás un archivo.
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
+    )
     _check_metrics_size(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
@@ -265,6 +280,9 @@ async def ai_recommendation(
     """Recomendación inteligente de Explorar datos (SPEC §7): lectura del
     análisis activo + plan de acción concreto. Se genera solo a pedido del
     usuario (botón), nunca automáticamente — control de costo de IA."""
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
+    )
     _check_metrics_size(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
@@ -327,6 +345,9 @@ async def ai_chat(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Chat libre anclado a los datos del negocio. Devuelve SSE."""
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
+    )
     _check_metrics_size(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     ctx = _metrics_context(body.metrics)

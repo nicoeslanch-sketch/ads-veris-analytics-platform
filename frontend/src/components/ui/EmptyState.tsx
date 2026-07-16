@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { UploadCloud } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import Card from './Card'
@@ -11,6 +12,8 @@ interface EmptyStateProps {
   ctaLabel?: string
   ctaTo?: string
   ctaState?: unknown
+  /** Acciones extra bajo el CTA (Fase 14: demo ficticia / prueba gratuita). */
+  children?: ReactNode
 }
 
 /**
@@ -24,6 +27,7 @@ export default function EmptyState({
   ctaLabel,
   ctaTo,
   ctaState,
+  children,
 }: EmptyStateProps) {
   return (
     <Card className="flex flex-col items-center gap-4 py-16 text-center">
@@ -44,6 +48,7 @@ export default function EmptyState({
           {ctaLabel}
         </Link>
       )}
+      {children}
     </Card>
   )
 }

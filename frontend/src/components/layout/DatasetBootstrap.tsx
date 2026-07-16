@@ -10,6 +10,7 @@ import { AlertTriangle, Loader2 } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { useDataset } from '../../data/DatasetContext'
 import { ApiError, apiPostJson } from '../../lib/api'
+import { useAccess } from '../../lib/access'
 import { supabaseConfigured } from '../../lib/supabase'
 import type { RestoreLatestResult } from '../../lib/types'
 
@@ -18,6 +19,7 @@ const AUTO_RESTORE_TIMEOUT_MS = 90_000
 
 export default function DatasetBootstrap() {
   const { user } = useAuth()
+  const { status: accessStatus, can } = useAccess()
   const { file, restoreDataset } = useDataset()
   const [restoring, setRestoring] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState<string | null>(null)
@@ -33,6 +35,14 @@ export default function DatasetBootstrap() {
   useEffect(() => {
     if (!supabaseConfigured || !user) return
     if (file || attemptedUsers.has(user.id)) return
+    // Fase 14: sin acceso resuelto no se dispara nada; sin capacidad de
+    // dashboard (sin plan / prueba expirada) no hay trabajo que restaurar —
+    // el backend igual respondería 403 en /restore/latest.
+    if (accessStatus === 'loading') return
+    if (accessStatus === 'resolved' && !can('view_dashboard')) {
+      attemptedUsers.add(user.id)
+      return
+    }
     cancelledRef.current = false
     let active = true
     const controller = new AbortController()
@@ -65,11 +75,15 @@ export default function DatasetBootstrap() {
         )
       } catch (err) {
         if (active && !cancelledRef.current) {
-          setRestoreError(
-            err instanceof ApiError
-              ? err.message
-              : 'No pudimos restaurar automaticamente tu ultimo trabajo.',
-          )
+          // Un 403 significa "sin acceso de procesamiento" (cuenta sin plan o
+          // prueba expirada): no hay nada que restaurar y no es un error.
+          if (!(err instanceof ApiError && err.status === 403)) {
+            setRestoreError(
+              err instanceof ApiError
+                ? err.message
+                : 'No pudimos restaurar automaticamente tu ultimo trabajo.',
+            )
+          }
         }
       } finally {
         if (active) {
@@ -85,7 +99,7 @@ export default function DatasetBootstrap() {
       active = false
       controller.abort()
     }
-  }, [user, file, restoreDataset])
+  }, [user, file, restoreDataset, accessStatus, can])
 
   if (!restoring && restoreError) {
     return (
