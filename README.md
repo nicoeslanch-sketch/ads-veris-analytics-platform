@@ -73,6 +73,10 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      Storage, y `addon_requests.billing_identity_id` para vincular la
      contratación al RUT. **Re-ejecutable**: si corriste la versión de la
      Fase 14, ejecútala de nuevo)
+   - `supabase/migrations/0017_billing_identity_retention.sql` (**Fase 14c —
+     ciclo de vida del RUT**: permite desvincular una identidad de solicitudes
+     y trials mediante `ON DELETE SET NULL`, conservando la evidencia necesaria
+     para impedir pruebas repetidas)
 3. **Política de contraseñas** (Fase 13/14 — la validación del formulario es
    solo UX; la política REAL vive aquí): en **Authentication → Providers →
    Email → Password requirements**, exige mínimo **8 caracteres** con
@@ -86,7 +90,7 @@ cd frontend
 cp .env.example .env    # completa VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY
 npm install
 npm run dev             # http://localhost:5173
-npm run test            # Vitest: paridad del RUT con el backend + meses parciales
+npm run test            # Vitest: RUT, meses parciales y concentración bruta
 ```
 
 ### 3. API Python (motor de datos)

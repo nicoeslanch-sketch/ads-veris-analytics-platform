@@ -181,8 +181,9 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   )
 
   const can = useCallback(
-    (cap: Capability) => Boolean(state.access?.capabilities.includes(cap)),
-    [state.access],
+    (cap: Capability) =>
+      state.status === 'resolved' && Boolean(state.access?.capabilities.includes(cap)),
+    [state.status, state.access],
   )
 
   return (

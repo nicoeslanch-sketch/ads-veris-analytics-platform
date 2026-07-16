@@ -63,6 +63,12 @@ interface SupportItem {
   tipo?: string
   status: 'pendiente' | 'atendida'
   respuesta?: string | null
+  billing_identity_id?: string | null
+  billing_identity?: {
+    id: string
+    rut_type: 'empresa' | 'responsable'
+    rut_masked: string
+  } | null
   created_at: string
 }
 
@@ -448,6 +454,24 @@ export default function AdminCuentas() {
                           ) : null}
                           {item.mensaje || 'Sin mensaje.'}
                         </p>
+                        {item.origen === 'addon' && item.billing_identity && (
+                          <div className="mt-2 flex min-w-0 items-start gap-1.5 text-[10px] leading-relaxed text-navy/55">
+                            <CreditCard className="mt-0.5 h-3 w-3 shrink-0 text-teal" />
+                            <span className="min-w-0">
+                              Facturación:{' '}
+                              {item.billing_identity.rut_type === 'empresa'
+                                ? 'empresa'
+                                : 'responsable'}{' '}
+                              · RUT{' '}
+                              <strong className="text-navy/70">
+                                {item.billing_identity.rut_masked}
+                              </strong>
+                              <span className="block break-all text-navy/35">
+                                ID {item.billing_identity.id}
+                              </span>
+                            </span>
+                          </div>
+                        )}
                         {item.status === 'pendiente' ? (
                           <button
                             onClick={() => void atender(item)}

@@ -26,6 +26,7 @@ router = APIRouter()
 _TIMEOUT = 10
 
 REQUEST_TYPES = {"tokens_limpieza", "upgrade_analista", "upgrade_gold", "otro"}
+UPGRADE_REQUEST_TYPES = {"upgrade_analista", "upgrade_gold"}
 
 
 def _configured(settings: Settings) -> bool:
@@ -115,6 +116,11 @@ def _verify_identity_ownership(user_id: str, identity_id: str, settings: Setting
 
 def _insert_request_sync(user_id: str, body: AddonRequestBody, settings: Settings) -> None:
     tipo = body.tipo if body.tipo in REQUEST_TYPES else "otro"
+    if tipo in UPGRADE_REQUEST_TYPES and not body.billing_identity_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Para contratar un plan debes registrar una identidad de facturación.",
+        )
     identity_id: str | None = None
     if body.billing_identity_id:
         if not _verify_identity_ownership(user_id, body.billing_identity_id, settings):

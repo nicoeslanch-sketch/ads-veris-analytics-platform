@@ -1,6 +1,13 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 14 completas + estabilización 14b.**
+**Estado actual: Fases 0 a 14 completas + estabilización 14c.**
+La Fase 14c (`CHANGELOG` [0.17.2]) cierra el bypass de upgrades sin identidad
+en el backend, usa Supabase Auth como señal autoritativa de correo confirmado,
+separa los rate limits, corrige concentración bruta sin romper el orden neto de
+las tablas, elimina el fallback del mes parcial en Resumen, cierra capacidades
+stale durante refrescos y muestra al administrador únicamente el RUT enmascarado.
+La migración `0017` permite desvincular identidades con `ON DELETE SET NULL`.
+**Backend 276 tests + Vitest 15 + build de producción.**
 La Fase 14b (`CHANGELOG` [0.17.1]) cierra los 4 P0 del informe externo sobre
 la Fase 14 — todos verificados como reales: elegibilidad del trial en API y
 RPC (un plan pagado/admin ya no reserva el RUT de otra empresa), reversa de

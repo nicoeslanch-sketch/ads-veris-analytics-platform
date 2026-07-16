@@ -32,6 +32,12 @@ describe('soloMesesCompletos', () => {
     const pct = ((last.ingresos - prev.ingresos) / prev.ingresos) * 100
     expect(Math.round(pct)).toBe(24) // abr→may +24%, jamás la "caída" de junio
   })
+
+  it('con un completo y un parcial no inventa un segundo mes comparable', () => {
+    const completos = soloMesesCompletos([evo[1], evo[2]])
+    expect(completos).toHaveLength(1)
+    expect(completos[0].mes).toBe('2026-05')
+  })
 })
 
 describe('mesParcialDe', () => {

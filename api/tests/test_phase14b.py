@@ -166,16 +166,47 @@ def test_correo_sin_confirmar_no_activa_trial(client, monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
         id="user-test",
         email="t@example.cl",
-        claims={"user_metadata": {"email_verified": False}},
+        claims={"user_metadata": {"email_verified": True}},
     )
     monkeypatch.setattr(
         "app.routes.me.get_profile_flags", lambda uid, st: ("sin_plan", False)
     )
+    class AuthResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"email_confirmed_at": None}
+
+    monkeypatch.setattr("app.routes.me.httpx.get", lambda *a, **k: AuthResponse())
     response = client.post(
         "/me/trial", json={"rut_type": "empresa", "rut": "12.345.678-5"}
     )
     assert response.status_code == 403
     assert "correo" in response.json()["detail"].lower()
+
+
+def test_correo_confirmado_en_auth_es_la_fuente_autoritativa(monkeypatch):
+    from app.routes.me import _guard_trial_eligibility_sync
+
+    monkeypatch.setattr(
+        "app.routes.me.get_profile_flags", lambda uid, st: ("sin_plan", False)
+    )
+
+    class AuthResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"email_confirmed_at": "2026-07-16T00:00:00Z"}
+
+    monkeypatch.setattr("app.routes.me.httpx.get", lambda *a, **k: AuthResponse())
+    user = AuthenticatedUser(
+        id="user-test",
+        email="t@example.cl",
+        claims={"user_metadata": {"email_verified": False}},
+    )
+    _guard_trial_eligibility_sync(user, _settings_enforced())
 
 
 def test_rate_limit_tambien_por_rut(client, monkeypatch):
@@ -184,12 +215,23 @@ def test_rate_limit_tambien_por_rut(client, monkeypatch):
 
     _attempts.clear()
     for _ in range(_TRIAL_ATTEMPT_MAX):
-        _guard_activation_rate("rut:12345678-5")
+        _guard_activation_rate("trial:rut:12345678-5")
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as excinfo:
-        _guard_activation_rate("rut:12345678-5")
+        _guard_activation_rate("trial:rut:12345678-5")
     assert excinfo.value.status_code == 429
+    _attempts.clear()
+
+
+def test_rate_limits_de_trial_y_facturacion_no_se_mezclan():
+    from app.routes.me import _TRIAL_ATTEMPT_MAX, _attempts, _guard_activation_rate
+
+    _attempts.clear()
+    for _ in range(_TRIAL_ATTEMPT_MAX):
+        _guard_activation_rate("billing:user:user-test")
+    _guard_activation_rate("trial:user:user-test")
+    assert len(_attempts["trial:user:user-test"]) == 1
     _attempts.clear()
 
 
@@ -217,6 +259,16 @@ def test_solicitud_con_identidad_ajena_es_422(client, monkeypatch):
         },
     )
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("tipo", ["upgrade_analista", "upgrade_gold"])
+def test_upgrade_sin_identidad_es_422(client, tipo):
+    response = client.post(
+        "/addons/request",
+        json={"tipo": tipo, "mensaje": "Quiero contratar"},
+    )
+    assert response.status_code == 422
+    assert "identidad de facturación" in response.json()["detail"]
 
 
 def test_migracion_0016_contiene_elegibilidad_y_limpieza_de_identidad():
@@ -284,6 +336,68 @@ def test_concentracion_de_clientes_usa_la_bruta():
     # Con el % neto, ACME "concentraba" un absurdo 100% sobre neto 10.000;
     # la concentración ahora es distribución bruta.
     assert m["clientes"]["concentracion_top_pct"] == 100.0
+
+
+def test_cliente_principal_se_elige_por_bruta_sin_reordenar_tablas_netas():
+    m = _metrics_de(
+        "Fecha;Cliente;Producto;Ventas\n"
+        "05/01/2026;A;A;100000\n"
+        "06/01/2026;A;A;-90000\n"
+        "07/01/2026;B;B;50000\n"
+    )
+    # Productos sigue siendo una tabla por neto: B=50.000 supera A=10.000.
+    assert m["top_productos"][0]["nombre"] == "B"
+    # Clientes es un ranking de concentración: A concentra 2/3 de la bruta.
+    assert m["clientes"]["top"][0]["nombre"] == "A"
+    assert m["clientes"]["concentracion_top_pct"] == pytest.approx(66.7, abs=0.1)
+
+
+def test_admin_support_expone_solo_identidad_enmascarada(monkeypatch):
+    from app.routes import admin as admin_module
+
+    monkeypatch.setattr(admin_module, "_require_admin_sync", lambda *a, **k: None)
+
+    def fake_fetch(settings, url, params):
+        if url.endswith("/support_requests"):
+            return []
+        if url.endswith("/addon_requests"):
+            return [
+                {
+                    "id": "request-1",
+                    "user_id": "user-test",
+                    "tipo": "upgrade_analista",
+                    "mensaje": "Quiero contratar",
+                    "status": "pendiente",
+                    "created_at": "2026-07-16T00:00:00Z",
+                    "billing_identity_id": "identity-1",
+                }
+            ]
+        if url.endswith("/billing_identities"):
+            assert "rut_normalized" not in params["select"]
+            return [
+                {
+                    "id": "identity-1",
+                    "rut_type": "empresa",
+                    "rut_masked": "12.***.***-5",
+                }
+            ]
+        raise AssertionError(f"Consulta inesperada: {url}")
+
+    monkeypatch.setattr(admin_module, "_fetch_json", fake_fetch)
+    result = admin_module._support_inbox_sync("admin", _settings_enforced())
+    item = result["solicitudes"][0]
+    assert item["billing_identity"]["rut_masked"] == "12.***.***-5"
+    assert "rut_normalized" not in item["billing_identity"]
+
+
+def test_migracion_0017_permite_desvincular_identidad():
+    from pathlib import Path
+
+    sql = (
+        Path(__file__).resolve().parents[2]
+        / "supabase" / "migrations" / "0017_billing_identity_retention.sql"
+    ).read_text(encoding="utf-8").lower()
+    assert sql.count("on delete set null") == 2
 
 
 def test_copy_de_parcialidad_no_afirma_causa():

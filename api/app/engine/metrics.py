@@ -175,6 +175,23 @@ def _group_sum(
     return rows
 
 
+def _sort_by_gross_share(rows: list[dict]) -> list[dict]:
+    """Ordena solo los rankings de concentración por participación bruta.
+
+    Las tablas generales conservan su orden por ingresos netos; mezclar ambos
+    criterios haría que barras y montos dejaran de ser monotónicos.
+    """
+    return sorted(
+        rows,
+        key=lambda row: (
+            row.get("participacion_bruta_pct")
+            if row.get("participacion_bruta_pct") is not None
+            else float("-inf")
+        ),
+        reverse=True,
+    )
+
+
 def _projection(monthly: pd.DataFrame, first_month: pd.Period | None = None) -> dict | None:
     """Proyección simple a 3 meses por crecimiento promedio mensual.
 
@@ -611,7 +628,9 @@ def compute_metrics(
             and strip_accents_lower(str(v).strip()) not in no_identificado
         )
         if valid_mask.any():
-            top = _group_sum(clientes_raw[valid_mask], amounts[valid_mask], None)
+            top = _sort_by_gross_share(
+                _group_sum(clientes_raw[valid_mask], amounts[valid_mask], None)
+            )
             # Fase 12b §21: el % del cliente principal es sobre las ventas CON
             # cliente identificado — si la mitad de las ventas no tiene
             # cliente, ese % NO es sobre el total y la UI debe decirlo.
@@ -626,7 +645,11 @@ def compute_metrics(
                 # Fase 14b: la concentración es una afirmación de DISTRIBUCIÓN
                 # → usa la participación bruta (suma 100%), no el % neto.
                 "concentracion_top_pct": (
-                    (top[0].get("participacion_bruta_pct") or top[0]["porcentaje"])
+                    (
+                        top[0].get("participacion_bruta_pct")
+                        if top[0].get("participacion_bruta_pct") is not None
+                        else top[0]["porcentaje"]
+                    )
                     if top
                     else None
                 ),

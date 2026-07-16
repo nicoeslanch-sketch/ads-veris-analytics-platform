@@ -32,6 +32,8 @@ import { useDataset } from '../data/DatasetContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
 import { formatCLP, formatNumber } from '../lib/format'
 import { formatMonthShort } from '../lib/charts'
+import { principalPorParticipacionBruta } from '../lib/metrics'
+import { soloMesesCompletos } from '../lib/partial'
 import type { MetricsResult } from '../lib/types'
 
 // ── Reglas configurables ──────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
   // Fase 14: un mes PARCIAL jamás se compara contra uno completo — el mes en
   // curso a medio llenar disparaba "caídas" falsas. La regla usa los dos
   // últimos meses COMPLETOS (el backend marca la parcialidad con los datos).
-  const completos = evo.filter((e) => !e.parcial)
+  const completos = soloMesesCompletos(evo)
   const excluidoParcial = completos.length < evo.length
   if (rules.caida_ingresos.activa && completos.length >= 2) {
     const last = completos[completos.length - 1]
@@ -115,7 +117,7 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
           icon: ArrowDownRight,
           titulo: `Tus ingresos cayeron ${formatPct(Math.abs(pct))} en ${formatMonthShort(last.mes)}`,
           detalle: `Pasaron de ${formatCLP(prev.ingresos)} a ${formatCLP(last.ingresos)} (regla: avisar sobre ${formatPct(rules.caida_ingresos.umbral_pct)}).${
-            excluidoParcial ? ' El mes en curso, con datos parciales, no se considera.' : ''
+            excluidoParcial ? ' El mes con cobertura parcial no se considera como mes completo.' : ''
           }`,
           recomendacion:
             'Revisa qué productos o canales explican la caída en Explorar datos y reactiva promociones donde más pesa.',
@@ -145,7 +147,7 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
   // Concentración del producto top — sobre la participación BRUTA (una
   // distribución que suma 100%): el % neto con devoluciones no sirve para
   // afirmar dependencia (Fase 14b).
-  const topProducto = m.top_productos?.[0]
+  const topProducto = principalPorParticipacionBruta(m.top_productos ?? [])
   const topProductoPct = topProducto?.participacion_bruta_pct ?? topProducto?.porcentaje
   if (
     rules.concentracion_producto.activa &&
@@ -166,7 +168,7 @@ function computeAlerts(m: MetricsResult, rules: AlertRules): Alert[] {
   }
 
   // Concentración de canal / sucursal
-  const canal = m.ventas_por_canal?.[0]
+  const canal = principalPorParticipacionBruta(m.ventas_por_canal ?? [])
   const canalPct = canal?.participacion_bruta_pct ?? canal?.porcentaje
   if (
     rules.concentracion_canal.activa &&

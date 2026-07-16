@@ -2,6 +2,46 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.17.2] - 2026-07-16 - Fase 14c: cierre comercial y consistencia analítica
+
+Revisión crítica del informe posterior a 14b. Se confirmaron tres defectos
+funcionales y cuatro endurecimientos relevantes; se evitó reordenar globalmente
+las tablas por ventas brutas porque habría desalineado barras y montos netos.
+
+### Seguridad y operación comercial
+- **Upgrade con identidad obligatoria en backend**: `POST /addons/request`
+  devuelve 422 para `upgrade_analista` y `upgrade_gold` sin
+  `billing_identity_id`; la propiedad de la identidad sigue verificándose.
+- **Correo confirmado autoritativo**: el trial consulta Supabase Auth Admin
+  (`email_confirmed_at`/`confirmed_at`) y deja de confiar en `user_metadata`,
+  que el usuario puede editar. Un fallo de Auth cierra con 503.
+- **Rate limits independientes**: trial por usuario, trial por RUT y registro
+  de identidad de facturación ya no consumen el mismo bucket.
+- **AccessProvider fail-closed durante refrescos**: `can()` solo habilita una
+  capacidad con estado `resolved`; una capacidad stale puede seguir dibujada
+  en contexto, pero no habilita acciones mientras se revalida.
+
+### Exactitud y administración
+- **Concentración bruta correcta sin romper rankings netos**: productos,
+  canales y clientes usados en afirmaciones de concentración seleccionan el
+  máximo `participacion_bruta_pct`. Las tablas generales conservan el orden
+  por ingreso neto, evitando barras no monotónicas después de devoluciones.
+- **Mes parcial sin fallback**: Resumen usa siempre `soloMesesCompletos`;
+  con un único mes completo muestra el mejor mes, pero no inventa crecimiento
+  usando el parcial. Alertas consume el mismo helper y corrige su copy.
+- **Bandeja administrativa útil y privada**: los upgrades muestran tipo, ID y
+  RUT enmascarado de la identidad; `rut_normalized` nunca sale de la API.
+- **Migración `0017_billing_identity_retention.sql`**: las referencias de
+  solicitudes y trials usan `ON DELETE SET NULL`, permitiendo atender una
+  eliminación de la identidad reutilizable sin borrar el historial ni
+  habilitar otra prueba gratuita.
+
+### Verificación
+- **276 pytest + 15 Vitest + build de producción**, todos verdes.
+- Pruebas nuevas: upgrade sin identidad, señal autoritativa de Auth, buckets
+  separados, concentración bruta con devoluciones, identidad enmascarada en
+  administración y contrato de la migración `0017`.
+
 ## [0.17.1] - 2026-07-16 - Fase 14b: estabilización — triage verificado del informe de Fase 14
 
 Los CUATRO P0 del informe externo se verificaron como reales en el código y

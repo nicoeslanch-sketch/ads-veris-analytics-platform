@@ -304,10 +304,30 @@ def _support_inbox_sync(caller_id: str, settings: Settings, caller_email: str | 
             settings,
             _rest(settings, "addon_requests"),
             {
-                "select": "id,user_id,tipo,mensaje,status,created_at",
+                "select": "id,user_id,tipo,mensaje,status,created_at,billing_identity_id",
                 "order": "created_at.desc",
                 "limit": "200",
             },
+        )
+        identity_ids = sorted(
+            {
+                str(row["billing_identity_id"])
+                for row in addons
+                if row.get("billing_identity_id")
+            }
+        )
+        identities = (
+            _fetch_json(
+                settings,
+                _rest(settings, "billing_identities"),
+                {
+                    "select": "id,rut_type,rut_masked",
+                    "id": f"in.({','.join(identity_ids)})",
+                    "limit": "200",
+                },
+            )
+            if identity_ids
+            else []
         )
     except httpx.HTTPError as exc:
         raise HTTPException(
@@ -315,8 +335,14 @@ def _support_inbox_sync(caller_id: str, settings: Settings, caller_email: str | 
             detail=f"No se pudo leer la bandeja de soporte: {exc.__class__.__name__}",
         ) from exc
 
+    identities_by_id = {str(row["id"]): row for row in identities}
     solicitudes = [{"origen": "ayuda", **row} for row in ayuda] + [
-        {"origen": "addon", **row} for row in addons
+        {
+            "origen": "addon",
+            **row,
+            "billing_identity": identities_by_id.get(str(row.get("billing_identity_id"))),
+        }
+        for row in addons
     ]
     solicitudes.sort(key=lambda s: s.get("created_at") or "", reverse=True)
     pendientes = sum(1 for s in solicitudes if s.get("status") == "pendiente")

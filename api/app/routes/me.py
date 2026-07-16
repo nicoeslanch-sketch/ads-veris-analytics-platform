@@ -40,8 +40,9 @@ from ..rut import is_valid_rut, mask_rut, normalize_rut
 router = APIRouter(prefix="/me", dependencies=[Depends(get_current_user)])
 
 # ── Rate limiting de activación (en memoria, por usuario) ────────────────────
-# Ventana deslizante simple: N intentos por ventana. Vive en memoria (una
-# instancia); si la API escala horizontal, moverlo a la base. Se aplica ANTES
+# Ventana deslizante simple: N intentos por ventana, con buckets separados
+# para trial por usuario, trial por RUT y facturación por usuario. Vive en
+# memoria (una instancia); si la API escala horizontal, moverlo a la base. Se aplica ANTES
 # de tocar la RPC — y como la RPC solo es ejecutable por la service_role, el
 # límite no se puede esquivar hablándole directo a PostgREST.
 _TRIAL_ATTEMPT_WINDOW_S = 600
@@ -50,19 +51,23 @@ _attempts: dict[str, list[float]] = {}
 _attempts_lock = threading.Lock()
 
 
-def _guard_activation_rate(user_id: str) -> None:
+def _guard_activation_rate(bucket_key: str) -> None:
     now = time.monotonic()
     with _attempts_lock:
-        recent = [t for t in _attempts.get(user_id, []) if now - t < _TRIAL_ATTEMPT_WINDOW_S]
+        recent = [
+            t
+            for t in _attempts.get(bucket_key, [])
+            if now - t < _TRIAL_ATTEMPT_WINDOW_S
+        ]
         if len(recent) >= _TRIAL_ATTEMPT_MAX:
-            _attempts[user_id] = recent
+            _attempts[bucket_key] = recent
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Demasiados intentos de activación. Espera unos minutos "
+                detail="Demasiados intentos. Espera unos minutos "
                 "y vuelve a intentarlo.",
             )
         recent.append(now)
-        _attempts[user_id] = recent
+        _attempts[bucket_key] = recent
 
 
 # ── Contexto de acceso ────────────────────────────────────────────────────────
@@ -168,11 +173,37 @@ def _guard_trial_eligibility_sync(user: AuthenticatedUser, settings: Settings) -
             detail="La prueba gratuita es para cuentas nuevas sin plan. "
             "Tu cuenta ya tiene acceso con su plan actual.",
         )
-    # Correo confirmado (antiabuso): solo bloquea si el claim dice
-    # explícitamente que NO está verificado — proyectos sin confirmación de
-    # correo habilitada no se rompen.
-    metadata = user.claims.get("user_metadata") or {}
-    if metadata.get("email_verified") is False:
+    # user_metadata es editable por el usuario y no sirve como defensa
+    # antiabuso. Supabase Auth Admin entrega el estado autoritativo.
+    try:
+        auth_response = httpx.get(
+            f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users/{user.id}",
+            headers=_rest_headers(settings),
+            timeout=10,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo verificar tu correo. Intenta nuevamente en unos minutos.",
+        ) from exc
+    if auth_response.status_code >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo verificar tu correo. Intenta nuevamente en unos minutos.",
+        )
+    try:
+        auth_user = auth_response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo verificar tu correo. Intenta nuevamente en unos minutos.",
+        ) from exc
+    if not isinstance(auth_user, dict):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo verificar tu correo. Intenta nuevamente en unos minutos.",
+        )
+    if not (auth_user.get("email_confirmed_at") or auth_user.get("confirmed_at")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Confirma tu correo electrónico antes de activar la prueba "
@@ -187,7 +218,7 @@ async def activate_trial(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Activa la prueba gratuita de 15 días (una por usuario Y por RUT)."""
-    _guard_activation_rate(user.id)
+    _guard_activation_rate(f"trial:user:{user.id}")
     normalized = normalize_rut(body.rut)
     if not normalized or not is_valid_rut(normalized):
         raise HTTPException(
@@ -197,7 +228,7 @@ async def activate_trial(
         )
     # El mismo RUT no debe poder sondearse sin límite alternando usuarios:
     # también hay ventana por RUT normalizado (jamás se loguea el RUT).
-    _guard_activation_rate(f"rut:{normalized}")
+    _guard_activation_rate(f"trial:rut:{normalized}")
     if settings.supabase_url and settings.supabase_service_role_key:
         await run_in_threadpool(_guard_trial_eligibility_sync, user, settings)
     trial = await run_in_threadpool(
@@ -283,7 +314,7 @@ async def save_billing_identity(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Registra el RUT de facturación (empresa o responsable) para contratar."""
-    _guard_activation_rate(user.id)
+    _guard_activation_rate(f"billing:user:{user.id}")
     normalized = normalize_rut(body.rut)
     if not normalized or not is_valid_rut(normalized):
         raise HTTPException(

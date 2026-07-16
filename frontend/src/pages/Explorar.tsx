@@ -48,6 +48,7 @@ import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
+import { principalPorParticipacionBruta } from '../lib/metrics'
 import { soloMesesCompletos } from '../lib/partial'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
@@ -188,7 +189,7 @@ function computeFindings(m: MetricsResult): Finding[] {
   // Concentración del producto top — SIEMPRE sobre la participación BRUTA
   // (una distribución que suma 100%); el % neto muestra devoluciones, pero
   // no sirve para afirmar dependencia.
-  const topProducto = m.top_productos?.[0]
+  const topProducto = principalPorParticipacionBruta(m.top_productos ?? [])
   const topProductoPct = topProducto?.participacion_bruta_pct ?? topProducto?.porcentaje
   if (topProducto && topProductoPct != null) {
     const alta = topProductoPct > 40
@@ -225,9 +226,9 @@ function computeFindings(m: MetricsResult): Finding[] {
   // Canal dominante (participación bruta: distribución real)
   const canales = m.ventas_por_canal ?? []
   if (canales.length >= 2) {
-    const dominante = canales[0]
-    const dominantePct = dominante.participacion_bruta_pct ?? dominante.porcentaje
-    if (dominantePct > 50) {
+    const dominante = principalPorParticipacionBruta(canales)
+    const dominantePct = dominante?.participacion_bruta_pct ?? dominante?.porcentaje
+    if (dominante && dominantePct != null && dominantePct > 50) {
       findings.push({
         tone: 'gold',
         icon: Store,
@@ -243,7 +244,7 @@ function computeFindings(m: MetricsResult): Finding[] {
     m.clientes.concentracion_top_pct > 40 &&
     m.clientes.unicos >= 2
   ) {
-    const topCliente = m.clientes.top[0]
+    const topCliente = principalPorParticipacionBruta(m.clientes.top)
     findings.push({
       tone: 'gold',
       icon: Users,

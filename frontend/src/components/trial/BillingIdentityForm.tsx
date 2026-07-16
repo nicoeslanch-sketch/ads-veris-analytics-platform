@@ -142,7 +142,8 @@ export function BillingIdentityForm({
           {PURPOSE_TEXT[context]} Se almacena protegido, se muestra enmascarado
           (12.***.***-9) y no se comparte públicamente. No validamos representación
           legal con este dato. Puedes pedir su corrección o eliminación escribiendo a
-          servicios@adsveris.com.
+          servicios@adsveris.com. Si se usó para una prueba, conservaremos únicamente
+          lo necesario para impedir activaciones repetidas mientras exista esa finalidad.
         </p>
       </div>
     </form>

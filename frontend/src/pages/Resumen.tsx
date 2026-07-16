@@ -41,6 +41,7 @@ import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
+import { soloMesesCompletos } from '../lib/partial'
 import type { MetricsResult } from '../lib/types'
 
 /** Indicadores operativos del negocio, calculados de los datos reales del
@@ -74,20 +75,19 @@ function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; va
   if (kpis.unidades_totales != null) {
     items.push({ label: 'Unidades vendidas', value: formatNumber(kpis.unidades_totales) })
   }
-  if (evo.length >= 2) {
+  const completos = soloMesesCompletos(evo)
+  if (completos.length >= 1) {
     // Fase 14: los meses PARCIALES no compiten como "mejor mes" ni definen el
     // crecimiento del periodo — un mes a medio llenar simulaba una caída.
-    const completos = evo.filter((e) => !e.parcial)
-    const base = completos.length >= 2 ? completos : evo
-    const best = base.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
+    const best = completos.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
     items.push({
       label: 'Mejor mes',
       value: formatMonthShort(best.mes),
-      hint: `${formatCLP(best.ingresos)}${best.parcial ? ' (mes incompleto)' : ''}`,
+      hint: formatCLP(best.ingresos),
     })
-    const first = base[0]
-    const last = base[base.length - 1]
-    if (first.ingresos > 0 && first !== last) {
+    const first = completos[0]
+    const last = completos[completos.length - 1]
+    if (completos.length >= 2 && first.ingresos > 0) {
       const totalGrowth = ((last.ingresos - first.ingresos) / first.ingresos) * 100
       items.push({
         label: 'Crecimiento del periodo',
