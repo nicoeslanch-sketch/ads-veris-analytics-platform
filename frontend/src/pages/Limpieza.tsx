@@ -131,7 +131,7 @@ function QualityRing({ quality }: { quality: number }) {
         />
       </svg>
       <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-navy">
-        {Math.round(quality)}%
+        {formatNumber(quality)}%
       </span>
     </div>
   )
@@ -752,8 +752,8 @@ export default function Limpieza() {
                   </h2>
                   <p className="mt-1 text-sm text-navy/70">
                     Tu dataset quedó limpio y cargado para el resto de los módulos. La calidad
-                    subió de <strong>{result.resumen.calidad_antes}%</strong> a{' '}
-                    <strong>{result.resumen.calidad_despues}%</strong>. Filas:{' '}
+                    subió de <strong>{formatNumber(result.resumen.calidad_antes)}%</strong> a{' '}
+                    <strong>{formatNumber(result.resumen.calidad_despues)}%</strong>. Filas:{' '}
                     {formatNumber(result.resumen.filas_antes)} →{' '}
                     {formatNumber(result.resumen.filas_despues)} · Columnas:{' '}
                     {formatNumber(result.resumen.columnas_antes)} →{' '}

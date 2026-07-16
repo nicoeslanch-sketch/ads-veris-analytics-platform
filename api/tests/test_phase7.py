@@ -131,12 +131,24 @@ def test_cuota_limpieza_con_base_disponible_no_consume_addon(monkeypatch):
     from app import quota
 
     settings = _quota_settings()
-    monkeypatch.setattr(quota, "get_profile_flags", lambda user_id, s: ("basico", False))
+    monkeypatch.setattr(quota, "get_profile_flags", lambda user_id, s: ("analista", False))
     monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 1)
     monkeypatch.setattr(quota, "addons_balance", lambda user_id, s: 0)
     info = quota.check_cleaning_quota("user-x", settings)
     assert info["consume_addon"] is False
     assert info["usadas_mes"] == 1 and info["base"] == 10
+
+
+def test_cuota_limpieza_basico_y_sin_plan_no_incluyen_la_funcion(monkeypatch):
+    """Regresión: Básico y sin_plan (prueba gratuita) no tienen AI_CLEANING en
+    la matriz de capacidades (capabilities.py) — la base debe ser 0, no la de
+    Analista. Antes cualquier plan que no fuera literalmente "gold" caía en el
+    límite de Analista (10), mostrando "0/10" durante la prueba gratuita."""
+    from app import quota
+
+    settings = _quota_settings()
+    for plan in ("basico", "sin_plan"):
+        assert quota.cleaning_limit_for(plan, settings) == 0, plan
 
 
 def test_cuota_limpieza_gold_tiene_base_mayor(monkeypatch):

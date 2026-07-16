@@ -439,6 +439,9 @@ export default function Planes() {
                       )}
                       Contratar este plan
                     </button>
+                    {upgradeState === 'error' && requestError && (
+                      <p className="mt-1.5 text-center text-xs text-coral">{requestError}</p>
+                    )}
                     <p className="mt-1.5 text-center text-[11px] text-navy/40">
                       Pago en línea próximamente; hoy coordinamos contigo la activación.
                       {access?.billing_identity
@@ -472,18 +475,14 @@ export default function Planes() {
               ) : (
                 <>
                   La limpieza dirigida con tus propias variables incluye{' '}
-                  <strong>{limpieza ? `${limpieza.base} intentos al mes` : '10 intentos al mes (25 en Gold)'}</strong>{' '}
-                  en los planes Analista y Gold. Si necesitas más, solicita tokens
-                  adicionales: se pagan aparte, nosotros los agregamos a tu cuenta y no
-                  expiran.
+                  <strong>10 intentos al mes (25 en Gold)</strong> en los planes Analista y
+                  Gold. Si necesitas más, solicita tokens adicionales: se pagan aparte,
+                  nosotros los agregamos a tu cuenta y no expiran.
                 </>
               )}
             </p>
             {usage && !usage.disponible && (
-              <p className="mt-2 text-xs text-navy/45">
-                El contador se activa en producción (requiere Supabase y las migraciones
-                0008 y 0009).
-              </p>
+              <p className="mt-2 text-xs text-navy/45">Disponible próximamente.</p>
             )}
           </div>
 
@@ -493,6 +492,10 @@ export default function Planes() {
                 <p className="flex items-center justify-center gap-2 text-sm font-semibold text-navy">
                   <ShieldCheck className="h-4 w-4 text-gold" /> Sin límite mensual
                 </p>
+              </div>
+            ) : limpieza && limpieza.base === 0 ? (
+              <div className="rounded-xl bg-navy/5 p-4 text-sm text-navy/60">
+                No incluida en tu plan actual. Está disponible desde el Plan Analista.
               </div>
             ) : limpieza && (
               <div className="rounded-xl bg-navy/5 p-4">

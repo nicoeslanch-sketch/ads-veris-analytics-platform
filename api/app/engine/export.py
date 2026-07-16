@@ -1,6 +1,13 @@
 """Safe dataframe exports for downloadable files."""
 
+import re
+
 import pandas as pd
+
+# Bug #5: un negativo contable estandarizado ("(12.990)" → "-12990") es un
+# número legítimo, no un intento de inyección de fórmulas — no debe llevar
+# apóstrofe de escape (eso lo convierte en texto y deja de sumar en Excel).
+_NEGATIVE_NUMBER_RE = re.compile(r"^-[\d.,]+$")
 
 
 def neutralize_excel_formula(value):
@@ -17,7 +24,17 @@ def neutralize_excel_formula(value):
     except TypeError:
         pass
     text = str(value)
-    if text.lstrip().startswith(("=", "+", "-", "@")):
+    stripped = text.lstrip()
+    if stripped.startswith("-") and _NEGATIVE_NUMBER_RE.match(stripped):
+        # Además de no escaparlo, hay que devolverlo como número real: pandas
+        # escribe un `str` de Python como celda de texto en el .xlsx sin
+        # importar el apóstrofe (el tipo de celda es explícito, no se
+        # autodetecta como en un CSV) — así seguiría sin sumar en pivotes.
+        try:
+            return float(stripped)
+        except ValueError:
+            pass
+    if stripped.startswith(("=", "+", "-", "@")):
         return "'" + text
     return value
 

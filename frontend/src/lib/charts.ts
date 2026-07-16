@@ -38,3 +38,10 @@ export function formatCLPCompact(value: number): string {
   if (abs >= 1_000) return `$${Math.round(value / 1_000)}K`
   return `$${Math.round(value)}`
 }
+
+/** Recorta una etiqueta larga de eje con "…" — sin esto, el <text> SVG de
+ * Recharts puede desbordar el ancho asignado y el contenedor lo recorta
+ * desde el borde, comiéndose la PRIMERA letra en vez de las últimas. */
+export function truncateLabel(text: string, maxLength = 18): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text
+}

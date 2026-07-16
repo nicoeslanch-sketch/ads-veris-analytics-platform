@@ -26,7 +26,13 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import HTTPException, status
 
-from .capabilities import display_plan, get_profile_flags, normalize_plan
+from .capabilities import (
+    PLAN_CAPABILITIES,
+    Capability,
+    display_plan,
+    get_profile_flags,
+    normalize_plan,
+)
 from .config import Settings
 
 _TIMEOUT = 10
@@ -213,8 +219,16 @@ def addons_balance(user_id: str, settings: Settings) -> int:
 
 
 def cleaning_limit_for(plan: str, settings: Settings) -> int:
-    """Intentos base de limpieza dirigida al mes según el plan (Fase 8)."""
-    if normalize_plan(plan) == "gold":
+    """Intentos base de limpieza dirigida al mes según el plan (Fase 8).
+
+    0 si el plan no incluye la capacidad AI_CLEANING (Básico, sin_plan/prueba
+    gratuita) — antes cualquier plan que no fuera literalmente "gold" caía en
+    el límite de Analista (10), mostrando "0/10" durante la prueba gratuita
+    aunque la limpieza dirigida esté tachada/no incluida en ese plan."""
+    normalized = normalize_plan(plan)
+    if Capability.AI_CLEANING not in PLAN_CAPABILITIES.get(normalized, set()):
+        return 0
+    if normalized == "gold":
         return settings.ai_cleaning_monthly_limit_gold
     return settings.ai_cleaning_monthly_limit
 

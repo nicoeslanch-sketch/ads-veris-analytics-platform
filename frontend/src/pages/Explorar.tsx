@@ -45,14 +45,14 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
-import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../data/DatasetContext'
+import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { principalPorParticipacionBruta } from '../lib/metrics'
 import { soloMesesCompletos } from '../lib/partial'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
-import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
+import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, truncateLabel } from '../lib/charts'
 import { formatCLP, setActiveCurrency } from '../lib/format'
 import type { DatasetDimensions, GroupRow, MetricsResult } from '../lib/types'
 
@@ -126,6 +126,10 @@ interface Finding {
   icon: LucideIcon
   title: string
   detail: string
+  /** Tipo de análisis al que pertenece (Bug #10): permite priorizar los
+   * hallazgos relevantes al preset activo en vez de mostrar siempre el mismo
+   * set fijo sin importar si el usuario eligió Productos/Categorías/Canales. */
+  category: GroupBy | 'general'
 }
 
 const TONE_STYLE: Record<FindingTone, string> = {
@@ -172,6 +176,7 @@ function computeFindings(m: MetricsResult): Finding[] {
         detail: `Pasaron de ${formatCLP(prev.ingresos)} en ${formatMonthShort(prev.mes)} a ${formatCLP(last.ingresos)}.${
           huboParcial ? ' El mes con cobertura parcial no se compara como mes completo.' : ''
         }`,
+        category: 'mes',
       })
     }
     const best = evo.reduce((a, b) => (b.ingresos > a.ingresos ? b : a))
@@ -182,6 +187,7 @@ function computeFindings(m: MetricsResult): Finding[] {
         icon: TrendingUp,
         title: `Tu mejor mes fue ${formatMonthShort(best.mes)}`,
         detail: `Ingresos de ${formatCLP(best.ingresos)}. El más bajo fue ${formatMonthShort(worst.mes)} con ${formatCLP(worst.ingresos)}.`,
+        category: 'mes',
       })
     }
   }
@@ -200,6 +206,7 @@ function computeFindings(m: MetricsResult): Finding[] {
       detail: alta
         ? 'Alta dependencia de un solo producto: si sus ventas caen, tu negocio lo siente. Conviene diversificar.'
         : 'Concentración sana. Es tu producto más fuerte: hay espacio para potenciarlo aún más.',
+      category: 'producto',
     })
   }
 
@@ -220,6 +227,7 @@ function computeFindings(m: MetricsResult): Finding[] {
       icon: Layers,
       title: `"${mejor.nombre}" es tu categoría más rentable (${formatPct(mejor.margen_pct ?? 0)} de margen)`,
       detail: `La menos rentable es "${peor.nombre}" con ${formatPct(peor.margen_pct ?? 0)}. Revisa precios o costos de esa línea.`,
+      category: 'categoria',
     })
   }
 
@@ -234,6 +242,7 @@ function computeFindings(m: MetricsResult): Finding[] {
         icon: Store,
         title: `"${dominante.nombre}" genera el ${formatPct(dominantePct)} de tus ventas brutas`,
         detail: 'Más de la mitad de tu venta depende de un solo canal. Fortalecer los demás reduce riesgo.',
+        category: 'canal',
       })
     }
   }
@@ -250,6 +259,7 @@ function computeFindings(m: MetricsResult): Finding[] {
       icon: Users,
       title: `Un solo cliente concentra el ${formatPct(m.clientes.concentracion_top_pct)} de tus ventas identificadas`,
       detail: `"${topCliente?.nombre ?? 'Tu cliente principal'}" pesa demasiado en tus ingresos: si se va, el negocio lo siente. Diversificar tu cartera reduce ese riesgo.`,
+      category: 'general',
     })
   }
 
@@ -265,6 +275,7 @@ function computeFindings(m: MetricsResult): Finding[] {
         icon: CalendarDays,
         title: `El ${mejorDia.dia} es tu mejor día (${formatPct(pct)} de la venta)`,
         detail: `Concentra tu dotación, horarios y promociones donde está la venta: ese día generaste ${formatCLP(mejorDia.ingresos)} en el periodo.`,
+        category: 'general',
       })
     }
   }
@@ -277,15 +288,22 @@ function computeFindings(m: MetricsResult): Finding[] {
       icon: crec >= 0 ? ArrowUpRight : ArrowDownRight,
       title: `Proyección: ${crec >= 0 ? 'crecimiento' : 'caída'} de ${formatPct(Math.abs(crec))} mensual`,
       detail: `Si la tendencia se mantiene, el próximo mes cerrarías en torno a ${formatCLP(m.proyeccion.meses[0]?.ingresos ?? 0)}.`,
+      category: 'mes',
     })
   }
 
   // Advertencias del motor de datos
   for (const advertencia of m.advertencias.slice(0, 1)) {
-    findings.push({ tone: 'gold', icon: AlertTriangle, title: 'Nota del motor de datos', detail: advertencia })
+    findings.push({
+      tone: 'gold',
+      icon: AlertTriangle,
+      title: 'Nota del motor de datos',
+      detail: advertencia,
+      category: 'general',
+    })
   }
 
-  return findings.slice(0, 6)
+  return findings
 }
 
 // ── Tooltip compartido (mismo estilo del Resumen) ────────────────────────────
@@ -309,15 +327,41 @@ function ChartTooltip({ active, payload, label }: {
   )
 }
 
+/** Tick del eje de categorías del gráfico de barras horizontal (Productos
+ * estrella, etc.): Recharts recorta el <text> SVG que se pasa del ancho
+ * asignado al eje desde el borde IZQUIERDO, comiéndose la primera letra de
+ * nombres largos ("Aceite maravilla 900ml" → ".ceite maravilla 900ml").
+ * Truncamos el contenido con "…" antes de renderizar, y dejamos el nombre
+ * completo en un <title> nativo (tooltip al pasar el mouse). */
+function YAxisCategoryTick({
+  x,
+  y,
+  payload,
+}: {
+  x?: number
+  y?: number
+  payload?: { value: string }
+}) {
+  if (x == null || y == null || !payload) return null
+  return (
+    <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fill={AXIS_INK}>
+      {truncateLabel(payload.value)}
+      <title>{payload.value}</title>
+    </text>
+  )
+}
+
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function Explorar() {
-  const { file, cleaning, datasetId, storagePath, uploadedAt, metrics: contextMetrics, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, eliminarDuplicados } = useDataset()
+  // El "Rango" de Explorar comparte estado con el selector de periodo global
+  // del topbar (Bug #8): antes eran dos filtros independientes y cambiar uno
+  // no se reflejaba en el otro ni en el gráfico/hallazgos de esta página.
+  const { file, cleaning, datasetId, storagePath, uploadedAt, metrics: contextMetrics, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, eliminarDuplicados, period: rango, setPeriod: setRango } = useDataset()
   // Fase 14: la demo ficticia sirve métricas congeladas del bundle (sin backend)
   const demo = useDemo()
   const ready = Boolean(file && cleaning) || demo.active
 
-  const [rango, setRango] = useState<Period>(ALL_PERIOD)
   const [groupBy, setGroupBy] = useState<GroupBy>('mes')
   const [metric, setMetric] = useState<Metric>('ingresos')
 
@@ -460,7 +504,14 @@ export default function Explorar() {
   }
 
   const hasCosts = Boolean(metrics?.kpis.ganancia_neta)
-  const findings = metrics ? computeFindings(metrics) : []
+  // Bug #10: el panel mostraba siempre el mismo set fijo sin importar el
+  // preset activo. Los hallazgos del tipo de análisis elegido (mes/producto/
+  // categoría/canal) suben primero; el resto completa el panel (sort estable:
+  // conserva el orden relativo dentro de cada grupo).
+  const findings = (metrics ? computeFindings(metrics) : [])
+    .slice()
+    .sort((a, b) => Number(a.category !== groupBy) - Number(b.category !== groupBy))
+    .slice(0, 6)
 
   // ── Fase 8: los análisis se adaptan a las columnas REALES del archivo ──
   // Sin columna de canal/sucursal no se ofrece ese análisis (no botones
@@ -794,8 +845,8 @@ export default function Explorar() {
                       <YAxis
                         type="category"
                         dataKey="nombre"
-                        width={132}
-                        tick={{ fill: AXIS_INK, fontSize: 12 }}
+                        width={140}
+                        tick={<YAxisCategoryTick />}
                         axisLine={false}
                         tickLine={false}
                       />

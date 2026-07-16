@@ -42,6 +42,16 @@ export interface DatasetRow {
   created_at: string
 }
 
+export interface AnalysisRow {
+  id: string
+  name: string
+  dataset_id: string | null
+  config: { rango?: string; agrupar_por?: string; metrica?: string } | null
+  findings: string[]
+  recommendation: { recomendacion: string; plan: string[] } | null
+  created_at: string
+}
+
 export interface CleaningJobRow {
   rules: CleaningRules | null
   options?: CleaningOptions | null
@@ -89,6 +99,29 @@ export async function fetchDatasets(limit = 50): Promise<FetchOutcome<DatasetRow
     return 'error'
   }
   return data as DatasetRow[]
+}
+
+/** Análisis guardados desde Explorar datos (migración 0004, botón "Guardar
+ * análisis") — antes no había dónde consultarlos después de guardarlos. */
+export async function fetchAnalyses(limit = 30): Promise<FetchOutcome<AnalysisRow>> {
+  if (!supabase || !(await hasSession())) return null
+  const { data, error } = await supabase
+    .from('analyses')
+    .select('id, name, dataset_id, config, findings, recommendation, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) {
+    console.warn('[historial] No se pudo leer analyses:', error.message)
+    return 'error'
+  }
+  return data as AnalysisRow[]
+}
+
+export async function deleteAnalysis(id: string): Promise<boolean> {
+  if (!supabase) return false
+  const { error } = await supabase.from('analyses').delete().eq('id', id)
+  if (error) console.warn('[historial] No se pudo eliminar el análisis:', error.message)
+  return !error
 }
 
 /** Descarga el archivo original desde Storage (RLS: solo la carpeta propia). */

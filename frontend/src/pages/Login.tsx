@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
@@ -51,6 +51,15 @@ export default function Login() {
   })
   const [submitting, setSubmitting] = useState(false)
   const [recovering, setRecovering] = useState(false)
+
+  // Limpia el state de la ruta para que el aviso no reaparezca al navegar
+  // hacia atrás/adelante o refrescar (ej. tras restablecer la contraseña).
+  useEffect(() => {
+    if ((location.state as { notice?: string } | null)?.notice) {
+      navigate(location.pathname, { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Ticks verdes SOLO cuando la contraseña cumple la política Y ambas coinciden.
   const passwordOk = isValidPassword(password)

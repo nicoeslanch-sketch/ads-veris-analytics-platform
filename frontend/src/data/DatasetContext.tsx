@@ -47,6 +47,28 @@ export function monthPeriod(isoMonth: string): Period {
   }
 }
 
+/** Construye el periodo que cubre TODO el dataset: desde el primer día del
+ * primer mes con datos hasta el último día del último mes (Bug #2: antes el
+ * default caía en un solo mes y dejaba fuera datos reales del archivo). */
+export function fullRangePeriod(months: string[]): Period {
+  if (months.length === 0) return ALL_PERIOD
+  const first = months[0]
+  const last = months[months.length - 1]
+  const [lastYear, lastMonth] = last.split('-').map(Number)
+  const lastDay = new Date(lastYear, lastMonth, 0).getDate()
+  const nameOf = (isoMonth: string) => {
+    const [y, m] = isoMonth.split('-').map(Number)
+    return new Date(y, m - 1, 1)
+      .toLocaleDateString('es-CL', { month: 'short', year: 'numeric' })
+      .replace(' de ', ' ')
+  }
+  return {
+    from: `${first}-01`,
+    to: `${last}-${String(lastDay).padStart(2, '0')}`,
+    label: `01 ${nameOf(first)} - ${lastDay} ${nameOf(last)}`,
+  }
+}
+
 /**
  * Estado del dataset de la sesión, compartido entre Estandarización, Limpieza
  * y el resto de módulos. El archivo vive en memoria (los endpoints son

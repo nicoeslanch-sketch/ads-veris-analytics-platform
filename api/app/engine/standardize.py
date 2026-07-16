@@ -208,7 +208,6 @@ def _value_dayfirst_evidence(text: str) -> bool | None:
         return False
     return None
 
-
 def column_date_profile(series: pd.Series) -> dict:
     """Perfil de formato de fecha de la columna (Fase 11 §7).
 
@@ -571,7 +570,12 @@ def _fuzzy_merge_keys(frequencies: dict[str, dict[str, int]]) -> dict[str, str]:
 
     Guardas para no fusionar valores legítimamente distintos:
     - Solo columnas con ≤ 400 claves únicas y claves de ≥ 4 caracteres con letras.
-    - La variante debe ser rara (≤ 1/3 de la canónica) y la canónica frecuente (≥ 3).
+    - La variante debe ser rara RELATIVA a la canónica (≤ 1/2 de su total) y la
+      canónica frecuente (≥ 3) — una variante también "frecuente" en términos
+      absolutos (ej. "pagada" con 12 apariciones) igual puede ser un typo de
+      una canónica mucho más frecuente (ej. "pagado" con 38) (Bug #4: antes
+      cualquier clave con total ≥ 3 quedaba excluida de por vida del lado
+      "raro", sin llegar siquiera a evaluar la cercanía con la canónica).
     - Distancia ≤ 1 para claves cortas (≤ 6), ≤ 2 para más largas.
     - Misma letra inicial (evita fusionar "gasto"/"pasto")."""
     if not (2 <= len(frequencies) <= _FUZZY_MAX_UNIQUE_KEYS):
@@ -580,13 +584,13 @@ def _fuzzy_merge_keys(frequencies: dict[str, dict[str, int]]) -> dict[str, str]:
     frequent = [k for k, t in totals.items() if t >= 3]
     merges: dict[str, str] = {}
     for key, total in totals.items():
-        if key in frequent or len(key) < _FUZZY_MIN_KEY_LEN or not any(c.isalpha() for c in key):
+        if len(key) < _FUZZY_MIN_KEY_LEN or not any(c.isalpha() for c in key):
             continue
         max_distance = 1 if len(key) <= 6 else 2
         for canon in frequent:
-            if canon[0] != key[0] or len(canon) < _FUZZY_MIN_KEY_LEN:
+            if canon == key or canon[0] != key[0] or len(canon) < _FUZZY_MIN_KEY_LEN:
                 continue
-            if total > max(2, totals[canon] // 3):
+            if total > max(2, totals[canon] // 2):
                 continue
             if _levenshtein_leq(key, canon, max_distance):
                 merges[key] = canon

@@ -35,7 +35,7 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import { useAuth } from '../auth/AuthContext'
-import { monthPeriod, useDataset } from '../data/DatasetContext'
+import { fullRangePeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
@@ -289,11 +289,12 @@ export default function Resumen() {
         if (!period.from && !period.to) setContextMetrics(result)
         const months = result.periodo.meses_disponibles
         setMonthsAvailable(months)
-        // Al entrar por primera vez, seleccionar el último mes con datos
-        // (así las variaciones "vs periodo anterior" tienen sentido).
+        // Al entrar por primera vez, mostrar el rango completo del dataset
+        // (Bug #2: antes se fijaba en un solo mes y el dashboard escondía
+        // datos reales del archivo sin ningún aviso).
         if (!defaultPeriodSet.current && months.length > 1 && !period.from) {
           defaultPeriodSet.current = true
-          setPeriod(monthPeriod(months[months.length - 1]))
+          setPeriod(fullRangePeriod(months))
         }
       })
       .catch((err) => {

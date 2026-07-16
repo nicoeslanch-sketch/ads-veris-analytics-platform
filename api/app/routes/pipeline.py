@@ -132,6 +132,19 @@ def _normalize_user_storage_path(storage_path: str, user: AuthenticatedUser) -> 
     return normalize_user_storage_path(storage_path, user.id)
 
 
+# lib/datasets.ts antepone Date.now() al nombre para evitar colisiones en
+# Storage ("1784231134931_base3_distribuidora_grande.xlsx") — es un detalle
+# de almacenamiento interno, no el nombre que el usuario reconoce. El nombre
+# que se muestra (y el que llega a /metrics, /reportes, descargas…) debe ser
+# el original, sin ese prefijo.
+_STORAGE_TIMESTAMP_PREFIX_RE = re.compile(r"^\d{10,}_")
+
+
+def _display_filename(basename: str) -> str:
+    stripped = _STORAGE_TIMESTAMP_PREFIX_RE.sub("", basename, count=1)
+    return stripped or basename
+
+
 async def _read_input(
     file: UploadFile | None,
     storage_path: str | None,
@@ -148,7 +161,7 @@ async def _read_input(
     if storage_path:
         safe_storage_path = _normalize_user_storage_path(storage_path, user)
         content = await run_in_threadpool(download_from_storage, safe_storage_path)
-        return os.path.basename(safe_storage_path), content
+        return _display_filename(os.path.basename(safe_storage_path)), content
     raise HTTPException(
         status_code=422,
         detail="Envía un archivo (campo 'file') o una ruta de Storage (campo 'storage_path').",
@@ -984,7 +997,7 @@ def _restore_latest_sync(user_id: str) -> dict:
 
     storage_path = normalize_user_storage_path(record["storage_path"], user_id)
     content = download_from_storage(storage_path)
-    filename = os.path.basename(storage_path)
+    filename = _display_filename(os.path.basename(storage_path))
     mapping = fetch_dataset_mapping(record["id"])
     cleaning = None
     eliminar_duplicados = False

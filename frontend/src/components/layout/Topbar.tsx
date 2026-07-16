@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, Calendar, Check, ChevronDown, LogOut, Menu, Settings, User } from 'lucide-react'
+import { Calendar, Check, ChevronDown, LogOut, Menu, Settings, User } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../../data/DatasetContext'
 import { formatMonthShort } from '../../lib/charts'
@@ -108,13 +108,9 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
         )}
       </div>
 
-      {/* Notificaciones */}
-      <button
-        className="relative rounded-full p-2 transition-colors hover:bg-white/10"
-        title="Notificaciones"
-      >
-        <Bell className="h-5 w-5" />
-      </button>
+      {/* Notificaciones: oculto hasta tener una fuente real (el ícono no
+          hacía nada al hacer clic — "Mis solicitudes" en el modal de ayuda
+          ya cubre el estado de tus solicitudes de soporte/upgrade). */}
 
       {/* Menú de perfil */}
       <div className="relative" ref={menuRef}>

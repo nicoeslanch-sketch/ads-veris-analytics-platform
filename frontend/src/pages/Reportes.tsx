@@ -13,6 +13,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import { useAuth } from '../auth/AuthContext'
+import { fullRangePeriod } from '../data/DatasetContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
 import { downloadReportCsv, openPrintableReport } from '../lib/report'
 import { formatCLP } from '../lib/format'
@@ -90,7 +91,7 @@ export default function Reportes() {
             <h2 className="text-base font-semibold text-navy">Contenido del reporte</h2>
             <p className="mt-0.5 min-w-0 text-sm text-navy/60">
               Archivo <span className="font-medium text-navy [overflow-wrap:anywhere] sm:[overflow-wrap:normal]">{metrics.archivo}</span> · periodo{' '}
-              {metrics.periodo.desde ?? 'inicio'} — {metrics.periodo.hasta ?? 'fin'} · ingresos
+              {fullRangePeriod(metrics.periodo.meses_disponibles).label} · ingresos
               del periodo <span className="font-medium text-navy">{formatCLP(metrics.kpis.ingresos_totales.valor)}</span>.
               Incluye indicadores, evolución mensual, análisis por categoría, canales, top
               productos y proyección.

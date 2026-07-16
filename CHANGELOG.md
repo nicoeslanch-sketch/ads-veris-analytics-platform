@@ -2,6 +2,69 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.17.6] - 2026-07-16 - Fixes de pruebas manuales: demo gratuita
+
+10 bugs encontrados probando el flujo de prueba gratuita de 15 días, más una
+mejora no bloqueante (análisis guardados).
+
+### Exactitud y fuente única de verdad
+- **Calidad del dato inconsistente**: el círculo de Limpieza redondeaba
+  (`Math.round`) el mismo valor que el texto y el Historial mostraban sin
+  redondear (99,7% → "100%" en el círculo). Ambos usan ahora `formatNumber`.
+- **Cupo de limpieza dirigida IA mal asignado durante la prueba gratuita**:
+  `cleaning_limit_for` trataba cualquier plan que no fuera literalmente
+  `"gold"` como si tuviera la base de Analista (10) — Básico y `sin_plan`
+  (prueba gratuita) mostraban "0/10" cuando esa función ni siquiera está
+  incluida en su plan. Ahora deriva de la matriz única de capacidades
+  (`PLAN_CAPABILITIES`); base 0 se comunica como "No incluida en tu plan
+  actual" en vez de un contador engañoso.
+- **Nombre de archivo con ID técnico de Storage como prefijo**: el path
+  interno antepone `Date.now()_` para evitar colisiones
+  (`1784231134931_base3_distribuidora_grande.xlsx`); se mostraba tal cual en
+  Reportes, Estandarización e Historial. Un helper único (`_display_filename`)
+  lo limpia en el backend, en la fuente.
+- **Placeholders "período inicio — fin" sin fechas reales**: Reportes siempre
+  pide el periodo COMPLETO del dataset (por diseño), así que `periodo.desde`/
+  `hasta` son `null` el 100% de las veces. Ahora usa `fullRangePeriod` sobre
+  `meses_disponibles` para mostrar el rango real, en la vista previa, el CSV
+  y el PDF.
+
+### Interfaz
+- **Sin confirmación al contratar un plan**: el botón "Contratar este plan"
+  ya tenía un estado de éxito, pero ninguno de error — una solicitud
+  rechazada (ej. 409 por duplicado pendiente) volvía al botón normal sin
+  ningún aviso visible cerca del punto de clic.
+- **Textos de debug visibles en producción**: "requiere Supabase y la
+  migración 0006/0008/0009" en Configuración y Planes, reemplazados por
+  "Disponible próximamente."
+- **Campana de notificaciones sin funcionalidad**: no había backend de
+  notificaciones detrás; se oculta hasta que exista una fuente real (ya
+  existe "Mis solicitudes" en el modal de ayuda como alternativa honesta).
+
+### Explorar datos
+- **Selector de periodo global desincronizado del "Rango" de Explorar**: eran
+  dos estados independientes; cambiar el topbar no tocaba Explorar y
+  viceversa. Ahora comparten el mismo `period`/`setPeriod` del contexto,
+  igual que Resumen.
+- **Primera letra recortada en las etiquetas del gráfico de barras**
+  ("Aceite maravilla 900ml" → ".ceite..."): el `<text>` SVG del eje de
+  categorías desbordaba el ancho asignado y Recharts lo recortaba desde el
+  borde izquierdo. Se trunca el contenido con "…" antes de renderizar (tooltip
+  nativo con el nombre completo).
+- **"Hallazgos principales" no reactivo al cambiar de preset**: los 6
+  hallazgos se calculaban solo desde `metrics`, ignorando si el usuario tenía
+  seleccionado Tendencia/Productos/Categorías/Canales. Cada hallazgo ahora
+  declara su categoría y los del preset activo se priorizan.
+
+### Mejora no bloqueante
+- **Vista de análisis guardados**: el botón "Guardar análisis" de Explorar
+  funcionaba pero no había dónde consultarlo después. Nueva tarjeta en
+  Historial, reutilizando las políticas RLS ya existentes de la migración
+  0004 (sin migración nueva).
+
+### Verificación
+- 285 pytest + build de producción + typecheck, todos verdes.
+
 ## [0.17.5] - 2026-07-16 - Resumen sin espacios verticales artificiales
 
 ### Interfaz

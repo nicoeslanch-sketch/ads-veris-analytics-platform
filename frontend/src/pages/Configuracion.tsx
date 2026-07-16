@@ -252,10 +252,7 @@ export default function Configuracion() {
                 </>
               )
             ) : (
-              <p className="mt-3 text-sm text-navy/50">
-                El contador de consultas se activa en producción (requiere Supabase y la
-                migración 0006).
-              </p>
+              <p className="mt-3 text-sm text-navy/50">Disponible próximamente.</p>
             )}
           </Card>
 
@@ -275,6 +272,10 @@ export default function Configuracion() {
                     La cuenta administradora puede ejecutar limpiezas dirigidas sin cupo mensual.
                   </p>
                 </div>
+              ) : plansUsage.limpieza.base === 0 ? (
+                <p className="mt-3 text-sm text-navy/50">
+                  No incluida en tu plan actual. Está disponible desde el Plan Analista.
+                </p>
               ) : (
                 <>
                 <p className="mt-3 text-2xl font-bold text-navy">
@@ -308,10 +309,7 @@ export default function Configuracion() {
                 </>
               )
             ) : (
-              <p className="mt-3 text-sm text-navy/50">
-                El contador se activa en producción (requiere Supabase y las migraciones
-                0008 y 0009).
-              </p>
+              <p className="mt-3 text-sm text-navy/50">Disponible próximamente.</p>
             )}
             <Link
               to="/planes"

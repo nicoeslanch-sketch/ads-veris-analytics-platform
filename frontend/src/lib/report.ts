@@ -4,6 +4,7 @@
 - PDF: ventana imprimible con estilos de marca → "Guardar como PDF".
 */
 
+import { fullRangePeriod } from '../data/DatasetContext'
 import type { MetricsResult } from './types'
 
 function csvNumber(value: number | null | undefined): string {
@@ -31,7 +32,7 @@ export function buildReportCsv(m: MetricsResult): string {
 
   push('Reporte ADS Veris')
   push('Archivo', m.archivo)
-  push('Periodo', `${m.periodo.desde ?? 'inicio'} a ${m.periodo.hasta ?? 'fin'}`)
+  push('Periodo', fullRangePeriod(m.periodo.meses_disponibles).label)
   push('Calidad de datos (%)', m.calidad_datos)
   push()
 
@@ -167,7 +168,7 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
   <div class="meta">
     ${empresa ? `<div><strong>${escapeHtml(empresa)}</strong></div>` : ''}
     <div>Archivo: ${escapeHtml(m.archivo)}</div>
-    <div>Periodo: ${escapeHtml(m.periodo.desde ?? 'inicio')} — ${escapeHtml(m.periodo.hasta ?? 'fin')}</div>
+    <div>Periodo: ${escapeHtml(fullRangePeriod(m.periodo.meses_disponibles).label)}</div>
     <div>Generado: ${new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' })}</div>
   </div>
 </header>

@@ -572,3 +572,18 @@ def test_jwt_es256_valido_via_jwks(client, sample_csv, monkeypatch):
         algorithm="ES256",
     )
     assert client.get("/me", headers={"Authorization": f"Bearer {bad_token}"}).status_code == 401
+
+
+def test_display_filename_quita_prefijo_de_storage():
+    """El path de Storage antepone Date.now()_ (lib/datasets.ts) para evitar
+    colisiones; el nombre visible al usuario debe ser el original, sin ese
+    prefijo técnico (bug reportado en pruebas manuales del flujo de Reportes)."""
+    from app.routes.pipeline import _display_filename
+
+    assert (
+        _display_filename("1784231134931_base3_distribuidora_grande.xlsx")
+        == "base3_distribuidora_grande.xlsx"
+    )
+    # Nombres legítimos que empiezan con números cortos no se tocan.
+    assert _display_filename("2026_ventas.csv") == "2026_ventas.csv"
+    assert _display_filename("ventas.csv") == "ventas.csv"

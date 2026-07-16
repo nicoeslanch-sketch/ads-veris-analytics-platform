@@ -41,6 +41,10 @@ function translateAuthError(message: string): string {
     'User already registered': 'Ya existe una cuenta con este correo.',
     'Password should be at least 6 characters':
       'La contraseña debe tener al menos 6 caracteres.',
+    'New password should be different from the old password.':
+      'La contraseña nueva debe ser distinta de la anterior.',
+    'Auth session missing!':
+      'El enlace expiró o ya se usó. Solicita uno nuevo desde "¿Olvidaste tu contraseña?".',
   }
   return map[message] ?? message
 }

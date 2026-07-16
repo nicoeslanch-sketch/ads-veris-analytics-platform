@@ -31,11 +31,14 @@ import EmptyState from '../components/ui/EmptyState'
 import { useDataset } from '../data/DatasetContext'
 import { apiDelete, apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import {
+  deleteAnalysis,
   fetchActivity,
+  fetchAnalyses,
   fetchDatasets,
   fetchLatestCleaningConfig,
   type ActivityRow,
   type ActivityType,
+  type AnalysisRow,
   type DatasetRow,
 } from '../lib/history'
 import { supabaseConfigured } from '../lib/supabase'
@@ -74,6 +77,9 @@ export default function Historial() {
 
   const [datasets, setDatasets] = useState<DatasetRow[] | null>(null)
   const [activity, setActivity] = useState<ActivityRow[] | null>(null)
+  const [analyses, setAnalyses] = useState<AnalysisRow[] | null>(null)
+  const [expandedAnalysis, setExpandedAnalysis] = useState<string | null>(null)
+  const [deletingAnalysis, setDeletingAnalysis] = useState<string | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [resuming, setResuming] = useState<string | null>(null)
@@ -89,18 +95,26 @@ export default function Historial() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([fetchDatasets(), fetchActivity()]).then(([ds, act]) => {
+    Promise.all([fetchDatasets(), fetchActivity(), fetchAnalyses()]).then(([ds, act, an]) => {
       if (cancelled) return
       // 'error' ≠ vacío: un fallo de Supabase no debe verse como "sin actividad"
-      setLoadError(ds === 'error' || act === 'error')
+      setLoadError(ds === 'error' || act === 'error' || an === 'error')
       setDatasets(ds === 'error' ? [] : ds)
       setActivity(act === 'error' ? [] : act)
+      setAnalyses(an === 'error' ? [] : an)
       setLoading(false)
     })
     return () => {
       cancelled = true
     }
   }, [])
+
+  const handleDeleteAnalysis = async (id: string) => {
+    setDeletingAnalysis(id)
+    const ok = await deleteAnalysis(id)
+    if (ok) setAnalyses((prev) => (prev ?? []).filter((a) => a.id !== id))
+    setDeletingAnalysis(null)
+  }
 
   useEffect(() => {
     if (!deleteTarget) return
@@ -246,7 +260,8 @@ export default function Historial() {
     )
   }
 
-  const hasData = (datasets?.length ?? 0) > 0 || (activity?.length ?? 0) > 0
+  const hasData =
+    (datasets?.length ?? 0) > 0 || (activity?.length ?? 0) > 0 || (analyses?.length ?? 0) > 0
 
   if (loadError && !hasData) {
     return (
@@ -487,38 +502,104 @@ export default function Historial() {
           </div>
         </Card>
 
-        {/* Actividad */}
-        <Card className="h-fit min-w-0 max-w-full overflow-hidden lg:overflow-visible">
-          <h2 className="text-base font-semibold text-navy">Actividad reciente</h2>
-          <ul className="mt-4 space-y-4">
-            {(activity ?? []).map((item) => {
-              const meta = ACTIVITY_META[item.activity_type]
-              return (
-                <li key={item.id} className="flex items-start gap-3">
-                  <div
-                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${meta.tone}`}
-                  >
-                    <meta.icon className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-navy/45">
-                      {meta.label}
-                    </p>
-                    <p className="truncate text-sm text-navy" title={item.description}>
-                      {item.description}
-                    </p>
-                    <p className="mt-0.5 text-xs text-navy/50">
-                      {formatDateTime(new Date(item.created_at))}
-                    </p>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-          {(activity?.length ?? 0) === 0 && (
-            <p className="mt-3 text-sm text-navy/50">Sin actividad registrada todavía.</p>
-          )}
-        </Card>
+        {/* Columna derecha: actividad + análisis guardados */}
+        <div className="flex min-w-0 max-w-full flex-col gap-6">
+          {/* Actividad */}
+          <Card className="h-fit min-w-0 max-w-full overflow-hidden lg:overflow-visible">
+            <h2 className="text-base font-semibold text-navy">Actividad reciente</h2>
+            <ul className="mt-4 space-y-4">
+              {(activity ?? []).map((item) => {
+                const meta = ACTIVITY_META[item.activity_type]
+                return (
+                  <li key={item.id} className="flex items-start gap-3">
+                    <div
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${meta.tone}`}
+                    >
+                      <meta.icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-navy/45">
+                        {meta.label}
+                      </p>
+                      <p className="truncate text-sm text-navy" title={item.description}>
+                        {item.description}
+                      </p>
+                      <p className="mt-0.5 text-xs text-navy/50">
+                        {formatDateTime(new Date(item.created_at))}
+                      </p>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+            {(activity?.length ?? 0) === 0 && (
+              <p className="mt-3 text-sm text-navy/50">Sin actividad registrada todavía.</p>
+            )}
+          </Card>
+
+          {/* Análisis guardados (Explorar datos → "Guardar análisis") */}
+          <Card className="h-fit min-w-0 max-w-full overflow-hidden lg:overflow-visible">
+            <div className="flex items-center gap-2">
+              <Search className="h-4.5 w-4.5 text-navy/70" />
+              <h2 className="text-base font-semibold text-navy">Análisis guardados</h2>
+            </div>
+            <ul className="mt-4 space-y-3">
+              {(analyses ?? []).map((item) => {
+                const expanded = expandedAnalysis === item.id
+                return (
+                  <li key={item.id} className="rounded-lg border border-navy/10 p-3">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedAnalysis(expanded ? null : item.id)}
+                      className="flex w-full items-start justify-between gap-2 text-left"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-navy" title={item.name}>
+                          {item.name}
+                        </p>
+                        <p className="mt-0.5 text-xs text-navy/50">
+                          {formatDateTime(new Date(item.created_at))} ·{' '}
+                          {item.findings.length} hallazgo(s)
+                        </p>
+                      </div>
+                    </button>
+                    {expanded && (
+                      <div className="mt-3 space-y-2 border-t border-navy/10 pt-3">
+                        {item.findings.length > 0 ? (
+                          <ul className="list-inside list-disc space-y-1 text-xs text-navy/70">
+                            {item.findings.map((finding, index) => (
+                              <li key={index}>{finding}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-xs text-navy/45">Sin hallazgos registrados.</p>
+                        )}
+                        {item.recommendation && (
+                          <p className="rounded-lg bg-gold/[0.08] p-2.5 text-xs leading-relaxed text-navy/70">
+                            {item.recommendation.recomendacion}
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteAnalysis(item.id)}
+                          disabled={deletingAnalysis === item.id}
+                          className="mt-1 text-xs font-medium text-coral hover:underline disabled:opacity-50"
+                        >
+                          {deletingAnalysis === item.id ? 'Eliminando...' : 'Eliminar'}
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+            {(analyses?.length ?? 0) === 0 && (
+              <p className="mt-3 text-sm text-navy/50">
+                Aún no has guardado ningún análisis. Hazlo desde Explorar datos.
+              </p>
+            )}
+          </Card>
+        </div>
       </div>
 
       {deleteTarget && (
