@@ -30,6 +30,20 @@ export interface ActivityRow {
   created_at: string
 }
 
+// El path de Storage antepone Date.now()_ al nombre (lib/datasets.ts) para
+// evitar colisiones; el backend ya devuelve el nombre limpio en `archivo`
+// desde esta sesión (_display_filename en pipeline.py), pero las entradas de
+// activity_log creadas ANTES de ese fix guardaron el texto crudo tal cual
+// ("Estandarización aplicada: 1784231134931_archivo.xlsx") — el dato ya está
+// escrito en la fila y no se puede reescribir con un fix del backend. Se
+// sanea también al mostrar, para que ninguna entrada vieja quede así para
+// siempre.
+const STORAGE_TIMESTAMP_PREFIX_RE = /\b\d{10,}_/g
+
+export function sanitizeActivityDescription(description: string): string {
+  return description.replace(STORAGE_TIMESTAMP_PREFIX_RE, '')
+}
+
 export interface DatasetRow {
   id: string
   name: string

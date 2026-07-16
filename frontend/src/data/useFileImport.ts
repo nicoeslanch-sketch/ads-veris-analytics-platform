@@ -16,9 +16,14 @@ import { useAccess } from '../lib/access'
 import { supabaseConfigured } from '../lib/supabase'
 import type { StandardizeResult } from '../lib/types'
 import { useDataset } from './DatasetContext'
+import { useDemo } from '../demo/DemoContext'
 
 export function useFileImport() {
   const { setUploaded, setStandardization } = useDataset()
+  // Bug: subir un archivo real mientras se ve la demo ficticia dejaba el
+  // banner y los números de "Comercial Andes SpA" activos hasta que el
+  // usuario salía manualmente — confundía datos ficticios con reales.
+  const demo = useDemo()
   // Fase 14: la puerta lee el AccessContext ÚNICO (capacidades del servidor,
   // trial incluido). Sin acceso optimista: mientras carga, no se sube nada.
   const { status: accessStatus, can, refresh: refreshAccess } = useAccess()
@@ -88,6 +93,7 @@ export function useFileImport() {
             '(revisa el bucket y las políticas RLS en Supabase).',
         )
       }
+      demo.exit()
       setUploaded(selected, datasetId, storagePath)
 
       // Fase 8: retención de Storage (fire-and-forget). Poda archivos viejos

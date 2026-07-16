@@ -504,11 +504,25 @@ export default function Explorar() {
   }
 
   const hasCosts = Boolean(metrics?.kpis.ganancia_neta)
+
+  // Bug: `evolucion_mensual` del backend es SIEMPRE el histórico completo
+  // (metrics.py: "Evolución mensual — siempre sobre el periodo completo"),
+  // a propósito para el gráfico de contexto del Resumen. Explorar promete
+  // que "Rango" filtra TODO el análisis, así que aquí se recorta en el
+  // cliente a los meses dentro del rango elegido — sin tocar el campo
+  // compartido que usan Resumen/Alertas/proyección.
+  const evolucionEnRango = (metrics?.evolucion_mensual ?? []).filter((m) => {
+    if (rango.from && m.mes < rango.from.slice(0, 7)) return false
+    if (rango.to && m.mes > rango.to.slice(0, 7)) return false
+    return true
+  })
+  const metricsEnRango = metrics ? { ...metrics, evolucion_mensual: evolucionEnRango } : null
+
   // Bug #10: el panel mostraba siempre el mismo set fijo sin importar el
   // preset activo. Los hallazgos del tipo de análisis elegido (mes/producto/
   // categoría/canal) suben primero; el resto completa el panel (sort estable:
   // conserva el orden relativo dentro de cada grupo).
-  const findings = (metrics ? computeFindings(metrics) : [])
+  const findings = (metricsEnRango ? computeFindings(metricsEnRango) : [])
     .slice()
     .sort((a, b) => Number(a.category !== groupBy) - Number(b.category !== groupBy))
     .slice(0, 6)
@@ -551,9 +565,7 @@ export default function Explorar() {
   // backend se corrigió específicamente para no inventar $0 y aquí un
   // `?? 0` la volvía a convertir en cero (gráfico, variaciones y
   // participaciones falsas incluidas).
-  const trendRows: Array<{ mes: string; valor: number | null }> = (
-    metrics?.evolucion_mensual ?? []
-  ).map((m) => ({
+  const trendRows: Array<{ mes: string; valor: number | null }> = evolucionEnRango.map((m) => ({
     mes: formatMonthShort(m.mes),
     valor: metric === 'utilidad' ? m.utilidad ?? null : m.ingresos,
   }))
@@ -584,13 +596,13 @@ export default function Explorar() {
   }
 
   const generarRecomendacion = async () => {
-    if (!metrics) return
+    if (!metricsEnRango) return
     setRecoLoading(true)
     setRecoError(null)
     try {
       const result = await apiPostJson<{ recomendacion: string; plan: string[] }>(
         '/ai/recommendation',
-        { metrics, hallazgos: findings.map((f) => f.title), analisis: analysisLabel },
+        { metrics: metricsEnRango, hallazgos: findings.map((f) => f.title), analisis: analysisLabel },
       )
       setReco(result)
     } catch (err) {

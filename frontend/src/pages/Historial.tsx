@@ -29,6 +29,7 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import { useDataset } from '../data/DatasetContext'
+import { useDemo } from '../demo/DemoContext'
 import { apiDelete, apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import {
   deleteAnalysis,
@@ -36,6 +37,7 @@ import {
   fetchAnalyses,
   fetchDatasets,
   fetchLatestCleaningConfig,
+  sanitizeActivityDescription,
   type ActivityRow,
   type ActivityType,
   type AnalysisRow,
@@ -73,6 +75,9 @@ function sourceBadge(source: string | null | undefined) {
 
 export default function Historial() {
   const { datasetId, setUploaded, setStandardization, setCleaning, reset } = useDataset()
+  // Bug: "Retomar" cambiaba el archivo activo pero dejaba el banner y los
+  // números ficticios de la demo visibles hasta salir manualmente.
+  const demo = useDemo()
   const navigate = useNavigate()
 
   const [datasets, setDatasets] = useState<DatasetRow[] | null>(null)
@@ -185,6 +190,7 @@ export default function Historial() {
    * el segundo módulo que lo pida sale del caché del servidor. */
   const handleResume = async (dataset: DatasetRow) => {
     if (!dataset.storage_path) return
+    demo.exit()
     setResuming(dataset.id)
     setResumeError(null)
     try {
@@ -510,6 +516,7 @@ export default function Historial() {
             <ul className="mt-4 space-y-4">
               {(activity ?? []).map((item) => {
                 const meta = ACTIVITY_META[item.activity_type]
+                const description = sanitizeActivityDescription(item.description)
                 return (
                   <li key={item.id} className="flex items-start gap-3">
                     <div
@@ -521,8 +528,8 @@ export default function Historial() {
                       <p className="text-xs font-semibold uppercase tracking-wide text-navy/45">
                         {meta.label}
                       </p>
-                      <p className="truncate text-sm text-navy" title={item.description}>
-                        {item.description}
+                      <p className="truncate text-sm text-navy" title={description}>
+                        {description}
                       </p>
                       <p className="mt-0.5 text-xs text-navy/50">
                         {formatDateTime(new Date(item.created_at))}
