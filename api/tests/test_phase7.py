@@ -175,11 +175,33 @@ def test_cuota_insights_no_cuenta_limpieza(monkeypatch):
         return 0
 
     settings = _quota_settings()
-    monkeypatch.setattr(quota, "get_plan", lambda user_id, s: "basico")
+    monkeypatch.setattr(
+        quota, "get_profile_flags", lambda user_id, s: ("basico", False)
+    )
     monkeypatch.setattr(quota, "count_month_usage", fake_count)
     quota.check_quota("user-x", settings)
     assert captured["kinds"] == quota.INSIGHT_KINDS
     assert "cleaning" not in captured["kinds"]
+
+
+def test_cuota_insights_admin_es_ilimitada(monkeypatch):
+    """El administrador conserva IA aunque su plan comercial sea Basico."""
+    from app import quota
+
+    settings = _quota_settings()
+    monkeypatch.setattr(
+        quota, "get_profile_flags", lambda user_id, s: ("basico", True)
+    )
+    monkeypatch.setattr(
+        quota, "count_month_usage", lambda user_id, s, kinds=None: 999
+    )
+    info = quota.check_quota("admin-x", settings)
+    assert info["ilimitado"] is True
+    assert info["limite"] == 0
+
+    visible = quota.usage_info("admin-x", settings)
+    assert visible["disponible"] is True
+    assert visible["ilimitado"] is True
 
 
 # ── POST /clean/assisted ──────────────────────────────────────────────────────

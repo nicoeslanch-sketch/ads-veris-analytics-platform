@@ -104,7 +104,12 @@ def _billing_identity_sync(user_id: str, settings: Settings) -> dict | None:
     return rows[0] if rows else None
 
 
-def _build_access_sync(user_id: str, settings: Settings) -> dict:
+def _is_designated_admin(email: str | None, settings: Settings) -> bool:
+    configured_email = getattr(settings, "admin_email", "").strip().lower()
+    return bool(configured_email and email and email.strip().lower() == configured_email)
+
+
+def _build_access_sync(user_id: str, email: str | None, settings: Settings) -> dict:
     configured = bool(settings.supabase_url and settings.supabase_service_role_key)
     enforcement = bool(settings.plan_enforcement and configured)
     if not configured:
@@ -114,6 +119,10 @@ def _build_access_sync(user_id: str, settings: Settings) -> dict:
         identity = None
     else:
         plan, is_admin = get_profile_flags(user_id, settings)
+        # Respaldo de bootstrap: el correo viene del JWT verificado. La
+        # migración 0018 mantiene is_admin en la base; esto evita una ventana
+        # sin acceso si la cuenta se creó después de una migración anterior.
+        is_admin = is_admin or _is_designated_admin(email, settings)
         # El estado del trial solo importa para cuentas sin plan pagado: las
         # demás no pagan la consulta extra.
         trial = (
@@ -125,7 +134,7 @@ def _build_access_sync(user_id: str, settings: Settings) -> dict:
     caps = effective_capabilities(plan, is_admin, bool(trial.get("active")), enforcement)
     return {
         "paid_plan": plan,
-        "plan_display": display_plan(plan),
+        "plan_display": "Administrador" if is_admin else display_plan(plan),
         "is_admin": is_admin,
         "enforcement": enforcement,
         "trial": trial,
@@ -141,7 +150,7 @@ async def me_access(
 ) -> dict:
     """Contexto de acceso efectivo del usuario (plan + admin + trial + caps)."""
     try:
-        return await run_in_threadpool(_build_access_sync, user.id, settings)
+        return await run_in_threadpool(_build_access_sync, user.id, user.email, settings)
     except HTTPException:
         raise
     except Exception as exc:
@@ -234,7 +243,7 @@ async def activate_trial(
     trial = await run_in_threadpool(
         trials.activate_trial, user.id, body.rut_type, normalized, settings
     )
-    access = await run_in_threadpool(_build_access_sync, user.id, settings)
+    access = await run_in_threadpool(_build_access_sync, user.id, user.email, settings)
     # El estado recién creado manda: si PostgREST tarda en ver la fila, el
     # contexto igual vuelve con el trial activo (una sola vuelta, sin recargar).
     if trial.get("active") and not access["trial"].get("active"):

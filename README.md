@@ -47,8 +47,7 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      ledger `plan_addons` y `addon_requests`)
    - `supabase/migrations/0010_admin_support.sql` (Fase 8: cuenta administradora
      `servicios@adsveris.com`, `support_requests` del botón de ayuda y auditoría
-     `admin_audit`. Si esa cuenta se crea DESPUÉS de correr la migración, repite el
-     UPDATE del paso 1 del archivo)
+     `admin_audit`; la migración 0018 vuelve persistente esa designación)
    - `supabase/migrations/0011_lock_privileged_columns.sql` (**Fase 10 — SEGURIDAD
      P0, obligatoria antes de aceptar usuarios externos**: bloquea que un usuario
      edite su propio `plan` / `is_admin` por la REST API; el navegador solo puede
@@ -77,6 +76,10 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      ciclo de vida del RUT**: permite desvincular una identidad de solicitudes
      y trials mediante `ON DELETE SET NULL`, conservando la evidencia necesaria
      para impedir pruebas repetidas)
+   - `supabase/migrations/0018_designated_admin_access.sql` (**Acceso
+     administrativo persistente**: corrige la cuenta
+     `servicios@adsveris.com` y mantiene `is_admin=true` mediante un trigger
+     idempotente, sin alterar su plan comercial)
 3. **Política de contraseñas** (Fase 13/14 — la validación del formulario es
    solo UX; la política REAL vive aquí): en **Authentication → Providers →
    Email → Password requirements**, exige mínimo **8 caracteres** con

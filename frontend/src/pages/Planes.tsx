@@ -23,6 +23,7 @@ import {
   Loader2,
   Minus,
   Send,
+  ShieldCheck,
   Sparkles,
   Users,
   X,
@@ -203,7 +204,7 @@ function TrialBanner() {
 }
 
 export default function Planes() {
-  const { plan: currentPlan, loading: planLoading } = usePlan()
+  const { plan: currentPlan, isAdmin, loading: planLoading } = usePlan()
   const { access, applyAccess, refresh } = useAccess()
   const [usage, setUsage] = useState<PlansUsage | null>(null)
   const [requestStates, setRequestStates] = useState<Record<string, RequestState>>({})
@@ -278,7 +279,10 @@ export default function Planes() {
   }
 
   const limpieza = usage?.disponible ? usage.limpieza : null
-  const restantesBase = limpieza ? Math.max(limpieza.base - limpieza.usadas_mes, 0) : null
+  const unlimitedCleaning = Boolean(isAdmin || limpieza?.ilimitado)
+  const restantesBase = limpieza && !unlimitedCleaning
+    ? Math.max(limpieza.base - limpieza.usadas_mes, 0)
+    : null
 
   return (
     <>
@@ -286,6 +290,16 @@ export default function Planes() {
         title="Planes"
         subtitle="Elige cuánto trabajo le entregas a tu analista de datos. Del dato al criterio."
       />
+
+      {isAdmin && (
+        <div className="mb-6 flex items-start gap-3 rounded-lg border border-gold/40 bg-gold/5 px-4 py-3 text-sm text-navy/80">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-gold" />
+          <p>
+            <strong>Cuenta administradora con acceso total.</strong> Todas las capacidades
+            están habilitadas y las cuotas de IA y limpieza dirigida son ilimitadas.
+          </p>
+        </div>
+      )}
 
       {!PLAN_ENFORCEMENT && (
         <div className="mb-6 flex items-start gap-2 rounded-lg border border-teal/40 bg-teal/5 px-4 py-3 text-sm text-navy/80">
@@ -314,7 +328,7 @@ export default function Planes() {
       <div className="grid gap-6 lg:grid-cols-3">
         {PLAN_CARDS.map(({ code, nombre, tagline, enConstruccion, destacado }) => {
           const Icon = PLAN_ICONS[code]
-          const esActual = !planLoading && currentPlan === code
+          const esActual = !planLoading && !isAdmin && currentPlan === code
           const upgradeTipo = `upgrade_${code}`
           const upgradeState = requestStates[upgradeTipo] ?? 'idle'
           return (
@@ -388,7 +402,11 @@ export default function Planes() {
               )}
 
               <div className="mt-5">
-                {esActual ? (
+                {isAdmin ? (
+                  <div className="rounded-lg border border-gold/40 bg-gold/5 px-4 py-2.5 text-center text-sm font-semibold text-navy">
+                    Incluido en tu acceso administrador
+                  </div>
+                ) : esActual ? (
                   <div className="rounded-lg border border-teal/40 bg-teal/5 px-4 py-2.5 text-center text-sm font-semibold text-teal">
                     Este es tu plan
                   </div>
@@ -446,11 +464,20 @@ export default function Planes() {
               </h2>
             </div>
             <p className="mt-2 text-sm leading-relaxed text-navy/60">
-              La limpieza dirigida con tus propias variables incluye{' '}
-              <strong>{limpieza ? `${limpieza.base} intentos al mes` : '10 intentos al mes (25 en Gold)'}</strong>{' '}
-              en los planes Analista y Gold. Si necesitas más, solicita tokens
-              adicionales: se pagan aparte, nosotros los agregamos a tu cuenta y no
-              expiran.
+              {unlimitedCleaning ? (
+                <>
+                  Tu cuenta administradora tiene <strong>limpieza dirigida ilimitada</strong>{' '}
+                  y no necesita tokens adicionales.
+                </>
+              ) : (
+                <>
+                  La limpieza dirigida con tus propias variables incluye{' '}
+                  <strong>{limpieza ? `${limpieza.base} intentos al mes` : '10 intentos al mes (25 en Gold)'}</strong>{' '}
+                  en los planes Analista y Gold. Si necesitas más, solicita tokens
+                  adicionales: se pagan aparte, nosotros los agregamos a tu cuenta y no
+                  expiran.
+                </>
+              )}
             </p>
             {usage && !usage.disponible && (
               <p className="mt-2 text-xs text-navy/45">
@@ -461,7 +488,13 @@ export default function Planes() {
           </div>
 
           <div className="flex flex-col items-stretch gap-3 sm:min-w-[260px]">
-            {limpieza && (
+            {unlimitedCleaning ? (
+              <div className="rounded-xl border border-gold/30 bg-gold/5 p-4">
+                <p className="flex items-center justify-center gap-2 text-sm font-semibold text-navy">
+                  <ShieldCheck className="h-4 w-4 text-gold" /> Sin límite mensual
+                </p>
+              </div>
+            ) : limpieza && (
               <div className="rounded-xl bg-navy/5 p-4">
                 <div className="flex items-baseline justify-between">
                   <span className="text-xs font-semibold uppercase tracking-wide text-navy/50">
@@ -486,7 +519,7 @@ export default function Planes() {
                 </p>
               </div>
             )}
-            {requestStates['tokens_limpieza'] === 'ok' ? (
+            {unlimitedCleaning ? null : requestStates['tokens_limpieza'] === 'ok' ? (
               <div className="rounded-lg border border-green/40 bg-green/5 px-4 py-2.5 text-center text-sm font-medium text-green">
                 Recibimos tu solicitud: nos pondremos en contacto contigo
               </div>

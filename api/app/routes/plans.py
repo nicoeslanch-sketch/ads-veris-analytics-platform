@@ -66,11 +66,13 @@ def _usage_sync(user_id: str, settings: Settings) -> dict:
         "insights": {
             "usadas": insights.get("usadas", 0),
             "limite": insights.get("limite", 0),
+            "ilimitado": bool(insights.get("ilimitado")),
         },
         "limpieza": {
             "usadas_mes": limpieza.get("usadas_mes", 0),
             "base": limpieza.get("base", settings.ai_cleaning_monthly_limit),
             "addons": limpieza.get("addons", 0),
+            "ilimitado": bool(limpieza.get("ilimitado")),
         },
     }
 

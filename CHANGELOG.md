@@ -2,6 +2,30 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.17.4] - 2026-07-16 - Carga estable y acceso administrador coherente
+
+### Acceso y carga de archivos
+- **Se conserva el archivo elegido durante la revalidación**: abrir/cerrar el
+  selector nativo provoca `focus` y una consulta nueva de acceso. El importador
+  ahora espera esa respuesta autoritativa hasta 10 segundos, sin leer ni subir
+  bytes antes de recibir permiso, en vez de descartar el archivo con
+  "Estamos verificando tu acceso".
+- **Estado explícito en los botones**: Estandarización y Google Sheets muestran
+  "Verificando acceso..." y bloquean la acción solo mientras se resuelve.
+
+### Administración
+- **Rol separado del plan comercial**: `servicios@adsveris.com` conserva
+  `plan=basico`, pero se presenta como "Administrador · acceso total" y no
+  recibe ofertas de upgrade ni compra de tokens.
+- **Cuotas administrativas realmente ilimitadas**: insights y limpieza
+  dirigida respetan `is_admin` tanto al ejecutar como al mostrar contadores.
+- **Migración `0018_designated_admin_access.sql`**: corrige la fila actual y
+  agrega un trigger idempotente para mantener `is_admin=true` en la cuenta
+  designada, aunque haya sido creada después de la migración 0010.
+
+### Verificación
+- **279 pytest + 21 Vitest + build de producción**, todos verdes.
+
 ## [0.17.3] - 2026-07-16 - Recuperación de contraseña completa
 
 ### Autenticación

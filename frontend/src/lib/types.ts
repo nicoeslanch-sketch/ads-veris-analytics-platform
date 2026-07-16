@@ -268,8 +268,8 @@ export interface PlansUsage {
   disponible: boolean
   plan: string
   enforcement: boolean
-  insights: { usadas: number; limite: number }
-  limpieza: { usadas_mes: number; base: number; addons: number }
+  insights: { usadas: number; limite: number; ilimitado?: boolean }
+  limpieza: { usadas_mes: number; base: number; addons: number; ilimitado?: boolean }
 }
 
 export interface CleaningRules {

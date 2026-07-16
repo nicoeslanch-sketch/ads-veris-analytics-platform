@@ -204,7 +204,9 @@ def test_limit_for_sin_plan_es_cero_no_keyerror():
 
 
 def test_check_quota_sin_plan_responde_403_con_cta(monkeypatch):
-    monkeypatch.setattr(quota, "get_plan", lambda uid, st: "sin_plan")
+    monkeypatch.setattr(
+        quota, "get_profile_flags", lambda uid, st: ("sin_plan", False)
+    )
     monkeypatch.setattr(quota, "count_month_usage", lambda uid, st, kinds=None: 0)
     with pytest.raises(HTTPException) as excinfo:
         quota.check_quota("u1", FakeSettings())

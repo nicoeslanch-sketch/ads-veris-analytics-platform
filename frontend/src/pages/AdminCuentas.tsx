@@ -321,8 +321,10 @@ export default function AdminCuentas() {
                             {cuenta.email} {cuenta.empresa ? `· ${cuenta.empresa}` : ''}
                           </p>
                         </div>
-                        <Badge tone={cuenta.plan === 'basico' ? 'navy' : 'gold'}>
-                          {planLabel(cuenta.plan).replace('Plan ', '')}
+                        <Badge tone={cuenta.is_admin || cuenta.plan !== 'basico' ? 'gold' : 'navy'}>
+                          {cuenta.is_admin
+                            ? 'Administrador'
+                            : planLabel(cuenta.plan).replace('Plan ', '')}
                         </Badge>
                         {cuenta.solicitudes_pendientes > 0 && (
                           <span className="rounded-full bg-coral/10 px-2 py-0.5 text-xs font-bold text-coral">

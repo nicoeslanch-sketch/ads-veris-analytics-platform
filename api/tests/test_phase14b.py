@@ -66,6 +66,24 @@ def _sin_plan(monkeypatch, trial=TRIAL_INACTIVO):
     monkeypatch.setattr("app.trials.get_trial_state", lambda uid, st: dict(trial))
 
 
+def test_correo_designado_recupera_rol_admin_en_contexto_de_acceso(monkeypatch):
+    """El JWT verificado cierra la ventana entre el alta y la migracion 0018."""
+    from app.routes import me as me_module
+
+    monkeypatch.setattr(
+        me_module, "get_profile_flags", lambda uid, st: ("basico", False)
+    )
+    monkeypatch.setattr(me_module, "_billing_identity_sync", lambda uid, st: None)
+    result = me_module._build_access_sync(
+        "admin-test", "servicios@adsveris.com", _settings_enforced()
+    )
+    assert result["is_admin"] is True
+    assert result["plan_display"] == "Administrador"
+    from app.capabilities import Capability
+
+    assert set(result["capabilities"]) == {cap.value for cap in Capability}
+
+
 # ── Gates por HTTP: 403 real y CERO trabajo ejecutado ────────────────────────
 
 
@@ -398,6 +416,19 @@ def test_migracion_0017_permite_desvincular_identidad():
         / "supabase" / "migrations" / "0017_billing_identity_retention.sql"
     ).read_text(encoding="utf-8").lower()
     assert sql.count("on delete set null") == 2
+
+
+def test_migracion_0018_mantiene_cuenta_administradora():
+    from pathlib import Path
+
+    sql = (
+        Path(__file__).resolve().parents[2]
+        / "supabase" / "migrations" / "0018_designated_admin_access.sql"
+    ).read_text(encoding="utf-8").lower()
+    assert "servicios@adsveris.com" in sql
+    assert "profiles_enforce_designated_admin" in sql
+    assert "new.is_admin := true" in sql
+    assert "set is_admin = true" in sql
 
 
 def test_copy_de_parcialidad_no_afirma_causa():

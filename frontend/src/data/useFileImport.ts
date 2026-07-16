@@ -4,7 +4,7 @@
  * ejecuta /standardize. Devuelve true si el archivo quedó estandarizado.
  */
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import {
   insertDataset,
@@ -21,7 +21,9 @@ export function useFileImport() {
   const { setUploaded, setStandardization } = useDataset()
   // Fase 14: la puerta lee el AccessContext ÚNICO (capacidades del servidor,
   // trial incluido). Sin acceso optimista: mientras carga, no se sube nada.
-  const { status: accessStatus, can } = useAccess()
+  const { status: accessStatus, can, refresh: refreshAccess } = useAccess()
+  const accessRef = useRef({ status: accessStatus, can })
+  accessRef.current = { status: accessStatus, can }
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
@@ -34,19 +36,33 @@ export function useFileImport() {
    * profundidad. Regla: ningún byte sale del navegador y ninguna llamada de
    * procesamiento comienza sin el contexto de acceso resuelto y aprobado. */
   const checkUploadAllowed = (): boolean => {
-    if (accessStatus === 'loading') {
-      setError('Estamos verificando tu acceso. Intenta nuevamente en unos segundos.')
-      return false
-    }
-    if (accessStatus === 'error') {
+    const current = accessRef.current
+    if (current.status === 'loading') return false
+    if (current.status === 'error') {
       setError('No se pudo verificar tu acceso. Revisa tu conexión e intenta nuevamente.')
+      refreshAccess()
       return false
     }
-    if (!can('standardize')) {
+    if (!current.can('standardize')) {
       setPlanBlocked(true)
       return false
     }
     return true
+  }
+
+  /** El selector nativo provoca blur/focus y AccessProvider revalida el plan.
+   * Conservamos el archivo elegido y esperamos la respuesta autoritativa antes
+   * de leer/subir bytes, en vez de obligar al usuario a seleccionarlo de nuevo. */
+  const waitForUploadAccess = async (): Promise<boolean> => {
+    const deadline = Date.now() + 10_000
+    while (accessRef.current.status === 'loading' && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 50))
+    }
+    if (accessRef.current.status === 'loading') {
+      setError('La verificación de acceso está tardando demasiado. Intenta nuevamente.')
+      return false
+    }
+    return checkUploadAllowed()
   }
 
   const importFile = async (
@@ -55,13 +71,13 @@ export function useFileImport() {
   ): Promise<boolean> => {
     setError(null)
     setPersistWarning(null)
-    if (!checkUploadAllowed()) return false
     if (!/\.(csv|xlsx)$/i.test(selected.name)) {
       setError('Formato no soportado. Sube un Excel moderno (.xlsx) o CSV (.csv); si tienes un .xls antiguo, guárdalo como .xlsx primero.')
       return false
     }
     setImporting(true)
     try {
+      if (!(await waitForUploadAccess())) return false
       // Persistencia best-effort: Storage + fila en datasets (si hay Supabase)
       const storagePath = await uploadToStorage(selected)
       const datasetId = await insertDataset(selected, storagePath, options.source ?? 'excel_csv')
@@ -109,5 +125,6 @@ export function useFileImport() {
     planBlocked,
     dismissPlanBlocked: () => setPlanBlocked(false),
     checkUploadAllowed,
+    accessStatus,
   }
 }

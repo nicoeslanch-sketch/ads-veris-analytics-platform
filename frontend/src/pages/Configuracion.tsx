@@ -8,11 +8,12 @@
 
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { BadgeCheck, Crown, Loader2, Save, Sparkles, Wand2 } from 'lucide-react'
+import { BadgeCheck, Crown, Loader2, Save, ShieldCheck, Sparkles, Wand2 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import { useAuth } from '../auth/AuthContext'
+import { useAccess } from '../lib/access'
 import { apiGet } from '../lib/api'
 import { fetchProfile, updateProfile } from '../lib/profile'
 import { supabaseConfigured } from '../lib/supabase'
@@ -25,6 +26,7 @@ interface AiUsage {
   plan: PlanCode
   usadas: number
   limite: number
+  ilimitado?: boolean
   periodo?: string
 }
 
@@ -64,6 +66,7 @@ const PREFERENCE_LABELS: Record<string, string> = {
 
 export default function Configuracion() {
   const { user } = useAuth()
+  const { access } = useAccess()
   const meta = (user?.user_metadata ?? {}) as Record<string, string | undefined>
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
@@ -122,8 +125,9 @@ export default function Configuracion() {
   }
 
   const isAnalyst = isAnalystPlan(plan)
+  const isAdmin = Boolean(access?.is_admin)
   const usagePct =
-    usage?.disponible && usage.limite > 0
+    usage?.disponible && !usage.ilimitado && usage.limite > 0
       ? Math.min(100, (usage.usadas / usage.limite) * 100)
       : 0
 
@@ -140,10 +144,10 @@ export default function Configuracion() {
       <div className="grid max-w-5xl items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         {/* Perfil y cuenta */}
         <Card className="h-fit">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-navy">Perfil y cuenta</h2>
-            <Badge tone={isAnalyst ? 'gold' : 'teal'}>
-              {planLabel(plan)}
+            <Badge tone={isAdmin || isAnalyst ? 'gold' : 'teal'}>
+              {isAdmin ? 'Administrador · acceso total' : planLabel(plan)}
             </Badge>
           </div>
 
@@ -217,7 +221,17 @@ export default function Configuracion() {
               <h2 className="text-base font-semibold text-navy">Consultas IA del mes</h2>
             </div>
             {usage?.disponible ? (
-              <>
+              usage.ilimitado ? (
+                <div className="mt-3 rounded-lg border border-gold/35 bg-gold/5 px-3 py-3">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-navy">
+                    <ShieldCheck className="h-4 w-4 text-gold" /> Uso ilimitado
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-navy/55">
+                    La cuenta administradora no tiene límite mensual de consultas IA.
+                  </p>
+                </div>
+              ) : (
+                <>
                 <p className="mt-3 text-2xl font-bold text-navy">
                   {formatNumber(usage.usadas)}
                   <span className="text-base font-medium text-navy/50">
@@ -235,7 +249,8 @@ export default function Configuracion() {
                   Cada resumen, pregunta al asistente y recomendación descuenta 1 del cupo.
                   Se renueva cada mes.
                 </p>
-              </>
+                </>
+              )
             ) : (
               <p className="mt-3 text-sm text-navy/50">
                 El contador de consultas se activa en producción (requiere Supabase y la
@@ -251,7 +266,17 @@ export default function Configuracion() {
               <h2 className="text-base font-semibold text-navy">Limpieza dirigida IA del mes</h2>
             </div>
             {plansUsage?.disponible ? (
-              <>
+              plansUsage.limpieza.ilimitado ? (
+                <div className="mt-3 rounded-lg border border-teal/30 bg-teal/5 px-3 py-3">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-navy">
+                    <ShieldCheck className="h-4 w-4 text-teal" /> Uso ilimitado
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-navy/55">
+                    La cuenta administradora puede ejecutar limpiezas dirigidas sin cupo mensual.
+                  </p>
+                </div>
+              ) : (
+                <>
                 <p className="mt-3 text-2xl font-bold text-navy">
                   {formatNumber(plansUsage.limpieza.usadas_mes)}
                   <span className="text-base font-medium text-navy/50">
@@ -280,7 +305,8 @@ export default function Configuracion() {
                     {formatNumber(plansUsage.limpieza.addons)}
                   </span>
                 </p>
-              </>
+                </>
+              )
             ) : (
               <p className="mt-3 text-sm text-navy/50">
                 El contador se activa en producción (requiere Supabase y las migraciones
@@ -296,7 +322,7 @@ export default function Configuracion() {
           </Card>
 
           {/* Plan */}
-          {!isAnalyst && (
+          {!isAdmin && !isAnalyst && (
             <Card className="border-gold/30 bg-gold/5">
               <div className="flex items-center gap-2">
                 <Crown className="h-4.5 w-4.5 text-gold" />

@@ -73,7 +73,17 @@ export default function Estandarizacion() {
   const [changingSheet, setChangingSheet] = useState(false)
   const [sheetError, setSheetError] = useState<string | null>(null)
   // Flujo compartido con Conectores: Storage + datasets + /standardize
-  const { importing: processing, error, persistWarning, importFile, planBlocked, dismissPlanBlocked, checkUploadAllowed } = useFileImport()
+  const {
+    importing: processing,
+    error,
+    persistWarning,
+    importFile,
+    planBlocked,
+    dismissPlanBlocked,
+    checkUploadAllowed,
+    accessStatus,
+  } = useFileImport()
+  const checkingAccess = accessStatus === 'loading'
 
   const handleFile = async (selected: File) => {
     await importFile(selected)
@@ -178,12 +188,13 @@ export default function Estandarizacion() {
               Continuar <ArrowRight className="h-3.5 w-3.5" />
             </Link>
             <button
+              disabled={processing || checkingAccess}
               onClick={() => {
                 if (!checkUploadAllowed()) return
                 reset()
                 inputRef.current?.click()
               }}
-              className="inline-flex w-full min-w-0 items-center justify-center gap-1.5 whitespace-normal rounded-lg border border-navy/20 bg-white px-3 py-2 text-center text-xs font-semibold text-navy transition-colors hover:border-teal/60 sm:w-auto sm:px-4"
+              className="inline-flex w-full min-w-0 items-center justify-center gap-1.5 whitespace-normal rounded-lg border border-navy/20 bg-white px-3 py-2 text-center text-xs font-semibold text-navy transition-colors hover:border-teal/60 disabled:cursor-wait disabled:opacity-60 sm:w-auto sm:px-4"
             >
               <UploadCloud className="h-3.5 w-3.5 shrink-0" /> Estandarizar nuevo documento
             </button>
@@ -242,11 +253,19 @@ export default function Estandarizacion() {
           />
           <button
             onClick={openFilePicker}
-            disabled={processing}
+            disabled={processing || checkingAccess}
             className="inline-flex items-center gap-2 rounded-lg bg-teal px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50"
           >
-            <Upload className="h-4 w-4" />
-            {processing ? 'Procesando...' : 'Subir archivo'}
+            {processing || checkingAccess ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+            {processing
+              ? 'Procesando...'
+              : checkingAccess
+                ? 'Verificando acceso...'
+                : 'Subir archivo'}
           </button>
           <p className="text-xs text-navy/45">Formatos soportados: Excel (.xlsx), CSV (.csv)</p>
           {error && (

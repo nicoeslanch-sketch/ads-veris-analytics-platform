@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import HTTPException, status
 
-from .capabilities import display_plan, get_plan, get_profile_flags, normalize_plan
+from .capabilities import display_plan, get_profile_flags, normalize_plan
 from .config import Settings
 
 _TIMEOUT = 10
@@ -102,12 +102,19 @@ def check_quota(user_id: str, settings: Settings) -> dict | None:
     if not _configured(settings):
         return None
     try:
-        plan = get_plan(user_id, settings)
+        plan, is_admin = get_profile_flags(user_id, settings)
         usadas = count_month_usage(user_id, settings, kinds=INSIGHT_KINDS)
     except httpx.HTTPError as exc:
         # Fail-open: no castigar al usuario por un problema de red interno.
         print(f"[quota] No se pudo verificar el cupo de IA ({exc.__class__.__name__}); se permite la consulta.")
         return None
+    if is_admin:
+        return {
+            "plan": plan,
+            "usadas": usadas,
+            "limite": 0,
+            "ilimitado": True,
+        }
     limite = limit_for(plan, settings)
     if limite <= 0:
         # Fase 14: sin plan / prueba gratuita — la IA no está incluida. Es una
@@ -130,7 +137,12 @@ def check_quota(user_id: str, settings: Settings) -> dict | None:
                 )
             ),
         )
-    return {"plan": plan, "usadas": usadas, "limite": limite}
+    return {
+        "plan": plan,
+        "usadas": usadas,
+        "limite": limite,
+        "ilimitado": False,
+    }
 
 
 def record_usage(user_id: str, kind: str, settings: Settings) -> None:
@@ -157,17 +169,30 @@ def record_usage(user_id: str, kind: str, settings: Settings) -> None:
 def usage_info(user_id: str, settings: Settings) -> dict:
     """Estado del cupo de insights para la página Configuración."""
     if not _configured(settings):
-        return {"disponible": False, "plan": "basico", "usadas": 0, "limite": 0}
+        return {
+            "disponible": False,
+            "plan": "basico",
+            "usadas": 0,
+            "limite": 0,
+            "ilimitado": False,
+        }
     try:
-        plan = get_plan(user_id, settings)
+        plan, is_admin = get_profile_flags(user_id, settings)
         usadas = count_month_usage(user_id, settings, kinds=INSIGHT_KINDS)
     except httpx.HTTPError:
-        return {"disponible": False, "plan": "basico", "usadas": 0, "limite": 0}
+        return {
+            "disponible": False,
+            "plan": "basico",
+            "usadas": 0,
+            "limite": 0,
+            "ilimitado": False,
+        }
     return {
         "disponible": True,
         "plan": plan,
         "usadas": usadas,
-        "limite": limit_for(plan, settings),
+        "limite": 0 if is_admin else limit_for(plan, settings),
+        "ilimitado": is_admin,
         "periodo": datetime.now(timezone.utc).strftime("%Y-%m"),
     }
 
@@ -221,6 +246,7 @@ def check_cleaning_quota(user_id: str, settings: Settings) -> dict | None:
             "base": base,
             "addons": addons,
             "consume_addon": False,
+            "ilimitado": True,
         }
     consume_addon = usadas >= base
     if consume_addon and addons <= 0:
@@ -238,6 +264,7 @@ def check_cleaning_quota(user_id: str, settings: Settings) -> dict | None:
         "base": base,
         "addons": addons,
         "consume_addon": consume_addon,
+        "ilimitado": False,
     }
 
 
@@ -282,9 +309,10 @@ def cleaning_usage_info(user_id: str, settings: Settings) -> dict:
             "usadas_mes": 0,
             "base": settings.ai_cleaning_monthly_limit,
             "addons": 0,
+            "ilimitado": False,
         }
     try:
-        plan = get_plan(user_id, settings)
+        plan, is_admin = get_profile_flags(user_id, settings)
         usadas = count_month_usage(user_id, settings, kinds=("cleaning",))
         addons = addons_balance(user_id, settings)
     except httpx.HTTPError:
@@ -293,10 +321,12 @@ def cleaning_usage_info(user_id: str, settings: Settings) -> dict:
             "usadas_mes": 0,
             "base": settings.ai_cleaning_monthly_limit,
             "addons": 0,
+            "ilimitado": False,
         }
     return {
         "disponible": True,
         "usadas_mes": usadas,
         "base": cleaning_limit_for(plan, settings),
         "addons": addons,
+        "ilimitado": is_admin,
     }

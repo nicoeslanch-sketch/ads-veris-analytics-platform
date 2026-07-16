@@ -37,13 +37,24 @@ interface SheetsImportResponse {
 export default function Conectores() {
   const navigate = useNavigate()
   const { file, cleaning } = useDataset()
-  const { importing, error: importError, persistWarning, importFile, planBlocked, dismissPlanBlocked, checkUploadAllowed } = useFileImport()
+  const {
+    importing,
+    error: importError,
+    persistWarning,
+    importFile,
+    planBlocked,
+    dismissPlanBlocked,
+    checkUploadAllowed,
+    accessStatus,
+  } = useFileImport()
 
   const [sheetUrl, setSheetUrl] = useState('')
   const [fetching, setFetching] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const busy = fetching || importing
+  const working = fetching || importing
+  const checkingAccess = accessStatus === 'loading'
+  const busy = working || checkingAccess
 
   const handleImportSheet = async () => {
     const url = sheetUrl.trim()
@@ -122,7 +133,7 @@ export default function Conectores() {
                   if (e.key === 'Enter') void handleImportSheet()
                 }}
                 placeholder="https://docs.google.com/spreadsheets/d/..."
-                disabled={busy}
+                disabled={working}
                 className="w-full bg-transparent text-sm text-navy placeholder-navy/35 outline-none disabled:opacity-60"
               />
             </div>
@@ -131,7 +142,12 @@ export default function Conectores() {
               disabled={!sheetUrl.trim() || busy}
               className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50"
             >
-              {busy ? (
+              {checkingAccess ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Verificando acceso...
+                </>
+              ) : working ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   {fetching ? 'Descargando…' : 'Estandarizando…'}

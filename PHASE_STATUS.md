@@ -1,6 +1,12 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 14 completas + estabilización 14c y recuperación de contraseña.**
+**Estado actual: Fases 0 a 14 completas + estabilización operativa 0.17.4.**
+La versión 0.17.4 elimina la carrera entre el selector de archivos y la
+revalidación de acceso, sin relajar el control fail-closed, y alinea toda la
+experiencia administrativa: etiqueta de acceso total, capacidades y cuotas IA
+ilimitadas. La migración `0018` mantiene el rol de
+`servicios@adsveris.com` aunque la cuenta se cree o actualice después.
+**Backend 279 tests + Vitest 21 + build de producción.**
 La versión 0.17.3 completa el circuito de recuperación: correo con redirect
 autorizado, panel público para ingresar y confirmar la nueva contraseña,
 política compartida de 8 caracteres con letras y números, compatibilidad con

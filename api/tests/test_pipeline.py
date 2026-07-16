@@ -491,7 +491,9 @@ def test_cuota_ia_agotada_devuelve_429(monkeypatch):
         supabase_service_role_key="service-key-de-prueba",
         ai_monthly_limit_basico=5,
     )
-    monkeypatch.setattr(quota, "get_plan", lambda user_id, s: "basico")
+    monkeypatch.setattr(
+        quota, "get_profile_flags", lambda user_id, s: ("basico", False)
+    )
     monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 5)
     try:
         quota.check_quota("user-x", settings)
@@ -503,7 +505,12 @@ def test_cuota_ia_agotada_devuelve_429(monkeypatch):
     # Con cupo disponible devuelve el estado
     monkeypatch.setattr(quota, "count_month_usage", lambda user_id, s, kinds=None: 4)
     info = quota.check_quota("user-x", settings)
-    assert info == {"plan": "basico", "usadas": 4, "limite": 5}
+    assert info == {
+        "plan": "basico",
+        "usadas": 4,
+        "limite": 5,
+        "ilimitado": False,
+    }
 
 
 def test_cuota_ia_sin_supabase_no_bloquea(client, auth_headers):
