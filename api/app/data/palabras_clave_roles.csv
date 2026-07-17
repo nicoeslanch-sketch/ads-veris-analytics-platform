@@ -1725,7 +1725,7 @@ linea_ingreso;categoria;catalogo;texto;es;80;categoria
 linea_servicio;categoria;catalogo;texto;es;80;categoria
 linea_venta;categoria;catalogo;texto;es;80;categoria
 tipo de articulo;categoria;catalogo;texto;es;80;categoria
-tipo de cliente;categoria;catalogo;texto;es;80;categoria
+tipo de cliente;tipo_cliente;cliente;texto;es;100;
 tipo de gasto;categoria;catalogo;texto;es;80;categoria
 tipo de ingreso;categoria;catalogo;texto;es;80;categoria
 tipo de negocio;categoria;catalogo;texto;es;80;categoria
@@ -1733,7 +1733,7 @@ tipo de producto;categoria;catalogo;texto;es;80;categoria
 tipo de servicio;categoria;catalogo;texto;es;80;categoria
 tipo de venta;categoria;catalogo;texto;es;80;categoria
 tipo_articulo;categoria;catalogo;texto;es;80;categoria
-tipo_cliente;categoria;catalogo;texto;es;80;categoria
+tipo_cliente;tipo_cliente;cliente;texto;es;100;
 tipo_gasto;categoria;catalogo;texto;es;80;categoria
 tipo_ingreso;categoria;catalogo;texto;es;80;categoria
 tipo_negocio;categoria;catalogo;texto;es;80;categoria
@@ -1832,7 +1832,7 @@ linea_ingresos;categoria;catalogo;texto;es;70;categoria
 linea_servicios;categoria;catalogo;texto;es;70;categoria
 linea_ventas;categoria;catalogo;texto;es;70;categoria
 tipo de articulos;categoria;catalogo;texto;es;70;categoria
-tipo de clientes;categoria;catalogo;texto;es;70;categoria
+tipo de clientes;tipo_cliente;cliente;texto;es;90;
 tipo de gastos;categoria;catalogo;texto;es;70;categoria
 tipo de ingresos;categoria;catalogo;texto;es;70;categoria
 tipo de negocios;categoria;catalogo;texto;es;70;categoria
@@ -1848,7 +1848,7 @@ tipo del producto;categoria;catalogo;texto;es;70;categoria
 tipo del servicio;categoria;catalogo;texto;es;70;categoria
 tipo del venta;categoria;catalogo;texto;es;70;categoria
 tipo_articulos;categoria;catalogo;texto;es;70;categoria
-tipo_clientes;categoria;catalogo;texto;es;70;categoria
+tipo_clientes;tipo_cliente;cliente;texto;es;90;
 tipo_gastos;categoria;catalogo;texto;es;70;categoria
 tipo_ingresos;categoria;catalogo;texto;es;70;categoria
 tipo_negocios;categoria;catalogo;texto;es;70;categoria

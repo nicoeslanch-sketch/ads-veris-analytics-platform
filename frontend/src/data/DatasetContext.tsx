@@ -10,9 +10,11 @@ import {
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import type {
+  AnalysisScope,
   CleanResult,
   MetricsResult,
   SheetManifest,
+  SheetProcessingStatus,
   StandardizeResult,
 } from '../lib/types'
 
@@ -30,12 +32,17 @@ export interface SheetSession {
   cleaning: CleanResult | null
   mappingOverride: Record<string, string> | null
   eliminarDuplicados: boolean
+  status: SheetProcessingStatus
+  error: string | null
 }
 
 export interface DatasetRestoreState {
   active_sheet: string | null
   available_sheets: string[]
   excluded_sheets: string[]
+  selected_sheets: string[]
+  sheet_errors: Record<string, string>
+  analysis_scope: AnalysisScope | null
   combine_sheets: boolean
 }
 
@@ -44,6 +51,9 @@ export interface RestoreDatasetOptions {
   availableSheets: string[]
   combineSheets: boolean
   sheetSessions: Record<string, SheetSession>
+  selectedSheets?: string[]
+  sheetErrors?: Record<string, string>
+  analysisScope?: AnalysisScope | null
 }
 
 /** Construye el periodo de un mes "YYYY-MM" (primer al último día). */
@@ -108,6 +118,9 @@ interface DatasetState {
   sheet: string | null
   availableSheets: string[]
   sheetSessions: Record<string, SheetSession>
+  selectedSheets: string[]
+  sheetErrors: Record<string, string>
+  analysisScope: AnalysisScope | null
   sheetManifest: SheetManifest | null
   combineSheets: boolean
   restoreState: DatasetRestoreState
@@ -139,6 +152,13 @@ interface DatasetState {
   setMappingOverride: (mapping: Record<string, string> | null) => void
   setEliminarDuplicados: (value: boolean) => void
   setCombineSheets: (value: boolean) => void
+  setSelectedSheets: (sheets: string[]) => void
+  setAnalysisScope: (scope: AnalysisScope) => void
+  setSheetStatus: (
+    sheet: string,
+    status: SheetProcessingStatus,
+    error?: string | null,
+  ) => void
   reset: () => void
 }
 
@@ -159,6 +179,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [eliminarDuplicados, setEliminarDuplicados] = useState(false)
   const [availableSheets, setAvailableSheets] = useState<string[]>([])
   const [sheetSessions, setSheetSessions] = useState<Record<string, SheetSession>>({})
+  const [selectedSheets, setSelectedSheetsState] = useState<string[]>([])
+  const [sheetErrors, setSheetErrors] = useState<Record<string, string>>({})
+  const [analysisScope, setAnalysisScopeState] = useState<AnalysisScope | null>(null)
   const [combineSheets, setCombineSheets] = useState(false)
   const [restoring, setRestoring] = useState(false)
 
@@ -190,8 +213,23 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
         cleaning: previous[activeSheet]?.cleaning ?? null,
         mappingOverride: previous[activeSheet]?.mappingOverride ?? null,
         eliminarDuplicados: previous[activeSheet]?.eliminarDuplicados ?? false,
+        status: 'estandarizada',
+        error: null,
       },
     }))
+    setSheetErrors((previous) => {
+      const next = { ...previous }
+      delete next[activeSheet]
+      return next
+    })
+    setSelectedSheetsState((previous) => (
+      previous.length ? previous : (sheets.length ? sheets : [activeSheet])
+    ))
+    setAnalysisScopeState((previous) => previous ?? {
+      mode: 'single',
+      sheets: [activeSheet],
+      active_sheet: activeSheet,
+    })
   }, [])
 
   const setCleaning = useCallback((result: CleanResult) => {
@@ -210,6 +248,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
           cleaning: result,
           mappingOverride: previous[activeSheet]?.mappingOverride ?? mappingOverride,
           eliminarDuplicados: removeDuplicates,
+          status: 'limpia',
+          error: null,
         },
       }))
     }
@@ -229,6 +269,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
           cleaning: null,
           mappingOverride: mapping,
           eliminarDuplicados: previous[sheet]?.eliminarDuplicados ?? eliminarDuplicados,
+          status: previous[sheet]?.status ?? 'estandarizada',
+          error: previous[sheet]?.error ?? null,
         },
       }))
     }
@@ -244,6 +286,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
           cleaning: previous[sheet]?.cleaning ?? cleaning,
           mappingOverride: previous[sheet]?.mappingOverride ?? mappingOverride,
           eliminarDuplicados: value,
+          status: previous[sheet]?.status ?? 'estandarizada',
+          error: previous[sheet]?.error ?? null,
         },
       }))
     }
@@ -265,6 +309,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setEliminarDuplicados(false)
       setAvailableSheets([])
       setSheetSessions({})
+      setSelectedSheetsState([])
+      setSheetErrors({})
+      setAnalysisScopeState(null)
       setCombineSheets(false)
     },
     [],
@@ -292,6 +339,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       cleaning: restoredCleaning,
       mappingOverride: restoredMapping,
       eliminarDuplicados: restoredEliminarDuplicados,
+      status: restoredCleaning ? 'limpia' : 'estandarizada',
+      error: null,
     }
     const activeSheet = options?.activeSheet ?? inferredActiveSheet
     const sessions = { ...(options?.sheetSessions ?? {}) }
@@ -312,6 +361,11 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setEliminarDuplicados(activeSession?.eliminarDuplicados ?? restoredEliminarDuplicados)
     setAvailableSheets(options?.availableSheets ?? sheets)
     setSheetSessions(sessions)
+    setSelectedSheetsState(options?.selectedSheets ?? (options?.availableSheets ?? sheets))
+    setSheetErrors(options?.sheetErrors ?? {})
+    setAnalysisScopeState(options?.analysisScope ?? (
+      activeSheet ? { mode: 'single', sheets: [activeSheet], active_sheet: activeSheet } : null
+    ))
     setCombineSheets(Boolean(options?.combineSheets))
   }, [])
 
@@ -330,6 +384,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setEliminarDuplicados(false)
     setAvailableSheets([])
     setSheetSessions({})
+    setSelectedSheetsState([])
+    setSheetErrors({})
+    setAnalysisScopeState(null)
     setCombineSheets(false)
   }, [])
 
@@ -345,6 +402,64 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     lastUserId.current = userId
   }, [userId, reset])
 
+  const setSelectedSheets = useCallback((names: string[]) => {
+    const unique = names.filter(
+      (name, index) => availableSheets.includes(name) && names.indexOf(name) === index,
+    )
+    setSelectedSheetsState(unique)
+    setSheetSessions((previous) => {
+      const next = { ...previous }
+      for (const name of availableSheets) {
+        const current = next[name]
+        if (current) {
+          next[name] = {
+            ...current,
+            status: unique.includes(name)
+              ? (current.status === 'no_seleccionada' ? 'pendiente' : current.status)
+              : 'no_seleccionada',
+          }
+        }
+      }
+      return next
+    })
+    setAnalysisScopeState((current) => {
+      if (current && current.sheets.every((name) => unique.includes(name))) return current
+      const active = unique[0]
+      return active ? { mode: 'single', sheets: [active], active_sheet: active } : null
+    })
+  }, [availableSheets])
+
+  const setSheetStatus = useCallback((
+    name: string,
+    status: SheetProcessingStatus,
+    error: string | null = null,
+  ) => {
+    setSheetSessions((previous) => ({
+      ...previous,
+      [name]: {
+        standardization: previous[name]?.standardization ?? null,
+        cleaning: previous[name]?.cleaning ?? null,
+        mappingOverride: previous[name]?.mappingOverride ?? null,
+        eliminarDuplicados: previous[name]?.eliminarDuplicados ?? false,
+        status,
+        error,
+      },
+    }))
+    setSheetErrors((previous) => {
+      const next = { ...previous }
+      if (error) next[name] = error
+      else delete next[name]
+      return next
+    })
+  }, [])
+
+  const setAnalysisScope = useCallback((scope: AnalysisScope) => {
+    setAnalysisScopeState(scope)
+    setMetricsState(null)
+    setMonthsAvailable([])
+    setPeriod(ALL_PERIOD)
+  }, [])
+
   const sheetManifest = useMemo<SheetManifest | null>(() => {
     if (availableSheets.length <= 1) return null
     return {
@@ -353,26 +468,31 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
         const directed = session?.cleaning?.dirigida
         return {
           nombre: name,
-          procesar: Boolean(session?.standardization),
+          procesar: selectedSheets.includes(name) && Boolean(session?.standardization),
           rules: session?.cleaning?.reglas_activas ?? {},
           mapping: session?.mappingOverride ?? {},
           scope: directed
             ? { incluir: directed.columnas_incluir, excluir: directed.columnas_excluir }
             : {},
           eliminar_duplicados: session?.eliminarDuplicados ?? false,
+          status: session?.status ?? (selectedSheets.includes(name) ? 'pendiente' : 'no_seleccionada'),
+          error: session?.error ?? sheetErrors[name] ?? '',
         }
       }),
     }
-  }, [availableSheets, sheetSessions])
+  }, [availableSheets, selectedSheets, sheetErrors, sheetSessions])
 
   const restoreState = useMemo<DatasetRestoreState>(() => ({
     active_sheet: sheet,
     available_sheets: availableSheets,
     excluded_sheets: availableSheets.filter(
-      (name) => !sheetSessions[name]?.standardization,
+      (name) => !selectedSheets.includes(name),
     ),
+    selected_sheets: selectedSheets,
+    sheet_errors: sheetErrors,
+    analysis_scope: analysisScope,
     combine_sheets: combineSheets,
-  }), [availableSheets, combineSheets, sheet, sheetSessions])
+  }), [analysisScope, availableSheets, combineSheets, selectedSheets, sheet, sheetErrors])
 
   const value = useMemo(
     () => ({
@@ -390,6 +510,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       sheet,
       availableSheets,
       sheetSessions,
+      selectedSheets,
+      sheetErrors,
+      analysisScope,
       sheetManifest,
       combineSheets,
       restoreState,
@@ -406,6 +529,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setMappingOverride,
       setEliminarDuplicados: updateEliminarDuplicados,
       setCombineSheets,
+      setSelectedSheets,
+      setAnalysisScope,
+      setSheetStatus,
       reset,
     }),
     [
@@ -423,6 +549,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       sheet,
       availableSheets,
       sheetSessions,
+      selectedSheets,
+      sheetErrors,
+      analysisScope,
       sheetManifest,
       combineSheets,
       restoreState,
@@ -434,6 +563,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setMappingOverride,
       setCleaning,
       updateEliminarDuplicados,
+      setSelectedSheets,
+      setAnalysisScope,
+      setSheetStatus,
       reset,
     ],
   )

@@ -294,10 +294,51 @@ export interface SheetManifestEntry {
   mapping: Record<string, string>
   scope: { incluir?: string[]; excluir?: string[] }
   eliminar_duplicados: boolean
+  status?: SheetProcessingStatus
+  error?: string
 }
 
 export interface SheetManifest {
   hojas: SheetManifestEntry[]
+}
+
+export type SheetProcessingStatus =
+  | 'pendiente'
+  | 'estandarizando'
+  | 'estandarizada'
+  | 'limpiando'
+  | 'limpia'
+  | 'error'
+  | 'no_seleccionada'
+
+export interface AnalysisJoin {
+  left_sheet: string
+  right_sheet: string
+  left_keys: string[]
+  right_keys: string[]
+  type: 'left'
+}
+
+export type AnalysisScope =
+  | { mode: 'single'; sheets: string[]; active_sheet: string }
+  | { mode: 'append'; sheets: string[]; active_sheet: string }
+  | { mode: 'join'; sheets: string[]; active_sheet: string; join: AnalysisJoin }
+
+export interface RelationshipCandidate extends AnalysisJoin {
+  coverage_left: number
+  coverage_right: number
+  overlap: number
+  unique_left: number
+  unique_right: number
+  cardinality: 'uno_a_uno' | 'muchos_a_uno' | 'uno_a_muchos' | 'muchos_a_muchos' | 'sin_relacion_segura'
+  safe: boolean
+  reason: string | null
+}
+
+export interface RelationshipResult {
+  candidates: RelationshipCandidate[]
+  safe_count: number
+  message: string | null
 }
 
 export const DEFAULT_CLEANING_OPTIONS: CleaningOptions = {
@@ -437,6 +478,8 @@ export interface MetricsResult {
     items: Record<string, number | null>
   }
   advertencias: string[]
+  analysis_scope?: AnalysisScope
+  analysis_provenance?: Record<string, unknown>
 }
 
 /** Compact response from POST /restore/latest. */
@@ -456,6 +499,9 @@ export interface RestoreLatestResult {
   active_sheet?: string | null
   available_sheets?: string[]
   excluded_sheets?: string[]
+  selected_sheets?: string[]
+  sheet_errors?: Record<string, string>
+  analysis_scope?: AnalysisScope | null
   combine_sheets?: boolean
   sheet_sessions?: Record<string, {
     standardization: StandardizeResult

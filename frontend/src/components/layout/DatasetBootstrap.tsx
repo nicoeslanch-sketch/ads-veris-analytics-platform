@@ -72,6 +72,8 @@ export default function DatasetBootstrap() {
               cleaning: session.cleaning,
               mappingOverride: session.mapping,
               eliminarDuplicados: session.eliminar_duplicados,
+              status: session.cleaning ? 'limpia' as const : 'estandarizada' as const,
+              error: restored.sheet_errors?.[name] ?? null,
             },
           ]),
         )
@@ -90,6 +92,9 @@ export default function DatasetBootstrap() {
               restored.available_sheets ?? restored.standardization.carga?.hojas_disponibles ?? [],
             combineSheets: Boolean(restored.combine_sheets),
             sheetSessions: restoredSessions,
+            selectedSheets: restored.selected_sheets,
+            sheetErrors: restored.sheet_errors,
+            analysisScope: restored.analysis_scope,
           },
         )
       } catch (err) {

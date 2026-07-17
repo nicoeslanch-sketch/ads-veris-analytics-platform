@@ -22,7 +22,7 @@ export function useSessionMetrics(): {
 } {
   const {
     file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics,
-    mappingOverride, sheet, eliminarDuplicados,
+    mappingOverride, sheet, sheetManifest, analysisScope, eliminarDuplicados,
   } = useDataset()
   const ready = Boolean(file && cleaning)
   const [loading, setLoading] = useState(false)
@@ -34,8 +34,9 @@ export function useSessionMetrics(): {
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Hoja y mapeo en la clave: si el usuario los cambia, se recalcula (Fase 11)
-    const key = `${datasetKey}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}`
-    if (metrics && isFullPeriod(metrics)) {
+    const key = `${datasetKey}|${sheet ?? ''}|${JSON.stringify(analysisScope ?? {})}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}`
+    const scopeMatches = JSON.stringify(metrics?.analysis_scope ?? null) === JSON.stringify(analysisScope ?? null)
+    if (metrics && isFullPeriod(metrics) && scopeMatches) {
       fetchedFor.current = key
       setActiveCurrency(metrics.moneda)
       return
@@ -50,6 +51,12 @@ export function useSessionMetrics(): {
       eliminar_duplicados: String(eliminarDuplicados),
       ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
       ...(sheet ? { sheet } : {}),
+      ...(sheetManifest && analysisScope
+        ? {
+            manifest: JSON.stringify(sheetManifest),
+            analysis_scope: JSON.stringify(analysisScope),
+          }
+        : {}),
     }
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
       signal: controller.signal,
@@ -75,7 +82,7 @@ export function useSessionMetrics(): {
       if (fetchedFor.current === key) fetchedFor.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics, sheet, mappingOverride, eliminarDuplicados])
+  }, [file, cleaning, datasetId, storagePath, uploadedAt, metrics, setMetrics, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados])
 
   // Solo entregar métricas del periodo completo (nunca el mes filtrado ajeno).
   return { ready, metrics: isFullPeriod(metrics) ? metrics : null, loading, error }

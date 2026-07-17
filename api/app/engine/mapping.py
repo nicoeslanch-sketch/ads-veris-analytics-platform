@@ -79,6 +79,28 @@ ENGINE_ROLES: tuple[str, ...] = tuple(role for role, _ in ROLE_KEYWORDS)
 _METHOD_RANK = {"exacto": 4, "contencion": 3, "prefijo": 2, "fuzzy": 1, "ia": 1}
 
 
+def _legacy_semantically_compatible(role: str, normalized_column: str) -> bool:
+    """Evita que la red legacy contradiga un encabezado semanticamente claro.
+
+    La coincidencia por subcadena sigue disponible para archivos historicos,
+    pero modificadores como "tipo" o "categoria" cambian el significado de
+    Cliente: TipoCliente es una clasificacion del cliente, no el cliente ni la
+    categoria del producto.
+    """
+    compact = norm_key(normalized_column)
+    if role == "cliente" and any(
+        marker in compact for marker in ("tipocliente", "categoriacliente", "segmentocliente")
+    ):
+        return False
+    if role == "categoria" and "cliente" in compact:
+        return False
+    if role == "monto" and any(
+        marker in compact for marker in ("preciounitario", "unitprice", "priceperunit")
+    ):
+        return False
+    return True
+
+
 def detect_columns_extended(columns: list[str]) -> dict[str, DictMatch]:
     """Rol extendido (64 roles) por columna, según el diccionario Fase 9."""
     return dictionary.match_columns([str(c) for c in columns])
@@ -114,7 +136,10 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
         for col in columns:
             if col in taken:
                 continue
-            if any(keyword in normalized[col] for keyword in keywords):
+            if (
+                _legacy_semantically_compatible(role, normalized[col])
+                and any(keyword in normalized[col] for keyword in keywords)
+            ):
                 mapping[role] = col
                 taken.add(col)
                 break

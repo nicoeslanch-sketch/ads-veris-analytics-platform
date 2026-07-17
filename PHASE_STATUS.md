@@ -1,6 +1,13 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 16 completas en código.**
+**Estado actual: Fases 0 a 17 completas en código.**
+La Fase 17 (`CHANGELOG` [0.20.0]) simplifica el mapeo Básico y completa el
+procesamiento, limpieza, análisis, exportación y restauración multihoja. Las
+relaciones solo permiten one-to-one/many-to-one confirmadas y demuestran que
+filas y totales no cambian. Requiere aplicar **0021** antes de desplegar el
+backend; esta rama no ejecuta migraciones, merge ni despliegues.
+
+**Historial de Fase 16.**
 La Fase 16 (`CHANGELOG` [0.19.0]) cierra la pérdida contextual de literales,
 bloquea globalmente cálculos con monedas incompatibles, reemplaza snapshots v2
 por restauración multihoja v3 con revisión reservada y RPC atómica, compara la
