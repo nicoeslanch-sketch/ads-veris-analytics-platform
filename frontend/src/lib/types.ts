@@ -453,5 +453,16 @@ export interface RestoreLatestResult {
   metrics?: MetricsResult | null
   mapping?: Record<string, string> | null
   eliminar_duplicados?: boolean
+  active_sheet?: string | null
+  available_sheets?: string[]
+  excluded_sheets?: string[]
+  combine_sheets?: boolean
+  sheet_sessions?: Record<string, {
+    standardization: StandardizeResult
+    cleaning: CleanResult | null
+    metrics: MetricsResult | null
+    mapping: Record<string, string> | null
+    eliminar_duplicados: boolean
+  }>
   source: 'snapshot' | 'computed' | 'empty'
 }

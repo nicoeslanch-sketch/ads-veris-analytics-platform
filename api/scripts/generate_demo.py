@@ -49,10 +49,10 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for name, payload in build_snapshots().items():
         path = OUT_DIR / name
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        with path.open("w", encoding="utf-8", newline="\n") as output:
+            output.write(
+                json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
+            )
         print(f"✓ {path.relative_to(API_DIR.parent)}")
 
 

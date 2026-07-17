@@ -64,6 +64,17 @@ export default function DatasetBootstrap() {
         const placeholder = new File([], restored.dataset.name, {
           type: 'application/octet-stream',
         })
+        const restoredSessions = Object.fromEntries(
+          Object.entries(restored.sheet_sessions ?? {}).map(([name, session]) => [
+            name,
+            {
+              standardization: session.standardization,
+              cleaning: session.cleaning,
+              mappingOverride: session.mapping,
+              eliminarDuplicados: session.eliminar_duplicados,
+            },
+          ]),
+        )
         restoreDataset(
           placeholder,
           restored.dataset.id,
@@ -73,6 +84,13 @@ export default function DatasetBootstrap() {
           restored.metrics ?? null,
           restored.mapping ?? null,
           Boolean(restored.eliminar_duplicados),
+          {
+            activeSheet: restored.active_sheet ?? null,
+            availableSheets:
+              restored.available_sheets ?? restored.standardization.carga?.hojas_disponibles ?? [],
+            combineSheets: Boolean(restored.combine_sheets),
+            sheetSessions: restoredSessions,
+          },
         )
       } catch (err) {
         if (active && !cancelledRef.current) {

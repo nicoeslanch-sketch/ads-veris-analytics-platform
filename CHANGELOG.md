@@ -2,6 +2,24 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.19.0] - 2026-07-17 - Fase 16: integridad auditable y restauración atómica
+
+- Conserva literales reservados en columnas textuales y separa nulo físico,
+  placeholder semántico contextual y texto literal durante carga, limpieza y exportación.
+- Detecta moneda sobre todas las filas de montos y costos mediante una estructura
+  tipada; una mezcla incompatible bloquea KPIs monetarios en API, IA y todas las vistas.
+- Reserva la revisión al recibir el trabajo y persiste snapshots multihoja v3 mediante
+  RPC atómica, con validación de SHA, reglas, mapeo, hoja y versión del motor.
+- Expone calidad antes/después con una fórmula común y cobertura basada en valores válidos.
+- Agrega auditoría por transformación; Excel incluye `Auditoria` y CSV se entrega como
+  ZIP con datos, auditoría y manifiesto.
+- Migra el E2E a `@playwright/test`, integra Chromium en CI y endurece el smoke RLS/Storage.
+- Corrige la numeración duplicada de migraciones: contratación Básico pasa a `0019` y
+  el estado de restauración v3 a `0020`.
+
+La comprobación crítica punto por punto, los pasos manuales y riesgos residuales están
+en [`docs/FASE_16_AUDITORIA.md`](./docs/FASE_16_AUDITORIA.md).
+
 ## [0.18.0] - 2026-07-17 - Fase 15: "todo en 10" — triage verificado del plan externo
 
 Implementación CRÍTICA del plan de 8 ejes: cada afirmación se verificó contra

@@ -1,4 +1,4 @@
-"""Identidad de versión del motor (Fase 15).
+"""Identidad de versión del motor (Fase 16).
 
 Fuente ÚNICA para: el endpoint GET /version (identidad de despliegue), el
 versionado de snapshots de restauración (un snapshot generado por un motor
@@ -11,8 +11,8 @@ Actualizar ENGINE_VERSION en cada release que cambie resultados del motor
 
 import os
 
-ENGINE_VERSION = "0.18.0"
-LATEST_MIGRATION = "0017"
+ENGINE_VERSION = "0.19.0"
+LATEST_MIGRATION = "0020"
 
 
 def commit_sha() -> str:

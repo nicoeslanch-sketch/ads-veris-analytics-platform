@@ -11,6 +11,8 @@ se habilitan cuando el usuario conecte sus datos financieros.
 """
 
 import re
+from dataclasses import dataclass, field
+from typing import Iterator
 
 import pandas as pd
 
@@ -22,9 +24,9 @@ from .mapping import (
 from .standardize import (
     is_missing,
     map_unique,
-    missing_mask,
     parse_date,
     parse_number,
+    physical_missing_mask,
     semantic_missing_mask,
 )
 
@@ -56,7 +58,7 @@ def _numeric_series(df: pd.DataFrame, column: str | None) -> pd.Series:
 _CURRENCY_SIGNALS = {
     "USD": re.compile(r"(?i)(us\$|usd)"),
     "EUR": re.compile(r"(?i)(€|eur)"),
-    "CLP": re.compile(r"(?i)(clp)"),
+    "CLP": re.compile(r"(?i)\bclp\b"),
     "UF": re.compile(r"(?i)\buf\b"),
     "ARS": re.compile(r"(?i)\bars\b"),
     "PEN": re.compile(r"(?i)(\bpen\b|s/\.?\s?\d)"),
@@ -66,40 +68,165 @@ _CURRENCY_SIGNALS = {
 }
 
 
-def detect_currency(raw: pd.Series | None) -> tuple[str, str | None]:
-    """(moneda_dominante, advertencia_o_None) a partir de los valores crudos.
+@dataclass(frozen=True)
+class CurrencyDetection:
+    """Resultado tipado de la inspección monetaria completa.
 
-    '$' a secas se asume CLP (convención es-CL); solo tokens explícitos
-    (US$, USD, €, EUR, CLP) cambian o mezclan la moneda."""
-    if raw is None:
-        return "CLP", None
+    ``conteos_por_columna`` permite auditar si la incompatibilidad proviene de
+    ventas, costos o de ambas. ``__iter__`` mantiene la compatibilidad con el
+    antiguo desempaquetado ``moneda, aviso = detect_currency(...)``.
+    """
+
+    dominante: str
+    detectadas: tuple[str, ...]
+    conteos: dict[str, int]
+    mixta: bool
+    advertencia: str | None = None
+    conteos_por_columna: dict[str, dict[str, int]] = field(default_factory=dict)
+
+    def __iter__(self) -> Iterator[str | None]:
+        yield self.dominante
+        yield self.advertencia
+
+    def to_dict(self) -> dict:
+        return {
+            "dominante": self.dominante,
+            "detectadas": list(self.detectadas),
+            "conteos": dict(self.conteos),
+            "mixta": self.mixta,
+            "advertencia": self.advertencia,
+            "conteos_por_columna": {
+                name: dict(counts) for name, counts in self.conteos_por_columna.items()
+            },
+        }
+
+
+def _currency_counts(raw: pd.Series | None) -> dict[str, int]:
     counts = {code: 0 for code in _CURRENCY_SIGNALS}
-    sample = [str(v) for v in raw.head(1000) if not is_missing(v)]
-    for value in sample:
-        for code, pattern in _CURRENCY_SIGNALS.items():
-            if pattern.search(value):
-                counts[code] += 1
-                break
-    explicit = {code: n for code, n in counts.items() if n > 0}
+    if raw is None:
+        return counts
+
+    # Recorre TODA la columna, pero evalúa cada valor único una sola vez.
+    # Es lineal para construir value_counts y evita el sesgo de las primeras
+    # 1.000 filas sin multiplicar el costo por datos muy repetidos.
+    values = raw.loc[~physical_missing_mask(raw)].astype(str).str.strip()
+    for value, occurrences in values.value_counts(dropna=False).items():
+        found = {
+            code for code, pattern in _CURRENCY_SIGNALS.items() if pattern.search(value)
+        }
+        # '$' aislado es CLP por convención es-CL, pero no cuando el mismo
+        # valor ya declara otra moneda (US$, ARS $, etc.).
+        if not found and "$" in value:
+            found.add("CLP")
+        for code in found:
+            counts[code] += int(occurrences)
+    return counts
+
+
+def detect_currency(
+    montos: pd.Series | None,
+    costos: pd.Series | None = None,
+) -> CurrencyDetection:
+    """Inspecciona montos y costos completos y devuelve un contrato tipado."""
+
+    by_column = {
+        "monto": _currency_counts(montos),
+        "costo": _currency_counts(costos),
+    }
+    counts = {
+        code: by_column["monto"][code] + by_column["costo"][code]
+        for code in _CURRENCY_SIGNALS
+    }
+    explicit = {code: count for code, count in counts.items() if count > 0}
     if not explicit:
-        return "CLP", None
-    dominant = max(explicit, key=lambda c: explicit[c])
-    others = [c for c in explicit if c != dominant]
-    # Sin token explícito la fila se asume en la moneda dominante; si hay más
-    # de un token explícito distinto, los totales estarían mezclando monedas.
-    if others:
-        detalle = ", ".join(sorted(explicit))
-        return dominant, (
-            f"Se detectaron montos en más de una moneda ({detalle}). Los totales "
-            "suman los valores SIN convertir: revisa la columna de montos o "
-            "sepárala por moneda antes de comparar."
+        return CurrencyDetection("CLP", (), counts, False, None, by_column)
+
+    dominant = max(explicit, key=lambda code: (explicit[code], code == "CLP", code))
+    detected = tuple(sorted(explicit))
+    mixed = len(detected) > 1
+    warning: str | None = None
+    if mixed:
+        detail = ", ".join(detected)
+        warning = (
+            f"Se detectaron montos o costos en más de una moneda ({detail}). "
+            "Los indicadores monetarios están bloqueados porque no existe una "
+            "conversión declarada y verificable."
         )
-    if dominant != "CLP":
-        return dominant, (
-            f"Los montos parecen estar en {dominant}: los indicadores se muestran "
-            "en esa moneda, sin conversión a pesos chilenos."
+    elif dominant != "CLP":
+        warning = (
+            f"Los montos y costos parecen estar en {dominant}: los indicadores se "
+            "muestran en esa moneda, sin conversión a pesos chilenos."
         )
-    return dominant, None
+    return CurrencyDetection(dominant, detected, counts, mixed, warning, by_column)
+
+
+def _coerce_currency_detection(
+    hint: CurrencyDetection | tuple[str, str | None] | None,
+    montos: pd.Series | None,
+    costos: pd.Series | None,
+) -> CurrencyDetection:
+    if isinstance(hint, CurrencyDetection):
+        return hint
+    if isinstance(hint, tuple):
+        # Compatibilidad transitoria con integraciones Fase 15. El pipeline
+        # propio nunca usa este camino: siempre entrega CurrencyDetection.
+        dominant, warning = hint
+        mixed = bool(warning and "más de una moneda" in warning.lower())
+        detected = (dominant,) if not mixed else (dominant, "INCOMPATIBLE")
+        return CurrencyDetection(
+            dominant,
+            detected,
+            {dominant: 1},
+            mixed,
+            warning,
+            {},
+        )
+    return detect_currency(montos, costos)
+
+
+def _block_monetary_outputs(result: dict, detection: CurrencyDetection) -> None:
+    """Elimina del contrato público cualquier suma monetaria incompatible.
+
+    El bloqueo vive en backend para proteger también análisis guardados, IA,
+    reportes y consumidores futuros que no implementen una pantalla especial.
+    Se conservan solo conteos no monetarios y metadatos de cobertura.
+    """
+
+    kpis = result.get("kpis", {})
+    for key in (
+        "ingresos_totales",
+        "ticket_promedio",
+        "gastos_totales",
+        "ganancia_neta",
+        "margen_utilidad_pct",
+        "flujo_caja",
+        "devoluciones",
+    ):
+        if key in kpis:
+            kpis[key] = None
+
+    # Estas estructuras se derivan de sumas monetarias. Entregar listas vacías
+    # evita que un consumidor use accidentalmente valores calculados antes del
+    # bloqueo y mantiene operativas las dimensiones no monetarias.
+    result["evolucion_mensual"] = []
+    for key in ("por_categoria", "ventas_por_canal", "top_productos", "por_dia_semana"):
+        if key in result:
+            result[key] = []
+    if "lideres_productos" in result:
+        result["lideres_productos"] = None
+    if isinstance(result.get("clientes"), dict):
+        result["clientes"] = {
+            **result["clientes"],
+            "top": [],
+            "concentracion_top_pct": None,
+            "cobertura_identificacion_pct": None,
+        }
+    result["proyeccion"] = None
+    result["datos_monetarios_disponibles"] = False
+    result["bloqueo_monetario"] = {
+        "codigo": "MONEDAS_INCOMPATIBLES",
+        "mensaje": detection.advertencia,
+    }
 
 
 def _pct_change(current: float, previous: float | None) -> float | None:
@@ -235,7 +362,7 @@ def compute_metrics(
     mapping: dict[str, str] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-    currency_hint: tuple[str, str | None] | None = None,
+    currency_hint: CurrencyDetection | tuple[str, str | None] | None = None,
 ) -> dict:
     """`currency_hint` viene del pipeline (detección sobre los valores CRUDOS,
     antes de que la estandarización quite los símbolos de moneda)."""
@@ -245,6 +372,12 @@ def compute_metrics(
     roles = resolve_mapping(list(df.columns), mapping)
     roles = {role: col for role, col in roles.items() if col in df.columns}
     warnings: list[str] = []
+
+    currency = _coerce_currency_detection(
+        currency_hint,
+        df[roles["monto"]] if roles.get("monto") else None,
+        df[roles["costo"]] if roles.get("costo") else None,
+    )
 
     amounts_all = _numeric_series(df, roles.get("monto"))
     costs_all = _numeric_series(df, roles.get("costo"))
@@ -557,23 +690,16 @@ def compute_metrics(
         if col is None:
             return False
         semantic = semantic_missing_mask(df[col], role)
-        return bool((~missing_mask(df[col]) & ~semantic).any())
+        return bool((~physical_missing_mask(df[col]) & ~semantic).any())
 
-    moneda, aviso_moneda = (
-        currency_hint
-        if currency_hint is not None
-        else detect_currency(df[roles["monto"]] if roles.get("monto") else None)
-    )
-    if aviso_moneda:
-        warnings.insert(0, aviso_moneda)
-    # Fase 15: con montos en MÁS DE UNA moneda, los totales suman peras con
-    # manzanas — el flag es explícito y el frontend BLOQUEA los KPIs
-    # monetarios (jamás mostrar una sola cifra como si fuera válida).
-    moneda_mixta = bool(aviso_moneda and "más de una moneda" in aviso_moneda)
+    if currency.advertencia:
+        warnings.insert(0, currency.advertencia)
 
     result: dict = {
-        "moneda": moneda,
-        "moneda_mixta": moneda_mixta,
+        "moneda": currency.dominante,
+        "moneda_mixta": currency.mixta,
+        "moneda_detalle": currency.to_dict(),
+        "datos_monetarios_disponibles": not currency.mixta,
         "mapeo": roles,
         # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
         # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
@@ -656,9 +782,11 @@ def compute_metrics(
     if roles.get("cliente"):
         clientes_raw = selection[roles["cliente"]]
         no_identificado = {"sin nombre", "sin identificar", "cliente desconocido", "no informa"}
-        valid_mask = clientes_raw.map(
-            lambda v: not is_missing(v)
-            and strip_accents_lower(str(v).strip()) not in no_identificado
+        absent = physical_missing_mask(clientes_raw) | semantic_missing_mask(
+            clientes_raw, "cliente", column_type="texto"
+        )
+        valid_mask = ~absent & clientes_raw.map(
+            lambda v: strip_accents_lower(str(v).strip()) not in no_identificado
         )
         if valid_mask.any():
             top = _sort_by_gross_share(
@@ -738,4 +866,6 @@ def compute_metrics(
         "items": {ratio: None for ratio in FINANCIAL_RATIOS},
     }
     result["advertencias"] = warnings
+    if currency.mixta:
+        _block_monetary_outputs(result, currency)
     return result

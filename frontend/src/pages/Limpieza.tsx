@@ -153,6 +153,7 @@ export default function Limpieza() {
     sheet,
     sheetManifest,
     combineSheets,
+    restoreState,
     eliminarDuplicados,
   } = useDataset()
   const [detection, setDetection] = useState<CleanResult | null>(null)
@@ -517,6 +518,7 @@ export default function Limpieza() {
           rules: JSON.stringify(rules),
           eliminar_duplicados: String(removeExactDuplicates),
           ...(datasetId ? { dataset_id: datasetId } : {}),
+          restore_state: JSON.stringify(restoreState),
           ...mappingFields(),
         }),
       )
@@ -552,6 +554,7 @@ export default function Limpieza() {
           // El texto libre nunca autoriza eliminación de filas.
           eliminar_duplicados: 'false',
           ...(datasetId ? { dataset_id: datasetId } : {}),
+          restore_state: JSON.stringify(restoreState),
           ...mappingFields(),
         }),
       )
@@ -819,12 +822,12 @@ export default function Limpieza() {
                       onClick={() => void handleDownload('csv')}
                       disabled={downloading !== null}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-teal/40 px-3.5 py-2.5 text-xs font-semibold text-teal transition-colors hover:bg-teal/5 disabled:cursor-not-allowed disabled:opacity-50"
-                      title="Descargar como CSV"
+                      title="Descargar datos CSV y auditoría dentro de un ZIP"
                     >
                       {downloading === 'csv' ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : null}
-                      {sheetManifest ? 'CSV hoja activa' : 'CSV'}
+                      {sheetManifest ? 'CSV + auditoría (hoja activa)' : 'CSV + auditoría (ZIP)'}
                     </button>
                     <Link
                       to="/explorar"

@@ -3,7 +3,7 @@
 Los puntos del plan "todo en 10" que NO viven en el código del repo viven
 aquí como checklist operacional. Cada sección dice qué hacer, dónde y cómo
 verificarlo. (Los puntos que SÍ son código ya están implementados — ver
-CHANGELOG [0.18.0].)
+CHANGELOG [0.19.0].)
 
 ## 1. Entornos (producción / staging / desarrollo)
 
@@ -57,6 +57,11 @@ CHANGELOG [0.18.0].)
 - **Aislamiento entre clientes**: correr `python api/scripts/smoke_rls.py`
   (ver instrucciones dentro) con dos cuentas de prueba tras cada cambio de
   RLS o migración — verifica que A no puede leer/restaurar/usar nada de B.
+  En staging/CI define `SMOKE_ENV=staging` (o `CI=true`) y entrega además
+  `API_BASE`, `JWT_A`, `JWT_B`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+  `STORAGE_PATH_B` y `BILLING_ID_B`. El smoke falla si falta una fixture y
+  consulta directamente datasets, columnas, trabajos, análisis, actividad,
+  facturación, solicitudes y Storage.
 
 ## 4. Backups y restauración (probar, no solo activar)
 
@@ -83,13 +88,11 @@ CHANGELOG [0.18.0].)
 - **Modelo `subscriptions`** (estado de pago/vencimiento/renovación):
   se implementa JUNTO con la pasarela de pago — hoy el plan en `profiles` +
   `addon_requests` con identidad de facturación cubre la operación manual.
-- **Ledger de transformaciones por celda + export auditable completo**:
-  el resumen por regla ya existe (cambios, fusiones, avisos, auditoría de
-  mojibake); el ledger fila-a-fila multiplica memoria en archivos grandes y
-  se abordará con streaming/muestreo en una fase dedicada.
-- **Restauración multihoja completa** (todas las sesiones por hoja +
-  combinación): el snapshot v2 restaura la sesión principal; ampliarlo
-  requiere rediseñar el tamaño del snapshot (hoy acotado a 512 KB).
+- **Escalado del ledger de auditoría**: Fase 16 entrega el ledger completo en
+  Excel/ZIP; para archivos extraordinariamente grandes todavía conviene migrar
+  su construcción a streaming para reducir el pico de memoria.
+- **Snapshots históricos v2**: siguen siendo compatibles, pero se recalculan
+  al restaurar porque no contienen el estado multihoja ni la procedencia v3.
 - **KPIs por moneda / conversión declarada**: hoy las monedas mixtas
   BLOQUEAN los KPIs (jamás una cifra inválida); separar por moneda es la
   siguiente iteración.

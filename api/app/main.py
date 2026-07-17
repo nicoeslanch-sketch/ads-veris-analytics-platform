@@ -4,6 +4,8 @@ Fase 0: esqueleto con health check y autenticación JWT.
 Fase 1: pipeline /standardize, /clean y /metrics (SPEC §6), protegido con JWT.
 """
 
+import logging
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -21,6 +23,7 @@ from .routes.retention import router as retention_router
 from .routes.support import router as support_router
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def validate_production_config(cfg: Settings) -> list[str]:
@@ -77,8 +80,14 @@ async def _warn_denied_origin(request, call_next):
     """Log seguro para diagnosticar CORS en producción: solo Origin + ruta, jamás tokens."""
     origin = request.headers.get("origin")
     if origin and not settings.is_cors_origin_allowed(origin):
-        print(f"[CORS] Origen NO permitido: {origin} → {request.method} {request.url.path} "
-              f"(ALLOWED_ORIGINS tiene {len(settings.cors_origins)} orígenes)")
+        logger.warning(
+            "[CORS] Origen NO permitido: %s -> %s %s "
+            "(ALLOWED_ORIGINS tiene %d orígenes)",
+            origin,
+            request.method,
+            request.url.path,
+            len(settings.cors_origins),
+        )
     return await call_next(request)
 
 

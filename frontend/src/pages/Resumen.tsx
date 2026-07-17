@@ -336,7 +336,9 @@ export default function Resumen() {
     )
   }
 
-  const kpis = metrics?.kpis
+  // El backend reemplaza toda suma monetaria por null cuando hay monedas
+  // incompatibles. No construir tarjetas antes de mostrar el bloqueo global.
+  const kpis = metrics?.moneda_mixta ? undefined : metrics?.kpis
   const evolution = metrics?.evolucion_mensual ?? []
   // Fase 14: el gráfico identifica el mes parcial (asterisco + nota al pie)
   const mesParcial = evolution.find((m) => m.parcial) ?? null

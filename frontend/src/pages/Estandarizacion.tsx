@@ -56,6 +56,7 @@ const STEPS = [
 export default function Estandarizacion() {
   const {
     file,
+    datasetId,
     standardization,
     uploadedAt,
     storagePath,
@@ -65,6 +66,7 @@ export default function Estandarizacion() {
     availableSheets,
     sheetSessions,
     combineSheets,
+    restoreState,
     setCombineSheets,
     reset,
   } = useDataset()
@@ -126,7 +128,11 @@ export default function Estandarizacion() {
     try {
       const result = await apiPost<StandardizeResult>(
         '/standardize',
-        buildDatasetForm(file, storagePath, { sheet: name }),
+        buildDatasetForm(file, storagePath, {
+          sheet: name,
+          ...(datasetId ? { dataset_id: datasetId } : {}),
+          restore_state: JSON.stringify({ ...restoreState, active_sheet: name }),
+        }),
       )
       setStandardization(result)
     } catch (err) {

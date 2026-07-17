@@ -28,6 +28,7 @@ import json
 import os
 import re
 import threading
+import zipfile
 from collections import OrderedDict
 
 from fastapi import (
@@ -48,13 +49,18 @@ from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import Capability, require_capability_for_user
 from ..config import Settings, get_settings
 from ..engine.ai_refine import refine_with_ai
+from ..engine.audit import AUDIT_COLUMNS, build_audit_dataframe
 from ..engine.clean import DEFAULT_RULES, analyze_and_clean
 from ..engine.directed import (
     MAX_INSTRUCTIONS_CHARS,
     interpret_cleaning_instructions,
 )
 from ..engine.export import safe_export_dataframe
-from ..engine.loader import UnsupportedFileError, load_dataframe_with_report
+from ..engine.loader import (
+    SOURCE_ROWS_ATTR,
+    UnsupportedFileError,
+    load_dataframe_with_report,
+)
 from ..engine.ai_classifier import classify_columns_with_ai
 from ..engine.mapping import detect_column_roles, detect_columns_extended
 from ..engine.metrics import compute_metrics, detect_currency
@@ -64,10 +70,13 @@ from ..restore_cache import (
     fetch_dataset_mapping,
     fetch_latest_cleaning_config,
     fetch_latest_restore_record,
+    fetch_restore_state_bundle,
+    reserve_restore_snapshot_revision,
     store_restore_snapshot,
     valid_restore_snapshot,
 )
 from ..storage import download_from_storage, normalize_user_storage_path
+from ..version import ENGINE_VERSION
 
 router = APIRouter()
 
@@ -231,6 +240,37 @@ def _parse_json_field(raw: str | None, field: str) -> dict:
             detail=f"El campo '{field}' debe ser un objeto JSON.",
         )
     return value
+
+
+def _validate_restore_state(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    state = _parse_json_field(raw, "restore_state")
+    active_sheet = _clean_sheet_param(state.get("active_sheet"))
+    available = state.get("available_sheets", [])
+    excluded = state.get("excluded_sheets", [])
+    if not isinstance(available, list) or not isinstance(excluded, list):
+        raise HTTPException(
+            status_code=422,
+            detail="restore_state.available_sheets y excluded_sheets deben ser listas.",
+        )
+
+    def clean_names(values: list) -> list[str]:
+        names: list[str] = []
+        for value in values[:200]:
+            name = _clean_sheet_param(value) if isinstance(value, str) else None
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    available_names = clean_names(available)
+    excluded_names = [name for name in clean_names(excluded) if name in available_names]
+    return {
+        "active_sheet": active_sheet,
+        "available_sheets": available_names,
+        "excluded_sheets": excluded_names,
+        "combine_sheets": bool(state.get("combine_sheets", False)),
+    }
 
 
 # ── Validación estricta de entradas (Fase 10 §14.1) ─────────────────────────
@@ -483,7 +523,11 @@ def _analyze_cached(
     # estandarización quita los símbolos y después ya no hay evidencia.
     raw_roles = {**detect_column_roles(list(df.columns)), **(mapping or {})}
     monto_col = raw_roles.get("monto")
-    currency = detect_currency(df[monto_col] if monto_col in df.columns else None)
+    costo_col = raw_roles.get("costo")
+    currency = detect_currency(
+        df[monto_col] if monto_col in df.columns else None,
+        df[costo_col] if costo_col in df.columns else None,
+    )
     standardized = _standardize_frame_cached(
         filename,
         content,
@@ -620,7 +664,12 @@ def _extract_columns_sync(
 
 def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     """Marcas visuales y observaciones auditables para una hoja limpia."""
-    from ..engine.standardize import is_missing, parse_date, parse_number
+    from ..engine.standardize import (
+        parse_date,
+        parse_number,
+        physical_missing_mask,
+        semantic_missing_mask,
+    )
 
     role_labels: dict[str, str] = {
         "fecha": "fecha",
@@ -645,11 +694,15 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     for col in df.columns:
         ctype = column_types.get(col, "texto")
         role = col_role.get(col)
-        vals = list(df[col])
-        fill_rate = sum(1 for value in vals if not is_missing(str(value))) / total
+        series = df[col]
+        vals = list(series)
+        missing = physical_missing_mask(series) | semantic_missing_mask(
+            series, role, column_type=ctype
+        )
+        fill_rate = float((~missing).sum()) / total
         for row_idx, value in enumerate(vals):
             text = str(value)
-            if not is_missing(text):
+            if not bool(missing.iloc[row_idx]):
                 # Fase 12b (P0): los valores NO interpretables se conservan en
                 # los datos — aquí se marcan para que el cliente pueda revisar
                 # el original en vez de encontrar una celda vaciada.
@@ -733,10 +786,97 @@ def _write_observations_sheet(wb, observations: list[tuple]) -> None:
         for source_row, source_sheet, column, kind, message in observations:
             ws.append([source_row, source_sheet or "CSV", column, kind, message])
     else:
-        ws.append(["—", "—", "—", "—", "Sin observaciones: la base quedó completa."])
+        ws.append([
+            "—",
+            "—",
+            "—",
+            "—",
+            (
+                "Sin observaciones dentro de las reglas ejecutadas. Esto no certifica "
+                "completitud ni ausencia de problemas fuera de ese alcance."
+            ),
+        ])
     ws.column_dimensions["B"].width = 20
     ws.column_dimensions["C"].width = 24
     ws.column_dimensions["E"].width = 64
+
+
+def _build_export_audit(
+    filename: str,
+    content: bytes,
+    sheet: str | None,
+    result: dict,
+    rules: dict,
+    mapping: dict | None,
+    scope: dict | None,
+):
+    original, _ = _load_or_400(filename, content, sheet=sheet)
+    original_headers = [str(column) for column in original.columns]
+    original_source_rows = list(
+        original.attrs.get(SOURCE_ROWS_ATTR, range(2, len(original) + 2))
+    )
+    normalize_headers(original)
+    confidence = {
+        column: details.get("confianza_tipo")
+        for column, details in result.get("reporte_calidad", {}).items()
+    }
+    return build_audit_dataframe(
+        filename=filename,
+        original=original,
+        cleaned=result["_df_limpio"],
+        original_source_rows=[int(row) for row in original_source_rows],
+        cleaned_source_rows=[
+            int(row) for row in result.get("_source_rows_limpio", [])
+        ],
+        source_sheet=(result.get("carga") or {}).get("hoja_usada"),
+        column_types=result.get("column_types", {}),
+        column_confidence=confidence,
+        mapping=result.get("mapeo", mapping or {}),
+        rules=rules,
+        scope=scope,
+        removed_rows=result.get("_filas_duplicadas_eliminadas", []),
+        source_sha256=hashlib.sha256(content).hexdigest(),
+        original_headers=original_headers,
+    )
+
+
+def _write_audit_sheet(wb, audit) -> None:
+    from openpyxl.styles import Font
+
+    ws = wb.create_sheet("Auditoria")
+    exported = safe_export_dataframe(audit)
+    ws.append(list(exported.columns))
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for row in exported.itertuples(index=False, name=None):
+        ws.append(list(row))
+    if audit.empty:
+        ws.append([
+            "—",
+            "—",
+            "—",
+            "—",
+            "—",
+            "—",
+            "sin_hallazgos_en_alcance",
+            "sin_cambios_detectados",
+            1.0,
+            "no_requerida",
+            ENGINE_VERSION,
+            json.dumps(
+                {
+                    "nota": (
+                        "No certifica completitud; solo indica que las reglas "
+                        "ejecutadas no generaron registros de auditoria."
+                    )
+                },
+                ensure_ascii=False,
+            ),
+        ])
+    ws.freeze_panes = "A2"
+    ws.column_dimensions["E"].width = 28
+    ws.column_dimensions["F"].width = 28
+    ws.column_dimensions["L"].width = 60
 
 
 def _clean_download_sync(
@@ -762,13 +902,45 @@ def _clean_download_sync(
     df = result["_df_limpio"].copy()
     stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
     df_export = safe_export_dataframe(df)
+    audit = _build_export_audit(
+        filename, content, sheet, result, rules, mapping, scope
+    )
 
     if fmt == "csv":
-        # CSV limpio de verdad: sin marcadores dentro de los datos.
+        # CSV no soporta hojas: se entrega un ZIP con datos y auditoría
+        # separada, ambos legibles y sin contaminar las columnas empresariales.
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                f"{stem}_limpio.csv",
+                df_export.to_csv(index=False, sep=";").encode("utf-8-sig"),
+            )
+            archive.writestr(
+                f"{stem}_auditoria.csv",
+                safe_export_dataframe(audit).to_csv(index=False, sep=";").encode("utf-8-sig"),
+            )
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    {
+                        "archivo_origen": filename,
+                        "version_motor": ENGINE_VERSION,
+                        "source_sha256": hashlib.sha256(content).hexdigest(),
+                        "filas_datos": len(df_export),
+                        "registros_auditoria": len(audit),
+                        "nota": (
+                            "La auditoria cubre las reglas ejecutadas y no certifica "
+                            "completitud fuera de ese alcance."
+                        ),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ).encode("utf-8"),
+            )
         return (
-            df_export.to_csv(index=False, sep=";").encode("utf-8-sig"),
-            f"{stem}_limpio.csv",
-            "text/csv; charset=utf-8",
+            output.getvalue(),
+            f"{stem}_limpio_con_auditoria.zip",
+            "application/zip",
         )
 
     import openpyxl
@@ -778,6 +950,7 @@ def _clean_download_sync(
     yellow, red, observations = _export_annotations(result, df)
     _write_clean_sheet(wb, "Datos_limpios", df, yellow, red)
     _write_observations_sheet(wb, observations)
+    _write_audit_sheet(wb, audit)
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
@@ -829,6 +1002,7 @@ def _clean_download_multi_sync(
         used_names.add("datos_combinados")
     observations: list[tuple] = []
     processed_frames: list[tuple[str, object]] = []
+    audit_frames: list[object] = []
 
     for entry in entries:
         sheet_name = entry["nombre"]
@@ -840,6 +1014,29 @@ def _clean_download_multi_sync(
                     "*",
                     "hoja_no_procesada",
                     "Hoja incluida en el manifiesto, pero el usuario decidió no procesarla.",
+                )
+            )
+            audit_frames.append(
+                pd.DataFrame.from_records(
+                    [
+                        {
+                            "archivo": filename,
+                            "hoja": sheet_name,
+                            "fila_origen": "—",
+                            "columna": "*",
+                            "valor_original": "—",
+                            "valor_final": "—",
+                            "regla": "manifiesto_multihoja",
+                            "accion": "hoja_excluida",
+                            "confianza": 1.0,
+                            "confirmacion": "confirmada_por_usuario",
+                            "version_motor": ENGINE_VERSION,
+                            "metadatos": json.dumps(
+                                {"procesar": False}, ensure_ascii=False
+                            ),
+                        }
+                    ],
+                    columns=AUDIT_COLUMNS,
                 )
             )
             continue
@@ -859,6 +1056,17 @@ def _clean_download_multi_sync(
         _write_clean_sheet(wb, export_name, frame, yellow, red)
         observations.extend(sheet_observations)
         processed_frames.append((sheet_name, frame))
+        audit_frames.append(
+            _build_export_audit(
+                filename,
+                content,
+                sheet_name,
+                result,
+                entry["rules"],
+                entry["mapping"] or None,
+                entry["scope"] or None,
+            )
+        )
 
     if combine_sheets:
         if len(processed_frames) < 2:
@@ -890,6 +1098,13 @@ def _clean_download_multi_sync(
         _write_clean_sheet(wb, "Datos_combinados", combined, {}, {})
 
     _write_observations_sheet(wb, observations)
+    non_empty_audit_frames = [frame for frame in audit_frames if not frame.empty]
+    audit = (
+        pd.concat(non_empty_audit_frames, ignore_index=True)
+        if non_empty_audit_frames
+        else pd.DataFrame(columns=AUDIT_COLUMNS)
+    )
+    _write_audit_sheet(wb, audit)
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
@@ -931,8 +1146,15 @@ def _metrics_sync(
     return computed
 
 
-def _restore_response(record: dict, snapshot: dict, source: str) -> dict:
-    return {
+def _restore_response(
+    record: dict,
+    snapshot: dict,
+    source: str,
+    *,
+    sheet_sessions: dict[str, dict] | None = None,
+    restore_state: dict | None = None,
+) -> dict:
+    response = {
         "dataset": {
             "id": record["id"],
             "name": record["name"],
@@ -947,6 +1169,18 @@ def _restore_response(record: dict, snapshot: dict, source: str) -> dict:
         "eliminar_duplicados": bool(snapshot.get("eliminar_duplicados", False)),
         "source": source,
     }
+    if sheet_sessions is not None:
+        response["sheet_sessions"] = sheet_sessions
+    if restore_state is not None:
+        response.update(
+            {
+                "active_sheet": restore_state.get("active_sheet"),
+                "available_sheets": restore_state.get("available_sheets", []),
+                "excluded_sheets": restore_state.get("excluded_sheets", []),
+                "combine_sheets": bool(restore_state.get("combine_sheets", False)),
+            }
+        )
+    return response
 
 
 def _build_and_store_restore_snapshot(
@@ -958,9 +1192,13 @@ def _build_and_store_restore_snapshot(
     mapping: dict | None,
     sheet: str | None,
     eliminar_duplicados: bool,
+    revision: int,
+    restore_state: dict | None = None,
+    persist: bool = True,
 ) -> dict:
-    """Build a bounded snapshot from server-generated results only."""
+    """Construye una hoja con resultados del servidor y la guarda atómicamente."""
     standardization = _standardize_sync(filename, content, sheet)
+    effective_sheet = sheet or standardization.get("carga", {}).get("hoja_usada")
     metrics = (
         _metrics_sync(
             filename,
@@ -968,7 +1206,7 @@ def _build_and_store_restore_snapshot(
             mapping,
             None,
             None,
-            sheet,
+            effective_sheet,
             eliminar_duplicados,
         )
         if cleaning is not None
@@ -980,12 +1218,56 @@ def _build_and_store_restore_snapshot(
         metrics,
         mapping,
         eliminar_duplicados,
-        # Fase 15 — procedencia auditable del snapshot (v2)
+        revision=revision,
         source_sha256=hashlib.sha256(content).hexdigest(),
         rules=(cleaning or {}).get("reglas_activas"),
-        sheet=sheet,
+        sheet=effective_sheet,
     )
-    store_restore_snapshot(dataset_id, user_id, snapshot)
+    effective_state = dict(restore_state or {})
+    effective_state["active_sheet"] = effective_sheet
+    if not effective_state.get("available_sheets"):
+        effective_state["available_sheets"] = standardization.get("carga", {}).get(
+            "hojas_disponibles", []
+        )
+    if persist:
+        store_restore_snapshot(
+            dataset_id, user_id, snapshot, restore_state=effective_state
+        )
+    return snapshot
+
+
+def _store_standardization_restore_snapshot(
+    dataset_id: str,
+    user_id: str,
+    content: bytes,
+    standardization: dict,
+    sheet: str | None,
+    revision: int,
+    restore_state: dict | None = None,
+) -> dict:
+    """Persiste una sesión de hoja aunque aún no haya limpieza/métricas."""
+
+    effective_sheet = sheet or standardization.get("carga", {}).get("hoja_usada")
+    snapshot = build_restore_snapshot(
+        standardization,
+        None,
+        None,
+        None,
+        False,
+        revision=revision,
+        source_sha256=hashlib.sha256(content).hexdigest(),
+        rules=None,
+        sheet=effective_sheet,
+    )
+    effective_state = dict(restore_state or {})
+    effective_state["active_sheet"] = effective_sheet
+    if not effective_state.get("available_sheets"):
+        effective_state["available_sheets"] = standardization.get("carga", {}).get(
+            "hojas_disponibles", []
+        )
+    store_restore_snapshot(
+        dataset_id, user_id, snapshot, restore_state=effective_state
+    )
     return snapshot
 
 
@@ -995,10 +1277,67 @@ def _restore_latest_sync(user_id: str) -> dict:
     if record is None:
         return {"dataset": None, "source": "empty"}
 
-    cached = valid_restore_snapshot(record.get("restore_snapshot"), record["status"])
-    if cached is not None:
-        return _restore_response(record, cached, "snapshot")
+    bundle = fetch_restore_state_bundle(record["id"], user_id)
+    if bundle is not None:
+        state = bundle["state"]
+        valid_by_key: dict[str, dict] = {}
+        for row in bundle["sheets"]:
+            if (
+                row.get("source_sha256") != state.get("source_sha256")
+                or row.get("engine_version") != state.get("engine_version")
+                or state.get("engine_version") != ENGINE_VERSION
+            ):
+                continue
+            raw = row.get("snapshot")
+            snapshot_status = (
+                "limpio" if isinstance(raw, dict) and isinstance(raw.get("cleaning"), dict)
+                else "estandarizado"
+            )
+            valid = valid_restore_snapshot(
+                raw,
+                snapshot_status,
+                expected_revision=row.get("revision"),
+                expected_source_sha256=row.get("source_sha256"),
+                expected_rules_hash=row.get("rules_hash"),
+                expected_mapping_hash=row.get("mapping_hash"),
+                expected_sheet=row.get("sheet"),
+            )
+            if valid is not None and row.get("engine_version") == valid.get("engine_version"):
+                valid_by_key[str(row.get("sheet_key"))] = valid
 
+        active_sheet = state.get("active_sheet")
+        active_key = active_sheet or "__single__"
+        active = valid_by_key.get(active_key)
+        if active is None and valid_by_key:
+            # Recuperación conservadora ante metadata global incompleta: usa
+            # la hoja de mayor revisión validada, nunca un JSON sin validar.
+            active = max(valid_by_key.values(), key=lambda item: item["revision"])
+            active_sheet = active.get("sheet")
+        if active is not None:
+            sessions = {
+                snapshot["sheet"]: {
+                    "standardization": snapshot["standardization"],
+                    "cleaning": snapshot.get("cleaning"),
+                    "metrics": snapshot.get("metrics"),
+                    "mapping": snapshot.get("mapping"),
+                    "eliminar_duplicados": bool(
+                        snapshot.get("eliminar_duplicados", False)
+                    ),
+                }
+                for snapshot in valid_by_key.values()
+                if snapshot.get("sheet") is not None
+            }
+            state = {**state, "active_sheet": active_sheet}
+            return _restore_response(
+                record,
+                active,
+                "snapshot",
+                sheet_sessions=sessions,
+                restore_state=state,
+            )
+
+    # La revisión se reserva ANTES de descargar y recalcular el archivo.
+    revision = reserve_restore_snapshot_revision(record["id"], user_id)
     storage_path = normalize_user_storage_path(record["storage_path"], user_id)
     content = download_from_storage(storage_path)
     filename = _display_filename(os.path.basename(storage_path))
@@ -1018,6 +1357,9 @@ def _restore_latest_sync(user_id: str) -> dict:
             None,
             eliminar_duplicados,
         )
+    # Si falta la migración de revisiones, la restauración calculada sigue
+    # funcionando pero NO se escribe con una revisión local insegura.
+    safe_revision = revision or 1
     snapshot = _build_and_store_restore_snapshot(
         record["id"],
         user_id,
@@ -1027,6 +1369,8 @@ def _restore_latest_sync(user_id: str) -> dict:
         mapping,
         None,
         eliminar_duplicados,
+        safe_revision,
+        persist=revision is not None,
     )
     return _restore_response(record, snapshot, "computed")
 
@@ -1051,12 +1395,24 @@ async def restore_latest(
 
 @router.post("/standardize")
 async def standardize(
+    background_tasks: BackgroundTasks,
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
     sheet: str | None = Form(None),
+    restore_state: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
+    # La revisión se reserva al entrar al endpoint, antes de cualquier descarga
+    # o cálculo que pueda invertir el orden de dos peticiones concurrentes.
+    revision = (
+        await run_in_threadpool(
+            reserve_restore_snapshot_revision, dataset_id, user.id, settings
+        )
+        if dataset_id
+        else None
+    )
     # Fase 13: las cuentas nuevas nacen SIN plan — pueden navegar, pero
     # procesar archivos requiere un plan activo o la prueba gratuita vigente
     # (las cuentas existentes conservan su plan básico y no notan el cambio).
@@ -1065,9 +1421,21 @@ async def standardize(
         require_capability_for_user, user.id, Capability.STANDARDIZE, settings
     )
     filename, content = await _read_input(file, storage_path, user)
-    return await run_in_threadpool(
-        _standardize_sync, filename, content, _clean_sheet_param(sheet)
-    )
+    sheet_name = _clean_sheet_param(sheet)
+    state = _validate_restore_state(restore_state)
+    result = await run_in_threadpool(_standardize_sync, filename, content, sheet_name)
+    if dataset_id and revision is not None:
+        background_tasks.add_task(
+            _store_standardization_restore_snapshot,
+            dataset_id,
+            user.id,
+            content,
+            result,
+            sheet_name,
+            revision,
+            state,
+        )
+    return result
 
 
 @router.post("/clean")
@@ -1081,20 +1449,30 @@ async def clean(
     eliminar_duplicados: bool = Form(False),
     mapping: str | None = Form(None),
     sheet: str | None = Form(None),
+    restore_state: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
+    revision = (
+        await run_in_threadpool(
+            reserve_restore_snapshot_revision, dataset_id, user.id, settings
+        )
+        if apply and dataset_id
+        else None
+    )
     await run_in_threadpool(
         require_capability_for_user, user.id, Capability.CLEAN, settings
     )
     filename, content = await _read_input(file, storage_path, user)
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
+    sheet_name = _clean_sheet_param(sheet)
+    state = _validate_restore_state(restore_state)
     result = await run_in_threadpool(
         _clean_sync, filename, content, rules_dict, apply, mapping_dict, None, None,
-        _clean_sheet_param(sheet), eliminar_duplicados,
+        sheet_name, eliminar_duplicados,
     )
-    if apply and dataset_id:
+    if apply and dataset_id and revision is not None:
         background_tasks.add_task(
             _build_and_store_restore_snapshot,
             dataset_id,
@@ -1103,8 +1481,10 @@ async def clean(
             content,
             result,
             mapping_dict,
-            _clean_sheet_param(sheet),
+            sheet_name,
             eliminar_duplicados,
+            revision,
+            state,
         )
     return result
 
@@ -1120,6 +1500,7 @@ async def clean_assisted(
     eliminar_duplicados: bool = Form(False),
     mapping: str | None = Form(None),
     sheet: str | None = Form(None),
+    restore_state: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -1129,6 +1510,13 @@ async def clean_assisted(
     interpretar instrucciones (costura IA determinista) → correr el motor
     dirigido → registrar el consumo SOLO si corrió OK. Si las instrucciones
     no se reconocen, responde 422 y el intento NO se descuenta."""
+    revision = (
+        await run_in_threadpool(
+            reserve_restore_snapshot_revision, dataset_id, user.id, settings
+        )
+        if dataset_id
+        else None
+    )
     await run_in_threadpool(
         require_capability_for_user, user.id, Capability.AI_CLEANING, settings
     )
@@ -1146,7 +1534,7 @@ async def clean_assisted(
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     sheet_name = _clean_sheet_param(sheet)
-
+    state = _validate_restore_state(restore_state)
     # 1) Cupo ANTES de gastar CPU (lanza 429 con CTA a Planes si no quedan intentos).
     quota_info = await run_in_threadpool(quota.check_cleaning_quota, user.id, settings)
 
@@ -1198,7 +1586,7 @@ async def clean_assisted(
         cupo = {"disponible": False, "usadas_mes": 0, "base": settings.ai_cleaning_monthly_limit, "addons": 0}
 
     result["dirigida"] = {"instrucciones": instructions, **plan.to_dict(), "cupo": cupo}
-    if dataset_id:
+    if dataset_id and revision is not None:
         background_tasks.add_task(
             _build_and_store_restore_snapshot,
             dataset_id,
@@ -1209,6 +1597,8 @@ async def clean_assisted(
             mapping_dict,
             sheet_name,
             eliminar_duplicados,
+            revision,
+            state,
         )
     return result
 

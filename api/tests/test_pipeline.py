@@ -1,5 +1,8 @@
 """Pruebas del pipeline Fase 1: salud, protección JWT y motor de datos."""
 
+import io
+import zipfile
+
 
 def _upload(sample_csv, extra: dict | None = None) -> dict:
     name, content = sample_csv
@@ -152,8 +155,12 @@ def test_clean_download_analista_exporta_csv_seguro(client, auth_headers, monkey
         headers=auth_headers,
     )
     assert response.status_code == 200
-    assert response.headers["content-disposition"].endswith('filename="formulas_limpio.csv"')
-    assert b"'=2+2" in response.content
+    assert response.headers["content-disposition"].endswith(
+        'filename="formulas_limpio_con_auditoria.zip"'
+    )
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert b"'=2+2" in archive.read("formulas_limpio.csv")
+        assert "formulas_auditoria.csv" in archive.namelist()
 
 
 def test_metrics_calcula_kpis_y_evolucion(client, auth_headers, sample_csv):

@@ -225,6 +225,9 @@ __marimo__/
 # ─── Node / Frontend ───────────────────────────────
 node_modules/
 frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
 frontend/.env
 frontend/.env.local
 frontend/.env.*.local
