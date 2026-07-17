@@ -417,6 +417,14 @@
   "aplicado": true,
   "calidad_antes": 96.5,
   "calidad_despues": 96.5,
+  "calidad_dimensiones": {
+   "cobertura_analitica": 100.0,
+   "completitud": 97.2,
+   "consistencia": 99.8,
+   "integridad": 100.0,
+   "unicidad": 99.3,
+   "validez": 99.8
+  },
   "columnas_antes": 8,
   "columnas_despues": 8,
   "filas_antes": 279,

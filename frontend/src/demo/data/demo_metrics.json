@@ -192,6 +192,26 @@
   "transacciones": 279,
   "unidades_totales": 1717.0
  },
+ "lideres_productos": {
+  "mayor_devolucion": {
+   "devoluciones": -18990.0,
+   "nombre": "Harina 25kg"
+  },
+  "por_utilidad": {
+   "nombre": "Harina 25kg",
+   "utilidad": 1132575.0
+  },
+  "por_ventas_brutas": {
+   "nombre": "Harina 25kg",
+   "participacion_bruta_pct": 38.5,
+   "ventas_brutas": 4158810.0
+  },
+  "por_ventas_netas": {
+   "nombre": "Harina 25kg",
+   "ventas_netas": 4139820.0
+  },
+  "total_productos": 7
+ },
  "mapeo": {
   "cantidad": "Cantidad",
   "categoria": "Categoría",
@@ -203,6 +223,7 @@
   "sucursal": "Sucursal"
  },
  "moneda": "CLP",
+ "moneda_mixta": false,
  "periodo": {
   "desde": null,
   "hasta": null,

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, Eye, EyeOff } from 'lucide-react'
-import { useAuth } from '../auth/AuthContext'
+import { translateAuthError, useAuth } from '../auth/AuthContext'
 import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
 import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '../auth/password'
@@ -82,7 +82,8 @@ export default function Login() {
       const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: buildPasswordRecoveryRedirect(window.location.origin),
       })
-      if (err) setError(err.message)
+      // Fase 15: jamás el mensaje técnico crudo de Supabase en pantalla
+      if (err) setError(translateAuthError(err.message))
       else setNotice('Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.')
     } finally {
       setRecovering(false)

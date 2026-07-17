@@ -31,7 +31,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import { ApiError, apiGet, apiPostJson } from '../lib/api'
-import { planLabel, type PlanCode } from '../lib/plans'
+import { normalizePlan, planLabel, type PlanCode } from '../lib/plans'
 import { usePlan } from '../lib/usePlan'
 
 interface AdminAccount {
@@ -263,9 +263,17 @@ export default function AdminCuentas() {
                 <CreditCard className="h-5 w-5 text-gold" />
               </div>
               <div>
-                <p className="text-xs text-navy/50">Planes de pago activos</p>
+                {/* Fase 15: "distinto de basico" contaba cuentas SIN plan como
+                    pagadas y excluía a los Básico (que sí son contratables).
+                    Se cuenta plan asignado real; el estado de PAGO vendrá de
+                    `subscriptions` cuando exista la pasarela. */}
+                <p className="text-xs text-navy/50">Cuentas con plan asignado</p>
                 <p className="text-xl font-bold text-navy">
-                  {data.cuentas.filter((c) => c.plan !== 'basico').length}
+                  {
+                    data.cuentas.filter((c) =>
+                      ['basico', 'analista', 'gold'].includes(normalizePlan(c.plan)),
+                    ).length
+                  }
                 </p>
               </div>
             </div>

@@ -25,8 +25,19 @@ router = APIRouter()
 
 _TIMEOUT = 10
 
-REQUEST_TYPES = {"tokens_limpieza", "upgrade_analista", "upgrade_gold", "otro"}
-UPGRADE_REQUEST_TYPES = {"upgrade_analista", "upgrade_gold"}
+# Fase 15: upgrade_basico EXISTE — el frontend genera upgrade_${plan} para los
+# tres planes contratables, pero este set no lo reconocía y la solicitud de
+# contratar el Plan Básico se degradaba en silencio a "otro" (el administrador
+# la veía sin saber qué plan pedía el usuario). Migración 0017 actualiza el
+# CHECK de addon_requests.tipo en Supabase.
+REQUEST_TYPES = {
+    "tokens_limpieza",
+    "upgrade_basico",
+    "upgrade_analista",
+    "upgrade_gold",
+    "otro",
+}
+UPGRADE_REQUEST_TYPES = {"upgrade_basico", "upgrade_analista", "upgrade_gold"}
 
 
 def _configured(settings: Settings) -> bool:

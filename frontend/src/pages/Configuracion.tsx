@@ -40,10 +40,13 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { full_name: '', company: '', rut: '', country: '', phone: '' }
 
+// Fase 15: el RUT sale de este formulario — existían DOS fuentes (profiles.rut
+// editable aquí en texto libre y billing_identities validada con módulo 11 al
+// contratar/activar la prueba). La fuente ÚNICA es billing_identities: aquí
+// solo se muestra enmascarada (read-only); profiles.rut queda como legado.
 const FIELD_LABELS: Array<{ key: keyof FormState; label: string; placeholder: string }> = [
   { key: 'full_name', label: 'Nombre completo', placeholder: 'Ej: María Pérez' },
   { key: 'company', label: 'Empresa', placeholder: 'Ej: Comercial Andes SpA' },
-  { key: 'rut', label: 'RUT de la empresa', placeholder: 'Ej: 76.123.456-7' },
   { key: 'country', label: 'País', placeholder: 'Ej: Chile' },
   { key: 'phone', label: 'Teléfono', placeholder: 'Ej: +56 9 1234 5678' },
 ]
@@ -126,10 +129,12 @@ export default function Configuracion() {
 
   const handleSave = async () => {
     setSaveState('saving')
+    // Fase 15: el RUT ya NO se escribe desde aquí — la fuente única es
+    // billing_identities (validada con módulo 11 al contratar o activar la
+    // prueba). profiles.rut queda como campo legado, intacto.
     const ok = await updateProfile({
       full_name: form.full_name || null,
       company: form.company || null,
-      rut: form.rut || null,
       country: form.country || null,
       phone: form.phone || null,
     })
@@ -195,6 +200,24 @@ export default function Configuracion() {
                     />
                   </label>
                 ))}
+                {/* Fase 15: fuente ÚNICA del RUT = billing_identities —
+                    aquí solo se muestra enmascarado, jamás se edita libre. */}
+                <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-navy/50">
+                  RUT de facturación
+                  <input
+                    value={
+                      access?.billing_identity
+                        ? `${access.billing_identity.rut_masked} (${access.billing_identity.rut_type})`
+                        : 'Se registra al contratar un plan o activar la prueba'
+                    }
+                    disabled
+                    className={`${inputClass} bg-navy/5 text-navy/60`}
+                  />
+                  <span className="text-[10px] font-normal normal-case tracking-normal text-navy/45">
+                    Validado con dígito verificador y protegido. Para corregirlo,
+                    escríbenos a servicios@adsveris.com.
+                  </span>
+                </label>
               </div>
               <div className="mt-5 flex items-center gap-3">
                 <button

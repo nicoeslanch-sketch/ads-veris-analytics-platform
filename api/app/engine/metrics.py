@@ -566,9 +566,14 @@ def compute_metrics(
     )
     if aviso_moneda:
         warnings.insert(0, aviso_moneda)
+    # Fase 15: con montos en MÁS DE UNA moneda, los totales suman peras con
+    # manzanas — el flag es explícito y el frontend BLOQUEA los KPIs
+    # monetarios (jamás mostrar una sola cifra como si fuera válida).
+    moneda_mixta = bool(aviso_moneda and "más de una moneda" in aviso_moneda)
 
     result: dict = {
         "moneda": moneda,
+        "moneda_mixta": moneda_mixta,
         "mapeo": roles,
         # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
         # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
@@ -612,11 +617,39 @@ def compute_metrics(
             selection[roles[canal_role]], amounts, group_costs
         )
     if roles.get("producto"):
+        productos_completos = _group_sum(
+            selection[roles["producto"]], amounts, group_costs
+        )
         # Fase 12b §24: 12 productos — el Resumen muestra 5 y Explorar hasta
         # 8+; cortar en 5 dejaba a "Explorar" sin nada que explorar.
-        result["top_productos"] = _group_sum(
-            selection[roles["producto"]], amounts, group_costs
-        )[:12]
+        result["top_productos"] = productos_completos[:12]
+        # Fase 15: los LÍDERES se calculan sobre TODOS los productos ANTES del
+        # recorte — un producto con brutas altas y devoluciones altas podía
+        # desaparecer del top-12 (ordenado por netas) y las afirmaciones de
+        # concentración quedaban ciegas a él.
+        if productos_completos:
+            def _lider(clave, minimo=False):
+                candidatos = [
+                    p for p in productos_completos if p.get(clave) is not None
+                ]
+                if not candidatos:
+                    return None
+                elegido = (min if minimo else max)(candidatos, key=lambda p: p[clave])
+                lider = {"nombre": elegido["nombre"], clave: elegido[clave]}
+                if clave == "ventas_brutas":
+                    # La concentración comercial se afirma con ESTE número.
+                    lider["participacion_bruta_pct"] = elegido.get(
+                        "participacion_bruta_pct"
+                    )
+                return lider
+
+            result["lideres_productos"] = {
+                "por_ventas_brutas": _lider("ventas_brutas"),
+                "por_ventas_netas": _lider("ventas_netas"),
+                "por_utilidad": _lider("utilidad"),
+                "mayor_devolucion": _lider("devoluciones", minimo=True),
+                "total_productos": len(productos_completos),
+            }
 
     # ── Fase 12: clientes (unicidad y concentración) ──
     # Riesgo clásico de PyME: depender de un cliente. Solo con columna cliente.

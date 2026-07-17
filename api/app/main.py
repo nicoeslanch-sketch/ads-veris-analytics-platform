@@ -8,7 +8,8 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import AuthenticatedUser, get_current_user
-from .config import get_settings
+from .config import Settings, get_settings
+from .version import ENGINE_VERSION, LATEST_MIGRATION, commit_sha
 from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
 from .routes.connectors import router as connectors_router
@@ -20,6 +21,40 @@ from .routes.retention import router as retention_router
 from .routes.support import router as support_router
 
 settings = get_settings()
+
+
+def validate_production_config(cfg: Settings) -> list[str]:
+    """Fase 15: en producción, la configuración insegura IMPIDE arrancar.
+
+    Devuelve la lista de violaciones (vacía = seguro). Con APP_ENV=production
+    la API no puede quedar "funcionando" con las puertas comerciales apagadas,
+    el bypass de desarrollo activo o sin Supabase — un despliegue así parece
+    sano y regala la plataforma completa.
+    """
+    if cfg.app_env.strip().lower() != "production":
+        return []
+    violations: list[str] = []
+    if not cfg.supabase_url:
+        violations.append("SUPABASE_URL está vacío")
+    if not cfg.supabase_service_role_key:
+        violations.append("SUPABASE_SERVICE_ROLE_KEY está vacío")
+    if not cfg.plan_enforcement:
+        violations.append("PLAN_ENFORCEMENT=false (puertas comerciales apagadas)")
+    if cfg.dev_auth_bypass:
+        violations.append("DEV_AUTH_BYPASS=true (autenticación desactivada)")
+    non_local = [
+        o for o in cfg.cors_origins if "localhost" not in o and "127.0.0.1" not in o
+    ]
+    if not non_local and not cfg.allowed_origin_regex:
+        violations.append("ALLOWED_ORIGINS solo contiene orígenes locales")
+    return violations
+
+
+_violations = validate_production_config(settings)
+if _violations:
+    raise RuntimeError(
+        "Startup failed: insecure production configuration — " + "; ".join(_violations)
+    )
 
 app = FastAPI(
     title="ADS Veris — Motor de datos",
@@ -51,6 +86,20 @@ async def _warn_denied_origin(request, call_next):
 def health() -> dict:
     """Único endpoint público: verificación de vida para Render/Railway."""
     return {"status": "ok", "service": "ads-veris-data-engine"}
+
+
+@app.get("/version")
+def version() -> dict:
+    """Identidad del despliegue (Fase 15): qué commit, motor y migración
+    esperada corren AQUÍ — el smoke test posterior al deploy compara este SHA
+    con el que se quiso publicar. Público: no revela secretos."""
+    return {
+        "status": "ok",
+        "commit_sha": commit_sha(),
+        "engine_version": ENGINE_VERSION,
+        "database_migration": LATEST_MIGRATION,
+        "environment": settings.app_env,
+    }
 
 
 @app.get("/me")

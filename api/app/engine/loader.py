@@ -184,10 +184,13 @@ def _detect_separator(sample: str) -> str:
 
 
 def _clean_string_frame(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.fillna("")
+    # Fase 15: los nulos REALES se detectan ANTES de pasar a texto y solo esas
+    # celdas quedan vacías. El replace global anterior ({"nan","NaT","None"} →
+    # "") borraba valores que el usuario escribió literalmente en el archivo —
+    # una categoría llamada "None" o un texto "nan" son DATOS, no vacíos.
+    missing = df.isna()
     df = df.astype(str)
-    # pandas serializa NaN de celdas ya convertidas como el texto "nan"
-    return df.replace({"nan": "", "NaT": "", "None": ""})
+    return df.mask(missing, "")
 
 
 def _csv_source_rows(text: str, separator: str, expected_rows: int) -> list[int]:
@@ -258,7 +261,9 @@ def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.Da
         best_sheet = sheet_names[0]
         best_score = -1
         for name in sheet_names:
-            sample = _clean_string_frame(book.parse(name, header=None, nrows=60, dtype=str))
+            sample = _clean_string_frame(
+                book.parse(name, header=None, nrows=60, dtype=str, keep_default_na=False)
+            )
             score = int((sample != "").sum().sum())
             if score > best_score:
                 best_sheet, best_score = name, score
@@ -271,7 +276,12 @@ def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.Da
                 "Puedes elegir otra hoja desde Estandarización."
             )
 
-    raw = _clean_string_frame(book.parse(best_sheet, header=None, dtype=str))
+    # Fase 15: keep_default_na=False — sin esto, pandas convertía el TEXTO
+    # literal "None"/"nan"/"NA" escrito por el usuario en NaN al leer el Excel
+    # (los vacíos REALES siguen llegando como NaN y se vacían por la máscara).
+    raw = _clean_string_frame(
+        book.parse(best_sheet, header=None, dtype=str, keep_default_na=False)
+    )
     header_row = _detect_header_row(raw)
     if header_row > 0:
         report["filas_titulo_omitidas"] = header_row

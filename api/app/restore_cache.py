@@ -18,9 +18,16 @@ from fastapi import HTTPException, status
 
 from .config import Settings, get_settings
 from .engine.clean import DEFAULT_RULES
+from .version import ENGINE_VERSION
 
 
-RESTORE_SNAPSHOT_VERSION = 1
+# Fase 15 — v2: el snapshot declara el MOTOR que lo generó (engine_version) y
+# metadatos de procedencia (hash del archivo, hashes de reglas/mapeo, hoja).
+# Al restaurar, un snapshot de otro motor o de otro esquema se INVALIDA y se
+# recalcula — jamás se sirven resultados de una versión distinta como si
+# fueran actuales. `revision` (epoch ms) da orden monotónico: una tarea de
+# fondo ANTIGUA que termina tarde ya no pisa un snapshot más nuevo.
+RESTORE_SNAPSHOT_VERSION = 2
 MAX_RESTORE_SNAPSHOT_BYTES = 512 * 1024
 logger = logging.getLogger(__name__)
 
@@ -173,16 +180,36 @@ def fetch_dataset_mapping(
     return mapping or None
 
 
+def _stable_hash(payload: Any) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    import hashlib
+
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
 def build_restore_snapshot(
     standardization: dict,
     cleaning: dict | None,
     metrics: dict | None,
     mapping: dict[str, str] | None,
     eliminar_duplicados: bool,
+    *,
+    source_sha256: str | None = None,
+    rules: dict | None = None,
+    sheet: str | None = None,
 ) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
     return {
         "version": RESTORE_SNAPSHOT_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "engine_version": ENGINE_VERSION,
+        "generated_at": now.isoformat(),
+        # Orden monotónico para escrituras en carrera (tareas de fondo)
+        "revision": int(now.timestamp() * 1000),
+        # Procedencia auditable: qué archivo/reglas/mapeo produjeron esto
+        "source_sha256": source_sha256,
+        "rules_hash": _stable_hash(rules) if rules is not None else None,
+        "mapping_hash": _stable_hash(mapping) if mapping is not None else None,
+        "sheet": sheet,
         "standardization": standardization,
         "cleaning": cleaning,
         "metrics": metrics,
@@ -193,6 +220,12 @@ def build_restore_snapshot(
 
 def valid_restore_snapshot(raw: Any, dataset_status: str) -> dict[str, Any] | None:
     if not isinstance(raw, dict) or raw.get("version") != RESTORE_SNAPSHOT_VERSION:
+        return None
+    # Fase 15: un snapshot generado por OTRO motor se invalida — el fallback
+    # recalcula con el motor actual y lo reemplaza (resultados nunca mezclan
+    # versiones). Cambios de archivo/mapeo/reglas producen dataset o snapshot
+    # nuevos por diseño; esta es la última línea de defensa.
+    if raw.get("engine_version") != ENGINE_VERSION:
         return None
     if not isinstance(raw.get("standardization"), dict):
         return None
@@ -225,18 +258,37 @@ def store_restore_snapshot(
             len(encoded),
         )
         return False
+    # Fase 15 — guardia monotónica: dos limpiezas en carrera escriben ambas
+    # como tarea de fondo; si la ANTIGUA termina última, no debe pisar a la
+    # nueva. El filtro extra solo actualiza cuando el snapshot guardado es más
+    # antiguo (o no existe). `generated_at` ISO-UTC ordena lexicográficamente.
+    params = {
+        "id": f"eq.{safe_dataset_id}",
+        "user_id": f"eq.{user_id}",
+        "select": "id",
+        "or": (
+            "(restore_snapshot.is.null,"
+            f"restore_snapshot->>generated_at.lt.{snapshot.get('generated_at', '')})"
+        ),
+    }
     try:
         response = httpx.patch(
             _rest_url(settings, "datasets"),
-            params={
-                "id": f"eq.{safe_dataset_id}",
-                "user_id": f"eq.{user_id}",
-                "select": "id",
-            },
+            params=params,
             json={"restore_snapshot": snapshot},
             headers=_headers(settings, representation=True),
             timeout=20,
         )
+        if response.status_code == 400:
+            # PostgREST sin soporte del filtro JSON (versiones antiguas):
+            # degradar a la escritura simple antes que perder el snapshot.
+            response = httpx.patch(
+                _rest_url(settings, "datasets"),
+                params={k: v for k, v in params.items() if k != "or"},
+                json={"restore_snapshot": snapshot},
+                headers=_headers(settings, representation=True),
+                timeout=20,
+            )
     except httpx.HTTPError as exc:
         logger.warning("Could not persist restore snapshot: %s", exc.__class__.__name__)
         return False
@@ -248,4 +300,6 @@ def store_restore_snapshot(
         rows = response.json()
     except ValueError:
         return False
+    # Lista vacía = la guardia decidió que ya había un snapshot MÁS NUEVO
+    # (o el dataset no existe): en ambos casos, no sobrescribimos.
     return isinstance(rows, list) and bool(rows)

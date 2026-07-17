@@ -690,14 +690,35 @@ def _normalize_text_column(
     fuzzy_examples: list[list[str]] = []
     fuzzy_merges = 0  # Fase 13: conteo REAL (los ejemplos van capados a 5)
     suggestions: list[tuple[str, str, int]] = []
+    # Fase 15 — política por ROL: las ENTIDADES comerciales (cliente,
+    # producto, vendedor, categoría) JAMÁS se fusionan solas por typo,
+    # morfología o abreviación — dos clientes con nombres parecidos pueden
+    # ser empresas DISTINTAS, y fusionarlos corrompe datos comerciales. En
+    # esas columnas toda fusión candidata pasa a SUGERENCIA (el usuario
+    # confirma). Las abreviaciones chilenas de lugares se aplican solas SOLO
+    # cuando la columna es geográfica (rol sucursal o encabezado de ciudad/
+    # comuna/región/dirección/zona); en otras columnas, sugerencia.
+    entity_column = role in {"cliente", "producto", "vendedor", "categoria"}
+    _header = strip_accents_lower(str(series.name or ""))
+    geo_column = role == "sucursal" or bool(
+        re.search(
+            r"ciudad|comuna|region|direccion|ubicacion|zona|sucursal|localidad",
+            _header,
+        )
+    )
     if allow_fuzzy:
+        totals = {key: sum(v.values()) for key, v in frequencies.items()}
         for rare_key, canon_key in _fuzzy_merge_keys(frequencies).items():
+            if entity_column:
+                suggestions.append(
+                    (canonical[rare_key], canonical[canon_key], totals[rare_key])
+                )
+                continue
             if len(fuzzy_examples) < 5:
                 fuzzy_examples.append([canonical[rare_key], canonical[canon_key]])
             canonical[rare_key] = canonical[canon_key]
             fuzzy_merges += 1
 
-        totals = {key: sum(v.values()) for key, v in frequencies.items()}
         ordered = sorted(totals, key=lambda k: totals[k], reverse=True)
 
         # Fase 11 §8: variantes MORFOLÓGICAS en categóricas de baja
@@ -722,6 +743,11 @@ def _normalize_text_column(
                     )
                     plural = minor == major + "s" or major == minor + "s"
                     if vowel_swap or plural:
+                        if entity_column:
+                            suggestions.append(
+                                (canonical[minor], canonical[major], totals[minor])
+                            )
+                            break
                         if len(fuzzy_examples) < 5:
                             fuzzy_examples.append([canonical[minor], canonical[major]])
                         canonical[minor] = canonical[major]
@@ -731,8 +757,9 @@ def _normalize_text_column(
         # Abreviaciones chilenas conocidas (Bug): "Stgo Centro" no se
         # fusionaba con "Santiago Centro" porque la distancia de edición
         # entre "stgocentro" y "santiagocentro" es demasiado grande para el
-        # fuzzy clásico. Confianza alta — es un diccionario curado, no una
-        # adivinanza — así que se fusiona directo, sin tope de cardinalidad.
+        # fuzzy clásico. Fase 15: el diccionario curado se aplica SOLO en
+        # columnas geográficas ("Stgo" en una columna de PRODUCTOS podría ser
+        # un modelo, no Santiago); en el resto queda como sugerencia.
         for minor in list(ordered):
             if canonical[minor] != _pick_canonical(frequencies[minor]):
                 continue  # ya fusionada por una pasada anterior
@@ -743,6 +770,9 @@ def _normalize_text_column(
             major = expanded_key
             if totals[minor] > totals[major]:
                 continue  # la forma abreviada no puede ser más frecuente que la completa
+            if not geo_column or entity_column:
+                suggestions.append((canonical[minor], canonical[major], totals[minor]))
+                continue
             if len(fuzzy_examples) < 5:
                 fuzzy_examples.append([canonical[minor], canonical[major]])
             canonical[minor] = canonical[major]
