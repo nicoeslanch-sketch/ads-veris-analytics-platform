@@ -37,6 +37,7 @@ import {
   fetchAnalyses,
   fetchDatasets,
   fetchLatestCleaningConfig,
+  hasVerifiedMonetaryIntegrity,
   sanitizeActivityDescription,
   type ActivityRow,
   type ActivityType,
@@ -556,6 +557,7 @@ export default function Historial() {
             <ul className="mt-4 space-y-3">
               {(analyses ?? []).map((item) => {
                 const expanded = expandedAnalysis === item.id
+                const monetaryIntegrityVerified = hasVerifiedMonetaryIntegrity(item)
                 return (
                   <li key={item.id} className="rounded-lg border border-navy/10 p-3">
                     <button
@@ -569,13 +571,24 @@ export default function Historial() {
                         </p>
                         <p className="mt-0.5 text-xs text-navy/50">
                           {formatDateTime(new Date(item.created_at))} ·{' '}
-                          {item.findings.length} hallazgo(s)
+                          {monetaryIntegrityVerified
+                            ? `${item.findings.length} hallazgo(s) · ${item.config?.moneda ?? 'moneda sin etiqueta'}`
+                            : 'integridad monetaria sin verificar'}
                         </p>
                       </div>
                     </button>
                     {expanded && (
                       <div className="mt-3 space-y-2 border-t border-navy/10 pt-3">
-                        {item.findings.length > 0 ? (
+                        {!monetaryIntegrityVerified ? (
+                          <div className="flex gap-2 rounded-lg border border-gold/30 bg-gold/[0.08] p-2.5 text-xs leading-relaxed text-navy/70">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+                            <p>
+                              Este análisis fue guardado antes del control global de monedas.
+                              Sus cifras y recomendaciones no se muestran porque no es posible
+                              demostrar su integridad. Vuelve a ejecutarlo desde Explorar datos.
+                            </p>
+                          </div>
+                        ) : item.findings.length > 0 ? (
                           <ul className="list-inside list-disc space-y-1 text-xs text-navy/70">
                             {item.findings.map((finding, index) => (
                               <li key={index}>{finding}</li>
@@ -584,7 +597,7 @@ export default function Historial() {
                         ) : (
                           <p className="text-xs text-navy/45">Sin hallazgos registrados.</p>
                         )}
-                        {item.recommendation && (
+                        {monetaryIntegrityVerified && item.recommendation && (
                           <p className="rounded-lg bg-gold/[0.08] p-2.5 text-xs leading-relaxed text-navy/70">
                             {item.recommendation.recomendacion}
                           </p>

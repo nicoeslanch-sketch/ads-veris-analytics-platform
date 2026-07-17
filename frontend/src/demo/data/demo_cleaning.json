@@ -24,10 +24,10 @@
   "fechas_a_estandarizar": 0,
   "filas_duplicadas_a_eliminar": 0,
   "filas_duplicadas_eliminadas": 0,
-  "textos_a_unificar": 4,
+  "textos_a_unificar": 3,
   "tipos_a_corregir": 0,
   "valores_fuera_de_rango_a_revisar": 4,
-  "valores_nulos_normalizados": 63
+  "valores_nulos_normalizados": 62
  },
  "duplicados_criterio": "fila_exacta_original_con_confirmacion",
  "duplicados_detalle": {
@@ -64,9 +64,9 @@
   "tamano_maximo_grupo": 2
  },
  "estandarizacion": {
-  "celdas_con_espacios_normalizados": 1,
+  "celdas_con_espacios_normalizados": 0,
   "celdas_con_variantes_unificadas": 3,
-  "celdas_textuales_unicas_modificadas": 4,
+  "celdas_textuales_unicas_modificadas": 3,
   "encabezados_normalizados": 0,
   "fechas_estandarizadas": 0,
   "fusiones_fuzzy": 0,
@@ -74,7 +74,7 @@
   "mojibake_reparado": 0,
   "numeros_estandarizados": 0,
   "placeholders_detectados": 0,
-  "textos_normalizados": 4
+  "textos_normalizados": 3
  },
  "fusiones_texto": {
   "ejemplos": [],
@@ -103,7 +103,7 @@
  },
  "mojibake_auditoria": [],
  "nulos_detalle": {
-  "fisicos": 63,
+  "fisicos": 62,
   "posibles_estructurales": [],
   "semanticos": 0
  },
@@ -212,14 +212,14 @@
   "fechas_invalidas": 0,
   "montos_cero": 0,
   "montos_negativos": 2,
-  "nulos_fisicos": 63,
+  "nulos_fisicos": 62,
   "nulos_semanticos": 0,
   "outliers_iqr": 4,
   "posibles_nulos_estructurales": 0,
-  "textos_inconsistentes": 4,
+  "textos_inconsistentes": 3,
   "tipos_incorrectos": 0,
   "valores_fuera_de_rango": 4,
-  "valores_nulos": 63
+  "valores_nulos": 62
  },
  "reglas_activas": {
   "columnas_vacias": false,
@@ -288,9 +288,9 @@
     "metodo": "exacto",
     "palabra_clave": "cliente"
    },
-   "nulos": 39,
-   "nulos_fisicos": 39,
-   "nulos_pct": 14.0,
+   "nulos": 38,
+   "nulos_fisicos": 38,
+   "nulos_pct": 13.6,
    "nulos_semanticos": 0,
    "rol": "cliente",
    "rol_extendido": "cliente",
@@ -418,9 +418,25 @@
   "calidad_antes": 96.5,
   "calidad_despues": 96.5,
   "calidad_dimensiones": {
-   "cobertura_analitica": 100.0,
+   "cobertura_analitica": 96.3,
    "completitud": 97.2,
-   "consistencia": 99.8,
+   "consistencia": 99.9,
+   "integridad": 100.0,
+   "unicidad": 99.3,
+   "validez": 99.8
+  },
+  "calidad_dimensiones_antes": {
+   "cobertura_analitica": 96.3,
+   "completitud": 97.2,
+   "consistencia": 99.9,
+   "integridad": 100.0,
+   "unicidad": 99.3,
+   "validez": 99.8
+  },
+  "calidad_dimensiones_despues": {
+   "cobertura_analitica": 96.3,
+   "completitud": 97.2,
+   "consistencia": 100.0,
    "integridad": 100.0,
    "unicidad": 99.3,
    "validez": 99.8

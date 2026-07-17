@@ -27,7 +27,7 @@ from app.restore_cache import (
     build_restore_snapshot,
     valid_restore_snapshot,
 )
-from app.version import ENGINE_VERSION
+from app.version import ENGINE_VERSION, LATEST_MIGRATION
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -79,36 +79,50 @@ def test_trial_capabilities_identicas_en_frontend_y_backend():
 # ── 2. Snapshots v2: versión del motor + procedencia + guardia ───────────────
 
 
-def test_snapshot_v2_declara_motor_y_procedencia():
+def test_snapshot_v3_declara_motor_y_procedencia():
     snap = build_restore_snapshot(
         {"archivo": "x"}, None, None, {"monto": "Ventas"}, False,
-        source_sha256="abc123", rules={"fechas": True}, sheet="Ventas",
+        revision=41, source_sha256="a" * 64,
+        rules={"fechas": True}, sheet="Ventas",
     )
-    assert snap["version"] == RESTORE_SNAPSHOT_VERSION == 2
+    assert snap["version"] == RESTORE_SNAPSHOT_VERSION == 3
     assert snap["engine_version"] == ENGINE_VERSION
-    assert snap["source_sha256"] == "abc123"
+    assert snap["source_sha256"] == "a" * 64
     assert snap["rules_hash"] and snap["mapping_hash"]
     assert snap["sheet"] == "Ventas"
     assert isinstance(snap["revision"], int)
 
 
 def test_snapshot_de_otro_motor_se_invalida():
-    snap = build_restore_snapshot({"archivo": "x"}, None, None, None, False)
-    assert valid_restore_snapshot(snap, "estandarizado") is not None
+    snap = build_restore_snapshot(
+        {"archivo": "x"}, None, None, None, False,
+        revision=42, source_sha256="b" * 64,
+    )
+    expected = dict(
+        expected_revision=42,
+        expected_source_sha256="b" * 64,
+        expected_rules_hash=snap["rules_hash"],
+        expected_mapping_hash=snap["mapping_hash"],
+        expected_sheet=None,
+    )
+    assert valid_restore_snapshot(snap, "estandarizado", **expected) is not None
     ajeno = {**snap, "engine_version": "0.0.1"}
-    assert valid_restore_snapshot(ajeno, "estandarizado") is None
+    assert valid_restore_snapshot(ajeno, "estandarizado", **expected) is None
     v1 = {**snap, "version": 1}
-    assert valid_restore_snapshot(v1, "estandarizado") is None
+    assert valid_restore_snapshot(v1, "estandarizado", **expected) is None
 
 
-def test_revision_de_snapshot_es_monotonica():
-    import time
-
-    a = build_restore_snapshot({"a": 1}, None, None, None, False)
-    time.sleep(0.002)
-    b = build_restore_snapshot({"a": 1}, None, None, None, False)
+def test_revision_de_snapshot_es_la_reservada_al_inicio():
+    a = build_restore_snapshot(
+        {"a": 1}, None, None, None, False,
+        revision=100, source_sha256="c" * 64,
+    )
+    b = build_restore_snapshot(
+        {"a": 1}, None, None, None, False,
+        revision=101, source_sha256="c" * 64,
+    )
     assert b["revision"] > a["revision"]
-    assert b["generated_at"] > a["generated_at"]  # ISO-UTC ordena lexicográfico
+    assert (a["revision"], b["revision"]) == (100, 101)
 
 
 # ── 3. Producción fail-closed ────────────────────────────────────────────────
@@ -273,8 +287,8 @@ def test_upgrade_basico_ya_no_se_degrada_a_otro():
 
     assert "upgrade_basico" in REQUEST_TYPES
     assert "upgrade_basico" in UPGRADE_REQUEST_TYPES
-    # La migración 0017 alinea el constraint de Supabase
-    sql = (REPO / "supabase" / "migrations" / "0017_contratacion_basico.sql").read_text(encoding="utf-8")
+    # La migración se renumeró a 0019 para eliminar la versión 0017 duplicada.
+    sql = (REPO / "supabase" / "migrations" / "0019_contratacion_basico.sql").read_text(encoding="utf-8")
     assert "upgrade_basico" in sql
 
 
@@ -305,5 +319,5 @@ def test_version_endpoint_expone_identidad():
     assert response.status_code == 200
     body = response.json()
     assert body["engine_version"] == ENGINE_VERSION
-    assert body["database_migration"] == "0017"
+    assert body["database_migration"] == LATEST_MIGRATION
     assert "commit_sha" in body and "environment" in body

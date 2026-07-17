@@ -2,9 +2,9 @@
  "archivo": "demo_empresa_ficticia.csv",
  "avisos": [],
  "cambios": {
-  "celdas_con_espacios_normalizados": 1,
+  "celdas_con_espacios_normalizados": 0,
   "celdas_con_variantes_unificadas": 3,
-  "celdas_textuales_unicas_modificadas": 4,
+  "celdas_textuales_unicas_modificadas": 3,
   "encabezados_normalizados": 0,
   "fechas_estandarizadas": 0,
   "fusiones_fuzzy": 0,
@@ -12,7 +12,7 @@
   "mojibake_reparado": 0,
   "numeros_estandarizados": 0,
   "placeholders_detectados": 0,
-  "textos_normalizados": 4
+  "textos_normalizados": 3
  },
  "carga": {
   "filas_titulo_omitidas": 0,

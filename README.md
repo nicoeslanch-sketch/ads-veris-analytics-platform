@@ -80,9 +80,12 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      administrativo persistente**: corrige la cuenta
      `servicios@adsveris.com` y mantiene `is_admin=true` mediante un trigger
      idempotente, sin alterar su plan comercial)
-   - `supabase/migrations/0017_contratacion_basico.sql` (**Fase 15**: el CHECK
+   - `supabase/migrations/0019_contratacion_basico.sql` (**Fase 15, renumerada
+     en Fase 16**: el CHECK
      de `addon_requests.tipo` reconoce `upgrade_basico` — antes una solicitud
      de contratar el Plan Básico se degradaba en silencio a 'otro')
+   - `supabase/migrations/0020_restore_state_v3.sql` (**Fase 16**: revisiones
+     reservadas al inicio, escritura atómica y estado/snapshots multihoja con RLS)
 3. **Política de contraseñas** (Fase 13/14 — la validación del formulario es
    solo UX; la política REAL vive aquí): en **Authentication → Providers →
    Email → Password requirements**, exige mínimo **8 caracteres** con

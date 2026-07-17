@@ -60,10 +60,24 @@ export interface AnalysisRow {
   id: string
   name: string
   dataset_id: string | null
-  config: { rango?: string; agrupar_por?: string; metrica?: string } | null
+  config: {
+    rango?: string
+    agrupar_por?: string
+    metrica?: string
+    moneda?: string
+    moneda_mixta?: boolean
+    integridad_monetaria?: string
+  } | null
   findings: string[]
   recommendation: { recomendacion: string; plan: string[] } | null
   created_at: string
+}
+
+export function hasVerifiedMonetaryIntegrity(analysis: AnalysisRow): boolean {
+  return (
+    analysis.config?.integridad_monetaria === 'verificada' &&
+    analysis.config?.moneda_mixta === false
+  )
 }
 
 export interface CleaningJobRow {

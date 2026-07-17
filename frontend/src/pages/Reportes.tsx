@@ -67,6 +67,24 @@ export default function Reportes() {
     )
   }
 
+  if (metrics?.moneda_mixta) {
+    return (
+      <>
+        <PageHeader
+          title="Reportes"
+          subtitle="Los reportes monetarios requieren datos comparables."
+        />
+        <EmptyState
+          icon={FileText}
+          title="Reporte monetario bloqueado"
+          description="El archivo mezcla monedas incompatibles. El backend no entrega totales utilizables y el reporte queda deshabilitado hasta que separes o corrijas ventas y costos."
+          ctaLabel="Revisar en Limpieza"
+          ctaTo="/limpieza"
+        />
+      </>
+    )
+  }
+
   const empresa =
     profileCompany ??
     ((user?.user_metadata ?? {}) as Record<string, string | undefined>).company ??

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -21,14 +22,14 @@ from .engine.clean import DEFAULT_RULES
 from .version import ENGINE_VERSION
 
 
-# Fase 15 — v2: el snapshot declara el MOTOR que lo generó (engine_version) y
-# metadatos de procedencia (hash del archivo, hashes de reglas/mapeo, hoja).
-# Al restaurar, un snapshot de otro motor o de otro esquema se INVALIDA y se
-# recalcula — jamás se sirven resultados de una versión distinta como si
-# fueran actuales. `revision` (epoch ms) da orden monotónico: una tarea de
-# fondo ANTIGUA que termina tarde ya no pisa un snapshot más nuevo.
-RESTORE_SNAPSHOT_VERSION = 2
-MAX_RESTORE_SNAPSHOT_BYTES = 512 * 1024
+# Fase 16 — v3: las revisiones se reservan en PostgreSQL al RECIBIR la
+# petición y cada hoja vive en una fila separada. Ya no existe el límite
+# arbitrario de 512 KiB del jsonb embebido en datasets.
+RESTORE_SNAPSHOT_VERSION = 3
+# Alias de compatibilidad para importadores antiguos. ``None`` significa que
+# el backend no descarta estados por tamaño; PostgreSQL/TOAST los almacena en
+# la tabla dedicada creada por la migración 0020.
+MAX_RESTORE_SNAPSHOT_BYTES: int | None = None
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +77,113 @@ def _get(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"No se pudo consultar Supabase: {exc.__class__.__name__}",
         ) from exc
+
+
+def _post_rpc(
+    function: str,
+    payload: dict[str, Any],
+    settings: Settings,
+) -> httpx.Response:
+    try:
+        return httpx.post(
+            f"{settings.supabase_url.rstrip('/')}/rest/v1/rpc/{function}",
+            json=payload,
+            headers=_headers(settings),
+            timeout=20,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"No se pudo consultar Supabase: {exc.__class__.__name__}",
+        ) from exc
+
+
+def reserve_restore_snapshot_revision(
+    dataset_id: str,
+    user_id: str,
+    settings: Settings | None = None,
+) -> int | None:
+    """Reserva el orden de una petición antes de ejecutar pandas.
+
+    No hay fallback local: una revisión que no proviene de PostgreSQL no puede
+    ordenar de forma segura procesos o instancias distintas del backend.
+    """
+
+    settings = settings or get_settings()
+    safe_dataset_id = _valid_uuid(dataset_id)
+    if not _configured(settings) or safe_dataset_id is None:
+        return None
+    try:
+        response = _post_rpc(
+            "reserve_restore_snapshot_revision",
+            {"p_dataset_id": safe_dataset_id, "p_user_id": user_id},
+            settings,
+        )
+    except HTTPException as exc:
+        logger.warning("Could not reserve restore revision: %s", exc.detail)
+        return None
+    if response.status_code != 200:
+        logger.warning(
+            "Supabase rejected restore revision reservation with status %s",
+            response.status_code,
+        )
+        return None
+    try:
+        revision = int(response.json())
+    except (TypeError, ValueError):
+        return None
+    return revision if revision > 0 else None
+
+
+def fetch_restore_state_bundle(
+    dataset_id: str,
+    user_id: str,
+    settings: Settings | None = None,
+) -> dict[str, Any] | None:
+    """Estado global y snapshots por hoja, leídos de tablas dedicadas."""
+
+    settings = settings or get_settings()
+    safe_dataset_id = _valid_uuid(dataset_id)
+    if not _configured(settings) or safe_dataset_id is None:
+        return None
+    state_response = _get(
+        "dataset_restore_states",
+        {
+            "dataset_id": f"eq.{safe_dataset_id}",
+            "user_id": f"eq.{user_id}",
+            "select": (
+                "dataset_id,user_id,revision,active_sheet,available_sheets,"
+                "excluded_sheets,combine_sheets,source_sha256,engine_version"
+            ),
+            "limit": "1",
+        },
+        settings,
+    )
+    if state_response.status_code != 200:
+        return None
+    states = state_response.json()
+    if not isinstance(states, list) or not states or not isinstance(states[0], dict):
+        return None
+
+    sheets_response = _get(
+        "dataset_sheet_snapshots",
+        {
+            "dataset_id": f"eq.{safe_dataset_id}",
+            "user_id": f"eq.{user_id}",
+            "select": (
+                "sheet_key,revision,source_sha256,rules_hash,mapping_hash,"
+                "sheet,engine_version,snapshot"
+            ),
+            "order": "revision.asc",
+        },
+        settings,
+    )
+    if sheets_response.status_code != 200:
+        return None
+    sheets = sheets_response.json()
+    if not isinstance(sheets, list):
+        return None
+    return {"state": states[0], "sheets": sheets}
 
 
 def fetch_latest_restore_record(
@@ -194,21 +302,28 @@ def build_restore_snapshot(
     mapping: dict[str, str] | None,
     eliminar_duplicados: bool,
     *,
-    source_sha256: str | None = None,
+    revision: int,
+    source_sha256: str,
     rules: dict | None = None,
     sheet: str | None = None,
 ) -> dict[str, Any]:
+    if revision <= 0:
+        raise ValueError("revision must be reserved before building a snapshot")
+    if not isinstance(source_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", source_sha256
+    ):
+        raise ValueError("source_sha256 must be a full SHA-256 hex digest")
     now = datetime.now(timezone.utc)
     return {
         "version": RESTORE_SNAPSHOT_VERSION,
         "engine_version": ENGINE_VERSION,
         "generated_at": now.isoformat(),
-        # Orden monotónico para escrituras en carrera (tareas de fondo)
-        "revision": int(now.timestamp() * 1000),
+        # Reservada por PostgreSQL al recibir la petición, no al finalizarla.
+        "revision": revision,
         # Procedencia auditable: qué archivo/reglas/mapeo produjeron esto
         "source_sha256": source_sha256,
-        "rules_hash": _stable_hash(rules) if rules is not None else None,
-        "mapping_hash": _stable_hash(mapping) if mapping is not None else None,
+        "rules_hash": _stable_hash(rules or {}),
+        "mapping_hash": _stable_hash(mapping or {}),
         "sheet": sheet,
         "standardization": standardization,
         "cleaning": cleaning,
@@ -218,7 +333,16 @@ def build_restore_snapshot(
     }
 
 
-def valid_restore_snapshot(raw: Any, dataset_status: str) -> dict[str, Any] | None:
+def valid_restore_snapshot(
+    raw: Any,
+    dataset_status: str,
+    *,
+    expected_revision: int,
+    expected_source_sha256: str,
+    expected_rules_hash: str,
+    expected_mapping_hash: str,
+    expected_sheet: str | None,
+) -> dict[str, Any] | None:
     if not isinstance(raw, dict) or raw.get("version") != RESTORE_SNAPSHOT_VERSION:
         return None
     # Fase 15: un snapshot generado por OTRO motor se invalida — el fallback
@@ -226,6 +350,30 @@ def valid_restore_snapshot(raw: Any, dataset_status: str) -> dict[str, Any] | No
     # versiones). Cambios de archivo/mapeo/reglas producen dataset o snapshot
     # nuevos por diseño; esta es la última línea de defensa.
     if raw.get("engine_version") != ENGINE_VERSION:
+        return None
+    if not isinstance(expected_revision, int) or expected_revision <= 0:
+        return None
+    if not isinstance(expected_source_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_source_sha256
+    ):
+        return None
+    if not isinstance(expected_rules_hash, str) or not re.fullmatch(
+        r"[0-9a-f]{16}", expected_rules_hash
+    ):
+        return None
+    if not isinstance(expected_mapping_hash, str) or not re.fullmatch(
+        r"[0-9a-f]{16}", expected_mapping_hash
+    ):
+        return None
+    if raw.get("revision") != expected_revision:
+        return None
+    if raw.get("source_sha256") != expected_source_sha256:
+        return None
+    if raw.get("rules_hash") != expected_rules_hash:
+        return None
+    if raw.get("mapping_hash") != expected_mapping_hash:
+        return None
+    if raw.get("sheet") != expected_sheet:
         return None
     if not isinstance(raw.get("standardization"), dict):
         return None
@@ -237,6 +385,12 @@ def valid_restore_snapshot(raw: Any, dataset_status: str) -> dict[str, Any] | No
     mapping = raw.get("mapping")
     if mapping is not None and not isinstance(mapping, dict):
         return None
+    if _stable_hash(mapping or {}) != expected_mapping_hash:
+        return None
+    cleaning = raw.get("cleaning")
+    rules = cleaning.get("reglas_activas") if isinstance(cleaning, dict) else None
+    if _stable_hash(rules or {}) != expected_rules_hash:
+        return None
     return raw
 
 
@@ -245,61 +399,59 @@ def store_restore_snapshot(
     user_id: str,
     snapshot: dict[str, Any],
     settings: Settings | None = None,
+    restore_state: dict[str, Any] | None = None,
 ) -> bool:
-    """Store only a bounded snapshot on a dataset owned by user_id."""
+    """Guarda una hoja mediante una única función PostgreSQL atómica."""
     settings = settings or get_settings()
     safe_dataset_id = _valid_uuid(dataset_id)
     if not _configured(settings) or safe_dataset_id is None:
         return False
-    encoded = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if len(encoded) > MAX_RESTORE_SNAPSHOT_BYTES:
-        logger.warning(
-            "Restore snapshot omitted because it is too large: %s bytes",
-            len(encoded),
-        )
+    revision = snapshot.get("revision")
+    if not isinstance(revision, int) or revision <= 0:
         return False
-    # Fase 15 — guardia monotónica: dos limpiezas en carrera escriben ambas
-    # como tarea de fondo; si la ANTIGUA termina última, no debe pisar a la
-    # nueva. El filtro extra solo actualiza cuando el snapshot guardado es más
-    # antiguo (o no existe). `generated_at` ISO-UTC ordena lexicográficamente.
-    params = {
-        "id": f"eq.{safe_dataset_id}",
-        "user_id": f"eq.{user_id}",
-        "select": "id",
-        "or": (
-            "(restore_snapshot.is.null,"
-            f"restore_snapshot->>generated_at.lt.{snapshot.get('generated_at', '')})"
-        ),
+
+    state = restore_state if isinstance(restore_state, dict) else {}
+    available_sheets = state.get("available_sheets")
+    if not isinstance(available_sheets, list):
+        available_sheets = (
+            snapshot.get("standardization", {}).get("carga", {}).get("hojas_disponibles", [])
+        )
+    active_sheet = state.get("active_sheet", snapshot.get("sheet"))
+    excluded_sheets = state.get("excluded_sheets")
+    if not isinstance(excluded_sheets, list):
+        excluded_sheets = [
+            name for name in available_sheets if name != snapshot.get("sheet")
+        ]
+    payload = {
+        "p_dataset_id": safe_dataset_id,
+        "p_user_id": user_id,
+        "p_sheet_key": snapshot.get("sheet") or "__single__",
+        "p_snapshot": snapshot,
+        "p_revision": revision,
+        "p_source_sha256": snapshot.get("source_sha256"),
+        "p_rules_hash": snapshot.get("rules_hash"),
+        "p_mapping_hash": snapshot.get("mapping_hash"),
+        "p_sheet": snapshot.get("sheet"),
+        "p_active_sheet": active_sheet,
+        "p_available_sheets": available_sheets,
+        "p_excluded_sheets": excluded_sheets,
+        "p_combine_sheets": bool(state.get("combine_sheets", False)),
+        "p_engine_version": ENGINE_VERSION,
     }
     try:
-        response = httpx.patch(
-            _rest_url(settings, "datasets"),
-            params=params,
-            json={"restore_snapshot": snapshot},
-            headers=_headers(settings, representation=True),
-            timeout=20,
+        response = _post_rpc(
+            "store_restore_snapshot_guarded",
+            payload,
+            settings,
         )
-        if response.status_code == 400:
-            # PostgREST sin soporte del filtro JSON (versiones antiguas):
-            # degradar a la escritura simple antes que perder el snapshot.
-            response = httpx.patch(
-                _rest_url(settings, "datasets"),
-                params={k: v for k, v in params.items() if k != "or"},
-                json={"restore_snapshot": snapshot},
-                headers=_headers(settings, representation=True),
-                timeout=20,
-            )
-    except httpx.HTTPError as exc:
-        logger.warning("Could not persist restore snapshot: %s", exc.__class__.__name__)
+    except HTTPException as exc:
+        logger.warning("Could not persist restore snapshot: %s", exc.detail)
         return False
-    # Missing migration or a deleted dataset stays best-effort.
     if response.status_code != 200:
         logger.warning("Supabase rejected restore snapshot with status %s", response.status_code)
         return False
     try:
-        rows = response.json()
+        stored = response.json()
     except ValueError:
         return False
-    # Lista vacía = la guardia decidió que ya había un snapshot MÁS NUEVO
-    # (o el dataset no existe): en ambos casos, no sobrescribimos.
-    return isinstance(rows, list) and bool(rows)
+    return stored is True

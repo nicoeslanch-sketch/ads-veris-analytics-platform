@@ -62,8 +62,9 @@
     "ventas_netas": 1414470.0
    }
   ],
-  "unicos": 5
+  "unicos": 6
  },
+ "datos_monetarios_disponibles": true,
  "dimensiones": {
   "canal": false,
   "cantidad": true,
@@ -223,6 +224,47 @@
   "sucursal": "Sucursal"
  },
  "moneda": "CLP",
+ "moneda_detalle": {
+  "advertencia": null,
+  "conteos": {
+   "ARS": 0,
+   "CLP": 0,
+   "COP": 0,
+   "EUR": 0,
+   "GBP": 0,
+   "MXN": 0,
+   "PEN": 0,
+   "UF": 0,
+   "USD": 0
+  },
+  "conteos_por_columna": {
+   "costo": {
+    "ARS": 0,
+    "CLP": 0,
+    "COP": 0,
+    "EUR": 0,
+    "GBP": 0,
+    "MXN": 0,
+    "PEN": 0,
+    "UF": 0,
+    "USD": 0
+   },
+   "monto": {
+    "ARS": 0,
+    "CLP": 0,
+    "COP": 0,
+    "EUR": 0,
+    "GBP": 0,
+    "MXN": 0,
+    "PEN": 0,
+    "UF": 0,
+    "USD": 0
+   }
+  },
+  "detectadas": [],
+  "dominante": "CLP",
+  "mixta": false
+ },
  "moneda_mixta": false,
  "periodo": {
   "desde": null,

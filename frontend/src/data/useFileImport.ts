@@ -104,7 +104,9 @@ export function useFileImport() {
 
       const result = await apiPost<StandardizeResult>(
         '/standardize',
-        buildDatasetForm(selected, storagePath),
+        buildDatasetForm(selected, storagePath, {
+          ...(datasetId ? { dataset_id: datasetId } : {}),
+        }),
       )
       setStandardization(result)
       const marked = await markStandardized(datasetId, result)

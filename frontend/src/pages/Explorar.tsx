@@ -508,6 +508,24 @@ export default function Explorar() {
     )
   }
 
+  if (metrics?.moneda_mixta) {
+    return (
+      <>
+        <PageHeader
+          title="Explorar datos"
+          subtitle="La integridad monetaria debe resolverse antes de comparar resultados."
+        />
+        <EmptyState
+          icon={AlertTriangle}
+          title="Exploración monetaria bloqueada"
+          description="El archivo mezcla monedas incompatibles en ventas o costos. El backend retiró sumas, rankings y proyecciones para impedir conclusiones inválidas. Corrige o separa las monedas y vuelve a limpiar el archivo."
+          ctaLabel="Revisar en Limpieza"
+          ctaTo="/limpieza"
+        />
+      </>
+    )
+  }
+
   const hasCosts = Boolean(metrics?.kpis.ganancia_neta)
 
   // Bug: `evolucion_mensual` del backend es SIEMPRE el histórico completo
@@ -623,12 +641,19 @@ export default function Explorar() {
     // Fase 14b (P0): la demo JAMÁS escribe en Supabase — sin este guard, un
     // clic guardaba hallazgos de la empresa ficticia en analyses/activity_log
     // e incluso podía asociarlos a un dataset REAL del usuario.
-    if (demo.active) return
+    if (demo.active || !metrics || metrics.moneda_mixta) return
     setSaveState('saving')
     const ok = await saveAnalysis(
       datasetId,
       analysisLabel,
-      { rango: rango.label, agrupar_por: groupBy, metrica: metric },
+      {
+        rango: rango.label,
+        agrupar_por: groupBy,
+        metrica: metric,
+        moneda: metrics.moneda,
+        moneda_mixta: false,
+        integridad_monetaria: 'verificada',
+      },
       findings.map((f) => f.title),
       reco,
     )

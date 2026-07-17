@@ -41,10 +41,9 @@ from .mapping import (
 )
 from .loader import SOURCE_ROWS_ATTR, SOURCE_SHEET_ATTR
 from .standardize import (
-    is_missing,
     is_identifier_column,
+    is_semantic_placeholder,
     map_unique,
-    missing_mask,
     parse_date,
     parse_number,
     physical_missing_mask,
@@ -190,6 +189,80 @@ def _quality(problem_cells: int, total_cells: int) -> float:
     return round(max(0.0, 1 - problem_cells / total_cells) * 100, 1)
 
 
+def _analytical_coverage(
+    df: pd.DataFrame,
+    roles: dict[str, str],
+) -> float:
+    """Cobertura de valores válidos para seis capacidades analíticas.
+
+    Tener un encabezado con un rol no basta: una columna de ventas llena de
+    ``NA`` o fechas ilegibles aporta 0% de cobertura. Para capacidades con
+    roles alternativos se usa la alternativa con mayor cobertura real.
+    """
+
+    if len(df) == 0:
+        return 0.0
+
+    def valid_rate(role: str) -> float:
+        column = roles.get(role)
+        if not column or column not in df.columns:
+            return 0.0
+        series = df[column]
+        expected_type = (
+            "fecha" if role == "fecha" else "numero" if role in {"monto", "costo"} else "texto"
+        )
+        physical = physical_missing_mask(series)
+        semantic = semantic_missing_mask(series, role, column_type=expected_type)
+        present = ~(physical | semantic)
+        if expected_type == "fecha":
+            valid = present & map_unique(series, parse_date).notna()
+        elif expected_type == "numero":
+            valid = present & map_unique(series, parse_number).notna()
+        else:
+            valid = present
+        return float(valid.sum()) / len(df)
+
+    capabilities = (
+        ("fecha",),
+        ("monto",),
+        ("costo",),
+        ("producto", "categoria"),
+        ("canal", "sucursal"),
+        ("cliente",),
+    )
+    rates = [max(valid_rate(role) for role in alternatives) for alternatives in capabilities]
+    return round(sum(rates) / len(rates) * 100, 1)
+
+
+def _quality_dimensions(
+    df: pd.DataFrame,
+    problems: dict,
+    roles: dict[str, str],
+    identity_inconsistencies: dict,
+) -> dict[str, float]:
+    rows, columns = len(df), len(df.columns)
+    cells = max(rows * max(columns, 1), 1)
+    identity_conflicts = (
+        identity_inconsistencies["nombre_con_varios_ids"]["conteo"]
+        + identity_inconsistencies["id_con_varios_nombres"]["conteo"]
+        if identity_inconsistencies
+        else 0
+    )
+    return {
+        "completitud": _quality(problems["valores_nulos"], cells),
+        "validez": _quality(
+            problems["fechas_invalidas"]
+            + problems["tipos_incorrectos"]
+            + problems["valores_fuera_de_rango"],
+            cells,
+        ),
+        "consistencia": _quality(problems["textos_inconsistentes"], cells),
+        "unicidad": _quality(problems["duplicados"] * max(columns, 1), cells),
+        "integridad": _quality(identity_conflicts, max(rows, 1)),
+        "cobertura_analitica": _analytical_coverage(df, roles),
+    }
+
+
 def _dedup_masks(
     df_original: pd.DataFrame, df_standardized: pd.DataFrame | None = None
 ) -> tuple[pd.Series, pd.Series]:
@@ -274,7 +347,9 @@ def _row_identifier_diagnostics(df: pd.DataFrame, source_rows: list[int]) -> tup
     for col in df.columns:
         if classify_identifier_kind(col, df[col]) != "fila":
             continue
-        missing = missing_mask(df[col])
+        # Los identificadores son texto: ``None``/``NA`` pueden ser códigos
+        # literales. Solo una celda físicamente vacía cuenta como ausente.
+        missing = physical_missing_mask(df[col])
         present = df.loc[~missing, col]
         unique_values = int(present.nunique(dropna=False))
         repeated_values = int(present[present.duplicated(keep=False)].nunique(dropna=False))
@@ -360,7 +435,11 @@ def _identity_inconsistencies(
         for position, (name, identifier) in enumerate(
             zip(df[name_col].astype(str), df[id_col].astype(str), strict=True)
         ):
-            if is_missing(name) or is_missing(identifier):
+            if (
+                not name.strip()
+                or is_semantic_placeholder(name, entity)
+                or not identifier.strip()
+            ):
                 continue
             name_key = dedup_norm_key(name)
             id_key = dedup_norm_key(identifier)
@@ -452,11 +531,16 @@ def _column_caches(
     dates: dict[str, pd.Series] = {}
     numbers: dict[str, pd.Series] = {}
     for col in df.columns:
-        miss = missing_mask(df[col])
-        missing[col] = miss
-        physical[col] = physical_missing_mask(df[col])
-        semantic[col] = semantic_missing_mask(df[col], roles_by_col.get(col))
         ctype = column_types.get(col, "texto")
+        physical[col] = physical_missing_mask(df[col])
+        semantic[col] = semantic_missing_mask(
+            df[col], roles_by_col.get(col), column_type=ctype
+        )
+        # La ausencia efectiva depende del contexto. Un token ``NA`` en una
+        # categoría textual es literal; en un monto es un placeholder
+        # semántico. En ambos casos el texto permanece intacto.
+        miss = physical[col] | semantic[col]
+        missing[col] = miss
         if ctype == "fecha":
             dates[col] = map_unique(df[col], lambda v: parse_date(v))
         elif ctype == "numero":
@@ -486,7 +570,12 @@ def _structural_null_patterns(
             or is_identifier_column(group_col, df[group_col])
         ):
             continue
-        valid_group = ~missing_mask(df[group_col])
+        valid_group = ~(
+            physical_missing_mask(df[group_col])
+            | semantic_missing_mask(
+                df[group_col], role, column_type="texto"
+            )
+        )
         cardinality = int(df.loc[valid_group, group_col].nunique(dropna=False))
         if not 2 <= cardinality <= STRUCTURAL_NULL_MAX_GROUP_CARDINALITY:
             continue
@@ -564,7 +653,9 @@ def _detect_problems(
     miss_cache, physical_cache, semantic_cache, date_cache, num_cache = _column_caches(
         df, column_types, roles_by_col
     )
-    empty_columns = [col for col in df.columns if bool(miss_cache[col].all())]
+    # Solo una columna físicamente vacía puede eliminarse automáticamente.
+    # Una columna llena de tokens literales nunca se borra en silencio.
+    empty_columns = [col for col in df.columns if bool(physical_cache[col].all())]
     if exact_duplicate_mask is None or normalized_only_mask is None:
         exact_duplicate_mask, normalized_only_mask = _dedup_masks(df, df)
 
@@ -798,6 +889,7 @@ def analyze_and_clean(
 
     rows_before, cols_before = len(df), len(df.columns)
     total_cells = rows_before * cols_before
+    df_before_clean = df.copy(deep=False)
 
     problems = _detect_problems(
         df,
@@ -1038,44 +1130,18 @@ def analyze_and_clean(
         )
         quality_after = _quality(remaining_cells, rows_after * max(cols_after, 1))
 
-    # ── Fase 15: calidad MULTIDIMENSIONAL (informe externo, adoptado) ──
-    # Una nota única esconde demasiado: un archivo con monedas mixtas o
-    # conflictos de identidad podía verse "casi perfecto". Seis dimensiones
-    # con la MISMA base de celdas que la nota global; el índice global se
-    # mantiene por compatibilidad, pero siempre acompañado de sus componentes.
-    _total_cells = max(rows_before * max(cols_before, 1), 1)
-    _identidad_conflictos = (
-        identity_inconsistencies["nombre_con_varios_ids"]["conteo"]
-        + identity_inconsistencies["id_con_varios_nombres"]["conteo"]
-        if identity_inconsistencies
-        else 0
+    calidad_dimensiones_antes = _quality_dimensions(
+        df_before_clean, problems, roles, identity_inconsistencies
     )
-    _roles_presentes = {r for r in roles if roles.get(r)}
-    _cobertura_roles = [
-        "fecha" in _roles_presentes,
-        "monto" in _roles_presentes,
-        "costo" in _roles_presentes,
-        bool({"producto", "categoria"} & _roles_presentes),
-        bool({"canal", "sucursal"} & _roles_presentes),
-        "cliente" in _roles_presentes,
-    ]
-    calidad_dimensiones = {
-        "completitud": _quality(problems["valores_nulos"], _total_cells),
-        "validez": _quality(
-            problems["fechas_invalidas"]
-            + problems["tipos_incorrectos"]
-            + problems["valores_fuera_de_rango"],
-            _total_cells,
-        ),
-        "consistencia": _quality(problems["textos_inconsistentes"], _total_cells),
-        "unicidad": _quality(
-            problems["duplicados"] * max(cols_before, 1), _total_cells
-        ),
-        "integridad": _quality(_identidad_conflictos, max(rows_before, 1)),
-        "cobertura_analitica": round(
-            sum(_cobertura_roles) / len(_cobertura_roles) * 100, 1
-        ),
-    }
+    if apply:
+        identidad_despues = _identity_inconsistencies(
+            df, roles, extended, clean_source_rows
+        )
+        calidad_dimensiones_despues = _quality_dimensions(
+            df, remaining, roles, identidad_despues
+        )
+    else:
+        calidad_dimensiones_despues = dict(calidad_dimensiones_antes)
 
     return {
         "resumen": {
@@ -1085,7 +1151,11 @@ def analyze_and_clean(
             "columnas_despues": cols_after,
             "calidad_antes": quality_before,
             "calidad_despues": quality_after,
-            "calidad_dimensiones": calidad_dimensiones,
+            # Alias histórico: representaba el estado inicial. Se mantiene
+            # para clientes Fase 15 y se agregan las dos etapas explícitas.
+            "calidad_dimensiones": calidad_dimensiones_antes,
+            "calidad_dimensiones_antes": calidad_dimensiones_antes,
+            "calidad_dimensiones_despues": calidad_dimensiones_despues,
             "aplicado": apply,
         },
         "problemas": problems,

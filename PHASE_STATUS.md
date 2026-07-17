@@ -1,6 +1,17 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 15 completas.**
+**Estado actual: Fases 0 a 16 completas en código.**
+La Fase 16 (`CHANGELOG` [0.19.0]) cierra la pérdida contextual de literales,
+bloquea globalmente cálculos con monedas incompatibles, reemplaza snapshots v2
+por restauración multihoja v3 con revisión reservada y RPC atómica, compara la
+calidad antes/después con la misma fórmula y entrega exportaciones auditables.
+También migra el E2E manual a `@playwright/test` e incorpora comprobaciones
+directas de RLS y Storage. Operativo: aplicar **0019** y **0020** en staging,
+ejecutar el smoke estricto con dos usuarios y solo después promover a producción.
+Resultado local verificado: **323 Pytest, 31 Vitest, build y Playwright 3/3**.
+Detalle y riesgos: `docs/FASE_16_AUDITORIA.md`.
+
+**Historial de Fase 15.**
 La Fase 15 (`CHANGELOG` [0.18.0], "todo en 10") corrige los bugs P0
 verificados del plan externo (upgrade_basico degradado a 'otro', literales
 nan/None borrados por el loader, KPI de planes del admin, monedas mixtas
@@ -14,7 +25,7 @@ verificar despliegues, test de paridad de la matriz de planes TS↔Python,
 límite de ráfaga de IA, job de seguridad en CI (pip-audit + npm audit),
 runbook `docs/OPERACION.md`, `scripts/smoke_rls.py` de aislamiento entre
 clientes y E2E versionado (`npm run test:e2e`). Operativo: ejecutar la
-migración **0017** y setear **APP_ENV=production** en Render.
+migración **0019** y setear **APP_ENV=production** en Render.
 **Backend 309 tests + Vitest + build + E2E.**
 
 **Historial 0.17.x (estabilización previa): Fases 0 a 14 + 0.17.5.**

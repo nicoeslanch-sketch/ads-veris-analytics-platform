@@ -24,7 +24,9 @@ import pandas as pd
 
 from .mapping import norm_key, resolve_mapping, strip_accents_lower
 
-# Valores que se consideran "sin dato" además del string vacío.
+# Tokens ambiguos que suelen significar "sin dato" en columnas numéricas o
+# de fecha. Son una CLASIFICACIÓN, no una orden de borrado: el valor escrito
+# por el usuario siempre se conserva literalmente durante todo el pipeline.
 MISSING_TOKENS = {"", "-", "--", "n/a", "na", "null", "none", "s/i", "sin dato"}
 
 # Placeholders dependientes del significado de la columna. Se conservan en el
@@ -99,14 +101,29 @@ def is_semantic_placeholder(value: str, role: str | None) -> bool:
     return normalized in placeholders
 
 
-def semantic_missing_mask(series: pd.Series, role: str | None) -> pd.Series:
-    """Placeholders válidos solo para un rol, sin modificar su valor original."""
+def semantic_missing_mask(
+    series: pd.Series,
+    role: str | None,
+    column_type: str | None = None,
+) -> pd.Series:
+    """Placeholders semánticos sin modificar el valor original.
+
+    Los placeholders específicos (por ejemplo ``Sin Nombre`` en cliente) se
+    detectan por rol. Los tokens ambiguos (``NA``, ``null``, ``None``...) solo
+    se consideran placeholders en columnas de fecha/número; en columnas de
+    texto son datos literales y por tanto no se marcan como ausentes.
+    """
     placeholders = PLACEHOLDERS_BY_ROLE.get(role or "", set())
-    if not placeholders:
-        return pd.Series(False, index=series.index)
-    return map_unique(
-        series.astype(str), lambda value: is_semantic_placeholder(value, role)
-    ).astype(bool)
+    text = series.astype(str)
+    role_mask = (
+        map_unique(text, lambda value: is_semantic_placeholder(value, role)).astype(bool)
+        if placeholders
+        else pd.Series(False, index=series.index)
+    )
+    if column_type not in {"fecha", "numero"}:
+        return role_mask
+    token_mask = text.str.strip().str.lower().isin(MISSING_TOKENS - {""})
+    return role_mask | token_mask
 
 
 def map_unique(series: pd.Series, func) -> pd.Series:
@@ -660,9 +677,12 @@ def _normalize_text_column(
                 mojibake_audit.append({**audit, "ocurrencias": occurrences})
 
     repaired = original.map(repaired_values)
+    # Nunca convertir tokens ambiguos a vacío. ``None``, ``none``, ``NA`` y
+    # ``null`` pueden ser categorías empresariales reales; si una columna
+    # numérica los usa como placeholder, clean.py los señaliza sin borrarlos.
     stripped = map_unique(
         repaired,
-        lambda v: "" if is_missing(v) else re.sub(r"\s+", " ", str(v)).strip(),
+        lambda v: re.sub(r"\s+", " ", str(v)).strip(),
     )
     # Un placeholder semántico conserva exactamente el texto entregado.
     stripped = stripped.where(~semantic_mask, original)
@@ -672,7 +692,7 @@ def _normalize_text_column(
     # La frecuencia contiene la misma informacion que recorrer cada fila,
     # pero permite normalizar cada variante una sola vez.
     for value, count in stripped.value_counts(dropna=False).items():
-        if not value or is_semantic_placeholder(value, role):
+        if not value or is_missing(value) or is_semantic_placeholder(value, role):
             continue
         # norm_key agrupa variantes que solo difieren en mayúsculas, tildes
         # o puntuación de formato (ej: "76.123.456-7" y "76123456-7").
@@ -801,7 +821,7 @@ def _normalize_text_column(
         stripped,
         lambda v: (
             v
-            if not v or is_semantic_placeholder(v, role)
+            if not v or is_missing(v) or is_semantic_placeholder(v, role)
             else canonical[norm_key(v)]
         ),
     )
@@ -908,7 +928,7 @@ def standardize_dataframe(
 
             def _standardize_date(value: str) -> str:
                 if is_missing(value):
-                    return ""
+                    return str(value).strip()
                 parsed = parse_date(value, dayfirst=dayfirst)
                 if parsed is None:
                     return str(value).strip()
@@ -942,7 +962,7 @@ def standardize_dataframe(
 
             def _standardize_number(value: str) -> str:
                 if is_missing(value):
-                    return ""
+                    return str(value).strip()
                 number = parse_number(
                     value,
                     dot3_convention=convention,

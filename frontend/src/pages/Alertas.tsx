@@ -238,7 +238,7 @@ export default function Alertas() {
   }, [rules, userId])
 
   const allAlerts = useMemo(
-    () => (metrics ? computeAlerts(metrics, rules) : []),
+    () => (metrics && !metrics.moneda_mixta ? computeAlerts(metrics, rules) : []),
     [metrics, rules],
   )
   const active = allAlerts.filter((a) => !resolved.includes(a.id))
@@ -272,6 +272,24 @@ export default function Alertas() {
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-teal" />
         </div>
+      </>
+    )
+  }
+
+  if (metrics?.moneda_mixta) {
+    return (
+      <>
+        <PageHeader
+          title="Alertas"
+          subtitle="Las reglas monetarias requieren una moneda compatible."
+        />
+        <EmptyState
+          icon={TriangleAlert}
+          title="Alertas monetarias bloqueadas"
+          description="No evaluamos caídas, márgenes ni concentraciones porque ventas o costos mezclan monedas sin conversión declarada. Corrige el archivo para evitar alertas falsas."
+          ctaLabel="Revisar en Limpieza"
+          ctaTo="/limpieza"
+        />
       </>
     )
   }

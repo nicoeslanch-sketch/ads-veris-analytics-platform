@@ -88,6 +88,19 @@ def _check_metrics_size(metrics: dict) -> None:
         )
 
 
+def _guard_monetary_integrity(metrics: dict) -> None:
+    if metrics.get("moneda_mixta") is True or metrics.get(
+        "datos_monetarios_disponibles"
+    ) is False:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "La IA está bloqueada para este archivo porque mezcla monedas "
+                "incompatibles. Separa o corrige montos y costos antes de analizar."
+            ),
+        )
+
+
 def _client(settings: Settings) -> AsyncAnthropic:
     if not settings.anthropic_api_key:
         raise HTTPException(
@@ -240,6 +253,7 @@ async def ai_summary(
         require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
     )
     _check_metrics_size(body.metrics)
+    _guard_monetary_integrity(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
         ctx = _metrics_context(body.metrics)
@@ -316,6 +330,7 @@ async def ai_recommendation(
         require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
     )
     _check_metrics_size(body.metrics)
+    _guard_monetary_integrity(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
         ctx = _metrics_context(body.metrics)
@@ -383,6 +398,7 @@ async def ai_chat(
         require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
     )
     _check_metrics_size(body.metrics)
+    _guard_monetary_integrity(body.metrics)
     await run_in_threadpool(quota.check_quota, user.id, settings)
     ctx = _metrics_context(body.metrics)
 

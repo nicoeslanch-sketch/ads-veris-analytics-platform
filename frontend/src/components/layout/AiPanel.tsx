@@ -128,6 +128,13 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         if (!isCurrent()) return
         localMetrics.current = m
       }
+      if (m.moneda_mixta) {
+        localMetrics.current = null
+        setError(
+          'La IA está bloqueada porque el archivo mezcla monedas incompatibles. Corrige ventas o costos en Limpieza.',
+        )
+        return
+      }
       setLoadingLabel('Generando resumen con IA…')
       const res = await apiPostJson<Summary>('/ai/summary', { metrics: m }, {
         signal: controller.signal,
@@ -187,7 +194,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
 
   const sendMessage = async (text: string) => {
     const m = localMetrics.current
-    if (!text.trim() || streaming || !m) return
+    if (!text.trim() || streaming || !m || m.moneda_mixta) return
     const question = text.trim()
     setInput('')
 

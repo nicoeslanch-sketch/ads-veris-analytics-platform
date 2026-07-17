@@ -32,6 +32,20 @@ export interface SheetSession {
   eliminarDuplicados: boolean
 }
 
+export interface DatasetRestoreState {
+  active_sheet: string | null
+  available_sheets: string[]
+  excluded_sheets: string[]
+  combine_sheets: boolean
+}
+
+export interface RestoreDatasetOptions {
+  activeSheet: string | null
+  availableSheets: string[]
+  combineSheets: boolean
+  sheetSessions: Record<string, SheetSession>
+}
+
 /** Construye el periodo de un mes "YYYY-MM" (primer al último día). */
 export function monthPeriod(isoMonth: string): Period {
   const [year, month] = isoMonth.split('-').map(Number)
@@ -96,6 +110,7 @@ interface DatasetState {
   sheetSessions: Record<string, SheetSession>
   sheetManifest: SheetManifest | null
   combineSheets: boolean
+  restoreState: DatasetRestoreState
   /** true mientras DatasetBootstrap restaura el último trabajo al iniciar
    * sesión/recargar — otros componentes (sidebar, selector de periodo,
    * cupos) lo usan para mostrar un estado de carga en vez de un valor por
@@ -114,6 +129,7 @@ interface DatasetState {
     metrics: MetricsResult | null,
     mappingOverride: Record<string, string> | null,
     eliminarDuplicados: boolean,
+    options?: RestoreDatasetOptions,
   ) => void
   setStandardization: (result: StandardizeResult) => void
   setCleaning: (result: CleanResult) => void
@@ -264,8 +280,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     restoredMetrics: MetricsResult | null,
     restoredMapping: Record<string, string> | null,
     restoredEliminarDuplicados: boolean,
+    options?: RestoreDatasetOptions,
   ) => {
-    const activeSheet =
+    const inferredActiveSheet =
       restoredCleaning?.carga?.hoja_usada ??
       restoredStandardization.carga?.hoja_usada ??
       null
@@ -276,22 +293,26 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       mappingOverride: restoredMapping,
       eliminarDuplicados: restoredEliminarDuplicados,
     }
+    const activeSheet = options?.activeSheet ?? inferredActiveSheet
+    const sessions = { ...(options?.sheetSessions ?? {}) }
+    if (activeSheet && !sessions[activeSheet]) sessions[activeSheet] = restoredSession
+    const activeSession = activeSheet ? sessions[activeSheet] : undefined
 
     setFile(restoredFile)
     setDatasetId(restoredDatasetId)
     setStoragePath(restoredStoragePath)
-    setStandardizationState(restoredStandardization)
-    setCleaningState(restoredCleaning)
+    setStandardizationState(activeSession?.standardization ?? restoredStandardization)
+    setCleaningState(activeSession?.cleaning ?? restoredCleaning)
     setMetricsState(restoredMetrics)
     setUploadedAt(new Date())
     setPeriod(ALL_PERIOD)
     setMonthsAvailable(restoredMetrics?.periodo.meses_disponibles ?? [])
-    setMappingOverrideState(restoredMapping)
+    setMappingOverrideState(activeSession?.mappingOverride ?? restoredMapping)
     setSheetState(activeSheet)
-    setEliminarDuplicados(restoredEliminarDuplicados)
-    setAvailableSheets(sheets)
-    setSheetSessions(activeSheet ? { [activeSheet]: restoredSession } : {})
-    setCombineSheets(false)
+    setEliminarDuplicados(activeSession?.eliminarDuplicados ?? restoredEliminarDuplicados)
+    setAvailableSheets(options?.availableSheets ?? sheets)
+    setSheetSessions(sessions)
+    setCombineSheets(Boolean(options?.combineSheets))
   }, [])
 
   const reset = useCallback(() => {
@@ -344,6 +365,15 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     }
   }, [availableSheets, sheetSessions])
 
+  const restoreState = useMemo<DatasetRestoreState>(() => ({
+    active_sheet: sheet,
+    available_sheets: availableSheets,
+    excluded_sheets: availableSheets.filter(
+      (name) => !sheetSessions[name]?.standardization,
+    ),
+    combine_sheets: combineSheets,
+  }), [availableSheets, combineSheets, sheet, sheetSessions])
+
   const value = useMemo(
     () => ({
       file,
@@ -362,6 +392,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       sheetSessions,
       sheetManifest,
       combineSheets,
+      restoreState,
       restoring,
       setRestoring,
       setSheet,
@@ -394,6 +425,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       sheetSessions,
       sheetManifest,
       combineSheets,
+      restoreState,
       restoring,
       setSheet,
       setUploaded,
