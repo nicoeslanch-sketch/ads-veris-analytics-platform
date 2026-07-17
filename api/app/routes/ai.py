@@ -30,6 +30,33 @@ router = APIRouter(prefix="/ai", dependencies=[Depends(get_current_user)])
 
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
+# ── Fase 15: límite de RÁFAGA por usuario (además del cupo mensual) ──────────
+# La cuota mensual no frena un loop accidental o abusivo que dispara decenas
+# de llamadas por minuto (cada una cuesta tokens reales). Ventana deslizante
+# en memoria (una instancia); si la API escala horizontal, moverlo a la base.
+import threading
+import time
+
+_BURST_WINDOW_S = 60
+_BURST_MAX = 12
+_burst: dict[str, list[float]] = {}
+_burst_lock = threading.Lock()
+
+
+def _guard_ai_burst(user_id: str) -> None:
+    now = time.monotonic()
+    with _burst_lock:
+        recent = [t for t in _burst.get(user_id, []) if now - t < _BURST_WINDOW_S]
+        if len(recent) >= _BURST_MAX:
+            _burst[user_id] = recent
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Demasiadas consultas al asistente en poco tiempo. "
+                "Espera un minuto y vuelve a intentarlo.",
+            )
+        recent.append(now)
+        _burst[user_id] = recent
+
 # ── System prompt ────────────────────────────────────────────────────────────
 
 _SYSTEM = (
@@ -208,6 +235,7 @@ async def ai_summary(
     # Fase 14 (P0): la IA era el bypass más caro — el cliente manda las
     # métricas como JSON, así que sin esta puerta una cuenta sin plan podía
     # consumir tokens de Anthropic sin haber procesado jamás un archivo.
+    _guard_ai_burst(user.id)
     await run_in_threadpool(
         require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
     )
@@ -283,6 +311,7 @@ async def ai_recommendation(
     """Recomendación inteligente de Explorar datos (SPEC §7): lectura del
     análisis activo + plan de acción concreto. Se genera solo a pedido del
     usuario (botón), nunca automáticamente — control de costo de IA."""
+    _guard_ai_burst(user.id)
     await run_in_threadpool(
         require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
     )
@@ -349,6 +378,7 @@ async def ai_chat(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Chat libre anclado a los datos del negocio. Devuelve SSE."""
+    _guard_ai_burst(user.id)
     await run_in_threadpool(
         require_capability_for_user, user.id, Capability.ASK_DATA_AI, settings
     )

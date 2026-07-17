@@ -1038,6 +1038,45 @@ def analyze_and_clean(
         )
         quality_after = _quality(remaining_cells, rows_after * max(cols_after, 1))
 
+    # ── Fase 15: calidad MULTIDIMENSIONAL (informe externo, adoptado) ──
+    # Una nota única esconde demasiado: un archivo con monedas mixtas o
+    # conflictos de identidad podía verse "casi perfecto". Seis dimensiones
+    # con la MISMA base de celdas que la nota global; el índice global se
+    # mantiene por compatibilidad, pero siempre acompañado de sus componentes.
+    _total_cells = max(rows_before * max(cols_before, 1), 1)
+    _identidad_conflictos = (
+        identity_inconsistencies["nombre_con_varios_ids"]["conteo"]
+        + identity_inconsistencies["id_con_varios_nombres"]["conteo"]
+        if identity_inconsistencies
+        else 0
+    )
+    _roles_presentes = {r for r in roles if roles.get(r)}
+    _cobertura_roles = [
+        "fecha" in _roles_presentes,
+        "monto" in _roles_presentes,
+        "costo" in _roles_presentes,
+        bool({"producto", "categoria"} & _roles_presentes),
+        bool({"canal", "sucursal"} & _roles_presentes),
+        "cliente" in _roles_presentes,
+    ]
+    calidad_dimensiones = {
+        "completitud": _quality(problems["valores_nulos"], _total_cells),
+        "validez": _quality(
+            problems["fechas_invalidas"]
+            + problems["tipos_incorrectos"]
+            + problems["valores_fuera_de_rango"],
+            _total_cells,
+        ),
+        "consistencia": _quality(problems["textos_inconsistentes"], _total_cells),
+        "unicidad": _quality(
+            problems["duplicados"] * max(cols_before, 1), _total_cells
+        ),
+        "integridad": _quality(_identidad_conflictos, max(rows_before, 1)),
+        "cobertura_analitica": round(
+            sum(_cobertura_roles) / len(_cobertura_roles) * 100, 1
+        ),
+    }
+
     return {
         "resumen": {
             "filas_antes": rows_before,
@@ -1046,6 +1085,7 @@ def analyze_and_clean(
             "columnas_despues": cols_after,
             "calidad_antes": quality_before,
             "calidad_despues": quality_after,
+            "calidad_dimensiones": calidad_dimensiones,
             "aplicado": apply,
         },
         "problemas": problems,

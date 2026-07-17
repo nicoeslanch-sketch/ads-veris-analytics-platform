@@ -361,6 +361,9 @@ export interface MetricsResult {
   archivo: string
   calidad_datos: number
   moneda: string
+  /** Fase 15: montos en MÁS de una moneda — los totales mezclan monedas y la
+   * UI bloquea los KPIs monetarios (jamás mostrar una cifra sumada inválida). */
+  moneda_mixta?: boolean
   mapeo: Record<string, string>
   dimensiones?: DatasetDimensions
   agrupado_por_canal: 'canal' | 'sucursal' | null
@@ -404,6 +407,15 @@ export interface MetricsResult {
   por_categoria?: GroupRow[]
   ventas_por_canal?: GroupRow[]
   top_productos?: GroupRow[]
+  /** Fase 15: líderes calculados sobre TODOS los productos ANTES del recorte
+   * a 12 — la concentración comercial usa por_ventas_brutas. */
+  lideres_productos?: {
+    por_ventas_brutas?: { nombre: string; ventas_brutas: number; participacion_bruta_pct?: number | null } | null
+    por_ventas_netas?: { nombre: string; ventas_netas: number } | null
+    por_utilidad?: { nombre: string; utilidad: number } | null
+    mayor_devolucion?: { nombre: string; devoluciones: number } | null
+    total_productos?: number
+  } | null
   /** Fase 12: concentración de clientes (riesgo de dependencia) — solo si hay columna cliente. */
   clientes?: {
     unicos: number

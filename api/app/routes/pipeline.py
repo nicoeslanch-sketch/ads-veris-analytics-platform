@@ -980,6 +980,10 @@ def _build_and_store_restore_snapshot(
         metrics,
         mapping,
         eliminar_duplicados,
+        # Fase 15 — procedencia auditable del snapshot (v2)
+        source_sha256=hashlib.sha256(content).hexdigest(),
+        rules=(cleaning or {}).get("reglas_activas"),
+        sheet=sheet,
     )
     store_restore_snapshot(dataset_id, user_id, snapshot)
     return snapshot

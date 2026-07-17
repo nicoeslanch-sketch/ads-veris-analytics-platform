@@ -9,6 +9,12 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Fase 15: entorno declarado del despliegue. En "production" la API se
+    # NIEGA a arrancar con configuración insegura (ver validate_production_config
+    # en main.py) — no puede existir un despliegue "funcionando" con las
+    # puertas comerciales desactivadas por error. Render: APP_ENV=production.
+    app_env: str = "development"
+
     supabase_url: str = ""
     supabase_service_role_key: str = ""
     supabase_jwt_secret: str = ""

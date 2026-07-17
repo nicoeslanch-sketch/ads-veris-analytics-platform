@@ -531,6 +531,17 @@ export default function Resumen() {
           ctaTo="/limpieza"
           ctaState={{ openMapping: true, highlightRole: 'monto' }}
         />
+      ) : metrics?.moneda_mixta ? (
+        /* Fase 15: montos en MÁS de una moneda — sumar CLP con USD/UF produce
+           una cifra sin sentido. Los KPIs monetarios se BLOQUEAN con la
+           explicación, en vez de mostrar un total inválido. */
+        <EmptyState
+          icon={Wallet}
+          title="Tu archivo mezcla más de una moneda"
+          description="Detectamos montos en monedas distintas: sumarlos produciría totales sin sentido, así que los indicadores monetarios quedan bloqueados. Separa el archivo por moneda (una por archivo) o corrige la columna de montos y vuelve a procesarlo. Las advertencias del motor traen el detalle."
+          ctaLabel="Revisar en Limpieza"
+          ctaTo="/limpieza"
+        />
       ) : metrics && kpis ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
           {/* KPIs (con tono suave del color de cada indicador) */}

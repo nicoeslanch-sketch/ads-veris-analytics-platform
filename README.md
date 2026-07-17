@@ -80,6 +80,9 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      administrativo persistente**: corrige la cuenta
      `servicios@adsveris.com` y mantiene `is_admin=true` mediante un trigger
      idempotente, sin alterar su plan comercial)
+   - `supabase/migrations/0017_contratacion_basico.sql` (**Fase 15**: el CHECK
+     de `addon_requests.tipo` reconoce `upgrade_basico` — antes una solicitud
+     de contratar el Plan Básico se degradaba en silencio a 'otro')
 3. **Política de contraseñas** (Fase 13/14 — la validación del formulario es
    solo UX; la política REAL vive aquí): en **Authentication → Providers →
    Email → Password requirements**, exige mínimo **8 caracteres** con
@@ -137,6 +140,7 @@ python -m pytest tests/ -v
 
 | Variable | Descripción |
 |---|---|
+| `APP_ENV` | **Fase 15**: en Render debe ser `production` — con ese valor la API se NIEGA a arrancar si falta Supabase, si `PLAN_ENFORCEMENT=false` o si `DEV_AUTH_BYPASS=true` (el error de arranque lista exactamente qué está mal). `GET /version` expone commit, motor, migración esperada y entorno para verificar cada deploy. Default: `development` |
 | `SUPABASE_URL` | URL del proyecto Supabase |
 | `SUPABASE_SERVICE_ROLE_KEY` | Clave service_role (solo backend) |
 | `SUPABASE_JWT_SECRET` | Secreto para validar los JWT de los usuarios |

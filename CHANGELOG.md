@@ -2,6 +2,118 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.18.0] - 2026-07-17 - Fase 15: "todo en 10" — triage verificado del plan externo
+
+Implementación CRÍTICA del plan de 8 ejes: cada afirmación se verificó contra
+el código (todas las que tocaban código eran reales), lo operacional que no
+vive en el repo se convirtió en runbook accionable (`docs/OPERACION.md`), y
+lo desproporcionado quedó documentado con su razón (misma sección §6 del
+runbook). Requiere ejecutar la migración **`0017`** y setear
+**`APP_ENV=production`** en Render.
+
+### Bugs P0 verificados y corregidos
+- **`upgrade_basico` no existía para el backend**: la solicitud de contratar
+  el Plan Básico se degradaba en silencio a "otro" (el admin la veía sin
+  saber qué plan pedía el usuario) y el CHECK de Supabase la habría rechazado
+  de enviarse tal cual. `REQUEST_TYPES`/`UPGRADE_REQUEST_TYPES` la reconocen
+  y la migración `0017` alinea el constraint (con reparación opcional de
+  solicitudes históricas degradadas).
+- **Literales `nan`/`NaT`/`None` borrados**: el loader convertía a vacío el
+  TEXTO literal escrito por el usuario (una categoría llamada "None" son
+  datos, no un nulo). Ahora los nulos REALES se detectan ANTES de pasar a
+  texto (máscara) y `keep_default_na=False` también en Excel — los vacíos
+  reales siguen vacíos, los literales sobreviven.
+- **KPI del admin contaba mal**: "Planes de pago activos" era
+  `plan !== 'basico'` — contaba cuentas SIN plan como pagadas y excluía a
+  los Básico. Ahora cuenta plan asignado real (basico/analista/gold); el
+  estado de PAGO vendrá del modelo `subscriptions` junto con la pasarela.
+- **Monedas mixtas ya no suman peras con manzanas**: flag explícito
+  `moneda_mixta` en el backend y el Resumen BLOQUEA los indicadores
+  monetarios con explicación y CTA (jamás una cifra sumada inválida).
+- **Dos fuentes de RUT unificadas**: Configuración editaba `profiles.rut` en
+  texto libre mientras la contratación usa `billing_identities` validada con
+  módulo 11. El formulario ya no escribe RUT; muestra la identidad de
+  facturación ENMASCARADA (read-only) y `profiles.rut` queda como legado.
+- **Errores técnicos de Supabase en recuperación de contraseña**: el
+  traductor de errores ahora es fail-closed (mensaje propio genérico para lo
+  no mapeado, detalle solo en consola) y la recuperación lo usa.
+
+### Exactitud y limpieza
+- **Líderes brutos ANTES del recorte**: `lideres_productos` (por ventas
+  brutas —con su participación—, netas, utilidad y mayor devolución) se
+  calcula sobre TODOS los productos; un producto con brutas altas y
+  devoluciones altas ya no desaparece del top-12 ordenado por netas.
+  La concentración de clientes también usa la participación bruta.
+- **Política de fusiones por ROL** (adoptada del informe, con matices): las
+  ENTIDADES comerciales (cliente, producto, vendedor, categoría) JAMÁS se
+  fusionan solas por typo/morfología/abreviación — pasan a SUGERENCIA
+  visible para que el usuario confirme. Las abreviaciones chilenas de
+  lugares (Stgo→Santiago) solo se aplican solas en columnas geográficas
+  (rol sucursal o encabezado ciudad/comuna/región/dirección/zona); "Stgo"
+  en una columna de productos podría ser un modelo.
+- **Calidad MULTIDIMENSIONAL**: `calidad_dimensiones` con seis componentes
+  (completitud, validez, consistencia, unicidad, integridad, cobertura
+  analítica) junto al índice global — un archivo con conflictos de identidad
+  ya no puede esconderse tras una nota única.
+
+### Arquitectura y seguridad
+- **Snapshots v2**: declaran `engine_version` (un snapshot de OTRO motor se
+  invalida y se recalcula — resultados jamás mezclan versiones), procedencia
+  auditable (`source_sha256`, `rules_hash`, `mapping_hash`, hoja) y
+  `revision` monotónica: la escritura usa guardia por `generated_at` (una
+  tarea de fondo antigua que termina tarde ya no pisa un snapshot más nuevo;
+  con PostgREST antiguo degrada a escritura simple).
+- **Arranque fail-closed en producción**: con `APP_ENV=production` la API se
+  NIEGA a arrancar si falta Supabase, si `PLAN_ENFORCEMENT=false`, si
+  `DEV_AUTH_BYPASS=true` o si CORS solo permite localhost — el error lista
+  cada violación ("Startup failed: insecure production configuration").
+- **`GET /version`**: identidad del despliegue (commit SHA de Render, versión
+  del motor, migración esperada, entorno) — el smoke test post-deploy
+  compara este SHA con el publicado.
+- **Contrato único de planes — vía test, no duplicando endpoints** (matiz al
+  informe): el riesgo real ya estaba cerrado con las capacidades del
+  servidor en `/me/access`; lo que faltaba era detectar la divergencia de la
+  matriz VISUAL de plans.ts. Un test de paridad lee plans.ts y compara
+  contra capabilities.py — editar una sola de las dos matrices rompe el CI.
+- **Límite de ráfaga de IA**: además del cupo mensual, máx. 12 llamadas/min
+  por usuario (un loop accidental ya no quema tokens).
+- **CI con job de seguridad**: `pip-audit` sobre requirements y `npm audit`
+  (high+) bloquean el pipeline con dependencias vulnerables conocidas.
+
+### Operación (lo que no es código, ahora es runbook)
+- **`docs/OPERACION.md`**: checklist de release con smoke test por perfil,
+  staging, protección de `main`, MFA y retiro de `ADMIN_EMAIL` tras
+  bootstrap (mantenerla convierte un correo en credencial permanente —
+  matiz: NO se eliminó el default por código para no dejar fuera al admin
+  actual antes de confirmar `is_admin`), simulacro de restauración de
+  backups, rotación de claves y observabilidad mínima.
+- **`api/scripts/smoke_rls.py`**: prueba de AISLAMIENTO entre clientes
+  contra un entorno real (A no restaura/procesa/factura nada de B; rutas
+  admin cerradas) — para correr tras cada cambio de RLS.
+- **E2E versionado**: `frontend/e2e/e2e_plataforma.mjs` + `npm run test:e2e`
+  (antes vivía fuera del repo).
+
+### Decisiones conscientes (rechazos/aplazamientos con razón — runbook §6)
+- Modelo `subscriptions` → junto con la pasarela de pago (hoy la operación
+  es manual y el par plan+identidad la cubre; crear estados de suscripción
+  sin pagos reales fabrica complejidad sin verdad que representar).
+- Ledger de transformaciones POR CELDA y export auditable completo → fase
+  dedicada (multiplica memoria en archivos grandes; el resumen por regla,
+  auditoría de mojibake, fusiones con ejemplos y avisos ya existen).
+- Restauración multihoja completa → requiere rediseñar el tope de 512 KB
+  del snapshot.
+- KPIs por moneda / conversión con tasa declarada → siguiente iteración
+  (hoy el bloqueo evita la cifra inválida, que era el P0).
+- Staging/observabilidad/backups/branch protection/MFA → operacional, en
+  el runbook con pasos concretos (no son archivos de este repo).
+
+### Verificación
+- **Backend 309 tests** (21 nuevos de Fase 15: paridad TS↔Python, snapshot
+  v2 e invalidación por motor, fail-closed de producción, literales
+  preservados en CSV y Excel, política de fusiones por rol, calidad
+  multidimensional, moneda mixta, líder bruto que sobrevive al recorte,
+  upgrade_basico, ráfaga de IA, /version) + Vitest + build + E2E.
+
 ## [0.17.6] - 2026-07-16 - Fixes de pruebas manuales: demo gratuita
 
 10 bugs encontrados probando el flujo de prueba gratuita de 15 días, más una

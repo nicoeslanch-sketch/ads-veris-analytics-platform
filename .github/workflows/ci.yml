@@ -42,3 +42,21 @@ jobs:
       # Fase 14b: Vitest — paridad del RUT con el backend y meses parciales
       - run: npm run test
       - run: npm run build
+
+  seguridad:
+    name: Seguridad — dependencias vulnerables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Fase 15: dependencias con vulnerabilidades CONOCIDAS bloquean el CI.
+      # pip-audit revisa api/requirements.txt; npm audit el lockfile (solo
+      # severidad high+ para no bloquear por ruido de advisories menores).
+      - run: pip install pip-audit
+      - run: pip-audit -r api/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd frontend && npm ci && npm audit --audit-level=high

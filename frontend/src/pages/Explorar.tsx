@@ -194,8 +194,13 @@ function computeFindings(m: MetricsResult): Finding[] {
 
   // Concentración del producto top — SIEMPRE sobre la participación BRUTA
   // (una distribución que suma 100%); el % neto muestra devoluciones, pero
-  // no sirve para afirmar dependencia.
-  const topProducto = principalPorParticipacionBruta(m.top_productos ?? [])
+  // no sirve para afirmar dependencia. Fase 15: el backend calcula el líder
+  // sobre TODOS los productos ANTES del recorte a 12 (lideres_productos) —
+  // un producto con brutas altas y devoluciones altas ya no desaparece.
+  const liderBruto = m.lideres_productos?.por_ventas_brutas
+  const topProducto = liderBruto?.participacion_bruta_pct != null
+    ? { nombre: liderBruto.nombre, participacion_bruta_pct: liderBruto.participacion_bruta_pct, porcentaje: liderBruto.participacion_bruta_pct }
+    : principalPorParticipacionBruta(m.top_productos ?? [])
   const topProductoPct = topProducto?.participacion_bruta_pct ?? topProducto?.porcentaje
   if (topProducto && topProductoPct != null) {
     const alta = topProductoPct > 40

@@ -1,6 +1,23 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 14 completas + estabilización operativa 0.17.5.**
+**Estado actual: Fases 0 a 15 completas.**
+La Fase 15 (`CHANGELOG` [0.18.0], "todo en 10") corrige los bugs P0
+verificados del plan externo (upgrade_basico degradado a 'otro', literales
+nan/None borrados por el loader, KPI de planes del admin, monedas mixtas
+sumadas → ahora BLOQUEAN los KPIs, doble fuente de RUT unificada en
+billing_identities, errores técnicos de Supabase en recuperación), sube la
+exactitud (líderes brutos antes del recorte a 12, fusiones de ENTIDADES
+comerciales solo como sugerencia, calidad multidimensional de 6 componentes)
+y endurece la operación: snapshots v2 con versión del motor y guardia
+monotónica, arranque fail-closed con APP_ENV=production, GET /version para
+verificar despliegues, test de paridad de la matriz de planes TS↔Python,
+límite de ráfaga de IA, job de seguridad en CI (pip-audit + npm audit),
+runbook `docs/OPERACION.md`, `scripts/smoke_rls.py` de aislamiento entre
+clientes y E2E versionado (`npm run test:e2e`). Operativo: ejecutar la
+migración **0017** y setear **APP_ENV=production** en Render.
+**Backend 309 tests + Vitest + build + E2E.**
+
+**Historial 0.17.x (estabilización previa): Fases 0 a 14 + 0.17.5.**
 La versión 0.17.5 reemplaza las filas acopladas del Resumen por columnas
 independientes y elimina los espacios verticales artificiales sin volver a
 estirar tarjetas; el orden móvil se conserva.

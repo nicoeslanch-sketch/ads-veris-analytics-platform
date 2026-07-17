@@ -34,7 +34,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 /** Traduce los errores más comunes de Supabase Auth a es-CL. */
-function translateAuthError(message: string): string {
+export function translateAuthError(message: string): string {
   const map: Record<string, string> = {
     'Invalid login credentials': 'Correo o contraseña incorrectos.',
     'Email not confirmed': 'Debes confirmar tu correo antes de ingresar.',
@@ -45,8 +45,14 @@ function translateAuthError(message: string): string {
       'La contraseña nueva debe ser distinta de la anterior.',
     'Auth session missing!':
       'El enlace expiró o ya se usó. Solicita uno nuevo desde "¿Olvidaste tu contraseña?".',
+    'Email rate limit exceeded':
+      'Enviamos demasiados correos en poco tiempo. Espera unos minutos y reintenta.',
   }
-  return map[message] ?? message
+  if (map[message]) return map[message]
+  // Fase 15: los mensajes técnicos de Supabase NO llegan al usuario — el
+  // detalle queda en la consola para diagnóstico; la UI muestra algo propio.
+  console.warn('[auth] error no mapeado:', message)
+  return 'No se pudo completar la operación. Intenta nuevamente en unos minutos.'
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
