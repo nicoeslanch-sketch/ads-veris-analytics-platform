@@ -274,7 +274,7 @@ def test_upgrade_basico_ya_no_se_degrada_a_otro():
     assert "upgrade_basico" in REQUEST_TYPES
     assert "upgrade_basico" in UPGRADE_REQUEST_TYPES
     # La migración 0017 alinea el constraint de Supabase
-    sql = (REPO / "supabase" / "migrations" / "0017_contratacion_basico.sql").read_text()
+    sql = (REPO / "supabase" / "migrations" / "0017_contratacion_basico.sql").read_text(encoding="utf-8")
     assert "upgrade_basico" in sql
 
 
