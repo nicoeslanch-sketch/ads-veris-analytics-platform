@@ -26,9 +26,14 @@ export function useFileImport() {
   const demo = useDemo()
   // Fase 14: la puerta lee el AccessContext ÚNICO (capacidades del servidor,
   // trial incluido). Sin acceso optimista: mientras carga, no se sube nada.
-  const { status: accessStatus, can, refresh: refreshAccess } = useAccess()
-  const accessRef = useRef({ status: accessStatus, can })
-  accessRef.current = { status: accessStatus, can }
+  const {
+    status: accessStatus,
+    refreshing: accessRefreshing,
+    can,
+    refresh: refreshAccess,
+  } = useAccess()
+  const accessRef = useRef({ status: accessStatus, refreshing: accessRefreshing, can })
+  accessRef.current = { status: accessStatus, refreshing: accessRefreshing, can }
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
@@ -60,10 +65,13 @@ export function useFileImport() {
    * de leer/subir bytes, en vez de obligar al usuario a seleccionarlo de nuevo. */
   const waitForUploadAccess = async (): Promise<boolean> => {
     const deadline = Date.now() + 10_000
-    while (accessRef.current.status === 'loading' && Date.now() < deadline) {
+    while (
+      (accessRef.current.status === 'loading' || accessRef.current.refreshing)
+      && Date.now() < deadline
+    ) {
       await new Promise((resolve) => window.setTimeout(resolve, 50))
     }
-    if (accessRef.current.status === 'loading') {
+    if (accessRef.current.status === 'loading' || accessRef.current.refreshing) {
       setError('La verificación de acceso está tardando demasiado. Intenta nuevamente.')
       return false
     }

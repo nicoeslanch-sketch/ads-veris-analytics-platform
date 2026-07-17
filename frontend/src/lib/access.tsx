@@ -83,6 +83,9 @@ const DEV_OPEN_ACCESS: AccessInfo = {
 
 interface AccessState {
   status: AccessStatus
+  /** Revalidación silenciosa para la misma cuenta. El acceso visible se
+   * conserva, pero las operaciones sensibles pueden esperar su término. */
+  refreshing: boolean
   access: AccessInfo | null
   /** ¿La capacidad está desbloqueada AHORA? false mientras carga o en error
    * (fail-closed para acciones; la navegación no depende de esto). */
@@ -110,36 +113,51 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     }
     return { status: 'loading', access: null }
   })
+  const [refreshing, setRefreshing] = useState(false)
   const requestSeq = useRef(0)
 
-  const fetchAccess = useCallback(() => {
+  const fetchAccess = useCallback((background = false) => {
     if (!supabaseConfigured) {
+      setRefreshing(false)
       setState({ status: 'resolved', access: DEV_OPEN_ACCESS })
       return
     }
     if (!userId) {
+      setRefreshing(false)
       setState({ status: 'loading', access: null })
       return
     }
     const seq = requestSeq.current + 1
     requestSeq.current = seq
-    // Fase 14b: "stale-while-revalidate" SOLO para el MISMO usuario — al
-    // cambiar de cuenta en el mismo navegador, el acceso anterior se limpia
-    // al instante (mantenerlo era mentirle a la UI con capacidades ajenas).
-    setState((prev) => ({
-      status: 'loading',
-      access: cachedUserId === userId ? prev.access : null,
-    }))
+    const previousAccess = cachedUserId === userId ? cachedAccess : null
+    const silentRefresh = background && previousAccess !== null
+
+    // Recuperar el foco no debe convertir una cuenta ya resuelta en
+    // "loading". Un usuario distinto nunca hereda este estado ni capacidades.
+    if (silentRefresh) {
+      setRefreshing(true)
+    } else {
+      setRefreshing(false)
+      setState({ status: 'loading', access: previousAccess })
+    }
     apiGet<AccessInfo>('/me/access')
       .then((info) => {
         if (requestSeq.current !== seq) return
         cachedUserId = userId
         cachedAccess = info
+        setRefreshing(false)
         setState({ status: 'resolved', access: info })
       })
       .catch(() => {
         if (requestSeq.current !== seq) return
-        // Fail-closed para acciones con puerta; el backend igual las protege.
+        setRefreshing(false)
+        if (silentRefresh) {
+          // Una falla transitoria al volver a la pestaña no borra un acceso ya
+          // confirmado. El backend sigue siendo la autoridad final.
+          setState({ status: 'resolved', access: previousAccess })
+          return
+        }
+        // Fail-closed durante la primera carga o al cambiar de cuenta.
         setState({ status: 'error', access: null })
       })
   }, [userId])
@@ -162,10 +180,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   // abierta, el usuario lo ve al volver a la pestaña — sin recargar.
   useEffect(() => {
     if (!supabaseConfigured) return
-    const onFocus = () => {
-      cachedAccess = null
-      fetchAccess()
-    }
+    const onFocus = () => fetchAccess(true)
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [fetchAccess])
@@ -175,6 +190,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       cachedUserId = userId
       cachedAccess = info
       requestSeq.current += 1 // invalida respuestas en vuelo más antiguas
+      setRefreshing(false)
       setState({ status: 'resolved', access: info })
     },
     [userId],
@@ -188,7 +204,14 @@ export function AccessProvider({ children }: { children: ReactNode }) {
 
   return (
     <AccessContext.Provider
-      value={{ status: state.status, access: state.access, can, refresh: fetchAccess, applyAccess }}
+      value={{
+        status: state.status,
+        refreshing,
+        access: state.access,
+        can,
+        refresh: fetchAccess,
+        applyAccess,
+      }}
     >
       {children}
     </AccessContext.Provider>
