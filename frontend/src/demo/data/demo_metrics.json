@@ -2,10 +2,16 @@
  "advertencias": [
   "El último registro disponible de 2026-06 corresponde al día 15 de 30. Para no comparar periodos con distinta cantidad de días registrados, este mes no se usa como mes completo: la proyección lo excluye y las alertas comparan meses completos.",
   "Los ingresos mostrados son NETOS: incluyen 2 monto(s) negativo(s) que restan 29.970 (devoluciones. reversas o ajustes).",
-  "24 de 279 ventas no tienen costo asociado (cobertura 91.4%): la utilidad y el margen se calculan solo sobre las ventas con costo — son resultados PARCIALES, no el total del negocio."
+  "24 de 279 ventas no tienen costo asociado (cobertura 91.4%): la utilidad y el margen se calculan solo sobre las ventas con costo — son resultados PARCIALES, no el total del negocio.",
+  "Se detectaron 2 repetición(es) exacta(s) en el archivo original. Se conservarán mientras no confirmes explícitamente su eliminación."
  ],
  "agrupado_por_canal": "sucursal",
  "archivo": "demo_empresa_ficticia.csv",
+ "calculo_costos": {
+  "columna_cantidad": null,
+  "columna_costo": "Costo",
+  "origen": "columna_costo"
+ },
  "calidad_datos": 96.5,
  "clientes": {
   "cobertura_identificacion_pct": 83.4,
@@ -17,6 +23,7 @@
     "ingresos": 1984420.0,
     "nombre": "Distribuidora Norte",
     "participacion_bruta_pct": 22.2,
+    "participacion_neta_pct": 22.1,
     "porcentaje": 22.0,
     "ventas_brutas": 2003410.0,
     "ventas_netas": 1984420.0
@@ -27,6 +34,7 @@
     "ingresos": 1970940.0,
     "nombre": "Almacén Doña Rosa",
     "participacion_bruta_pct": 21.9,
+    "participacion_neta_pct": 21.9,
     "porcentaje": 21.9,
     "ventas_brutas": 1970940.0,
     "ventas_netas": 1970940.0
@@ -37,6 +45,7 @@
     "ingresos": 1883810.0,
     "nombre": "Minimarket El Sol",
     "participacion_bruta_pct": 21.0,
+    "participacion_neta_pct": 21.0,
     "porcentaje": 20.9,
     "ventas_brutas": 1894790.0,
     "ventas_netas": 1883810.0
@@ -47,6 +56,7 @@
     "ingresos": 1725700.0,
     "nombre": "Café Central",
     "participacion_bruta_pct": 19.2,
+    "participacion_neta_pct": 19.2,
     "porcentaje": 19.2,
     "ventas_brutas": 1725700.0,
     "ventas_netas": 1725700.0
@@ -57,6 +67,7 @@
     "ingresos": 1414470.0,
     "nombre": "Botillería La Esquina",
     "participacion_bruta_pct": 15.7,
+    "participacion_neta_pct": 15.8,
     "porcentaje": 15.7,
     "ventas_brutas": 1414470.0,
     "ventas_netas": 1414470.0
@@ -76,6 +87,11 @@
   "producto": true,
   "sucursal": true,
   "vendedor": false
+ },
+ "duplicados": {
+  "conservados": 2,
+  "detectados": 2,
+  "eliminados": 0
  },
  "evolucion_mensual": [
   {
@@ -159,6 +175,13 @@
   "nota": "ROA, ROE, liquidez, prueba ácida, rotación de inventario y días de cobro/pago requieren datos de balance (activos, pasivos, inventario, cuentas por cobrar/pagar). Se habilitan al conectar esos datos."
  },
  "kpis": {
+  "base_costos": {
+   "costo_pareado": 7500953.0,
+   "costo_total_conocido": 7500953.0,
+   "filas_con_costo": 255,
+   "filas_pareadas": 255,
+   "ingresos_pareados": 10330690.0
+  },
   "cobertura_costos": {
    "filas_con_ingreso": 279,
    "filas_con_ingreso_y_costo": 255,
@@ -287,6 +310,7 @@
  "por_categoria": [
   {
    "cobertura_costos_pct": 92.9,
+   "costo": 4824571.0,
    "devoluciones": -18990.0,
    "filas": 154,
    "filas_pareadas": 143,
@@ -294,6 +318,7 @@
    "margen_pct": 26.6,
    "nombre": "Abarrotes",
    "participacion_bruta_pct": 62.8,
+   "participacion_neta_pct": 62.8,
    "porcentaje": 62.6,
    "utilidad": 1750169.0,
    "ventas_brutas": 6785850.0,
@@ -301,6 +326,7 @@
   },
   {
    "cobertura_costos_pct": 90.8,
+   "costo": 2318552.0,
    "devoluciones": -10980.0,
    "filas": 87,
    "filas_pareadas": 79,
@@ -308,6 +334,7 @@
    "margen_pct": 29.4,
    "nombre": "Aseo",
    "participacion_bruta_pct": 32.2,
+   "participacion_neta_pct": 32.2,
    "porcentaje": 32.1,
    "utilidad": 966548.0,
    "ventas_brutas": 3475780.0,
@@ -315,6 +342,7 @@
   },
   {
    "cobertura_costos_pct": 86.8,
+   "costo": 357830.0,
    "devoluciones": 0.0,
    "filas": 38,
    "filas_pareadas": 33,
@@ -322,6 +350,7 @@
    "margen_pct": 24.0,
    "nombre": "Bebidas",
    "participacion_bruta_pct": 5.0,
+   "participacion_neta_pct": 5.0,
    "porcentaje": 5.0,
    "utilidad": 113020.0,
    "ventas_brutas": 540930.0,
@@ -381,6 +410,7 @@
  "top_productos": [
   {
    "cobertura_costos_pct": 97.2,
+   "costo": 2912295.0,
    "devoluciones": -18990.0,
    "filas": 36,
    "filas_pareadas": 35,
@@ -388,6 +418,7 @@
    "margen_pct": 28.0,
    "nombre": "Harina 25kg",
    "participacion_bruta_pct": 38.5,
+   "participacion_neta_pct": 38.4,
    "porcentaje": 38.3,
    "utilidad": 1132575.0,
    "ventas_brutas": 4158810.0,
@@ -395,6 +426,7 @@
   },
   {
    "cobertura_costos_pct": 93.0,
+   "costo": 1350130.0,
    "devoluciones": 0.0,
    "filas": 43,
    "filas_pareadas": 40,
@@ -402,6 +434,7 @@
    "margen_pct": 29.0,
    "nombre": "Papel Higiénico 12un",
    "participacion_bruta_pct": 18.0,
+   "participacion_neta_pct": 18.1,
    "porcentaje": 18.0,
    "utilidad": 551490.0,
    "ventas_brutas": 1949560.0,
@@ -409,6 +442,7 @@
   },
   {
    "cobertura_costos_pct": 94.7,
+   "costo": 1236235.0,
    "devoluciones": 0.0,
    "filas": 38,
    "filas_pareadas": 36,
@@ -416,6 +450,7 @@
    "margen_pct": 26.0,
    "nombre": "Arroz Grado 1 5kg",
    "participacion_bruta_pct": 15.9,
+   "participacion_neta_pct": 15.9,
    "porcentaje": 15.9,
    "utilidad": 434375.0,
    "ventas_brutas": 1712550.0,
@@ -423,6 +458,7 @@
   },
   {
    "cobertura_costos_pct": 88.6,
+   "costo": 968422.0,
    "devoluciones": -10980.0,
    "filas": 44,
    "filas_pareadas": 39,
@@ -430,6 +466,7 @@
    "margen_pct": 30.0,
    "nombre": "Detergente 3L",
    "participacion_bruta_pct": 14.1,
+   "participacion_neta_pct": 14.1,
    "porcentaje": 14.0,
    "utilidad": 415058.0,
    "ventas_brutas": 1526220.0,
@@ -437,6 +474,7 @@
   },
   {
    "cobertura_costos_pct": 89.7,
+   "costo": 442809.0,
    "devoluciones": 0.0,
    "filas": 39,
    "filas_pareadas": 35,
@@ -444,6 +482,7 @@
    "margen_pct": 22.0,
    "nombre": "Aceite Vegetal 1L",
    "participacion_bruta_pct": 5.6,
+   "participacion_neta_pct": 5.7,
    "porcentaje": 5.6,
    "utilidad": 124911.0,
    "ventas_brutas": 610050.0,
@@ -451,6 +490,7 @@
   },
   {
    "cobertura_costos_pct": 86.8,
+   "costo": 357830.0,
    "devoluciones": 0.0,
    "filas": 38,
    "filas_pareadas": 33,
@@ -458,6 +498,7 @@
    "margen_pct": 24.0,
    "nombre": "Bebida Cola 3L",
    "participacion_bruta_pct": 5.0,
+   "participacion_neta_pct": 5.0,
    "porcentaje": 5.0,
    "utilidad": 113020.0,
    "ventas_brutas": 540930.0,
@@ -465,6 +506,7 @@
   },
   {
    "cobertura_costos_pct": 90.2,
+   "costo": 233232.0,
    "devoluciones": 0.0,
    "filas": 41,
    "filas_pareadas": 37,
@@ -472,6 +514,7 @@
    "margen_pct": 20.0,
    "nombre": "Azúcar 1kg",
    "participacion_bruta_pct": 2.8,
+   "participacion_neta_pct": 2.8,
    "porcentaje": 2.8,
    "utilidad": 58308.0,
    "ventas_brutas": 304440.0,
@@ -481,6 +524,7 @@
  "ventas_por_canal": [
   {
    "cobertura_costos_pct": 92.0,
+   "costo": 2808683.0,
    "devoluciones": -10980.0,
    "filas": 100,
    "filas_pareadas": 92,
@@ -488,6 +532,7 @@
    "margen_pct": 27.5,
    "nombre": "Santiago Centro",
    "participacion_bruta_pct": 36.7,
+   "participacion_neta_pct": 36.7,
    "porcentaje": 36.6,
    "utilidad": 1063867.0,
    "ventas_brutas": 3962400.0,
@@ -495,6 +540,7 @@
   },
   {
    "cobertura_costos_pct": 92.6,
+   "costo": 2536240.0,
    "devoluciones": 0.0,
    "filas": 94,
    "filas_pareadas": 87,
@@ -502,6 +548,7 @@
    "margen_pct": 27.4,
    "nombre": "Puente Alto",
    "participacion_bruta_pct": 33.5,
+   "participacion_neta_pct": 33.6,
    "porcentaje": 33.5,
    "utilidad": 957400.0,
    "ventas_brutas": 3616080.0,
@@ -509,6 +556,7 @@
   },
   {
    "cobertura_costos_pct": 89.4,
+   "costo": 2156030.0,
    "devoluciones": -18990.0,
    "filas": 85,
    "filas_pareadas": 76,
@@ -516,6 +564,7 @@
    "margen_pct": 27.3,
    "nombre": "Maipú",
    "participacion_bruta_pct": 29.8,
+   "participacion_neta_pct": 29.8,
    "porcentaje": 29.7,
    "utilidad": 808470.0,
    "ventas_brutas": 3224080.0,

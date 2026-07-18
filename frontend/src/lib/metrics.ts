@@ -1,4 +1,23 @@
-import type { GroupRow } from './types'
+import type { GroupRow, MetricsResult } from './types'
+
+export type SummaryContentKind =
+  | 'mixed_currency'
+  | 'product_catalog'
+  | 'adaptive_profile'
+  | 'missing_amount'
+  | 'financial'
+
+/** El bloqueo global de monedas siempre tiene prioridad, incluso cuando la
+ * misma respuesta también incluye un perfil de Productos o Campañas. */
+export function summaryContentKind(metrics: MetricsResult): SummaryContentKind {
+  if (metrics.moneda_mixta) return 'mixed_currency'
+  if (metrics.analisis_productos) return 'product_catalog'
+  if (metrics.analisis_campanas || metrics.analisis_inventario || metrics.analisis_generico) {
+    return 'adaptive_profile'
+  }
+  if (metrics.dimensiones?.monto === false) return 'missing_amount'
+  return 'financial'
+}
 
 /** Elemento con mayor participación bruta.
  *

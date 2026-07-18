@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -38,7 +38,13 @@ import { saveCleaningJob, saveColumnMapping } from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
 import { useCapability, usePlan } from '../lib/usePlan'
-import { basicMappingQuestions, cleaningScopeState } from '../lib/multiSheet'
+import {
+  automaticCleaningSignature,
+  basicMappingQuestions,
+  cleaningScopeState,
+  sheetsForAutomaticCleaning,
+  updateBatchSheetErrors,
+} from '../lib/multiSheet'
 import {
   DEFAULT_RULES,
   type CleanResult,
@@ -91,6 +97,7 @@ const MAPPING_ROLES: Array<{ role: string; label: string; description: string }>
 
 const IMPORTANT_MAPPING_ROLES = new Set(['monto', 'fecha', 'costo', 'producto', 'categoria'])
 const MEDIUM_ROLE_CONFIDENCE = 0.75
+const RESTORE_STATE_TIMEOUT_MS = 15_000
 
 function applyMappingOverrides(
   automatic: Record<string, string>,
@@ -167,6 +174,11 @@ export default function Limpieza() {
   const [rules, setRules] = useState<CleaningRules>(DEFAULT_RULES)
   const [detecting, setDetecting] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [cleaningProgress, setCleaningProgress] = useState<{
+    current: number
+    total: number
+    sheet: string
+  } | null>(null)
   const [applySameRules, setApplySameRules] = useState(true)
   const [downloading, setDownloading] = useState<'xlsx' | 'csv' | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -175,6 +187,8 @@ export default function Limpieza() {
   const [duplicateRemovalPending, setDuplicateRemovalPending] = useState(false)
   const cancelDuplicateRef = useRef<HTMLButtonElement | null>(null)
   const detectStartedFor = useRef<string | null>(null)
+  const cleaningRunRef = useRef(false)
+  const autoCleanStartedFor = useRef<string | null>(null)
   const mappingSectionRef = useRef<HTMLDivElement | null>(null)
   const mappingNavigation = location.state as
     | { openMapping?: boolean; highlightRole?: string }
@@ -202,6 +216,10 @@ export default function Limpieza() {
   )
   const { plan } = usePlan()
   const basicMapping = plan === 'basico'
+  const automaticSheets = sheetsForAutomaticCleaning(selectedSheets, sheetSessions)
+  const automaticCleaningReady = automaticSheets.length > 0 && selectedSheets.every(
+    (name) => Boolean(sheetSessions[name]?.standardization),
+  )
   const [confirmedBasicRoles, setConfirmedBasicRoles] = useState<string[]>([])
   const [basicReviewExpanded, setBasicReviewExpanded] = useState(false)
 
@@ -220,9 +238,148 @@ export default function Limpieza() {
       .catch(() => setUsage(null))
   }
 
+  const handleApplySheets = useCallback(async (
+    names: string[],
+    options: { automatic?: boolean; retryErrors?: boolean } = {},
+  ) => {
+    if (!file || names.length === 0 || cleaningRunRef.current) return
+    const runnable = names.filter((name) => {
+      const session = sheetSessions[name]
+      return Boolean(session?.standardization) &&
+        !session?.cleaning &&
+        (session?.status !== 'error' || options.retryErrors) &&
+        session?.status !== 'limpiando'
+    })
+    if (runnable.length === 0) return
+    const target = sheet && runnable.includes(sheet) ? sheet : runnable[0]
+    // Cambiar la vista antes del resultado mantiene estandarizacion, limpieza y
+    // tarjetas en la misma hoja. Antes, limpiar Mayo dejaba visible Enero.
+    if (target) setSheet(target)
+    cleaningRunRef.current = true
+    setApplying(true)
+    setError(null)
+    setPersistWarning(null)
+    const batchRestoreState = {
+      ...restoreState,
+      active_sheet: target,
+      selected_sheets: [...selectedSheets],
+      excluded_sheets: availableSheets.filter(
+        (sheetName) => !selectedSheets.includes(sheetName),
+      ),
+    }
+    let batchSheetErrors = { ...batchRestoreState.sheet_errors }
+    try {
+      for (const [index, name] of runnable.entries()) {
+        const session = sheetSessions[name]
+        if (!session?.standardization) continue
+        setCleaningProgress({ current: index + 1, total: runnable.length, sheet: name })
+        setSheetStatus(name, 'limpiando')
+        // /clean solo persiste su snapshot si termina bien. Por eso el estado
+        // enviado puede quitar preventivamente el error de esta hoja: si
+        // falla, no se escribe y el catch lo reincorpora al mapa del lote.
+        const successSheetErrors = updateBatchSheetErrors(batchSheetErrors, name, null)
+        try {
+          const response = await apiPost<CleanResult>(
+            '/clean',
+            buildDatasetForm(file, storagePath, {
+              apply: 'true',
+              rules: JSON.stringify(
+                basicMapping || applySameRules
+                  ? rules
+                  : (session.cleaning?.reglas_activas ?? rules),
+              ),
+              // La limpieza automatica nunca elimina filas. Los duplicados
+              // requieren la confirmacion explicita que ya existe en la UI.
+              eliminar_duplicados: String(
+                options.automatic ? false : session.eliminarDuplicados,
+              ),
+              ...(datasetId ? { dataset_id: datasetId } : {}),
+              sheet: name,
+              ...(session.mappingOverride
+                ? { mapping: JSON.stringify(session.mappingOverride) }
+                : {}),
+              restore_state: JSON.stringify({
+                ...batchRestoreState,
+                sheet_errors: successSheetErrors,
+              }),
+            }),
+          )
+          batchSheetErrors = successSheetErrors
+          setCleaning(response, { activate: name === target })
+          await saveCleaningJob(datasetId, response.reglas_activas, response)
+        } catch (err) {
+          const message = err instanceof ApiError ? err.message : 'No se pudo limpiar esta hoja.'
+          batchSheetErrors = updateBatchSheetErrors(batchSheetErrors, name, message)
+          setSheetStatus(name, 'error', message)
+        }
+      }
+    } finally {
+      if (datasetId) {
+        const stateForm = new FormData()
+        stateForm.append('dataset_id', datasetId)
+        stateForm.append('restore_state', JSON.stringify({
+          ...batchRestoreState,
+          sheet_errors: batchSheetErrors,
+        }))
+        try {
+          await apiPost<Record<string, unknown>>(
+            '/restore/state',
+            stateForm,
+            { timeoutMs: RESTORE_STATE_TIMEOUT_MS },
+          )
+        } catch {
+          // El procesamiento ya ocurrio: un fallo al guardar la restauracion
+          // no debe convertir hojas limpias en fallidas ni repetir el lote.
+          setPersistWarning(
+            'La limpieza termino, pero no pudimos guardar el estado final del lote. ' +
+            'Si recargas ahora, puede que no aparezcan algunos errores o reintentos.',
+          )
+        }
+      }
+      cleaningRunRef.current = false
+      setCleaningProgress(null)
+      setApplying(false)
+    }
+  }, [
+    applySameRules,
+    availableSheets,
+    basicMapping,
+    datasetId,
+    file,
+    restoreState,
+    rules,
+    selectedSheets,
+    setCleaning,
+    setSheet,
+    setSheetStatus,
+    sheet,
+    sheetSessions,
+    storagePath,
+  ])
+
   useEffect(() => {
     refreshUsage()
   }, [])
+
+  useEffect(() => {
+    if (!file || !automaticCleaningReady || applying) return
+    const datasetKey = datasetId ?? storagePath ?? `${file.name}:${file.lastModified}`
+    const key = automaticCleaningSignature(datasetKey, selectedSheets, sheetSessions, rules)
+    if (autoCleanStartedFor.current === key) return
+    autoCleanStartedFor.current = key
+    void handleApplySheets(automaticSheets, { automatic: true })
+  }, [
+    applying,
+    automaticCleaningReady,
+    automaticSheets.join('\u0000'),
+    datasetId,
+    file,
+    handleApplySheets,
+    rules,
+    selectedSheets,
+    sheetSessions,
+    storagePath,
+  ])
 
   useEffect(() => {
     setRules(cleaning?.reglas_activas ?? DEFAULT_RULES)
@@ -261,7 +418,7 @@ export default function Limpieza() {
   }, [duplicateConfirmOpen])
 
   useEffect(() => {
-    if (!file || cleaning) return
+    if (!file || cleaning || applying || automaticCleaningReady) return
     const key = [
       datasetId ?? storagePath ?? `${file.name}:${file.lastModified}:${uploadedAt?.getTime() ?? 0}`,
       sheet ?? '',
@@ -300,7 +457,17 @@ export default function Limpieza() {
       // página quedaba en "Analizando…" para siempre y el botón deshabilitado.
       if (detectStartedFor.current === key) detectStartedFor.current = null
     }
-  }, [file, datasetId, storagePath, uploadedAt, cleaning, sheet, mappingOverride])
+  }, [
+    file,
+    datasetId,
+    storagePath,
+    uploadedAt,
+    cleaning,
+    sheet,
+    mappingOverride,
+    applying,
+    automaticCleaningReady,
+  ])
 
   if (!file || !standardization) {
     // Fase 14: en modo demo se muestra un resumen READ-ONLY de la limpieza
@@ -465,6 +632,7 @@ export default function Limpieza() {
   }
 
   const handleMappingChange = (role: string, column: string) => {
+    if (applying || cleaningRunRef.current) return
     const nextOverride: Record<string, string> = { ...(mappingOverride ?? {}) }
     if (column) {
       // Un mismo nombre de columna no puede cumplir dos roles.
@@ -572,55 +740,6 @@ export default function Limpieza() {
     void handleApply(true)
   }
 
-  const preparedSheets = selectedSheets.filter(
-    (name) => Boolean(sheetSessions[name]?.standardization),
-  )
-
-  const handleApplySheets = async (names: string[]) => {
-    if (!file || names.length === 0) return
-    const target = sheet && names.includes(sheet) ? sheet : names[0]
-    if (target && sheetSessions[target]?.cleaning) setSheet(target)
-    setApplying(true)
-    setError(null)
-    setPersistWarning(null)
-    for (const name of names) {
-      const session = sheetSessions[name]
-      if (!session?.standardization) continue
-      setSheetStatus(name, 'limpiando')
-      try {
-        const response = await apiPost<CleanResult>(
-          '/clean',
-          buildDatasetForm(file, storagePath, {
-            apply: 'true',
-            rules: JSON.stringify(
-              basicMapping || applySameRules
-                ? rules
-                : (session.cleaning?.reglas_activas ?? rules),
-            ),
-            eliminar_duplicados: String(session.eliminarDuplicados),
-            ...(datasetId ? { dataset_id: datasetId } : {}),
-            sheet: name,
-            ...(session.mappingOverride
-              ? { mapping: JSON.stringify(session.mappingOverride) }
-              : {}),
-            restore_state: JSON.stringify({
-              ...restoreState,
-              active_sheet: target,
-              selected_sheets: selectedSheets,
-              excluded_sheets: availableSheets.filter((sheetName) => !selectedSheets.includes(sheetName)),
-            }),
-          }),
-        )
-        setCleaning(response, { activate: name === target })
-        await saveCleaningJob(datasetId, response.reglas_activas, response)
-      } catch (err) {
-        const message = err instanceof ApiError ? err.message : 'No se pudo limpiar esta hoja.'
-        setSheetStatus(name, 'error', message)
-      }
-    }
-    setApplying(false)
-  }
-
   /** Botón del chat: limpieza dirigida con las variables escritas. */
   const handleAssisted = async () => {
     if (!instructions.trim()) {
@@ -672,6 +791,9 @@ export default function Limpieza() {
   const failedSheets = selectedSheets.filter((name) => sheetSessions[name]?.status === 'error')
   const pendingSheets = selectedSheets.filter(
     (name) => !sheetSessions[name]?.cleaning && sheetSessions[name]?.status !== 'error',
+  )
+  const pendingPreparedSheets = pendingSheets.filter(
+    (name) => Boolean(sheetSessions[name]?.standardization),
   )
   const scopeState = cleaningScopeState(selectedSheets, sheetSessions, applying)
   const cleaningComplete = scopeState === 'complete'
@@ -729,6 +851,39 @@ export default function Limpieza() {
         </div>
       </div>
 
+      {availableSheets.length > 1 && (
+        <Card className="mb-4 !p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="flex flex-wrap items-center gap-2 text-sm font-semibold text-navy">
+              Hoja mostrada
+              <select
+                value={sheet ?? selectedSheets[0] ?? ''}
+                onChange={(event) => setSheet(event.target.value)}
+                className="max-w-full rounded-lg border border-navy/20 bg-white px-3 py-2 text-sm text-navy outline-none focus:border-teal"
+              >
+                {selectedSheets.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+            <p className="text-xs text-navy/55">
+              Las tarjetas, la vista previa y el diagnóstico son solo de esta hoja.
+              El estado y los totales de todas las hojas aparecen debajo.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {applying && cleaningProgress && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-teal/25 bg-teal/[0.06] px-4 py-3 text-sm text-navy">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-teal" />
+          <p>
+            <strong>Limpieza automática {cleaningProgress.current} de {cleaningProgress.total}:</strong>{' '}
+            {cleaningProgress.sheet}. No necesitas abrir ni limpiar las hojas una por una.
+          </p>
+        </div>
+      )}
+
       {/* Encabezado: archivo, filas, columnas, calidad, estado (tonos suaves) */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Card className="!p-4 bg-gradient-to-br from-green/[0.06] to-transparent">
@@ -757,7 +912,7 @@ export default function Limpieza() {
               <p className="text-xl font-bold text-navy">
                 {formatNumber(applied && result ? result.resumen.filas_despues : standardization.filas)}
               </p>
-              <p className="text-xs text-navy/50">Vista activa: {sheet ?? 'hoja actual'}</p>
+              <p className="text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
             </div>
           </div>
         </Card>
@@ -771,7 +926,7 @@ export default function Limpieza() {
               <p className="text-xl font-bold text-navy">
                 {formatNumber(applied && result ? result.resumen.columnas_despues : standardization.columnas)}
               </p>
-              <p className="text-xs text-navy/50">Vista activa: {sheet ?? 'hoja actual'}</p>
+              <p className="text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
             </div>
           </div>
         </Card>
@@ -783,6 +938,7 @@ export default function Limpieza() {
               {quality !== null && (
                 <Badge tone={qualityLabel(quality).tone}>{qualityLabel(quality).text}</Badge>
               )}
+              <p className="mt-1 text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
             </div>
           </div>
         </Card>
@@ -849,7 +1005,7 @@ export default function Limpieza() {
             })}
           </div>
           {failedSheets.length > 0 && (
-            <button type="button" onClick={() => void handleApplySheets(failedSheets)} disabled={applying} className="mt-3 inline-flex items-center gap-2 rounded-lg border border-coral/30 px-3 py-2 text-xs font-semibold text-coral disabled:opacity-50">
+            <button type="button" onClick={() => void handleApplySheets(failedSheets, { retryErrors: true })} disabled={applying} className="mt-3 inline-flex items-center gap-2 rounded-lg border border-coral/30 px-3 py-2 text-xs font-semibold text-coral disabled:opacity-50">
               {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Reintentar solo las fallidas
             </button>
@@ -907,16 +1063,18 @@ export default function Limpieza() {
                 </div>
                 <div className="flex-1">
                   <h2 className="text-base font-semibold text-navy">
-                    {directed ? 'Limpieza dirigida aplicada ✅' : 'Limpieza aplicada ✅'}
+                    {cleaningComplete
+                      ? (directed ? 'Limpieza dirigida completa ✅' : 'Todas las hojas están limpias ✅')
+                      : `Hoja ${sheet ?? 'actual'} limpia; el alcance sigue en proceso`}
                   </h2>
                   <p className="mt-1 text-sm text-navy/70">
-                    Tu dataset quedó limpio y cargado para el resto de los módulos. La calidad
-                    subió de <strong>{formatNumber(result.resumen.calidad_antes)}%</strong> a{' '}
+                    {cleaningComplete
+                      ? 'El dataset completo ya está disponible para Resumen, Explorar y descarga. '
+                      : `Estos resultados corresponden solo a ${sheet ?? 'la hoja mostrada'}. Faltan ${pendingSheets.length} hoja(s) y hay ${failedSheets.length} con error. `}
+                    Calidad de esta hoja:{' '}
+                    <strong>{formatNumber(result.resumen.calidad_antes)}%</strong> →{' '}
                     <strong>{formatNumber(result.resumen.calidad_despues)}%</strong>. Filas:{' '}
-                    {formatNumber(result.resumen.filas_antes)} →{' '}
-                    {formatNumber(result.resumen.filas_despues)} · Columnas:{' '}
-                    {formatNumber(result.resumen.columnas_antes)} →{' '}
-                    {formatNumber(result.resumen.columnas_despues)}.
+                    {formatNumber(result.resumen.filas_antes)} → {formatNumber(result.resumen.filas_despues)}.
                   </p>
                   {exactDuplicates > 0 && (
                     <p className="mt-2 text-sm text-navy/70">
@@ -1168,6 +1326,7 @@ export default function Limpieza() {
                     </div>
                     <h3 className="text-sm font-semibold text-navy">Problemas detectados</h3>
                   </div>
+                  <p className="mt-1 text-[11px] text-navy/45">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
                   <ul className="mt-4 space-y-2.5">
                     {PROBLEM_LABELS.map(({ key, label, unit, icon: Icon }) => (
                       <li key={key} className="flex items-center justify-between gap-2 text-sm">
@@ -1198,6 +1357,7 @@ export default function Limpieza() {
                       Qué se eliminará / corregirá
                     </h3>
                   </div>
+                  <p className="mt-1 text-[11px] text-navy/45">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
                   <ul className="mt-4 space-y-2.5">
                     {planned.map(({ label, value }) => (
                       <li key={label} className="flex items-center justify-between gap-2 text-sm">
@@ -1238,7 +1398,12 @@ export default function Limpieza() {
                         <Toggle
                           checked={rules[key]}
                           label={label}
-                          onChange={(value) => setRules((prev) => ({ ...prev, [key]: value }))}
+                          disabled={applying}
+                          onChange={(value) => {
+                            if (!applying && !cleaningRunRef.current) {
+                              setRules((prev) => ({ ...prev, [key]: value }))
+                            }
+                          }}
                         />
                       </li>
                     ))}
@@ -1277,8 +1442,9 @@ export default function Limpieza() {
                       <select
                         id="basic-column-question"
                         value={basicSelectedColumn}
+                        disabled={applying}
                         onChange={(event) => handleMappingChange(basicQuestion.role, event.target.value)}
-                        className="mt-3 w-full rounded-md border border-navy/20 bg-white px-3 py-2.5 text-sm text-navy outline-none focus:border-teal"
+                        className="mt-3 w-full rounded-md border border-navy/20 bg-white px-3 py-2.5 text-sm text-navy outline-none focus:border-teal disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <option value="">Seleccionar columna</option>
                         {availableColumns.map((candidate) => (
@@ -1436,8 +1602,9 @@ export default function Limpieza() {
                             </span>
                             <select
                               value={column}
+                              disabled={applying}
                               onChange={(event) => handleMappingChange(role, event.target.value)}
-                              className="w-full rounded-md border border-navy/20 bg-white px-3 py-2 text-sm text-navy outline-none focus:border-teal"
+                              className="w-full rounded-md border border-navy/20 bg-white px-3 py-2 text-sm text-navy outline-none focus:border-teal disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               <option value="">Sin asignar</option>
                               {availableColumns.map((candidate) => (
@@ -1471,16 +1638,18 @@ export default function Limpieza() {
         )}
 
         {/* Barra de acción: botón "Limpiar datos" (todos los planes) */}
-        {!applied && (
+        {!cleaningComplete && (
           <Card className="!p-4 bg-gradient-to-r from-teal/[0.04] to-transparent">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-navy/60">
                 Limpieza con reglas por defecto, disponible en todos los planes.
               </p>
-              {preparedSheets.length > 1 && (
+              {selectedSheets.length > 1 && (
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <span className="w-full text-right text-xs text-navy/50">
-                    Se limpiaran {preparedSheets.length} hojas: {preparedSheets.join(', ')}
+                    {pendingPreparedSheets.length > 0
+                      ? `Faltan ${pendingPreparedSheets.length} hoja(s): ${pendingPreparedSheets.join(', ')}`
+                      : 'No quedan hojas pendientes; reintenta las que tengan error.'}
                   </span>
                   {!basicMapping && (
                     <label className="mr-auto flex items-center gap-2 text-xs text-navy/65">
@@ -1505,19 +1674,19 @@ export default function Limpieza() {
                   )}
                   <button
                     type="button"
-                    onClick={() => void handleApplySheets(preparedSheets)}
-                    disabled={applying || detecting || !result}
+                    onClick={() => void handleApplySheets(pendingPreparedSheets)}
+                    disabled={applying || pendingPreparedSheets.length === 0}
                     className="inline-flex items-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
                   >
                     {applying && <Loader2 className="h-4 w-4 animate-spin" />}
-                    Limpiar todas las hojas preparadas
+                    Limpiar {pendingPreparedSheets.length} hoja(s) pendientes
                   </button>
                 </div>
               )}
               <button
                 onClick={() => void handleApply()}
                 disabled={applying || assistedRunning || detecting || !result}
-                className={`${preparedSheets.length > 1 ? 'hidden' : 'inline-flex'} items-center gap-2 rounded-lg bg-teal px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50`}
+                className={`${selectedSheets.length > 1 ? 'hidden' : 'inline-flex'} items-center gap-2 rounded-lg bg-teal px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50`}
               >
                 {applying ? (
                   <>

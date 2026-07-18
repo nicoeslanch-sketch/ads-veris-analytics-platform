@@ -74,9 +74,17 @@ _MONTHS_ES = {
     "noviembre": 11, "diciembre": 12,
     "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6, "jul": 7,
     "ago": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dic": 12,
+    # Exportaciones de ERPs suelen mezclar meses en ingles aun con el resto
+    # del libro en español ("12-Jan-2025", "03-Aug-25"). Son nombres
+    # inequívocos, por lo que reconocerlos no requiere adivinar day/month.
+    "january": 1, "february": 2, "march": 3, "april": 4, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10,
+    "november": 11, "december": 12,
+    "jan": 1, "apr": 4, "aug": 8, "dec": 12,
 }
 
 _TYPE_SAMPLE_SIZE = 300
+NUMERIC_CANONICAL_ATTR = "adsveris_numeric_canonical"
 _TYPE_SAMPLE_SEED = 20260706  # determinista: mismos datos → misma clasificación
 
 
@@ -901,7 +909,17 @@ def standardize_dataframe(
     }
 
     for col in result.columns:
-        ctype, confidence = detect_value_type_confidence(result[col], col)
+        role = roles_by_col.get(col)
+        # Los identificadores pueden estar formados solo por dígitos y aun así
+        # son texto empresarial: "001" y "1" no son necesariamente la misma
+        # llave. La detección por contenido los clasificaba como número y
+        # eliminaba ceros iniciales antes de relacionar o exportar. Un rol
+        # numérico/fecha elegido explícitamente conserva precedencia.
+        identifier_by_name = is_identifier_column(col)
+        if identifier_by_name and role not in {"monto", "costo", "cantidad", "fecha"}:
+            ctype, confidence = "texto", 1.0
+        else:
+            ctype, confidence = detect_value_type_confidence(result[col], col)
         column_types[col] = ctype
         column_confidence[col] = confidence
 
@@ -991,6 +1009,12 @@ def standardize_dataframe(
                     dot3_convention=convention,
                     comma3_convention=comma_convention,
                 )
+                # Un porcentaje explicito representa una fraccion en Excel y
+                # en los calculos: "20%" debe ser 0.2, igual que un 0.2 ya
+                # numerico. Antes quedaba 20 y "110%" quedaba 110, mezclando
+                # dos escalas dentro de Descuento_Pct.
+                if number is not None and "%" in str(value):
+                    number /= 100
                 return str(value).strip() if number is None else format_number(number)
 
             new = map_unique(result[col], _standardize_number)
@@ -1022,4 +1046,8 @@ def standardize_dataframe(
         },
     }
     result.attrs.update(source_attrs)
+    # Desde este punto los números válidos están en la representación canónica
+    # de format_number (sin separadores de miles y con punto decimal). Los
+    # consumidores deben saberlo para no reinterpretar 1.234 como 1234.
+    result.attrs[NUMERIC_CANONICAL_ATTR] = True
     return result, report

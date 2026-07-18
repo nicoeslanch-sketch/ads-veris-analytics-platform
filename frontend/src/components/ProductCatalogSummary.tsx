@@ -1,6 +1,17 @@
 import Card from './ui/Card'
 import { formatCLP, formatNumber } from '../lib/format'
+import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, truncateLabel } from '../lib/charts'
 import type { MetricsResult } from '../lib/types'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 type ProductAnalysis = NonNullable<MetricsResult['analisis_productos']>
 
@@ -13,6 +24,7 @@ function pct(value: number | null) {
 }
 
 export default function ProductCatalogSummary({ analysis }: { analysis: ProductAnalysis }) {
+  const totals = analysis.totales_catalogo_unitario
   const cards = [
     ['Productos', formatNumber(analysis.productos)],
     ['Costo promedio', money(analysis.costos.promedio)],
@@ -22,7 +34,18 @@ export default function ProductCatalogSummary({ analysis }: { analysis: ProductA
     ['Margen potencial promedio', pct(analysis.margen_potencial.promedio)],
     ['Cobertura de costos', `${formatNumber(analysis.cobertura_costo_pct)}%`],
     ['Estado', `${formatNumber(analysis.activos ?? 0)} activos - ${formatNumber(analysis.inactivos ?? 0)} inactivos`],
+    ...(totals
+      ? [
+          ['Costo catálogo (1 unidad/SKU)', money(totals.costo)],
+          ['Precio lista catálogo (1 unidad/SKU)', money(totals.precio_lista)],
+          ['Utilidad potencial (1 unidad/SKU)', money(totals.utilidad_potencial)],
+        ]
+      : []),
   ]
+  const comparison = analysis.ranking_costos.slice(0, 10).map((item) => ({
+    ...item,
+    etiqueta: truncateLabel(item.producto, 22),
+  }))
   return (
     <div className="space-y-6">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -33,6 +56,42 @@ export default function ProductCatalogSummary({ analysis }: { analysis: ProductA
           </Card>
         ))}
       </div>
+      <p className="rounded-xl border border-teal/20 bg-teal/5 px-4 py-3 text-xs leading-relaxed text-navy/65">
+        Los totales de catálogo suponen una unidad de cada producto. No representan inventario
+        ni gasto real; para valorizar existencias se necesita relacionar la cantidad en stock.
+      </p>
+      {comparison.length > 0 && (
+        <Card>
+          <h2 className="text-sm font-semibold text-navy">Costo unitario vs. precio de lista</h2>
+          <p className="mt-1 text-xs text-navy/55">Los 10 productos con mayor costo unitario.</p>
+          <div className="mt-4 h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={comparison} layout="vertical" margin={{ top: 4, right: 20, bottom: 8, left: 12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
+                <XAxis
+                  type="number"
+                  tickFormatter={formatCLPCompact}
+                  tick={{ fill: AXIS_INK, fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="etiqueta"
+                  width={150}
+                  tick={{ fill: AXIS_INK, fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip formatter={(value) => formatCLP(Number(value))} />
+                <Legend />
+                <Bar dataKey="costo" name="Costo unitario" fill={CHART.gastos} radius={[0, 3, 3, 0]} />
+                <Bar dataKey="precio_lista" name="Precio de lista" fill={CHART.ingresos} radius={[0, 3, 3, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      )}
       <div className="grid gap-5 xl:grid-cols-3">
         <Card>
           <h2 className="text-sm font-semibold text-navy">Ranking por costo unitario</h2>

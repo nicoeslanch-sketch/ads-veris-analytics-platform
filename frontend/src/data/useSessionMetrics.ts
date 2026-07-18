@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
 import { setActiveCurrency } from '../lib/format'
+import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import type { MetricsResult } from '../lib/types'
 import { useDataset } from './DatasetContext'
 
@@ -34,7 +35,17 @@ export function useSessionMetrics(): {
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Hoja y mapeo en la clave: si el usuario los cambia, se recalcula (Fase 11)
-    const key = `${datasetKey}|${sheet ?? ''}|${JSON.stringify(analysisScope ?? {})}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}`
+    const key = metricsCacheKey({
+      dataset: datasetKey,
+      sheet,
+      analysisScope,
+      mapping: mappingOverride,
+      eliminarDuplicados,
+      revision: cleaning.revision,
+      rules: cleaning.reglas_activas,
+      directed: cleaning.dirigida,
+      manifest: sheetManifest,
+    })
     const scopeMatches = JSON.stringify(metrics?.analysis_scope ?? null) === JSON.stringify(analysisScope ?? null)
     if (metrics && isFullPeriod(metrics) && scopeMatches) {
       fetchedFor.current = key
@@ -42,6 +53,14 @@ export function useSessionMetrics(): {
       return
     }
     fetchedFor.current = key
+    const cached = getCachedMetrics(key)
+    if (cached && isFullPeriod(cached)) {
+      setActiveCurrency(cached.moneda)
+      setMetrics(cached)
+      setError(null)
+      setLoading(false)
+      return
+    }
     const controller = new AbortController()
     const requestId = latestRequest.current + 1
     latestRequest.current = requestId
@@ -51,6 +70,16 @@ export function useSessionMetrics(): {
       eliminar_duplicados: String(eliminarDuplicados),
       ...(datasetId ? { dataset_id: datasetId } : {}),
       ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
+      rules: JSON.stringify(cleaning.reglas_activas),
+      ...(cleaning.revision != null ? { revision: String(cleaning.revision) } : {}),
+      ...(cleaning.dirigida
+        ? {
+            scope: JSON.stringify({
+              incluir: cleaning.dirigida.columnas_incluir,
+              excluir: cleaning.dirigida.columnas_excluir,
+            }),
+          }
+        : {}),
       ...(sheet ? { sheet } : {}),
       ...(sheetManifest && analysisScope
         ? {
@@ -59,9 +88,10 @@ export function useSessionMetrics(): {
           }
         : {}),
     }
-    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
-      signal: controller.signal,
-    })
+    requestMetrics(
+      key,
+      () => apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields)),
+    )
       .then((result) => {
         if (latestRequest.current !== requestId || controller.signal.aborted) return
         setActiveCurrency(result.moneda)

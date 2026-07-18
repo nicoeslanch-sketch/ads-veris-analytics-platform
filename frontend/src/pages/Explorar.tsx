@@ -52,6 +52,7 @@ import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { principalPorParticipacionBruta } from '../lib/metrics'
 import { soloMesesCompletos } from '../lib/partial'
+import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, truncateLabel } from '../lib/charts'
@@ -61,7 +62,7 @@ import type { DatasetDimensions, GroupRow, MetricsResult } from '../lib/types'
 // ── Configuración del análisis ────────────────────────────────────────────────
 
 type GroupBy = 'mes' | 'categoria' | 'producto' | 'canal'
-type Metric = 'ingresos' | 'utilidad'
+type Metric = 'ingresos' | 'costo' | 'utilidad'
 
 const GROUP_LABEL: Record<GroupBy, string> = {
   mes: 'Mes (tendencia)',
@@ -72,6 +73,7 @@ const GROUP_LABEL: Record<GroupBy, string> = {
 
 const METRIC_LABEL: Record<Metric, string> = {
   ingresos: 'Ingresos',
+  costo: 'Costo',
   utilidad: 'Utilidad',
 }
 
@@ -397,9 +399,33 @@ export default function Explorar() {
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Mapeo manual y reintento en la clave: cambiar el mapeo refresca el análisis
-    const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}|${JSON.stringify(analysisScope ?? {})}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
+    const key = metricsCacheKey({
+      dataset: datasetKey,
+      dateFrom: rango.from,
+      dateTo: rango.to,
+      sheet,
+      analysisScope,
+      mapping: mappingOverride,
+      eliminarDuplicados,
+      revision: cleaning.revision,
+      rules: cleaning.reglas_activas,
+      directed: cleaning.dirigida,
+      manifest: sheetManifest,
+      retry: retryTick,
+    })
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
+    const cached = getCachedMetrics(key)
+    if (cached) {
+      setMetrics(cached)
+      setActiveCurrency(cached.moneda)
+      if (monthsAvailable.length === 0) {
+        setMonthsAvailable(cached.periodo.meses_disponibles)
+      }
+      setError(null)
+      setLoading(false)
+      return
+    }
     const snapshotMatchesRange = Boolean(
       contextMetrics &&
       JSON.stringify(contextMetrics.analysis_scope ?? null) === JSON.stringify(analysisScope ?? null) &&
@@ -433,6 +459,14 @@ export default function Explorar() {
       ...(datasetId ? { dataset_id: datasetId } : {}),
     }
     if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
+    fields.rules = JSON.stringify(cleaning.reglas_activas)
+    if (cleaning.revision != null) fields.revision = String(cleaning.revision)
+    if (cleaning.dirigida) {
+      fields.scope = JSON.stringify({
+        incluir: cleaning.dirigida.columnas_incluir,
+        excluir: cleaning.dirigida.columnas_excluir,
+      })
+    }
     if (sheet) fields.sheet = sheet
     if (sheetManifest && analysisScope) {
       fields.manifest = JSON.stringify(sheetManifest)
@@ -440,9 +474,10 @@ export default function Explorar() {
     }
     if (rango.from) fields.date_from = rango.from
     if (rango.to) fields.date_to = rango.to
-    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
-      signal: controller.signal,
-    })
+    requestMetrics(
+      key,
+      () => apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields)),
+    )
       .then((result) => {
         if (latestRequest.current !== requestId || controller.signal.aborted) return
         setMetrics(result)
@@ -492,6 +527,7 @@ export default function Explorar() {
       const fallback = (Object.keys(available) as GroupBy[]).find((k) => available[k])
       setGroupBy(fallback ?? 'mes')
     }
+    if (metric !== 'ingresos' && !d.costo) setMetric('ingresos')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metrics])
 
@@ -609,14 +645,16 @@ export default function Explorar() {
 
   // Fase 12b §23: "sin datos de costo" NO es utilidad cero — un grupo sin
   // cobertura se excluye del gráfico de utilidad en vez de dibujar una barra $0.
-  const valueOf = (row: GroupRow) => (metric === 'utilidad' ? row.utilidad ?? 0 : row.ingresos)
-  const rowHasMetric = (row: GroupRow) => metric !== 'utilidad' || row.utilidad != null
-  const barColor = metric === 'utilidad' ? CHART.utilidad : CHART.ingresos
+  const valueOf = (row: GroupRow) =>
+    metric === 'utilidad' ? row.utilidad ?? 0 : metric === 'costo' ? row.costo ?? 0 : row.ingresos
+  const rowHasMetric = (row: GroupRow) =>
+    metric === 'utilidad' ? row.utilidad != null : metric === 'costo' ? row.costo != null : true
+  const barColor = metric === 'utilidad' ? CHART.utilidad : metric === 'costo' ? CHART.gastos : CHART.ingresos
   const chartRows = [...groupRows]
     .filter(rowHasMetric)
     .sort((a, b) => valueOf(b) - valueOf(a))
     .slice(0, 8)
-  const excludedNoCost = metric === 'utilidad' ? groupRows.length - groupRows.filter(rowHasMetric).length : 0
+  const excludedNoCost = metric !== 'ingresos' ? groupRows.length - groupRows.filter(rowHasMetric).length : 0
 
   // Fase 14b: utilidad DESCONOCIDA se mantiene null hasta el final — el
   // backend se corrigió específicamente para no inventar $0 y aquí un
@@ -624,7 +662,12 @@ export default function Explorar() {
   // participaciones falsas incluidas).
   const trendRows: Array<{ mes: string; valor: number | null }> = evolucionEnRango.map((m) => ({
     mes: formatMonthShort(m.mes),
-    valor: metric === 'utilidad' ? m.utilidad ?? null : m.ingresos,
+    valor:
+      metric === 'utilidad'
+        ? m.utilidad ?? null
+        : metric === 'costo'
+          ? m.gastos ?? null
+          : m.ingresos,
   }))
   const trendConDato = trendRows.filter((row): row is { mes: string; valor: number } => row.valor != null)
   const trendTotal = trendConDato.reduce((sum, row) => sum + row.valor, 0)
@@ -642,8 +685,8 @@ export default function Explorar() {
       }
     })
     .slice(-8)
-  const mesesSinUtilidad =
-    metric === 'utilidad' ? trendRows.length - trendConDato.length : 0
+  const mesesSinCosto =
+    metric !== 'ingresos' ? trendRows.length - trendConDato.length : 0
 
   const analysisLabel = `${METRIC_LABEL[metric]} por ${GROUP_LABEL[groupBy]} · ${rango.label}`
 
@@ -815,6 +858,9 @@ export default function Explorar() {
               className={selectClass}
             >
               <option value="ingresos">Ingresos</option>
+              <option value="costo" disabled={!hasCosts}>
+                Costo{hasCosts ? '' : ' (requiere columna de costo)'}
+              </option>
               <option value="utilidad" disabled={!hasCosts}>
                 Utilidad{hasCosts ? '' : ' (requiere columna de costo)'}
               </option>
@@ -888,18 +934,18 @@ export default function Explorar() {
                         />
                       </LineChart>
                     </ResponsiveContainer>
-                    {mesesSinUtilidad > 0 && (
+                    {mesesSinCosto > 0 && (
                       <p className="mt-2 text-xs text-navy/45">
-                        {mesesSinUtilidad} mes(es) sin cobertura de costos: su utilidad se
-                        muestra como hueco (no es $0, es desconocida).
+                        {mesesSinCosto} mes(es) sin cobertura de costos: el valor se
+                        muestra como hueco (no es $0, es desconocido).
                       </p>
                     )}
                   </div>
                 )
               ) : chartRows.length === 0 ? (
                 <p className="mt-6 text-sm text-navy/50">
-                  {metric === 'utilidad' && excludedNoCost > 0
-                    ? 'Ningún grupo tiene cobertura de costos: no hay utilidad que graficar (elige "Ingresos").'
+                  {metric !== 'ingresos' && excludedNoCost > 0
+                    ? `Ningún grupo tiene cobertura de costos: no hay ${METRIC_LABEL[metric].toLowerCase()} que graficar (elige "Ingresos").`
                     : `Tu archivo no tiene una columna de ${GROUP_LABEL[groupBy].toLowerCase()} que se pueda agrupar.`}
                 </p>
               ) : (
@@ -1036,6 +1082,7 @@ export default function Explorar() {
                         <th className="pb-2 pr-4">{GROUP_LABEL[groupBy]}</th>
                         <th className="pb-2 pr-4 text-right">Ingresos</th>
                         <th className="pb-2 pr-4 text-right">% del total</th>
+                        {hasCosts && <th className="pb-2 pr-4 text-right">Costo</th>}
                         {hasCosts && <th className="pb-2 pr-4 text-right">Utilidad</th>}
                         {hasCosts && <th className="pb-2 text-right">Margen</th>}
                       </tr>
@@ -1050,6 +1097,11 @@ export default function Explorar() {
                           <td className="py-2.5 pr-4 text-right text-navy/60">
                             {formatPct(row.porcentaje)}
                           </td>
+                          {hasCosts && (
+                            <td className="py-2.5 pr-4 text-right text-navy/80">
+                              {row.costo != null ? formatCLP(row.costo) : '—'}
+                            </td>
+                          )}
                           {hasCosts && (
                             <td className="py-2.5 pr-4 text-right text-navy/80">
                               {row.utilidad != null ? formatCLP(row.utilidad) : '—'}

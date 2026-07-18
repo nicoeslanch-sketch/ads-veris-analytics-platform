@@ -1,15 +1,10 @@
 """Safe dataframe exports for downloadable files."""
 
-import re
+from numbers import Number
 
 import pandas as pd
 
-from .standardize import map_unique, parse_number
-
-# Bug #5: un negativo contable estandarizado ("(12.990)" → "-12990") es un
-# número legítimo, no un intento de inyección de fórmulas — no debe llevar
-# apóstrofe de escape (eso lo convierte en texto y deja de sumar en Excel).
-_NEGATIVE_NUMBER_RE = re.compile(r"^-[\d.,]+$")
+from .standardize import map_unique, parse_date, parse_number
 
 
 def neutralize_excel_formula(value):
@@ -25,17 +20,13 @@ def neutralize_excel_formula(value):
             return value
     except TypeError:
         pass
+    # Los valores de columnas numericas ya fueron convertidos antes de llegar
+    # aqui. Nunca reinterpretar un texto como numero: un SKU "-12.990" o un
+    # valor original de auditoria debe conservar exactamente sus caracteres.
+    if isinstance(value, Number):
+        return value
     text = str(value)
     stripped = text.lstrip()
-    if stripped.startswith("-") and _NEGATIVE_NUMBER_RE.match(stripped):
-        # Además de no escaparlo, hay que devolverlo como número real: pandas
-        # escribe un `str` de Python como celda de texto en el .xlsx sin
-        # importar el apóstrofe (el tipo de celda es explícito, no se
-        # autodetecta como en un CSV) — así seguiría sin sumar en pivotes.
-        try:
-            return float(stripped)
-        except ValueError:
-            pass
     if stripped.startswith(("=", "+", "-", "@")):
         return "'" + text
     return value
@@ -44,6 +35,9 @@ def neutralize_excel_formula(value):
 def safe_export_dataframe(
     df: pd.DataFrame,
     numeric_columns: set[str] | list[str] | tuple[str, ...] | None = None,
+    date_columns: set[str] | list[str] | tuple[str, ...] | None = None,
+    *,
+    canonical_numeric: bool = False,
 ) -> pd.DataFrame:
     """Neutraliza fórmulas y conserva números como celdas numéricas.
 
@@ -62,7 +56,17 @@ def safe_export_dataframe(
         if column not in exported.columns:
             continue
         original = exported[column]
-        parsed = map_unique(original, parse_number)
+        parsed = map_unique(
+            original,
+            lambda value: parse_number(
+                value,
+                # Las salidas del limpiador ya usan punto decimal canonico.
+                # Reinterpretar "1.234" como miles cambiaba 1,234→1.234→1234
+                # justo al escribir el XLSX.
+                dot3_convention="decimal" if canonical_numeric else "miles",
+                comma3_convention="decimal",
+            ),
+        )
         valid = parsed.notna()
         ambiguous_comma = original.astype(str).str.strip().str.match(
             r"^[+-]?\d{1,3},\d{3}$"
@@ -72,5 +76,16 @@ def safe_export_dataframe(
             continue
         typed = original.astype(object).copy()
         typed.loc[valid] = pd.to_numeric(parsed.loc[valid], errors="coerce")
+        exported[column] = typed
+    for column in set(date_columns or ()):
+        if column not in exported.columns:
+            continue
+        original = exported[column]
+        parsed = map_unique(original, parse_date)
+        valid = parsed.notna()
+        if not bool(valid.any()):
+            continue
+        typed = original.astype(object).copy()
+        typed.loc[valid] = parsed.loc[valid]
         exported[column] = typed
     return exported.apply(lambda column: column.map(neutralize_excel_formula))

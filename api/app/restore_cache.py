@@ -271,6 +271,43 @@ def fetch_latest_restore_record(
     return row if isinstance(row, dict) else None
 
 
+def fetch_restore_record(
+    dataset_id: str,
+    user_id: str,
+    settings: Settings | None = None,
+) -> dict[str, Any] | None:
+    """Dataset concreto, filtrado por propietario, para mutaciones de estado."""
+
+    settings = settings or get_settings()
+    safe_dataset_id = _valid_uuid(dataset_id)
+    if safe_dataset_id is None:
+        return None
+    if not _configured(settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servidor no tiene configurado Supabase.",
+        )
+    response = _get(
+        "datasets",
+        {
+            "id": f"eq.{safe_dataset_id}",
+            "user_id": f"eq.{user_id}",
+            "select": "id,name,source,storage_path,status,created_at",
+            "limit": "1",
+        },
+        settings,
+    )
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Supabase no pudo validar el dataset. Puedes reintentar.",
+        )
+    rows = response.json()
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        return None
+    return rows[0]
+
+
 def fetch_latest_cleaning_config(
     dataset_id: str,
     user_id: str,
@@ -475,14 +512,30 @@ def store_restore_snapshot(
         "p_combine_sheets": bool(state.get("combine_sheets", False)),
         "p_engine_version": ENGINE_VERSION,
     }
+    analysis_scope = state.get("analysis_scope")
+    persisted_analysis_scope = (
+        dict(analysis_scope) if isinstance(analysis_scope, dict) else {}
+    )
+    selection_mode = state.get("selection_mode")
+    if selection_mode in {"all", "custom"}:
+        # 0021 ya persiste analysis_scope como JSONB. Guardar aquí el modo de
+        # selección evita otra columna/migración y permite restaurar exactamente
+        # "Todas" frente a "Elegir hojas" después de recargar.
+        persisted_analysis_scope["_selection_mode"] = selection_mode
     payload_v2 = {
         **payload,
         "p_selected_sheets": state.get("selected_sheets", []),
         "p_sheet_errors": state.get("sheet_errors", {}),
-        "p_analysis_scope": state.get("analysis_scope", {}),
+        "p_analysis_scope": persisted_analysis_scope,
     }
     uses_v2 = any(
-        key in state for key in ("selected_sheets", "sheet_errors", "analysis_scope")
+        key in state
+        for key in (
+            "selected_sheets",
+            "sheet_errors",
+            "analysis_scope",
+            "selection_mode",
+        )
     )
     try:
         response = _post_rpc(

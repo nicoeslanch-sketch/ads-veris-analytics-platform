@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.engine.clean import analyze_and_clean
 from app.engine.loader import load_dataframe_with_report
-from app.engine.metrics import detect_currency
+from app.engine.metrics import compute_metrics, detect_currency
 from app.engine.standardize import standardize_dataframe
 from app.routes.pipeline import _clean_download_sync, _metrics_sync
 from app.main import app
@@ -135,6 +135,62 @@ def test_excel_load_standardize_clean_export_conserva_literales():
     assert "valor_original" in audit_headers and "version_motor" in audit_headers
 
 
+def test_csv_pipeline_preserves_identifier_leading_zeroes():
+    content = b"ID_Producto;Monto\n001;100\n002;200\n"
+    loaded, _ = load_dataframe_with_report("identificadores.csv", content)
+    standardized, report = standardize_dataframe(
+        loaded, {"producto": "ID_Producto", "monto": "Monto"}
+    )
+
+    assert report["column_types"]["ID_Producto"] == "texto"
+    assert standardized["ID_Producto"].tolist() == ["001", "002"]
+
+    payload, _, _ = _clean_download_sync(
+        "identificadores.csv",
+        content,
+        {},
+        "csv",
+        mapping={"producto": "ID_Producto", "monto": "Monto"},
+    )
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        rows = list(
+            csv.DictReader(
+                io.StringIO(
+                    archive.read("identificadores_limpio.csv").decode("utf-8-sig")
+                ),
+                delimiter=";",
+            )
+        )
+    assert [row["ID_Producto"] for row in rows] == ["001", "002"]
+
+
+def test_excel_pipeline_preserves_identifier_leading_zeroes():
+    source = io.BytesIO()
+    pd.DataFrame(
+        {"ID_Producto": ["001", "002"], "Monto": ["100", "200"]}
+    ).to_excel(source, index=False)
+    content = source.getvalue()
+    loaded, _ = load_dataframe_with_report("identificadores.xlsx", content)
+    standardized, report = standardize_dataframe(
+        loaded, {"producto": "ID_Producto", "monto": "Monto"}
+    )
+
+    assert report["column_types"]["ID_Producto"] == "texto"
+    assert standardized["ID_Producto"].tolist() == ["001", "002"]
+
+    payload, _, _ = _clean_download_sync(
+        "identificadores.xlsx",
+        content,
+        {},
+        "xlsx",
+        mapping={"producto": "ID_Producto", "monto": "Monto"},
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(payload), data_only=False)
+    sheet = workbook["Datos_limpios"]
+    assert [sheet["A2"].value, sheet["A3"].value] == ["001", "002"]
+    assert [sheet["A2"].data_type, sheet["A3"].data_type] == ["s", "s"]
+
+
 def test_literales_textuales_cuentan_como_clientes_validos_en_metricas():
     content = (
         "Cliente;Ventas\n"
@@ -185,7 +241,45 @@ def test_moneda_mixta_tambien_se_detecta_entre_ventas_y_costos():
     assert detail["conteos_por_columna"]["monto"]["CLP"] == 2
     assert detail["conteos_por_columna"]["costo"]["USD"] == 2
     assert metrics["kpis"]["ganancia_neta"] is None
+    assert metrics["kpis"]["base_costos"] is None
+    assert metrics["periodo"]["sin_fecha"]["monto"] is None
     assert metrics.get("top_productos", []) == []
+
+
+def test_moneda_mixta_bloquea_estadisticas_monetarias_del_catalogo():
+    frame = pd.DataFrame(
+        {
+            "ID_Producto": ["A", "B"],
+            "Producto": ["Uno", "Dos"],
+            "Categoria": ["X", "Y"],
+            "Marca": ["M1", "M2"],
+            "Costo_Unitario": ["CLP 100", "USD 2"],
+            "Precio_Lista": ["CLP 200", "USD 4"],
+            "Estado": ["Activo", "Inactivo"],
+        }
+    )
+    metrics = compute_metrics(
+        frame,
+        {
+            "producto": "Producto",
+            "categoria": "Categoria",
+            "costo": "Costo_Unitario",
+            "monto": "Precio_Lista",
+        },
+    )
+
+    assert metrics["moneda_mixta"] is True
+    analysis = metrics["analisis_productos"]
+    assert analysis["productos"] == 2
+    assert analysis["cobertura_costo_pct"] == 100.0
+    assert analysis["categorias"]
+    assert analysis["marcas"]
+    assert set(analysis["costos"].values()) == {None}
+    assert set(analysis["precios_lista"].values()) == {None}
+    assert set(analysis["margen_potencial"].values()) == {None}
+    assert analysis["totales_catalogo_unitario"] is None
+    assert analysis["ranking_costos"] == []
+    assert metrics["datos_monetarios_disponibles"] is False
 
 
 def test_calidad_dimensiones_antes_y_despues_misma_formula_y_valores_validos():

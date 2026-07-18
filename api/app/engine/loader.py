@@ -160,6 +160,11 @@ def _classify_sheet_sample(
     area = max(populated_rows * max(populated_columns, 1), 1)
     density = non_empty_cells / area
     header_row = _detect_header_row(cleaned) if len(cleaned) else 0
+    sample_headers = (
+        [str(value).strip() for value in cleaned.iloc[header_row].tolist()]
+        if populated_rows
+        else []
+    )
     data_rows = max(populated_rows - header_row - 1, 0)
     auxiliary_name = bool(_AUXILIARY_SHEET_NAME_RE.search(name.strip()))
     formulas = int(structure.get("formulas_muestra", 0) or 0)
@@ -201,6 +206,10 @@ def _classify_sheet_sample(
             "celdas_no_vacias_muestra": non_empty_cells,
             "densidad_muestra": round(density, 3),
             "fila_encabezado": header_row + 1 if populated_rows else None,
+            # Permite que consumidores internos preseleccionen candidatas por
+            # estructura sin materializar cada hoja completa. Son solo los
+            # encabezados de la muestra ya leída para esta clasificación.
+            "encabezados_muestra": sample_headers,
             **structure,
         },
     }

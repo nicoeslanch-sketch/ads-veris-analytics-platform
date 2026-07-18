@@ -373,6 +373,9 @@ export interface RelationshipCandidate extends AnalysisJoin {
   cardinality: 'uno_a_uno' | 'muchos_a_uno' | 'uno_a_muchos' | 'muchos_a_muchos' | 'sin_relacion_segura'
   safe: boolean
   reason: string | null
+  purpose?: 'enriquecer_costos' | 'enriquecer_referencia' | 'otra_relacion'
+  recommended?: boolean
+  currency_compatible?: boolean
 }
 
 export interface RelationshipResult {
@@ -413,9 +416,13 @@ export interface GroupRow {
   /** Fase 14b: distribución REAL — brutas del grupo / brutas totales.
    * Suma ≈100% y es la base de toda afirmación de CONCENTRACIÓN. */
   participacion_bruta_pct?: number | null
+  /** Neto del grupo / neto total. Coincide con los montos y sectores del
+   * gráfico; puede ser negativo si un grupo solo contiene devoluciones. */
+  participacion_neta_pct?: number | null
   ventas_brutas?: number
   devoluciones?: number
   ventas_netas?: number
+  costo?: number
   utilidad?: number
   margen_pct?: number | null
   /** Fase 12b: base de cálculo del grupo — sin esto una categoría con 1 fila
@@ -455,12 +462,12 @@ export interface MetricsResult {
     meses_disponibles: string[]
     /** Fase 13 (P0.4): el mes seleccionado esta incompleto — la variacion compara dias equivalentes. */
     mes_parcial?: boolean
-    sin_fecha?: { filas: number; monto: number; excluidas_por_filtro: boolean }
+    sin_fecha?: { filas: number; monto: number | null; excluidas_por_filtro: boolean }
   }
   kpis: {
-    ingresos_totales: KpiValue
+    ingresos_totales: KpiValue | null
     transacciones: number
-    ticket_promedio: number
+    ticket_promedio: number | null
     unidades_totales?: number
     gastos_totales: KpiValue | null
     ganancia_neta: KpiValue | null
@@ -468,10 +475,19 @@ export interface MetricsResult {
     flujo_caja: KpiValue | null
     /** Fase 10: % de filas con ingreso que también traen costo (margen confiable). */
     cobertura_costos?: { filas_con_ingreso: number; filas_con_ingreso_y_costo: number; pct: number }
+    /** Bases distintas: costo total conocido puede incluir filas sin monto;
+     * utilidad y margen usan exclusivamente filas pareadas. */
+    base_costos?: {
+      filas_con_costo: number
+      costo_total_conocido: number
+      filas_pareadas: number
+      costo_pareado: number
+      ingresos_pareados: number
+    } | null
     /** Fase 12b §12: filas con monto legible — base real del ticket promedio. */
     registros_con_monto?: number
     /** Fase 12b §16: montos negativos (devoluciones/reversas) — los ingresos son netos. */
-    devoluciones?: { monto: number; filas: number }
+    devoluciones?: { monto: number; filas: number } | null
   }
   evolucion_mensual: Array<{
     mes: string
@@ -520,6 +536,14 @@ export interface MetricsResult {
     items: Record<string, number | null>
   }
   advertencias: string[]
+  datos_monetarios_disponibles?: boolean
+  bloqueo_monetario?: { codigo: string; mensaje: string | null }
+  duplicados?: { detectados: number; eliminados: number; conservados: number }
+  calculo_costos?: {
+    origen: 'cantidad_por_costo_unitario' | 'columna_costo'
+    columna_costo: string | null
+    columna_cantidad: string | null
+  } | null
   analysis_scope?: AnalysisScope
   analysis_provenance?: Record<string, unknown>
   tipo_analisis?: 'catalogo_productos' | 'campanas_marketing' | 'inventario' | 'generico'
@@ -528,6 +552,12 @@ export interface MetricsResult {
     costos: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
     precios_lista: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
     margen_potencial: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
+    totales_catalogo_unitario?: {
+      costo: number
+      precio_lista: number
+      utilidad_potencial: number
+      productos_con_comparacion: number
+    } | null
     cobertura_costo_pct: number
     ranking_costos: Array<{ producto: string; costo: number; precio_lista: number | null; margen_potencial_pct: number | null }>
     categorias: Array<{ nombre: string; productos: number }>
@@ -537,7 +567,7 @@ export interface MetricsResult {
   }
   analisis_campanas?: {
     campanas: number
-    inversion: number
+    inversion: number | null
     impresiones: number
     clics: number
     ctr_pct: number | null

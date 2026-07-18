@@ -1,9 +1,11 @@
 """Fast restoration: persistent snapshot first, full pipeline as fallback."""
 
+import json
 import time
 from statistics import median
 
 import httpx
+import pytest
 
 from app.config import Settings
 from app.engine.clean import DEFAULT_RULES
@@ -109,6 +111,305 @@ def test_store_snapshot_confirma_fila_y_filtra_por_propietario(monkeypatch):
     assert captured["url"].endswith("/rpc/store_restore_snapshot_guarded")
     assert captured["json"]["p_user_id"] == "owner-123"
     assert captured["json"]["p_snapshot"]["version"] == RESTORE_SNAPSHOT_VERSION
+
+
+@pytest.mark.parametrize("selection_mode", ["all", "custom"])
+def test_selection_mode_round_trip_uses_analysis_scope_json(
+    monkeypatch, selection_mode
+):
+    from app import restore_cache
+    from app.routes import pipeline as pl
+
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return httpx.Response(200, json=True)
+
+    monkeypatch.setattr(restore_cache.httpx, "post", fake_post)
+    settings = Settings(
+        supabase_url="https://example.supabase.co",
+        supabase_service_role_key="service-role-test",
+    )
+    snapshot = _snapshot(sheet="Ventas")
+    state = {
+        "active_sheet": "Ventas",
+        "available_sheets": ["Ventas", "Productos"],
+        "excluded_sheets": [] if selection_mode == "all" else ["Productos"],
+        "selected_sheets": (
+            ["Ventas", "Productos"] if selection_mode == "all" else ["Ventas"]
+        ),
+        "sheet_errors": {},
+        "analysis_scope": {
+            "mode": "single",
+            "sheets": ["Ventas"],
+            "active_sheet": "Ventas",
+        },
+        "selection_mode": selection_mode,
+    }
+
+    assert store_restore_snapshot(
+        "00000000-0000-0000-0000-000000000001",
+        "owner-123",
+        snapshot,
+        settings,
+        restore_state=state,
+    ) is True
+    persisted_scope = captured["json"]["p_analysis_scope"]
+    assert persisted_scope["_selection_mode"] == selection_mode
+
+    restored = pl._restore_response(
+        {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "libro.xlsx",
+            "storage_path": "owner-123/libro.xlsx",
+            "status": "limpio",
+        },
+        snapshot,
+        "snapshot",
+        restore_state={
+            **state,
+            "analysis_scope": persisted_scope,
+            # La tabla no tiene una columna selection_mode: esta clave no
+            # vuelve desde Supabase y debe reconstruirse desde el JSONB.
+            "selection_mode": None,
+        },
+    )
+    assert restored["selection_mode"] == selection_mode
+
+
+def test_selection_mode_without_analysis_scope_does_not_expose_internal_marker(
+    monkeypatch,
+):
+    from app import restore_cache
+    from app.routes import pipeline as pl
+
+    captured: dict = {}
+
+    def fake_post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return httpx.Response(200, json=True)
+
+    monkeypatch.setattr(restore_cache.httpx, "post", fake_post)
+    settings = Settings(
+        supabase_url="https://example.supabase.co",
+        supabase_service_role_key="service-role-test",
+    )
+    snapshot = _snapshot(sheet="Ventas")
+    state = {
+        "active_sheet": "Ventas",
+        "available_sheets": ["Ventas"],
+        "excluded_sheets": [],
+        "selected_sheets": ["Ventas"],
+        "sheet_errors": {},
+        "analysis_scope": None,
+        "selection_mode": "custom",
+    }
+
+    assert store_restore_snapshot(
+        "00000000-0000-0000-0000-000000000001",
+        "owner-123",
+        snapshot,
+        settings,
+        restore_state=state,
+    ) is True
+    persisted_scope = captured["json"]["p_analysis_scope"]
+    assert persisted_scope == {"_selection_mode": "custom"}
+
+    restored = pl._restore_response(
+        {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "libro.xlsx",
+            "storage_path": "owner-123/libro.xlsx",
+            "status": "limpio",
+        },
+        snapshot,
+        "snapshot",
+        restore_state={**state, "analysis_scope": persisted_scope, "selection_mode": None},
+    )
+    assert restored["selection_mode"] == "custom"
+    assert restored["analysis_scope"] is None
+
+
+def test_restore_state_endpoint_persists_last_failed_sheet_and_recovers_it(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline as pl
+
+    dataset_id = "00000000-0000-0000-0000-000000000031"
+    source_sha = SOURCE_SHA
+    existing = _snapshot(revision=30, sheet="Productos")
+    existing_cleaning = existing["cleaning"]
+    record = {
+        "id": dataset_id,
+        "name": "libro.xlsx",
+        "source": "excel_csv",
+        "storage_path": "user-test-123/libro.xlsx",
+        "status": "limpio",
+    }
+    authoritative = {
+        "dataset_id": dataset_id,
+        "user_id": "user-test-123",
+        "revision": 30,
+        "active_sheet": "Ventas",
+        "available_sheets": ["Ventas", "Productos"],
+        "excluded_sheets": [],
+        "selected_sheets": ["Ventas", "Productos"],
+        "sheet_errors": {},
+        "analysis_scope": {},
+        "combine_sheets": False,
+        "source_sha256": source_sha,
+        "engine_version": existing["engine_version"],
+    }
+
+    def row(snapshot):
+        return {
+            "sheet_key": "Productos",
+            "revision": snapshot["revision"],
+            "source_sha256": snapshot["source_sha256"],
+            "rules_hash": snapshot["rules_hash"],
+            "mapping_hash": snapshot["mapping_hash"],
+            "sheet": snapshot["sheet"],
+            "engine_version": snapshot["engine_version"],
+            "snapshot": snapshot,
+        }
+
+    stored: dict = {}
+    monkeypatch.setattr(pl, "require_capability_for_user", lambda *_args: "ok")
+    monkeypatch.setattr(pl, "reserve_restore_snapshot_revision", lambda *_args: 31)
+    monkeypatch.setattr(pl, "fetch_restore_record", lambda *_args: record)
+    monkeypatch.setattr(
+        pl,
+        "fetch_restore_state_bundle",
+        lambda *_args, **_kwargs: {
+            "state": authoritative,
+            "sheets": [row(existing)],
+        },
+    )
+
+    def fake_store(
+        _dataset_id,
+        _user_id,
+        snapshot,
+        settings=None,
+        restore_state=None,
+    ):
+        stored.update({"snapshot": snapshot, "state": restore_state})
+        return True
+
+    monkeypatch.setattr(pl, "store_restore_snapshot", fake_store)
+    requested_state = {
+        "active_sheet": "Productos",
+        "available_sheets": ["Ventas", "Productos"],
+        "excluded_sheets": [],
+        "selected_sheets": ["Ventas", "Productos"],
+        "sheet_errors": {"Productos": "La limpieza falló en esta hoja."},
+        "analysis_scope": {
+            "mode": "single",
+            "sheets": ["Productos"],
+            "active_sheet": "Productos",
+        },
+        "selection_mode": "all",
+        "combine_sheets": False,
+    }
+
+    response = client.post(
+        "/restore/state",
+        data={
+            "dataset_id": dataset_id,
+            "restore_state": json.dumps(requested_state),
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["revision"] == 31
+    assert stored["snapshot"]["revision"] == 31
+    assert stored["snapshot"]["cleaning"] == existing_cleaning
+    assert existing["revision"] == 30
+    assert stored["state"]["sheet_errors"] == requested_state["sheet_errors"]
+
+    cloned = stored["snapshot"]
+    restored = pl._restore_response(
+        record,
+        cloned,
+        "snapshot",
+        sheet_sessions={
+            "Productos": {
+                "standardization": cloned["standardization"],
+                "cleaning": cloned["cleaning"],
+                "metrics": cloned["metrics"],
+                "mapping": cloned["mapping"],
+                "eliminar_duplicados": cloned["eliminar_duplicados"],
+            }
+        },
+        restore_state=stored["state"],
+    )
+    assert restored["sheet_errors"] == requested_state["sheet_errors"]
+    assert restored["active_sheet"] == "Productos"
+    assert restored["cleaning"] == existing_cleaning
+
+
+def test_restore_state_endpoint_blocks_when_no_valid_snapshot(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline as pl
+
+    dataset_id = "00000000-0000-0000-0000-000000000032"
+    monkeypatch.setattr(pl, "require_capability_for_user", lambda *_args: "ok")
+    monkeypatch.setattr(pl, "reserve_restore_snapshot_revision", lambda *_args: 32)
+    monkeypatch.setattr(
+        pl,
+        "fetch_restore_record",
+        lambda *_args: {
+            "id": dataset_id,
+            "name": "libro.xlsx",
+            "storage_path": "user-test-123/libro.xlsx",
+            "status": "limpio",
+        },
+    )
+    monkeypatch.setattr(
+        pl,
+        "fetch_restore_state_bundle",
+        lambda *_args, **_kwargs: {
+            "state": {
+                "dataset_id": dataset_id,
+                "user_id": "user-test-123",
+                "available_sheets": ["Ventas"],
+                "source_sha256": SOURCE_SHA,
+                "engine_version": _snapshot()["engine_version"],
+            },
+            "sheets": [],
+        },
+    )
+    monkeypatch.setattr(
+        pl,
+        "store_restore_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("no debe escribir sin snapshot válido")
+        ),
+    )
+
+    response = client.post(
+        "/restore/state",
+        data={
+            "dataset_id": dataset_id,
+            "restore_state": json.dumps(
+                {
+                    "active_sheet": "Ventas",
+                    "available_sheets": ["Ventas"],
+                    "excluded_sheets": [],
+                    "selected_sheets": ["Ventas"],
+                    "sheet_errors": {"Ventas": "falló"},
+                    "selection_mode": "all",
+                }
+            ),
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+    assert "snapshot vigente" in response.json()["detail"]
 
 
 def test_store_snapshot_grande_usa_tabla_dedicada_sin_limite_512k(monkeypatch):

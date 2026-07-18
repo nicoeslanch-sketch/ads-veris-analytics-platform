@@ -192,10 +192,39 @@ def test_composite_key_can_be_safe_when_single_columns_are_not_unique():
 
 def test_relationship_response_never_contains_cell_values():
     frames = {
-        "Ventas": pd.DataFrame({"ID Producto": ["SECRETO-1", "SECRETO-2"]}),
-        "Productos": pd.DataFrame({"ID Producto": ["SECRETO-1", "SECRETO-2"]}),
+        "Ventas": pd.DataFrame(
+            {
+                "ID Producto": ["SECRETO-1", "SECRETO-2"],
+                "Fecha": ["01/01/2025", "02/01/2025"],
+                "Cantidad": [1, 2],
+                "Monto": [100, 200],
+            }
+        ),
+        "Productos": pd.DataFrame(
+            {
+                "ID Producto": ["SECRETO-1", "SECRETO-2"],
+                "Producto": ["Uno", "Dos"],
+                "Costo Unitario": [50, 80],
+                "Precio Lista": [120, 140],
+            }
+        ),
     }
-    candidates = detect_relationships(frames)
+    candidates = detect_relationships(
+        frames,
+        {
+            "Ventas": {
+                "fecha": "Fecha",
+                "producto": "ID Producto",
+                "cantidad": "Cantidad",
+                "monto": "Monto",
+            },
+            "Productos": {
+                "producto": "Producto",
+                "costo": "Costo Unitario",
+                "monto": "Precio Lista",
+            },
+        },
+    )
 
     assert candidates
     assert "SECRETO" not in str(candidates)
@@ -335,3 +364,18 @@ def test_restore_state_keeps_selection_errors_and_confirmed_scope():
     assert state["selected_sheets"] == ["Ventas", "Productos"]
     assert state["sheet_errors"] == {"Productos": "fallo temporal"}
     assert state["analysis_scope"]["mode"] == "join"
+
+
+def test_restore_state_preserves_null_analysis_scope_and_custom_selection():
+    state = _validate_restore_state(json.dumps({
+        "active_sheet": "Ventas",
+        "available_sheets": ["Ventas", "Productos"],
+        "excluded_sheets": ["Productos"],
+        "selected_sheets": ["Ventas"],
+        "sheet_errors": {},
+        "analysis_scope": None,
+        "selection_mode": "custom",
+    }))
+
+    assert state["analysis_scope"] is None
+    assert state["selection_mode"] == "custom"

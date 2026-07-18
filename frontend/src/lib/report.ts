@@ -39,7 +39,9 @@ export function buildReportCsv(m: MetricsResult): string {
 
   push('INDICADORES (CLP)')
   push('Indicador', 'Valor', 'Variación %')
-  push('Ingresos totales', m.kpis.ingresos_totales.valor, m.kpis.ingresos_totales.variacion_pct)
+  if (m.kpis.ingresos_totales) {
+    push('Ingresos totales', m.kpis.ingresos_totales.valor, m.kpis.ingresos_totales.variacion_pct)
+  }
   if (m.kpis.gastos_totales) push('Gastos totales', m.kpis.gastos_totales.valor, m.kpis.gastos_totales.variacion_pct)
   if (m.kpis.ganancia_neta) push('Utilidad bruta', m.kpis.ganancia_neta.valor, m.kpis.ganancia_neta.variacion_pct)
   if (m.kpis.margen_utilidad_pct) push('Margen de utilidad (%)', m.kpis.margen_utilidad_pct.valor)
@@ -118,7 +120,9 @@ function tableHtml(
 export function openPrintableReport(m: MetricsResult, empresa: string | null): void {
   const archivoLimpio = cleanFilename(m.archivo)
   const kpiRows: Array<[string, string]> = [
-    ['Ingresos totales', clp(m.kpis.ingresos_totales.valor)],
+    ...(m.kpis.ingresos_totales
+      ? [['Ingresos totales', clp(m.kpis.ingresos_totales.valor)] as [string, string]]
+      : []),
     ...(m.kpis.gastos_totales ? [['Gastos totales', clp(m.kpis.gastos_totales.valor)] as [string, string]] : []),
     ...(m.kpis.ganancia_neta ? [['Utilidad bruta', clp(m.kpis.ganancia_neta.valor)] as [string, string]] : []),
     ...(m.kpis.margen_utilidad_pct

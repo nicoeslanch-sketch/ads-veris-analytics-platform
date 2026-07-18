@@ -11,6 +11,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { useDataset } from '../../data/DatasetContext'
 import { ApiError, apiPostJson } from '../../lib/api'
 import { useAccess } from '../../lib/access'
+import { restoredSheetStatus } from '../../lib/multiSheet'
 import { supabaseConfigured } from '../../lib/supabase'
 import type { RestoreLatestResult } from '../../lib/types'
 
@@ -65,17 +66,20 @@ export default function DatasetBootstrap() {
           type: 'application/octet-stream',
         })
         const restoredSessions = Object.fromEntries(
-          Object.entries(restored.sheet_sessions ?? {}).map(([name, session]) => [
-            name,
-            {
-              standardization: session.standardization,
-              cleaning: session.cleaning,
-              mappingOverride: session.mapping,
-              eliminarDuplicados: session.eliminar_duplicados,
-              status: session.cleaning ? 'limpia' as const : 'estandarizada' as const,
-              error: restored.sheet_errors?.[name] ?? null,
-            },
-          ]),
+          Object.entries(restored.sheet_sessions ?? {}).map(([name, session]) => {
+            const restoredError = restored.sheet_errors?.[name] ?? null
+            return [
+              name,
+              {
+                standardization: session.standardization,
+                cleaning: session.cleaning,
+                mappingOverride: session.mapping,
+                eliminarDuplicados: session.eliminar_duplicados,
+                status: restoredSheetStatus(restoredError, Boolean(session.cleaning)),
+                error: restoredError,
+              },
+            ]
+          }),
         )
         restoreDataset(
           placeholder,

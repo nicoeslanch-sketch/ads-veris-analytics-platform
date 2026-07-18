@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
+import { clearAnalysisCaches } from '../lib/analysisCache'
 import type {
   AnalysisScope,
   CleanResult,
@@ -157,7 +158,7 @@ interface DatasetState {
   setCombineSheets: (value: boolean) => void
   setSelectionMode: (value: 'all' | 'custom') => void
   setSelectedSheets: (sheets: string[]) => void
-  setAnalysisScope: (scope: AnalysisScope) => void
+  setAnalysisScope: (scope: AnalysisScope | null) => void
   setSheetStatus: (
     sheet: string,
     status: SheetProcessingStatus,
@@ -254,9 +255,13 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     const activeSheet = result.carga?.hoja_usada ?? sheet
     const removeDuplicates = Boolean(result.opciones_aplicacion?.eliminar_duplicados)
     const activate = options.activate !== false
+    // Una hoja no activa también puede formar parte de append/join. Cualquier
+    // resultado nuevo cambia el manifest y vuelve obsoletas las métricas
+    // combinadas que estaban en memoria.
+    setMetricsState(null)
     if (activate) {
+      if (activeSheet) setSheetState(activeSheet)
       setCleaningState(result)
-      setMetricsState(null)
       setMonthsAvailable([])
       setPeriod(ALL_PERIOD)
       setEliminarDuplicados(removeDuplicates)
@@ -316,6 +321,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
 
   const setUploaded = useCallback(
     (newFile: File, newDatasetId: string | null, newStoragePath: string | null) => {
+      clearAnalysisCaches()
       setFile(newFile)
       setDatasetId(newDatasetId)
       setStoragePath(newStoragePath)
@@ -351,6 +357,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     restoredEliminarDuplicados: boolean,
     options?: RestoreDatasetOptions,
   ) => {
+    clearAnalysisCaches()
     const inferredActiveSheet =
       restoredCleaning?.carga?.hoja_usada ??
       restoredStandardization.carga?.hoja_usada ??
@@ -393,6 +400,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const reset = useCallback(() => {
+    clearAnalysisCaches()
     setFile(null)
     setDatasetId(null)
     setStoragePath(null)
@@ -458,6 +466,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     status: SheetProcessingStatus,
     error: string | null = null,
   ) => {
+    // El estado entra al manifest multihoja; invalida incluso si `name` no es
+    // la vista activa para no reutilizar métricas de una selección anterior.
+    setMetricsState(null)
     setSheetSessions((previous) => ({
       ...previous,
       [name]: {
@@ -477,7 +488,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const setAnalysisScope = useCallback((scope: AnalysisScope) => {
+  const setAnalysisScope = useCallback((scope: AnalysisScope | null) => {
     setAnalysisScopeState(scope)
     setMetricsState(null)
     setMonthsAvailable([])

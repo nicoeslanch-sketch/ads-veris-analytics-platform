@@ -9,7 +9,7 @@ export default function AdaptiveProfileSummary({ metrics }: { metrics: MetricsRe
   if (campaign) {
     const cards = [
       ['Campañas', formatNumber(campaign.campanas)],
-      ['Inversión', formatCLP(campaign.inversion)],
+      ['Inversión', campaign.inversion == null ? '—' : formatCLP(campaign.inversion)],
       ['Impresiones', formatNumber(campaign.impresiones)],
       ['Clics', formatNumber(campaign.clics)],
       ['CTR', campaign.ctr_pct == null ? '—' : `${formatNumber(campaign.ctr_pct)}%`],

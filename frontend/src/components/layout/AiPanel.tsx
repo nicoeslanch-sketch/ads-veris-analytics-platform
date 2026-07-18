@@ -15,6 +15,7 @@ import { useDataset } from '../../data/DatasetContext'
 import { useDemo } from '../../demo/DemoContext'
 import { useAccess } from '../../lib/access'
 import { ApiError, apiPost, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
+import { metricsCacheKey, requestMetrics } from '../../lib/analysisCache'
 import { setActiveCurrency } from '../../lib/format'
 import type { MetricsResult } from '../../lib/types'
 
@@ -51,6 +52,8 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     uploadedAt,
     mappingOverride,
     sheet,
+    sheetManifest,
+    analysisScope,
     eliminarDuplicados,
     setMetrics: setContextMetrics,
   } = useDataset()
@@ -112,14 +115,46 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       let m = metricsArg
       if (!m) {
         setLoadingLabel('Calculando indicadores…')
+        const metricsKey = metricsCacheKey({
+          dataset: datasetId ?? storagePathArg ?? String(uploadedAt?.getTime() ?? 0),
+          sheet,
+          analysisScope,
+          mapping: mappingOverride,
+          eliminarDuplicados,
+          revision: cleaning?.revision,
+          rules: cleaning?.reglas_activas,
+          directed: cleaning?.dirigida,
+          manifest: sheetManifest,
+        })
         const fields: Record<string, string> = {
           eliminar_duplicados: String(eliminarDuplicados),
+          ...(datasetId ? { dataset_id: datasetId } : {}),
           ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
+          rules: JSON.stringify(cleaning?.reglas_activas ?? {}),
+          ...(cleaning?.revision != null ? { revision: String(cleaning.revision) } : {}),
+          ...(cleaning?.dirigida
+            ? {
+                scope: JSON.stringify({
+                  incluir: cleaning.dirigida.columnas_incluir,
+                  excluir: cleaning.dirigida.columnas_excluir,
+                }),
+              }
+            : {}),
           ...(sheet ? { sheet } : {}),
+          ...(sheetManifest && analysisScope
+            ? {
+                manifest: JSON.stringify(sheetManifest),
+                analysis_scope: JSON.stringify(analysisScope),
+              }
+            : {}),
         }
-        m = await apiPost<MetricsResult>('/metrics', buildDatasetForm(fileObj, storagePathArg, fields), {
-          signal: controller.signal,
-        })
+        m = await requestMetrics(
+          metricsKey,
+          () => apiPost<MetricsResult>(
+            '/metrics',
+            buildDatasetForm(fileObj, storagePathArg, fields),
+          ),
+        )
         if (!isCurrent()) return
         setActiveCurrency(m.moneda)
         localMetrics.current = m
@@ -169,12 +204,17 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     // Fase 14: bloqueado por plan/prueba (o acceso sin resolver) → cero llamadas.
     if (aiBlocked) return
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
-    const fileKey = [
-      datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0),
-      sheet ?? '',
-      JSON.stringify(mappingOverride ?? {}),
-      String(eliminarDuplicados),
-    ].join('|')
+    const fileKey = metricsCacheKey({
+      dataset: datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0),
+      sheet,
+      analysisScope,
+      mapping: mappingOverride,
+      eliminarDuplicados,
+      revision: cleaning?.revision,
+      rules: cleaning?.reglas_activas,
+      directed: cleaning?.dirigida,
+      manifest: sheetManifest,
+    })
     if (fetchedForFile.current === fileKey) return
     fetchedForFile.current = fileKey
     void runActivation(file, storagePath, contextMetrics)
@@ -184,7 +224,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       if (fetchedForFile.current === fileKey) fetchedForFile.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, aiBlocked, file, datasetId, storagePath, uploadedAt, sheet, mappingOverride, eliminarDuplicados])
+  }, [active, aiBlocked, file, datasetId, storagePath, uploadedAt, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, cleaning])
 
   // Si las métricas llegan al contexto después (usuario visitó Resumen),
   // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.

@@ -110,7 +110,9 @@ export default function Reportes() {
             <p className="mt-0.5 min-w-0 text-sm text-navy/60">
               Archivo <span className="font-medium text-navy [overflow-wrap:anywhere] sm:[overflow-wrap:normal]">{cleanFilename(metrics.archivo)}</span> · periodo{' '}
               {fullRangePeriod(metrics.periodo.meses_disponibles).label} · ingresos
-              del periodo <span className="font-medium text-navy">{formatCLP(metrics.kpis.ingresos_totales.valor)}</span>.
+              del periodo <span className="font-medium text-navy">{metrics.kpis.ingresos_totales
+                ? formatCLP(metrics.kpis.ingresos_totales.valor)
+                : '—'}</span>.
               Incluye indicadores, evolución mensual, análisis por categoría, canales, top
               productos y proyección.
             </p>

@@ -12,9 +12,18 @@ from app.engine.audit import build_audit_dataframe
 from app.engine.export import safe_export_dataframe
 from app.engine.loader import load_dataframe_with_report
 from app.engine.metrics import compute_metrics
-from app.engine.multi_sheet import build_analysis_frame, validate_analysis_scope
+from app.engine.multi_sheet import (
+    build_analysis_frame,
+    detect_relationships,
+    join_related_frames,
+    validate_analysis_scope,
+)
+from app.engine.standardize import parse_date, standardize_dataframe
 from app.routes.pipeline import _clean_download_book_sync
+from app.routes.pipeline import _analysis_export_type_columns
 from app.routes.pipeline import _cache_key
+from app.routes.pipeline import _relationships_sync
+from app.routes.pipeline import _write_clean_sheet
 
 
 def _classified_workbook() -> bytes:
@@ -121,6 +130,506 @@ def test_product_catalog_has_unit_statistics_not_fake_cost_sum():
     assert metrics["kpis"]["ingresos_totales"] is None
 
 
+def test_product_catalog_with_stock_quantity_stays_a_catalog():
+    """Stock is not a sold quantity and must not turn a product master into sales."""
+    frame = pd.DataFrame(
+        {
+            "ID_Producto": ["A", "B"],
+            "Producto": ["Uno", "Dos"],
+            "Stock": [10, 20],
+            "Costo_Unitario": [50, 80],
+            "Precio_Lista": [100, 160],
+        }
+    )
+    metrics = compute_metrics(
+        frame,
+        {
+            "producto": "Producto",
+            "cantidad": "Stock",
+            "costo": "Costo_Unitario",
+            "monto": "Precio_Lista",
+        },
+    )
+
+    assert metrics["tipo_analisis"] == "catalogo_productos"
+    assert metrics["analisis_productos"]["totales_catalogo_unitario"] == {
+        "costo": 130.0,
+        "precio_lista": 260.0,
+        "utilidad_potencial": 130.0,
+        "productos_con_comparacion": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata_date",
+    [
+        "Fecha_Actualizacion",
+        "Fecha_Creacion",
+        "Fecha_Modificacion",
+        "Fecha_Vigencia",
+    ],
+)
+def test_product_catalog_metadata_date_is_not_a_sales_date(metadata_date):
+    frame = pd.DataFrame(
+        {
+            "ID_Producto": ["A", "B"],
+            "Producto": ["Uno", "Dos"],
+            "Stock": [10, 20],
+            "Costo_Unitario": [50, 80],
+            "Precio_Lista": [100, 160],
+            metadata_date: ["01/01/2025", "02/01/2025"],
+        }
+    )
+    metrics = compute_metrics(
+        frame,
+        {
+            "fecha": metadata_date,
+            "producto": "Producto",
+            "cantidad": "Stock",
+            "costo": "Costo_Unitario",
+            "monto": "Precio_Lista",
+        },
+    )
+
+    assert metrics["tipo_analisis"] == "catalogo_productos"
+    assert metrics["kpis"]["ingresos_totales"] is None
+    assert metrics["analisis_productos"]["productos"] == 2
+
+
+def test_product_table_with_sales_date_is_transactional():
+    frame = pd.DataFrame(
+        {
+            "Producto": ["A", "B"],
+            "Cantidad": [2, 3],
+            "Costo_Unitario": [50, 80],
+            "Precio_Lista": [100, 160],
+            "Fecha_Venta": ["01/01/2025", "02/01/2025"],
+        }
+    )
+    metrics = compute_metrics(
+        frame,
+        {
+            "fecha": "Fecha_Venta",
+            "producto": "Producto",
+            "cantidad": "Cantidad",
+            "costo": "Costo_Unitario",
+            "monto": "Precio_Lista",
+        },
+    )
+
+    assert metrics.get("tipo_analisis") != "catalogo_productos"
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 260.0
+
+
+def test_stock_product_catalog_is_a_cost_reference_for_sales_relationships():
+    sales = pd.DataFrame(
+        {
+            "ID_Producto": ["A", "A", "B"],
+            "Cantidad": [1, 2, 1],
+            "Monto": [200, 400, 300],
+        }
+    )
+    products = pd.DataFrame(
+        {
+            "ID_Producto": ["A", "B"],
+            "Producto": ["Uno", "Dos"],
+            "Stock": [10, 20],
+            "Costo_Unitario": [50, 80],
+            "Precio_Lista": [100, 160],
+            "Fecha_Actualizacion": ["01/01/2025", "02/01/2025"],
+        }
+    )
+    candidates = detect_relationships(
+        {"Ventas": sales, "Productos": products},
+        {
+            "Ventas": {
+                "producto": "ID_Producto",
+                "cantidad": "Cantidad",
+                "monto": "Monto",
+            },
+            "Productos": {
+                "producto": "Producto",
+                "cantidad": "Stock",
+                "costo": "Costo_Unitario",
+                "monto": "Precio_Lista",
+                "fecha": "Fecha_Actualizacion",
+            },
+        },
+    )
+
+    relation = next(
+        item
+        for item in candidates
+        if item["left_sheet"] == "Ventas" and item["right_sheet"] == "Productos"
+    )
+    assert relation["safe"] is True
+    assert relation["purpose"] == "enriquecer_costos"
+    assert relation["recommended"] is True
+
+
+def test_sales_with_transaction_id_and_amount_can_relates_without_date_or_quantity():
+    sales = pd.DataFrame(
+        {
+            "ID_Venta": ["V1", "V2", "V3"],
+            "ID_Producto": ["A", "A", "B"],
+            "Monto": [200, 400, 300],
+        }
+    )
+    products = pd.DataFrame(
+        {
+            "ID_Producto": ["A", "B"],
+            "Producto": ["Uno", "Dos"],
+            "Costo_Unitario": [50, 80],
+            "Precio_Lista": [100, 160],
+        }
+    )
+    mappings = {
+        "Ventas": {"producto": "ID_Producto", "monto": "Monto"},
+        "Productos": {
+            "producto": "Producto",
+            "costo": "Costo_Unitario",
+            "monto": "Precio_Lista",
+        },
+    }
+
+    candidates = detect_relationships(
+        {"Ventas": sales, "Productos": products}, mappings
+    )
+    relation = next(
+        item
+        for item in candidates
+        if item["left_sheet"] == "Ventas" and item["right_sheet"] == "Productos"
+    )
+    metrics = compute_metrics(sales, mappings["Ventas"])
+
+    assert relation["safe"] is True
+    assert relation["purpose"] == "enriquecer_costos"
+    assert relation["recommended"] is True
+    assert metrics.get("tipo_analisis") != "generico"
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 900.0
+
+
+def test_relationships_sync_blocks_clp_sales_with_usd_stock_catalog():
+    source = io.BytesIO()
+    with pd.ExcelWriter(source, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "Fecha_Venta": ["01/01/2025", "02/01/2025", "03/01/2025"],
+                "ID_Producto": ["A", "A", "B"],
+                "Cantidad": [1, 2, 1],
+                "Monto": ["CLP 200", "CLP 400", "CLP 300"],
+            }
+        ).to_excel(writer, sheet_name="Ventas", index=False)
+        pd.DataFrame(
+            {
+                "ID_Producto": ["A", "B"],
+                "Producto": ["Uno", "Dos"],
+                "Stock": [10, 20],
+                "Costo_Unitario": ["USD 2", "USD 3"],
+                "Precio_Lista": ["USD 4", "USD 6"],
+                "Fecha_Actualizacion": ["01/01/2025", "02/01/2025"],
+            }
+        ).to_excel(writer, sheet_name="Productos", index=False)
+    manifest = {
+        "hojas": [
+            {
+                "nombre": "Ventas",
+                "procesar": True,
+                "rules": {},
+                "mapping": {
+                    "fecha": "Fecha_Venta",
+                    "producto": "ID_Producto",
+                    "cantidad": "Cantidad",
+                    "monto": "Monto",
+                },
+                "scope": {},
+                "eliminar_duplicados": False,
+            },
+            {
+                "nombre": "Productos",
+                "procesar": True,
+                "rules": {},
+                "mapping": {
+                    "fecha": "Fecha_Actualizacion",
+                    "producto": "Producto",
+                    "cantidad": "Stock",
+                    "costo": "Costo_Unitario",
+                    "monto": "Precio_Lista",
+                },
+                "scope": {},
+                "eliminar_duplicados": False,
+            },
+        ]
+    }
+
+    response = _relationships_sync("monedas.xlsx", source.getvalue(), manifest)
+    relation = next(
+        item
+        for item in response["candidates"]
+        if item["left_sheet"] == "Ventas" and item["right_sheet"] == "Productos"
+    )
+
+    assert relation["purpose"] == "enriquecer_costos"
+    assert relation["safe"] is False
+    assert relation["recommended"] is False
+    assert relation["currency_compatible"] is False
+    assert "CLP" in relation["reason"] and "USD" in relation["reason"]
+
+
+def test_relationship_focus_discovers_neutral_cost_catalog_from_headers():
+    source = io.BytesIO()
+    with pd.ExcelWriter(source, engine="openpyxl") as writer:
+        for sheet, prefix in (("Enero", "E"), ("Febrero", "F")):
+            pd.DataFrame(
+                {
+                    "ID_Venta": [f"{prefix}1", f"{prefix}2"],
+                    "ID_Producto": ["A", "B"],
+                    "Monto": [200, 300],
+                }
+            ).to_excel(writer, sheet_name=sheet, index=False)
+        pd.DataFrame(
+            {
+                "ID_Producto": ["A", "B"],
+                "Descripcion": ["Uno", "Dos"],
+                "Costo_Unitario": [50, 80],
+                "Precio_Lista": [100, 160],
+            }
+        ).to_excel(writer, sheet_name="Catalogo_SKU", index=False)
+    manifest = {
+        "hojas": [
+            {
+                "nombre": name,
+                "procesar": True,
+                "rules": {},
+                "mapping": (
+                    {"producto": "ID_Producto", "monto": "Monto"}
+                    if name != "Catalogo_SKU"
+                    else {}
+                ),
+                "scope": {},
+                "eliminar_duplicados": False,
+            }
+            for name in ("Enero", "Febrero", "Catalogo_SKU")
+        ]
+    }
+
+    response = _relationships_sync(
+        "catalogo-neutro.xlsx",
+        source.getvalue(),
+        manifest,
+        focus={"sheets": ["Enero", "Febrero"]},
+    )
+
+    catalog_relations = [
+        item
+        for item in response["candidates"]
+        if item["right_sheet"] == "Catalogo_SKU"
+    ]
+    assert catalog_relations
+    assert all(item["purpose"] == "enriquecer_costos" for item in catalog_relations)
+    assert any(item["safe"] and item["recommended"] for item in catalog_relations)
+
+
+def test_total_cost_reference_is_not_multiplied_or_recommended_as_unit_cost():
+    sales = pd.DataFrame(
+        {
+            "ID_Producto": ["A", "B"],
+            "Cantidad": [2, 3],
+            "Monto": [500, 900],
+        }
+    )
+    products = pd.DataFrame(
+        {
+            "ID_Producto": ["A", "B"],
+            "Producto": ["Uno", "Dos"],
+            "Costo_Total": [1000, 2000],
+            "Precio_Lista": [300, 350],
+        }
+    )
+    mappings = {
+        "Ventas": {
+            "producto": "ID_Producto",
+            "cantidad": "Cantidad",
+            "monto": "Monto",
+        },
+        "Productos": {
+            "producto": "Producto",
+            "costo": "Costo_Total",
+            "monto": "Precio_Lista",
+        },
+    }
+    join = {
+        "left_sheet": "Ventas",
+        "right_sheet": "Productos",
+        "left_keys": ["ID_Producto"],
+        "right_keys": ["ID_Producto"],
+        "type": "left",
+    }
+
+    merged, mapping, provenance = join_related_frames(
+        {"Ventas": sales, "Productos": products}, mappings, join
+    )
+    relation = detect_relationships(
+        {"Ventas": sales, "Productos": products}, mappings
+    )[0]
+
+    assert merged["Costo_Total"].tolist() == [1000, 2000]
+    assert "Costo_Venta" not in merged.columns
+    assert mapping.get("costo") is None
+    assert provenance["costo_derivado"] is None
+    assert relation["purpose"] == "enriquecer_referencia"
+    assert relation["recommended"] is False
+
+
+def test_transaction_with_amount_and_price_list_is_not_hidden_as_catalog():
+    frame = pd.DataFrame(
+        {
+            "Producto": ["A", "B"],
+            "Cantidad": [2, 3],
+            "Monto": [500, 900],
+            "Costo_Unitario": [100, 200],
+            "Precio_Lista": [300, 350],
+        }
+    )
+    metrics = compute_metrics(
+        frame,
+        {
+            "producto": "Producto",
+            "cantidad": "Cantidad",
+            "monto": "Monto",
+            "costo": "Costo_Unitario",
+        },
+    )
+
+    assert metrics.get("tipo_analisis") != "catalogo_productos"
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 1400.0
+    assert metrics["kpis"]["gastos_totales"]["valor"] == 800.0
+    assert metrics["kpis"]["ganancia_neta"]["valor"] == 600.0
+
+
+def test_single_sales_sheet_multiplies_quantity_by_unit_cost():
+    frame = pd.DataFrame(
+        {
+            "Fecha": ["01/01/2025", "02/01/2025"],
+            "ID_Producto": ["A", "B"],
+            "Cantidad": [2, 3],
+            "Costo_Unitario": [50, 80],
+            "Monto": [200, 400],
+            "Categoria": ["X", "Y"],
+        }
+    )
+    metrics = compute_metrics(
+        frame,
+        {
+            "fecha": "Fecha",
+            "producto": "ID_Producto",
+            "cantidad": "Cantidad",
+            "costo": "Costo_Unitario",
+            "monto": "Monto",
+            "categoria": "Categoria",
+        },
+    )
+
+    assert metrics["calculo_costos"]["origen"] == "cantidad_por_costo_unitario"
+    assert metrics["kpis"]["gastos_totales"]["valor"] == 340.0
+    assert metrics["kpis"]["ganancia_neta"]["valor"] == 260.0
+    assert {row["nombre"]: row["costo"] for row in metrics["por_categoria"]} == {
+        "X": 100.0,
+        "Y": 240.0,
+    }
+
+
+def test_declared_total_cost_is_not_multiplied_again():
+    metrics = compute_metrics(
+        pd.DataFrame(
+            {
+                "Fecha": ["01/01/2025"],
+                "Producto": ["A"],
+                "Cantidad": [4],
+                "Costo_Total": [300],
+                "Monto": [500],
+            }
+        ),
+        {
+            "fecha": "Fecha",
+            "producto": "Producto",
+            "cantidad": "Cantidad",
+            "costo": "Costo_Total",
+            "monto": "Monto",
+        },
+    )
+
+    assert metrics["calculo_costos"]["origen"] == "columna_costo"
+    assert metrics["kpis"]["gastos_totales"]["valor"] == 300.0
+
+
+def test_english_month_names_and_explicit_percentages_are_normalized():
+    assert parse_date("12-Jan-2025").strftime("%Y-%m-%d") == "2025-01-12"
+    assert parse_date("03-Aug-25").strftime("%Y-%m-%d") == "2025-08-03"
+
+    standardized, _ = standardize_dataframe(
+        pd.DataFrame({"Descuento_Pct": ["20%", "0.2", "110%"]})
+    )
+    assert standardized["Descuento_Pct"].tolist() == ["0.2", "0.2", "1.1"]
+
+
+def test_metrics_honors_canonical_decimal_chosen_by_standardization():
+    standardized, _ = standardize_dataframe(
+        pd.DataFrame({"Fecha": ["01/01/2025", "02/01/2025"], "Monto": ["1,234", "2,5"]}),
+        {"fecha": "Fecha", "monto": "Monto"},
+    )
+    assert standardized["Monto"].tolist() == ["1.234", "2.5"]
+    metrics = compute_metrics(standardized, {"fecha": "Fecha", "monto": "Monto"})
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 3.73
+
+
+def test_canonical_export_keeps_decimal_dates_and_negative_text_roles():
+    exported = safe_export_dataframe(
+        pd.DataFrame(
+            {
+                "Monto": ["1.234"],
+                "Fecha": ["12-Jan-2025"],
+                "SKU": ["-12.990"],
+            }
+        ),
+        numeric_columns={"Monto"},
+        date_columns={"Fecha"},
+        canonical_numeric=True,
+    )
+
+    assert exported.loc[0, "Monto"] == 1.234
+    assert exported.loc[0, "Fecha"].strftime("%Y-%m-%d") == "2025-01-12"
+    assert exported.loc[0, "SKU"] == "'-12.990"
+
+
+def test_xlsx_writer_preserves_numeric_percent_and_date_types():
+    workbook = openpyxl.Workbook()
+    workbook.remove(workbook.active)
+    _write_clean_sheet(
+        workbook,
+        "Ventas",
+        pd.DataFrame(
+            {
+                "Fecha": ["12-Jan-2025"],
+                "Monto": ["1.234"],
+                "Descuento_Pct": ["0.2"],
+            }
+        ),
+        {},
+        {},
+        numeric_columns={"Monto", "Descuento_Pct"},
+        date_columns={"Fecha"},
+    )
+    sheet = workbook["Ventas"]
+
+    assert sheet["A2"].is_date
+    assert sheet["A2"].number_format == "dd/mm/yyyy"
+    assert sheet["B2"].value == 1.234
+    assert sheet["B2"].data_type == "n"
+    assert sheet["C2"].value == 0.2
+    assert sheet["C2"].number_format == "0.00%"
+
+
 def test_numeric_export_types_only_values_that_parse():
     exported = safe_export_dataframe(
         pd.DataFrame({"Cantidad": ["2", "N/D"], "Monto": ["1.500", "1,234"], "Texto": ["001", "=2+2"]}),
@@ -133,6 +642,166 @@ def test_numeric_export_types_only_values_that_parse():
     assert exported.loc[1, "Monto"] == "1,234"
     assert exported.loc[0, "Texto"] == "001"
     assert exported.loc[1, "Texto"] == "'=2+2"
+
+
+def test_related_export_keeps_all_inferred_numeric_and_date_columns_typed():
+    frame = pd.DataFrame(
+        {
+            "Fecha": ["12-Jan-2025"],
+            "Monto": ["1.234"],
+            "Precio_Unitario": ["2500"],
+            "Costo_Unitario_Productos": ["800"],
+            "Costo_Venta": [1600.0],
+        }
+    )
+    numeric, dates = _analysis_export_type_columns(
+        frame,
+        {
+            "Ventas": {
+                "column_types": {
+                    "Fecha": "fecha",
+                    "Monto": "numero",
+                    "Precio_Unitario": "numero",
+                }
+            },
+            "Productos": {"column_types": {"Costo_Unitario": "numero"}},
+        },
+        {"fecha": "Fecha", "monto": "Monto", "costo": "Costo_Venta"},
+    )
+    exported = safe_export_dataframe(
+        frame,
+        numeric_columns=numeric,
+        date_columns=dates,
+        canonical_numeric=True,
+    )
+
+    assert numeric == {
+        "Monto",
+        "Precio_Unitario",
+        "Costo_Unitario_Productos",
+        "Costo_Venta",
+    }
+    assert dates == {"Fecha"}
+    assert exported.loc[0, "Monto"] == 1.234
+    assert exported.loc[0, "Precio_Unitario"] == 2500
+    assert exported.loc[0, "Costo_Unitario_Productos"] == 800
+    assert exported.loc[0, "Fecha"].strftime("%Y-%m-%d") == "2025-01-12"
+
+
+def test_related_export_does_not_infer_identifier_type_from_numeric_prefix():
+    frame = pd.DataFrame(
+        {"ID_Producto": ["001"], "ID_Referencia": ["002"]}
+    )
+    numeric, dates = _analysis_export_type_columns(
+        frame,
+        {
+            "Ventas": {"column_types": {"ID_Producto": "texto"}},
+            "Referencia": {"column_types": {"ID": "numero"}},
+        },
+    )
+    exported = safe_export_dataframe(
+        frame,
+        numeric_columns=numeric,
+        date_columns=dates,
+        canonical_numeric=True,
+    )
+
+    assert numeric == set()
+    assert dates == set()
+    assert exported.loc[0, "ID_Producto"] == "001"
+    assert exported.loc[0, "ID_Referencia"] == "002"
+
+
+def test_joined_xlsx_keeps_sales_costs_percentages_and_dates_typed_end_to_end():
+    source = io.BytesIO()
+    with pd.ExcelWriter(source, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "Fecha": ["12-Jan-2025", "13-Jan-2025"],
+                "ID_Producto": ["A", "B"],
+                "Cantidad": ["2", "3"],
+                "Precio_Unitario": ["2500", "3000"],
+                "Descuento_Pct": ["20%", "0.1"],
+                "Monto": ["4000", "8100"],
+            }
+        ).to_excel(writer, sheet_name="Ventas", index=False)
+        pd.DataFrame(
+            {
+                "ID_Producto": ["A", "B"],
+                "Producto": ["Uno", "Dos"],
+                "Costo_Unitario": ["800", "1000"],
+            }
+        ).to_excel(writer, sheet_name="Productos", index=False)
+
+    manifest = {
+        "hojas": [
+            {
+                "nombre": "Ventas",
+                "procesar": True,
+                "rules": {},
+                "mapping": {
+                    "fecha": "Fecha",
+                    "producto": "ID_Producto",
+                    "cantidad": "Cantidad",
+                    "monto": "Monto",
+                },
+                "scope": {},
+                "eliminar_duplicados": False,
+                "status": "limpia",
+                "error": "",
+            },
+            {
+                "nombre": "Productos",
+                "procesar": True,
+                "rules": {},
+                "mapping": {
+                    "producto": "Producto",
+                    "costo": "Costo_Unitario",
+                },
+                "scope": {},
+                "eliminar_duplicados": False,
+                "status": "limpia",
+                "error": "",
+            },
+        ]
+    }
+    scope = {
+        "mode": "join",
+        "sheets": ["Ventas", "Productos"],
+        "active_sheet": "Ventas",
+        "join": {
+            "left_sheet": "Ventas",
+            "right_sheet": "Productos",
+            "left_keys": ["ID_Producto"],
+            "right_keys": ["ID_Producto"],
+            "type": "left",
+        },
+    }
+    payload, _, _ = _clean_download_book_sync(
+        "ventas_productos.xlsx", source.getvalue(), manifest, "xlsx", scope
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(payload), data_only=False)
+    related = workbook["Datos_relacionados"]
+    positions = {cell.value: cell.column for cell in related[1]}
+
+    assert related.cell(2, positions["Fecha"]).is_date
+    for column in (
+        "Cantidad",
+        "Precio_Unitario",
+        "Descuento_Pct",
+        "Monto",
+        "Costo_Unitario",
+        "Costo_Venta",
+        "Utilidad_Bruta",
+        "Margen_Bruto",
+    ):
+        assert related.cell(2, positions[column]).data_type == "n"
+    assert related.cell(2, positions["Descuento_Pct"]).value == 0.2
+    assert related.cell(2, positions["Descuento_Pct"]).number_format == "0.00%"
+    assert related.cell(2, positions["Costo_Venta"]).value == 1600
+    assert related.cell(2, positions["Utilidad_Bruta"]).value == 2400
+    assert related.cell(2, positions["Margen_Bruto"]).value == 0.6
+    assert related.cell(2, positions["Margen_Bruto"]).number_format == "0.00%"
 
 
 def test_cache_key_includes_dataset_revision_rules_mapping_sheet_and_engine():
@@ -292,7 +961,6 @@ def test_stress_workbook_verifiable_regressions():
     reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
 )
 def test_stress_append_join_exact_cost_regression():
-    from app.engine.standardize import parse_number
     from app.routes.pipeline import _analyze_cached
 
     content = STRESS_PATH.read_bytes()
@@ -328,8 +996,12 @@ def test_stress_append_join_exact_cost_regression():
     )
 
     assert len(joined) == 5430
-    assert float(joined[mapping["monto"]].map(parse_number).sum()) == 3_165_894_176
-    assert float(joined[mapping["costo"]].sum()) == 1_853_487_400
+    # El frame ya usa representación numérica canónica. Reutilizar aquí
+    # parse_number con su convención de miles volvería a convertir 1.234 en
+    # 1234 y reproduciría precisamente el bug de doble interpretación.
+    metrics = compute_metrics(joined, mapping)
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 3_165_789_390.89
+    assert metrics["kpis"]["gastos_totales"]["valor"] == 1_853_487_400
     cost = provenance["join"]["costo_derivado"]
     assert cost["filas_con_costo"] == 5043
     assert cost["cobertura_costos_pct"] == 92.87

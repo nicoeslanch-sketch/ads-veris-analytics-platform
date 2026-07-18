@@ -151,6 +151,9 @@ export default function Estandarizacion() {
     selectedSheets,
   )
   const standardizationComplete = standardizationScopeComplete(selectedSheets, sheetSessions)
+  const selectedSheetErrors = selectedSheets.filter(
+    (name) => sheetSessions[name]?.status === 'error',
+  )
 
   useEffect(() => {
     if (!canCombineSheets && combineSheets) setCombineSheets(false)
@@ -294,7 +297,11 @@ export default function Estandarizacion() {
               </Link>
             ) : (
               <span className="rounded-lg bg-navy/10 px-4 py-2 text-xs font-semibold text-navy/55">
-                Completa las {selectedSheets.length} hojas seleccionadas para continuar
+                {batchProgress
+                  ? `Preparando automáticamente ${batchProgress.current} de ${batchProgress.total}: ${batchProgress.sheet}. Espera un momento.`
+                  : selectedSheetErrors.length > 0
+                    ? `${selectedSheetErrors.length} hoja(s) necesitan reintento antes de continuar.`
+                    : `Estamos preparando automáticamente las ${selectedSheets.length} hojas seleccionadas. No necesitas hacer nada.`}
               </span>
             )}
             <button
@@ -462,6 +469,10 @@ export default function Estandarizacion() {
               Todas las hojas se preparan automáticamente. Si eliges solo algunas,
               podrás marcarlas manualmente sin crear documentos separados.
             </p>
+            <p className="mt-1 text-xs text-navy/55">
+              <strong>Vista actual</strong> solo indica la hoja que ves en pantalla; todas las
+              hojas marcadas se incluyen en el proceso.
+            </p>
             <fieldset className="mt-4 grid gap-2 sm:grid-cols-2">
               <legend className="mb-2 text-sm font-semibold text-navy">
                 Que hojas quieres preparar?
@@ -594,7 +605,7 @@ export default function Estandarizacion() {
                           </span>
                         )}
                       </span>
-                      {isActive && <span className="shrink-0 font-medium text-teal">Activa</span>}
+                      {isActive && <span className="shrink-0 font-medium text-teal">Vista actual</span>}
                     </button>
                     <span className={session?.status === 'error' ? 'shrink-0 text-coral' : 'shrink-0 text-navy/55'}>
                       {!isSelected ? 'Conservar sin procesar' : status}

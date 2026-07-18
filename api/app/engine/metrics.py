@@ -22,6 +22,7 @@ from .mapping import (
     strip_accents_lower,
 )
 from .standardize import (
+    NUMERIC_CANONICAL_ATTR,
     is_missing,
     map_unique,
     parse_date,
@@ -44,8 +45,18 @@ FINANCIAL_RATIOS = [
 def _numeric_series(df: pd.DataFrame, column: str | None) -> pd.Series:
     if column is None or column not in df.columns:
         return pd.Series([None] * len(df), index=df.index, dtype=float)
+    canonical = bool(df.attrs.get(NUMERIC_CANONICAL_ATTR))
     return map_unique(
-        df[column], lambda v: parse_number(v) if not is_missing(v) else None
+        df[column],
+        lambda value: (
+            parse_number(
+                value,
+                dot3_convention="decimal" if canonical else "miles",
+                comma3_convention="decimal",
+            )
+            if not is_missing(value)
+            else None
+        ),
     ).astype(float)
 
 
@@ -201,9 +212,17 @@ def _block_monetary_outputs(result: dict, detection: CurrencyDetection) -> None:
         "margen_utilidad_pct",
         "flujo_caja",
         "devoluciones",
+        "base_costos",
     ):
         if key in kpis:
             kpis[key] = None
+
+    # El monto de filas sin fecha también es una suma monetaria. Quedaba fuera
+    # de los KPI principales y podía ser consumido por reportes aun cuando la
+    # mezcla de monedas ya había bloqueado el dashboard.
+    period_without_date = result.get("periodo", {}).get("sin_fecha")
+    if isinstance(period_without_date, dict) and "monto" in period_without_date:
+        period_without_date["monto"] = None
 
     # Estas estructuras se derivan de sumas monetarias. Entregar listas vacías
     # evita que un consumidor use accidentalmente valores calculados antes del
@@ -221,12 +240,228 @@ def _block_monetary_outputs(result: dict, detection: CurrencyDetection) -> None:
             "concentracion_top_pct": None,
             "cobertura_identificacion_pct": None,
         }
+
+    # Los catálogos no publican ingresos genéricos, pero sí estadísticas de
+    # costo/precio y margen potencial. También son indicadores monetarios y
+    # deben quedar inutilizables si el archivo mezcla monedas. Se conservan
+    # exclusivamente conteos, cobertura, categorías, marcas y estados.
+    product_analysis = result.get("analisis_productos")
+    if isinstance(product_analysis, dict):
+        empty_stats = {
+            "promedio": None,
+            "mediana": None,
+            "minimo": None,
+            "maximo": None,
+        }
+        for key in ("costos", "precios_lista", "margen_potencial"):
+            if key in product_analysis:
+                product_analysis[key] = dict(empty_stats)
+        if "totales_catalogo_unitario" in product_analysis:
+            product_analysis["totales_catalogo_unitario"] = None
+        if "ranking_costos" in product_analysis:
+            product_analysis["ranking_costos"] = []
+
+    # En campañas, inversión y CPC son monetarios; impresiones, clics, CTR y
+    # sus desgloses siguen siendo seguros y útiles.
+    campaign_analysis = result.get("analisis_campanas")
+    if isinstance(campaign_analysis, dict):
+        for key in ("inversion", "cpc"):
+            if key in campaign_analysis:
+                campaign_analysis[key] = None
     result["proyeccion"] = None
     result["datos_monetarios_disponibles"] = False
     result["bloqueo_monetario"] = {
         "codigo": "MONEDAS_INCOMPATIBLES",
         "mensaje": detection.advertencia,
     }
+
+
+def is_product_catalog_profile(
+    columns: list[str] | pd.Index,
+    roles: dict[str, str],
+) -> bool:
+    """Distingue una maestra de productos de una tabla transaccional.
+
+    ``Stock`` puede ocupar el rol cantidad en una maestra y ``Precio_Lista``
+    puede ocupar el rol monto por compatibilidad legacy. Eso no convierte la
+    maestra en ventas. En el sentido inverso, la presencia de una columna
+    transaccional distinta (por ejemplo ``Monto``) impide ocultar ingresos
+    solo porque la misma tabla también incluya precio de lista y costos.
+
+    Esta función es compartida por métricas y relaciones multihoja para que
+    ambas rutas clasifiquen la misma estructura de la misma manera.
+    """
+
+    normalized_columns = {
+        str(column): strip_accents_lower(str(column)).replace("_", " ")
+        for column in columns
+    }
+    price_list_columns = {
+        column
+        for column, normalized in normalized_columns.items()
+        if "precio" in normalized and "lista" in normalized
+    }
+    if not price_list_columns:
+        return False
+
+    transaction_id_tokens = (
+        "id venta",
+        "id transaccion",
+        "numero venta",
+        "numero boleta",
+        "numero factura",
+    )
+    has_transaction_id = any(
+        any(token in normalized for token in transaction_id_tokens)
+        for normalized in normalized_columns.values()
+    ) or any(
+        any(
+            marker in re.sub(r"[^a-z0-9]", "", normalized)
+            for marker in ("idventa", "idtransaccion", "numeroventa", "numeroboleta", "numerofactura")
+        )
+        for normalized in normalized_columns.values()
+    )
+    operational_date_tokens = (
+        "venta",
+        "operacion",
+        "transaccion",
+        "factura",
+        "boleta",
+        "pedido",
+        "orden",
+        "emision",
+        "sale",
+        "transaction",
+        "operation",
+        "invoice",
+        "order",
+    )
+    metadata_date_tokens = (
+        "actualizacion",
+        "creacion",
+        "modificacion",
+        "vigencia",
+        "carga",
+        "update",
+        "created",
+        "creation",
+        "modified",
+        "effective",
+    )
+    mapped_date = roles.get("fecha")
+    mapped_date_normalized = normalized_columns.get(str(mapped_date), "")
+    # Una fecha explícitamente comercial domina cualquier marca de metadata
+    # (por ejemplo Fecha_Venta_Modificada sigue siendo una fecha de venta).
+    has_operational_date = any(
+        (
+            column == str(mapped_date)
+            or any(marker in normalized for marker in ("fecha", "date", "periodo"))
+        )
+        and any(token in normalized for token in operational_date_tokens)
+        for column, normalized in normalized_columns.items()
+    )
+    mapped_date_is_metadata = bool(
+        mapped_date
+        and any(token in mapped_date_normalized for token in metadata_date_tokens)
+        and not any(
+            token in mapped_date_normalized for token in operational_date_tokens
+        )
+    )
+    has_transaction_date = bool(
+        has_operational_date or (mapped_date and not mapped_date_is_metadata)
+    )
+    mapped_amount = roles.get("monto")
+    amount_is_list_price = mapped_amount is None or mapped_amount in price_list_columns
+
+    # Protege incluso ante un override manual que asigne Precio_Lista a monto
+    # aunque el archivo conserve una columna comercial inequívoca.
+    transaction_amount_tokens = {
+        "monto",
+        "venta",
+        "ventas",
+        "ingreso",
+        "ingresos",
+        "importe",
+        "facturacion",
+        "revenue",
+        "sales",
+    }
+    distinct_transaction_amount = any(
+        column not in price_list_columns
+        and column != roles.get("costo")
+        and bool(
+            set(re.split(r"[^a-z0-9]+", normalized.strip()))
+            & transaction_amount_tokens
+        )
+        for column, normalized in normalized_columns.items()
+    )
+    return bool(
+        roles.get("producto")
+        and roles.get("costo")
+        and not has_transaction_date
+        and not has_transaction_id
+        and amount_is_list_price
+        and not distinct_transaction_amount
+    )
+
+
+def is_transaction_profile(
+    columns: list[str] | pd.Index,
+    roles: dict[str, str],
+) -> bool:
+    """Reconoce hechos comerciales aunque no traigan fecha ni cantidad.
+
+    Muchos extractos válidos solo incluyen folio, producto y monto. El perfil
+    anterior los trataba como una tabla genérica, lo que impedía relacionarlos
+    con Productos. Un catálogo explícito siempre tiene prioridad para que
+    Precio_Lista/Stock no se conviertan en ventas ficticias.
+    """
+
+    if not roles.get("monto") or is_product_catalog_profile(columns, roles):
+        return False
+    normalized_columns = {
+        str(column): strip_accents_lower(str(column)).replace("_", " ")
+        for column in columns
+    }
+    compact_names = {
+        re.sub(r"[^a-z0-9]", "", normalized)
+        for normalized in normalized_columns.values()
+    }
+    has_transaction_id = any(
+        any(
+            marker in compact
+            for marker in (
+                "idventa",
+                "idtransaccion",
+                "numeroventa",
+                "numeroboleta",
+                "numerofactura",
+            )
+        )
+        for compact in compact_names
+    )
+    amount_name = normalized_columns.get(str(roles.get("monto")), "")
+    amount_words = set(re.split(r"[^a-z0-9]+", amount_name.strip()))
+    clear_transaction_amount = bool(
+        amount_words
+        & {
+            "monto",
+            "venta",
+            "ventas",
+            "ingreso",
+            "ingresos",
+            "importe",
+            "facturacion",
+            "revenue",
+            "sales",
+        }
+    )
+    return bool(
+        roles.get("fecha")
+        or (roles.get("cantidad") and roles.get("producto"))
+        or has_transaction_id
+        or clear_transaction_amount
+    )
 
 
 def _pct_change(current: float, previous: float | None) -> float | None:
@@ -258,6 +493,7 @@ def _group_sum(
     # absurdos (100.000 sobre un neto de 10.000 = "1.000%").
     positivos = float(frame.loc[frame["monto"] > 0, "monto"].sum())
     total = positivos if positivos > 0 else (abs(float(frame["monto"].sum())) or 1.0)
+    total_neto = float(frame["monto"].sum())
     rows: list[dict] = []
     for name, g in frame.groupby("grupo", dropna=False):
         ingresos = float(g["monto"].sum())
@@ -279,6 +515,9 @@ def _group_sum(
             "participacion_bruta_pct": (
                 round(brutas / positivos * 100, 1) if positivos > 0 else None
             ),
+            "participacion_neta_pct": (
+                round(ingresos / total_neto * 100, 1) if total_neto else None
+            ),
         }
         # Fase 12b §22: cada grupo expone su base de cálculo — sin esto, una
         # categoría con UNA fila con costo competía en "rentabilidad" contra
@@ -290,7 +529,9 @@ def _group_sum(
             item["cobertura_costos_pct"] = round(len(paired) / len(g) * 100, 1)
             if len(paired):
                 ing_par = float(paired["monto"].sum())
-                utilidad = ing_par - float(paired["costo"].sum())
+                costo_pareado = float(paired["costo"].sum())
+                utilidad = ing_par - costo_pareado
+                item["costo"] = round(costo_pareado, 2)
                 item["utilidad"] = round(utilidad, 2)
                 item["margen_pct"] = (
                     round(utilidad / ing_par * 100, 1) if ing_par else None
@@ -376,13 +617,15 @@ def compute_metrics(
         strip_accents_lower(str(column)).replace("_", " "): str(column)
         for column in df.columns
     }
-    product_catalog = bool(
-        roles.get("producto")
-        and roles.get("costo")
-        and not roles.get("fecha")
-        and not roles.get("cantidad")
-        and any("precio" in name and "lista" in name for name in normalized_columns)
+    price_list_column = next(
+        (
+            column
+            for normalized, column in normalized_columns.items()
+            if "precio" in normalized and "lista" in normalized
+        ),
+        None,
     )
+    product_catalog = is_product_catalog_profile(df.columns, roles)
     normalized_keys = {norm_key: column for norm_key, column in normalized_columns.items()}
     campaign_profile = all(
         any(token in name for name in normalized_keys)
@@ -393,9 +636,7 @@ def compute_metrics(
         and any("stock minimo" in name for name in normalized_keys)
         and bool(roles.get("producto"))
     )
-    transactional_profile = bool(
-        roles.get("monto") and (roles.get("fecha") or (roles.get("cantidad") and roles.get("producto")))
-    )
+    transactional_profile = is_transaction_profile(df.columns, roles)
 
     currency = _coerce_currency_detection(
         currency_hint,
@@ -405,6 +646,30 @@ def compute_metrics(
 
     amounts_all = _numeric_series(df, roles.get("monto"))
     costs_all = _numeric_series(df, roles.get("costo"))
+    cost_column_normalized = (
+        strip_accents_lower(str(roles["costo"])).replace("_", " ")
+        if roles.get("costo")
+        else ""
+    )
+    unit_cost_role = any(
+        marker in cost_column_normalized
+        for marker in ("costo unitario", "cost unit", "unit cost", "costo por unidad")
+    )
+    derived_unit_cost = bool(
+        unit_cost_role
+        and roles.get("cantidad")
+        and transactional_profile
+        and not product_catalog
+    )
+    if derived_unit_cost:
+        quantities_all = _numeric_series(df, roles.get("cantidad"))
+        costs_all = (costs_all * quantities_all).where(
+            costs_all.notna() & quantities_all.notna()
+        )
+        warnings.append(
+            f"El costo de venta se calculó como {roles['cantidad']} × "
+            f"{roles['costo']}; el costo unitario no se sumó directamente."
+        )
     has_costs = roles.get("costo") is not None and costs_all.notna().any()
     profits_all = (amounts_all - costs_all) if has_costs else None
 
@@ -707,10 +972,18 @@ def compute_metrics(
             else None,
         }
         kpis["flujo_caja"] = _kpi(utilidad, prev_utilidad)
+        costo_pareado = float(costs[paired_mask].sum())
         kpis["cobertura_costos"] = {
             "filas_con_ingreso": filas_con_ingreso,
             "filas_con_ingreso_y_costo": filas_pareadas,
             "pct": cobertura_pct,
+        }
+        kpis["base_costos"] = {
+            "filas_con_costo": int(costs.notna().sum()),
+            "costo_total_conocido": round(gastos, 2),
+            "filas_pareadas": filas_pareadas,
+            "costo_pareado": round(costo_pareado, 2),
+            "ingresos_pareados": round(ingresos_pareados, 2),
         }
     else:
         kpis["gastos_totales"] = None
@@ -735,6 +1008,11 @@ def compute_metrics(
         "moneda_detalle": currency.to_dict(),
         "datos_monetarios_disponibles": not currency.mixta,
         "mapeo": roles,
+        "calculo_costos": {
+            "origen": "cantidad_por_costo_unitario" if derived_unit_cost else "columna_costo",
+            "columna_costo": roles.get("costo"),
+            "columna_cantidad": roles.get("cantidad") if derived_unit_cost else None,
+        } if has_costs else None,
         # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
         # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
         "dimensiones": {
@@ -943,14 +1221,7 @@ def compute_metrics(
     if product_catalog:
         product_column = roles["producto"]
         cost_values = _numeric_series(df, roles.get("costo"))
-        price_column = next(
-            (
-                column
-                for normalized, column in normalized_columns.items()
-                if "precio" in normalized and "lista" in normalized
-            ),
-            roles.get("monto"),
-        )
+        price_column = price_list_column or roles.get("monto")
         price_values = _numeric_series(df, price_column)
         paired = cost_values.notna() & price_values.notna()
         margins = ((price_values - cost_values) / price_values.where(price_values != 0) * 100).where(paired)
@@ -998,6 +1269,17 @@ def compute_metrics(
             "costos": stats(cost_values),
             "precios_lista": stats(price_values),
             "margen_potencial": stats(margins),
+            # No es valor de inventario: representa una unidad de cada fila
+            # del catalogo. Se expone con ese nombre explicito para que la UI
+            # no lo presente como un gasto real del negocio.
+            "totales_catalogo_unitario": {
+                "costo": round(float(cost_values.dropna().sum()), 2),
+                "precio_lista": round(float(price_values.dropna().sum()), 2),
+                "utilidad_potencial": round(
+                    float((price_values[paired] - cost_values[paired]).sum()), 2
+                ),
+                "productos_con_comparacion": int(paired.sum()),
+            },
             "cobertura_costo_pct": round(float(cost_values.notna().mean() * 100), 1) if len(df) else 0.0,
             "ranking_costos": ranking.to_dict(orient="records"),
             "categorias": counts(roles.get("categoria")),

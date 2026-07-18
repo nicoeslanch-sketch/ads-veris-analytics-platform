@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { principalPorParticipacionBruta } from './metrics'
-import type { GroupRow } from './types'
+import { principalPorParticipacionBruta, summaryContentKind } from './metrics'
+import type { GroupRow, MetricsResult } from './types'
 
 describe('principalPorParticipacionBruta', () => {
   it('no confunde el mayor neto con la mayor concentración bruta', () => {
@@ -31,5 +31,41 @@ describe('principalPorParticipacionBruta', () => {
       { nombre: 'B', ingresos: 40, porcentaje: 80 },
     ]
     expect(principalPorParticipacionBruta(rows)?.nombre).toBe('B')
+  })
+
+  it('prioriza el bloqueo monetario sobre perfiles de productos o campañas', () => {
+    const metrics: MetricsResult = {
+      archivo: 'mixto.xlsx',
+      calidad_datos: 100,
+      moneda: 'CLP',
+      moneda_mixta: true,
+      mapeo: {},
+      agrupado_por_canal: null,
+      periodo: { desde: null, hasta: null, meses_disponibles: [] },
+      kpis: {
+        ingresos_totales: null,
+        transacciones: 2,
+        ticket_promedio: null,
+        gastos_totales: null,
+        ganancia_neta: null,
+        margen_utilidad_pct: null,
+        flujo_caja: null,
+      },
+      evolucion_mensual: [],
+      proyeccion: null,
+      indicadores_financieros: { disponible: false, nota: '', items: {} },
+      advertencias: [],
+      analisis_campanas: {
+        campanas: 2,
+        inversion: null,
+        impresiones: 100,
+        clics: 10,
+        ctr_pct: 10,
+        cpc: null,
+        plataformas: [],
+        estados: [],
+      },
+    }
+    expect(summaryContentKind(metrics)).toBe('mixed_currency')
   })
 })

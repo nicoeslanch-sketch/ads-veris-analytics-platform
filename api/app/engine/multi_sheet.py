@@ -17,8 +17,8 @@ from typing import Any
 import pandas as pd
 
 from .mapping import detect_columns_extended, norm_key, resolve_mapping
-from .metrics import detect_currency
-from .standardize import detect_value_type_confidence, parse_number
+from .metrics import detect_currency, is_transaction_profile
+from .standardize import NUMERIC_CANONICAL_ATTR, detect_value_type_confidence, parse_number
 
 # Se permite una relacion parcial controlada desde 60%: las filas sin clave o
 # sin correspondencia permanecen en el left join y se informan. El archivo de
@@ -35,6 +35,23 @@ IDENTIFIER_MARKERS = {
     "id", "codigo", "code", "sku", "rut", "folio", "numero", "nro", "num",
     "uuid", "clave", "key",
 }
+
+
+def is_unit_cost_column(column: str | None) -> bool:
+    """Solo acepta encabezados que declaran explícitamente costo por unidad."""
+
+    if not column:
+        return False
+    compact = norm_key(str(column))
+    return any(
+        marker in compact
+        for marker in (
+            "costounitario",
+            "costoporunidad",
+            "unitcost",
+            "costperunit",
+        )
+    )
 
 
 def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> dict:
@@ -189,10 +206,24 @@ def relation_stats(
         return RelationStats(0, 0, 0, 0, 0, "sin_relacion_segura", False, "Los tipos son incompatibles.")
     left_series = _key_series(left, left_keys)
     right_series = _key_series(right, right_keys)
+    return _relation_stats_from_series(left_series, len(left), right_series, len(right))
+
+
+def _relation_stats_from_series(
+    left_series: pd.Series,
+    left_rows: int,
+    right_series: pd.Series,
+    right_rows: int,
+) -> RelationStats:
+    """Calcula la seguridad desde claves ya normalizadas.
+
+    El detector automático reutiliza estas series entre candidatos; normalizar
+    las mismas 5.500 claves cientos de veces era su principal cuello de botella.
+    """
     left_valid = left_series.dropna()
     right_valid = right_series.dropna()
-    coverage_left = len(left_valid) / max(len(left), 1)
-    coverage_right = len(right_valid) / max(len(right), 1)
+    coverage_left = len(left_valid) / max(left_rows, 1)
+    coverage_right = len(right_valid) / max(right_rows, 1)
     left_unique_values = set(left_valid.tolist())
     right_unique_values = set(right_valid.tolist())
     overlap = (
@@ -266,62 +297,182 @@ def detect_relationships(
     frames: dict[str, pd.DataFrame],
     mappings: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Candidatas sin valores de usuario: solo nombres y estadisticas."""
-    del mappings  # reservado para reglas semanticas adicionales
+    """Detecta relaciones de enriquecimiento y las ordena por utilidad.
+
+    Dos tablas transaccionales compatibles se deben apilar, no relacionar.
+    Para evitar sugerencias confusas, la deteccion automatica prioriza una
+    tabla de ventas a la izquierda y una maestra (especialmente Productos con
+    costo) a la derecha. La validacion manual sigue disponible para cualquier
+    pareja y usa :func:`relation_stats` directamente.
+    """
+    mappings = mappings or {}
+    resolved_mappings = {
+        name: resolve_mapping([str(column) for column in frame.columns], mappings.get(name))
+        for name, frame in frames.items()
+    }
+
+    def sheet_profile(name: str) -> dict[str, bool]:
+        mapping = resolved_mappings[name]
+        is_transaction = is_transaction_profile(frames[name].columns, mapping)
+        return {
+            "transaction": is_transaction,
+            "cost_reference": bool(
+                is_unit_cost_column(mapping.get("costo")) and not is_transaction
+            ),
+        }
+
+    profiles = {name: sheet_profile(name) for name in frames}
+    key_series_cache: dict[tuple[str, tuple[str, ...]], pd.Series] = {}
+    column_type_cache: dict[tuple[str, str], str] = {}
+
+    def cached_column_type(name: str, frame: pd.DataFrame, key: str) -> str:
+        cache_key = (name, key)
+        if cache_key not in column_type_cache:
+            column_type_cache[cache_key] = _column_type(frame, key)
+        return column_type_cache[cache_key]
+
+    def cached_stats(
+        left_name: str,
+        left_keys: list[str],
+        right_name: str,
+        right_keys: list[str],
+    ) -> RelationStats:
+        left = frames[left_name]
+        right = frames[right_name]
+        if any(key not in left.columns for key in left_keys) or any(
+            key not in right.columns for key in right_keys
+        ):
+            return RelationStats(
+                0, 0, 0, 0, 0, "sin_relacion_segura", False, "La clave no existe."
+            )
+        left_types = tuple(
+            cached_column_type(left_name, left, key)
+            for key in left_keys
+        )
+        right_types = tuple(
+            cached_column_type(right_name, right, key)
+            for key in right_keys
+        )
+        if left_types != right_types:
+            return RelationStats(
+                0, 0, 0, 0, 0, "sin_relacion_segura", False, "Los tipos son incompatibles."
+            )
+        left_cache_key = (left_name, tuple(left_keys))
+        right_cache_key = (right_name, tuple(right_keys))
+        if left_cache_key not in key_series_cache:
+            key_series_cache[left_cache_key] = _key_series(left, left_keys)
+        if right_cache_key not in key_series_cache:
+            key_series_cache[right_cache_key] = _key_series(right, right_keys)
+        return _relation_stats_from_series(
+            key_series_cache[left_cache_key],
+            len(left),
+            key_series_cache[right_cache_key],
+            len(right),
+        )
+
+    def purpose(left_name: str, right_name: str) -> str:
+        left = profiles[left_name]
+        right = profiles[right_name]
+        if left["transaction"] and right["cost_reference"]:
+            return "enriquecer_costos"
+        if left["transaction"] and not right["transaction"]:
+            return "enriquecer_referencia"
+        return "otra_relacion"
+
     candidates: list[dict[str, Any]] = []
     for first_name, second_name in itertools.combinations(frames, 2):
-        first = frames[first_name]
-        second = frames[second_name]
-        pairs = _candidate_pairs(first, second)
-        safe_single = False
-        for first_key, second_key in pairs:
-            orientations = [
-                (first_name, second_name, first, second, [first_key], [second_key]),
-                (second_name, first_name, second, first, [second_key], [first_key]),
-            ]
-            best = max(
-                orientations,
-                key=lambda item: relation_stats(item[2], item[4], item[3], item[5]).unique_right,
-            )
-            stats = relation_stats(best[2], best[4], best[3], best[5])
-            safe_single = safe_single or stats.safe
-            candidates.append(
+        # Ventas Enero + Ventas Febrero es un apilado. Buscar una llave entre
+        # ambas agrega trabajo y puede terminar recomendando una union que no
+        # representa el negocio.
+        first_transaction = profiles[first_name]["transaction"]
+        second_transaction = profiles[second_name]["transaction"]
+        if first_transaction == second_transaction:
+            continue
+        # La orientación comercial es inequívoca: ventas a la izquierda y la
+        # maestra a la derecha. Evaluar también el sentido inverso triplicaba
+        # estadísticas y generaba sugerencias sin utilidad para el usuario.
+        if first_transaction:
+            left_name, right_name = first_name, second_name
+        else:
+            left_name, right_name = second_name, first_name
+        left = frames[left_name]
+        right = frames[right_name]
+        pairs = _candidate_pairs(left, right)
+        relation_purpose = purpose(left_name, right_name)
+        pair_candidates: list[dict[str, Any]] = []
+        for left_key, right_key in pairs:
+            stats = cached_stats(left_name, [left_key], right_name, [right_key])
+            pair_candidates.append(
                 {
-                    "left_sheet": best[0],
-                    "right_sheet": best[1],
-                    "left_keys": best[4],
-                    "right_keys": best[5],
+                    "left_sheet": left_name,
+                    "right_sheet": right_name,
+                    "left_keys": [left_key],
+                    "right_keys": [right_key],
                     "type": "left",
+                    "purpose": relation_purpose,
+                    "recommended": bool(
+                        stats.safe and relation_purpose == "enriquecer_costos"
+                    ),
                     **stats.to_dict(),
                 }
             )
-        if safe_single or len(pairs) < 2:
+        safe_single = [item for item in pair_candidates if item["safe"]]
+        if safe_single:
+            candidates.append(max(
+                safe_single,
+                key=lambda item: (item["overlap"], item["coverage_left"]),
+            ))
             continue
+        composite_candidate: dict[str, Any] | None = None
         for pair_combo in itertools.combinations(pairs[:6], 2):
-            first_keys = [pair[0] for pair in pair_combo]
-            second_keys = [pair[1] for pair in pair_combo]
-            orientations = [
-                (first_name, second_name, first, second, first_keys, second_keys),
-                (second_name, first_name, second, first, second_keys, first_keys),
-            ]
-            for left_name, right_name, left, right, left_keys, right_keys in orientations:
-                stats = relation_stats(left, left_keys, right, right_keys)
-                if stats.safe:
-                    candidates.append(
-                        {
-                            "left_sheet": left_name,
-                            "right_sheet": right_name,
-                            "left_keys": left_keys,
-                            "right_keys": right_keys,
-                            "type": "left",
-                            **stats.to_dict(),
-                        }
-                    )
-                    break
-            if candidates and candidates[-1].get("safe"):
+            left_keys = [pair[0] for pair in pair_combo]
+            right_keys = [pair[1] for pair in pair_combo]
+            stats = cached_stats(left_name, left_keys, right_name, right_keys)
+            if stats.safe:
+                composite_candidate = {
+                    "left_sheet": left_name,
+                    "right_sheet": right_name,
+                    "left_keys": left_keys,
+                    "right_keys": right_keys,
+                    "type": "left",
+                    "purpose": relation_purpose,
+                    "recommended": bool(relation_purpose == "enriquecer_costos"),
+                    **stats.to_dict(),
+                }
                 break
-    candidates.sort(key=lambda item: (not item["safe"], -item["overlap"], -item["coverage_left"]))
+        if composite_candidate is not None:
+            candidates.append(composite_candidate)
+        elif pair_candidates:
+            candidates.append(max(
+                pair_candidates,
+                key=lambda item: (item["overlap"], item["coverage_left"]),
+            ))
+    purpose_order = {
+        "enriquecer_costos": 0,
+        "enriquecer_referencia": 1,
+        "otra_relacion": 2,
+    }
+    candidates.sort(
+        key=lambda item: (
+            not item["safe"],
+            not item.get("recommended", False),
+            purpose_order.get(item.get("purpose"), 3),
+            -item["overlap"],
+            -item["coverage_left"],
+        )
+    )
     return candidates
+
+
+def _numeric_values(frame: pd.DataFrame, column: str) -> pd.Series:
+    canonical = bool(frame.attrs.get(NUMERIC_CANONICAL_ATTR))
+    return frame[column].map(
+        lambda value: parse_number(
+            value,
+            dot3_convention="decimal" if canonical else "miles",
+            comma3_convention="decimal",
+        )
+    )
 
 
 def _metric_totals(frame: pd.DataFrame, mapping: dict[str, str]) -> dict[str, float]:
@@ -330,7 +481,7 @@ def _metric_totals(frame: pd.DataFrame, mapping: dict[str, str]) -> dict[str, fl
         column = mapping.get(role)
         if not column or column not in frame.columns:
             continue
-        values = frame[column].map(parse_number)
+        values = _numeric_values(frame, column)
         totals[role] = float(pd.to_numeric(values, errors="coerce").sum())
     return totals
 
@@ -365,6 +516,8 @@ def append_compatible_frames(
         part.insert(0, "hoja_origen", name)
         parts.append(part)
     combined = pd.concat(parts, ignore_index=True)
+    if all(bool(frame.attrs.get(NUMERIC_CANONICAL_ATTR)) for frame in frames.values()):
+        combined.attrs[NUMERIC_CANONICAL_ATTR] = True
     combined_mapping = dict(first_mapping)
     for role in ("monto", "costo"):
         column = combined_mapping.get(role)
@@ -420,6 +573,8 @@ def join_related_frames(
         validate="many_to_one",
         sort=False,
     )
+    if left.attrs.get(NUMERIC_CANONICAL_ATTR):
+        merged.attrs[NUMERIC_CANONICAL_ATTR] = True
     redundant_right_keys = [
         right_key
         for left_key, right_key in zip(left_keys, right_keys, strict=True)
@@ -435,14 +590,15 @@ def join_related_frames(
     if (
         right_cost_column
         and right_cost_column in merged.columns
+        and is_unit_cost_column(right_cost_original)
         and quantity_column
         and quantity_column in merged.columns
         and amount_column
         and amount_column in merged.columns
     ):
-        quantity = merged[quantity_column].map(parse_number).astype(float)
-        unit_cost = merged[right_cost_column].map(parse_number).astype(float)
-        amount = merged[amount_column].map(parse_number).astype(float)
+        quantity = _numeric_values(merged, quantity_column).astype(float)
+        unit_cost = _numeric_values(merged, right_cost_column).astype(float)
+        amount = _numeric_values(merged, amount_column).astype(float)
         paired = quantity.notna() & unit_cost.notna()
         cost_name = "Costo_Venta"
         utility_name = "Utilidad_Bruta"

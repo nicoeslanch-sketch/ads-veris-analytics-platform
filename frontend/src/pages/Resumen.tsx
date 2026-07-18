@@ -44,7 +44,20 @@ import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
+import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
+import { summaryContentKind } from '../lib/metrics'
 import type { MetricsResult } from '../lib/types'
+
+type UsableMonetaryKpis = MetricsResult['kpis'] & {
+  ingresos_totales: NonNullable<MetricsResult['kpis']['ingresos_totales']>
+  ticket_promedio: number
+}
+
+function hasUsableMonetaryKpis(
+  kpis: MetricsResult['kpis'] | undefined,
+): kpis is UsableMonetaryKpis {
+  return Boolean(kpis?.ingresos_totales && kpis.ticket_promedio != null)
+}
 
 /** Indicadores operativos del negocio, calculados de los datos reales del
  * archivo (los ratios de balance —ROA, ROE, liquidez— requieren conectar
@@ -57,14 +70,16 @@ function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; va
   // Fase 12b §12: si hay filas sin monto legible, el ticket lo dice — el
   // promedio se calcula sobre menos registros que el total.
   const conMonto = kpis.registros_con_monto
-  items.push({
-    label: 'Ticket promedio',
-    value: formatCLP(kpis.ticket_promedio),
-    hint:
-      conMonto != null && conMonto < kpis.transacciones
-        ? `sobre ${formatNumber(conMonto)} de ${formatNumber(kpis.transacciones)} registros con monto`
-        : 'por registro',
-  })
+  if (kpis.ticket_promedio != null) {
+    items.push({
+      label: 'Ticket promedio',
+      value: formatCLP(kpis.ticket_promedio),
+      hint:
+        conMonto != null && conMonto < kpis.transacciones
+          ? `sobre ${formatNumber(conMonto)} de ${formatNumber(kpis.transacciones)} registros con monto`
+          : 'por registro',
+    })
+  }
   // §11: sin una clave de transacción declarada, esto son FILAS del archivo.
   items.push({ label: 'Registros', value: formatNumber(kpis.transacciones), hint: 'filas en el periodo' })
   if (kpis.devoluciones) {
@@ -248,9 +263,31 @@ export default function Resumen() {
     }
     // El mapeo manual y el reintento forman parte de la clave: cambiar el mapeo
     // en Limpieza refresca el dashboard, y "Reintentar" fuerza una nueva llamada.
-    const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}|${JSON.stringify(analysisScope ?? {})}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
+    const key = metricsCacheKey({
+      dataset: datasetKey,
+      dateFrom: period.from,
+      dateTo: period.to,
+      sheet,
+      analysisScope,
+      mapping: mappingOverride,
+      eliminarDuplicados,
+      revision: cleaning.revision,
+      rules: cleaning.reglas_activas,
+      directed: cleaning.dirigida,
+      manifest: sheetManifest,
+      retry: retryTick,
+    })
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
+    const cached = getCachedMetrics(key)
+    if (cached) {
+      setMetrics(cached)
+      setActiveCurrency(cached.moneda)
+      setMonthsAvailable(cached.periodo.meses_disponibles)
+      setError(null)
+      setLoading(false)
+      return
+    }
     const snapshotMatchesPeriod = Boolean(
       contextMetrics &&
       JSON.stringify(contextMetrics.analysis_scope ?? null) === JSON.stringify(analysisScope ?? null) &&
@@ -278,6 +315,14 @@ export default function Resumen() {
       ...(datasetId ? { dataset_id: datasetId } : {}),
     }
     if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
+    fields.rules = JSON.stringify(cleaning.reglas_activas)
+    if (cleaning.revision != null) fields.revision = String(cleaning.revision)
+    if (cleaning.dirigida) {
+      fields.scope = JSON.stringify({
+        incluir: cleaning.dirigida.columnas_incluir,
+        excluir: cleaning.dirigida.columnas_excluir,
+      })
+    }
     if (sheet) fields.sheet = sheet
     if (sheetManifest && analysisScope) {
       fields.manifest = JSON.stringify(sheetManifest)
@@ -285,9 +330,10 @@ export default function Resumen() {
     }
     if (period.from) fields.date_from = period.from
     if (period.to) fields.date_to = period.to
-    apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
-      signal: controller.signal,
-    })
+    requestMetrics(
+      key,
+      () => apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields)),
+    )
       .then((result) => {
         if (latestRequest.current !== requestId || controller.signal.aborted) return
         setMetrics(result)
@@ -347,7 +393,11 @@ export default function Resumen() {
   // El backend reemplaza toda suma monetaria por null cuando hay monedas
   // incompatibles. No construir tarjetas antes de mostrar el bloqueo global.
   const adaptiveProfile = Boolean(metrics?.analisis_campanas || metrics?.analisis_inventario || metrics?.analisis_generico)
-  const kpis = metrics?.moneda_mixta || metrics?.analisis_productos || adaptiveProfile ? undefined : metrics?.kpis
+  const contentKind = metrics ? summaryContentKind(metrics) : null
+  const candidateKpis = metrics?.moneda_mixta || metrics?.analisis_productos || adaptiveProfile
+    ? undefined
+    : metrics?.kpis
+  const kpis = hasUsableMonetaryKpis(candidateKpis) ? candidateKpis : undefined
   const evolution = metrics?.evolucion_mensual ?? []
   // Fase 14: el gráfico identifica el mes parcial (asterisco + nota al pie)
   const mesParcial = evolution.find((m) => m.parcial) ?? null
@@ -388,6 +438,19 @@ export default function Resumen() {
             value: formatCLP(kpis.ingresos_totales.valor),
             variation: <Variation pct={kpis.ingresos_totales.variacion_pct} suffix="vs mes anterior" />,
             spark: sparkOf('ingresos'),
+          },
+          {
+            label: 'Costo Conocido',
+            icon: Coins,
+            color: CHART.gastos,
+            value: kpis.gastos_totales ? formatCLP(kpis.gastos_totales.valor) : '—',
+            variation: kpis.base_costos ? (
+              <p className="text-xs text-navy/40">
+                {formatNumber(kpis.base_costos.filas_con_costo)} registros con costo;{' '}
+                {formatNumber(kpis.base_costos.filas_pareadas)} pareados para utilidad
+              </p>
+            ) : null,
+            spark: sparkOf('gastos'),
           },
           {
             label: 'Utilidad Bruta',
@@ -531,11 +594,22 @@ export default function Resumen() {
         <div className="flex items-center gap-3 py-20 text-sm text-navy/60">
           <Loader2 className="h-5 w-5 animate-spin text-teal" /> Calculando indicadores...
         </div>
-      ) : metrics?.analisis_productos ? (
+      ) : contentKind === 'mixed_currency' ? (
+        /* El bloqueo antecede a todos los perfiles adaptativos. Un catálogo o
+           campaña mixta conserva conteos seguros en el contrato, pero no debe
+           ocultar que sus costos, precios, inversión y CPC están bloqueados. */
+        <EmptyState
+          icon={Wallet}
+          title="Tu archivo mezcla más de una moneda"
+          description="Detectamos montos en monedas distintas: sumarlos produciría totales sin sentido, así que los indicadores monetarios quedan bloqueados. Separa el archivo por moneda (una por archivo) o corrige la columna de montos y vuelve a procesarlo. Las advertencias del motor traen el detalle."
+          ctaLabel="Revisar en Limpieza"
+          ctaTo="/limpieza"
+        />
+      ) : contentKind === 'product_catalog' && metrics?.analisis_productos ? (
         <ProductCatalogSummary analysis={metrics.analisis_productos} />
-      ) : metrics && adaptiveProfile ? (
+      ) : contentKind === 'adaptive_profile' && metrics ? (
         <AdaptiveProfileSummary metrics={metrics} />
-      ) : metrics && metrics.dimensiones?.monto === false ? (
+      ) : contentKind === 'missing_amount' ? (
         /* Fase 11: sin columna de monto el dashboard sería puro $0 — mejor
            decirlo claro y llevar al usuario al mapeo de columnas. */
         <EmptyState
@@ -545,17 +619,6 @@ export default function Resumen() {
           ctaLabel="Ir a asignar columnas"
           ctaTo="/limpieza"
           ctaState={{ openMapping: true, highlightRole: 'monto' }}
-        />
-      ) : metrics?.moneda_mixta ? (
-        /* Fase 15: montos en MÁS de una moneda — sumar CLP con USD/UF produce
-           una cifra sin sentido. Los KPIs monetarios se BLOQUEAN con la
-           explicación, en vez de mostrar un total inválido. */
-        <EmptyState
-          icon={Wallet}
-          title="Tu archivo mezcla más de una moneda"
-          description="Detectamos montos en monedas distintas: sumarlos produciría totales sin sentido, así que los indicadores monetarios quedan bloqueados. Separa el archivo por moneda (una por archivo) o corrige la columna de montos y vuelve a procesarlo. Las advertencias del motor traen el detalle."
-          ctaLabel="Revisar en Limpieza"
-          ctaTo="/limpieza"
         />
       ) : metrics && kpis ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
@@ -592,6 +655,18 @@ export default function Resumen() {
                 {metrics?.dimensiones?.costo
                   ? 'Tu archivo trae una columna de costos, pero ninguna venta tiene su costo asociado en este periodo: la utilidad y el margen no se pueden calcular.'
                   : 'Tu archivo no trae una columna de costos: agrégala (o asígnala en el mapeo de Limpieza) para ver utilidad bruta y margen.'}
+              </p>
+            </div>
+          )}
+
+          {(metrics.duplicados?.conservados ?? 0) > 0 && (
+            <div className="mt-4 flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/[0.07] px-4 py-2.5 text-xs text-navy/75">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+              <p>
+                Se detectaron <strong>{formatNumber(metrics.duplicados?.detectados ?? 0)}</strong>{' '}
+                duplicados exactos y se conservaron{' '}
+                <strong>{formatNumber(metrics.duplicados?.conservados ?? 0)}</strong> porque no
+                confirmaste su eliminación. Los totales actuales los incluyen.
               </p>
             </div>
           )}
@@ -737,6 +812,7 @@ export default function Resumen() {
                       <th className="pb-2 pr-4 text-right">Ingresos</th>
                       {/* Fase 14b: participación BRUTA — distribución real que suma 100% */}
                       <th className="pb-2 pr-4 text-right">% Ventas brutas</th>
+                      <th className="pb-2 pr-4 text-right">Costo asociado</th>
                       <th className="pb-2 pr-4 text-right">Utilidad</th>
                       <th className="pb-2">Margen</th>
                     </tr>
@@ -750,7 +826,10 @@ export default function Resumen() {
                           {formatNumber(row.participacion_bruta_pct ?? row.porcentaje)}%
                         </td>
                         <td className="py-2.5 pr-4 text-right text-navy/75">
-                          {row.utilidad !== undefined ? formatCLP(row.utilidad) : '—'}
+                          {row.costo != null ? formatCLP(row.costo) : '—'}
+                        </td>
+                        <td className="py-2.5 pr-4 text-right text-navy/75">
+                          {row.utilidad != null ? formatCLP(row.utilidad) : '—'}
                         </td>
                         <td className="py-2.5">
                           {row.margen_pct !== undefined && row.margen_pct !== null ? (
@@ -834,7 +913,7 @@ export default function Resumen() {
                             <span className="shrink-0 font-semibold text-navy">
                               {formatCLPCompact(entry.ingresos)}
                               <span className="ml-1.5 font-normal text-navy/45">
-                                {formatNumber(entry.participacion_bruta_pct ?? entry.porcentaje)}%
+                              {formatNumber(entry.participacion_neta_pct ?? entry.porcentaje)}%
                               </span>
                             </span>
                           </li>
@@ -859,7 +938,7 @@ export default function Resumen() {
                             <span className="shrink-0 font-semibold text-navy">
                               {formatCLP(product.ingresos)}
                               <span className="ml-2 text-xs font-normal text-navy/45">
-                                {formatNumber(product.participacion_bruta_pct ?? product.porcentaje)}%
+                                {formatNumber(product.participacion_neta_pct ?? product.porcentaje)}%
                               </span>
                             </span>
                           </div>

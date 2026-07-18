@@ -31,6 +31,7 @@ import threading
 import time
 import zipfile
 from collections import OrderedDict
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
@@ -64,10 +65,16 @@ from ..engine.loader import (
 )
 from ..engine.ai_classifier import classify_columns_with_ai
 from ..engine.mapping import detect_column_roles, detect_columns_extended
-from ..engine.metrics import CurrencyDetection, compute_metrics, detect_currency
+from ..engine.metrics import (
+    CurrencyDetection,
+    compute_metrics,
+    detect_currency,
+    is_transaction_profile,
+)
 from ..engine.multi_sheet import (
     build_analysis_frame,
     detect_relationships,
+    is_unit_cost_column,
     relation_stats,
     validate_analysis_scope,
 )
@@ -77,6 +84,7 @@ from ..restore_cache import (
     fetch_dataset_mapping,
     fetch_latest_cleaning_config,
     fetch_latest_restore_record,
+    fetch_restore_record,
     fetch_restore_state_bundle,
     fetch_restore_state_metadata,
     reserve_restore_snapshot_revision,
@@ -344,11 +352,17 @@ def _validate_restore_state(raw: str | None) -> dict:
         else [name for name in available_names if name not in excluded_names]
     )
     analysis_raw = state.get("analysis_scope")
+    if analysis_raw is not None and not isinstance(analysis_raw, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="restore_state.analysis_scope debe ser un objeto o null.",
+        )
     try:
-        analysis_scope = validate_analysis_scope(
-            analysis_raw if isinstance(analysis_raw, dict) else None,
-            available_names,
-        ) if available_names else None
+        analysis_scope = (
+            validate_analysis_scope(analysis_raw, available_names)
+            if available_names and isinstance(analysis_raw, dict)
+            else None
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     selection_mode = state.get("selection_mode", "all")
@@ -555,13 +569,22 @@ def _processed_manifest_frames(
     content: bytes,
     manifest: dict,
     cache_dataset_id: str | None = None,
+    selected_sheets: set[str] | None = None,
 ) -> tuple[dict[str, object], dict[str, dict[str, str]], dict[str, dict]]:
-    """Procesa el manifiesto en orden y conserva la configuracion por hoja."""
+    """Procesa el manifiesto en orden y conserva la configuracion por hoja.
+
+    Para metricas se reciben solo las hojas del alcance. Antes, cambiar de
+    Enero a Mayo copiaba y validaba las diez hojas limpias aunque el tablero
+    necesitara una sola; la exportacion y el detector de relaciones conservan
+    el comportamiento completo al omitir ``selected_sheets``.
+    """
     frames: dict[str, object] = {}
     mappings: dict[str, dict[str, str]] = {}
     results: dict[str, dict] = {}
     for entry in manifest["hojas"]:
-        if not entry["procesar"]:
+        if not entry["procesar"] or (
+            selected_sheets is not None and entry["nombre"] not in selected_sheets
+        ):
             continue
         result = _analyze_cached(
             filename,
@@ -913,6 +936,7 @@ def _extract_columns_sync(
 def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     """Marcas visuales y observaciones auditables para una hoja limpia."""
     from ..engine.standardize import (
+        map_unique,
         parse_date,
         parse_number,
         physical_missing_mask,
@@ -943,30 +967,31 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         ctype = column_types.get(col, "texto")
         role = col_role.get(col)
         series = df[col]
-        vals = list(series)
-        missing = physical_missing_mask(series) | semantic_missing_mask(
-            series, role, column_type=ctype
-        )
+        missing = (
+            physical_missing_mask(series)
+            | semantic_missing_mask(series, role, column_type=ctype)
+        ).reset_index(drop=True)
         fill_rate = float((~missing).sum()) / total
-        for row_idx, value in enumerate(vals):
-            text = str(value)
-            if not bool(missing.iloc[row_idx]):
-                # Fase 12b (P0): los valores NO interpretables se conservan en
-                # los datos — aquí se marcan para que el cliente pueda revisar
-                # el original en vez de encontrar una celda vaciada.
-                if ctype == "fecha" and parse_date(text) is None:
-                    yellow[(row_idx, col)] = (
-                        "Fecha no interpretable: se conservó el valor original — revisar."
-                    )
-                elif ctype == "numero" and parse_number(text) is None:
-                    yellow[(row_idx, col)] = (
-                        "Número no interpretable: se conservó el valor original — revisar."
-                    )
-                continue
-            if ctype == "fecha":
+        # Parsear por valor único y trabajar con máscaras evita repetir una
+        # llamada Python por cada celda del libro grande.
+        if ctype in {"fecha", "numero"}:
+            parser = parse_date if ctype == "fecha" else parse_number
+            parsed = map_unique(series.astype(str).reset_index(drop=True), parser)
+            invalid = (~missing) & parsed.isna()
+            invalid_message = (
+                "Fecha no interpretable: se conservó el valor original — revisar."
+                if ctype == "fecha"
+                else "Número no interpretable: se conservó el valor original — revisar."
+            )
+            for row_idx in invalid[invalid].index:
+                yellow[(int(row_idx), col)] = invalid_message
+
+        if ctype == "fecha":
+            for row_idx in missing[missing].index:
                 yellow[(row_idx, col)] = "Fecha faltante: revisar."
-            elif fill_rate >= 0.7:
-                label = role_labels.get(role, col) if role else col
+        elif fill_rate >= 0.7:
+            label = role_labels.get(role, col) if role else col
+            for row_idx in missing[missing].index:
                 red[(row_idx, col)] = f"Dato faltante en una columna casi completa ({label})."
 
     observations = [
@@ -1002,6 +1027,68 @@ def _safe_excel_sheet_name(name: str, used: set[str]) -> str:
     return candidate
 
 
+def _analysis_export_type_columns(
+    frame,
+    results: dict[str, dict],
+    mapping: dict[str, str] | None = None,
+) -> tuple[set[str], set[str]]:
+    """Propaga los tipos ya inferidos a una tabla apilada/relacionada.
+
+    Una relación puede conservar columnas numéricas que no son un rol KPI
+    (por ejemplo ``Precio_Unitario``) o renombrarlas con el nombre de la hoja
+    derecha. Limitar el tipado a monto/costo/cantidad las convertía de nuevo
+    en texto al exportar ``Datos_relacionados``.
+    """
+    source_kinds: dict[str, set[str]] = {}
+    numeric_renames: set[str] = set()
+    date_renames: set[str] = set()
+    frame_columns = {str(column) for column in frame.columns}
+    for sheet_name, result in results.items():
+        for column, kind in result.get("column_types", {}).items():
+            source = str(column)
+            source_kinds.setdefault(source, set()).add(str(kind))
+            # join_related_frames solo agrega este sufijo cuando una columna
+            # de la tabla derecha colisiona con otra de la izquierda. La
+            # coincidencia debe ser exacta: un origen numérico "ID" jamás
+            # debe convertir "ID_Producto" en número por simple prefijo.
+            renamed = f"{source}_{sheet_name}"
+            # El sufijo solo puede provenir de una colisión del merge si la
+            # columna original también sigue presente en la tabla izquierda.
+            # Sin esa evidencia, ``ID_Referencia`` puede ser simplemente una
+            # columna textual original y no el renombre de un ``ID`` numérico.
+            if source in frame_columns and renamed in frame_columns:
+                if kind == "numero":
+                    numeric_renames.add(renamed)
+                elif kind == "fecha":
+                    date_renames.add(renamed)
+
+    numeric = {
+        source
+        for source, kinds in source_kinds.items()
+        if source in frame_columns and kinds == {"numero"}
+    } | numeric_renames
+    dates = {
+        source
+        for source, kinds in source_kinds.items()
+        if source in frame_columns and kinds == {"fecha"}
+    } | date_renames
+    resolved_mapping = mapping or {}
+    numeric.update(
+        column
+        for role, column in resolved_mapping.items()
+        if role in {"monto", "costo", "cantidad"} and column in frame.columns
+    )
+    numeric.update(
+        str(column)
+        for column in frame.columns
+        if str(column).casefold().startswith(("utilidad_", "margen_", "costo_"))
+    )
+    date_role = resolved_mapping.get("fecha")
+    if date_role in frame.columns:
+        dates.add(date_role)
+    return numeric, dates
+
+
 def _write_clean_sheet(
     wb,
     title: str,
@@ -1010,11 +1097,17 @@ def _write_clean_sheet(
     red: dict,
     index: int | None = None,
     numeric_columns: set[str] | None = None,
+    date_columns: set[str] | None = None,
 ) -> None:
     from openpyxl.styles import Font, PatternFill
 
     ws = wb.create_sheet(title, index)
-    exported = safe_export_dataframe(df, numeric_columns=numeric_columns)
+    exported = safe_export_dataframe(
+        df,
+        numeric_columns=numeric_columns,
+        date_columns=date_columns,
+        canonical_numeric=True,
+    )
     ws.append(list(exported.columns))
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -1029,6 +1122,23 @@ def _write_clean_sheet(
         ws.cell(row=row + 2, column=positions[column]).fill = yellow_fill
     for row, column in red:
         ws.cell(row=row + 2, column=positions[column]).fill = red_fill
+    percentage_markers = ("pct", "porcentaje", "percent")
+    for column, position in positions.items():
+        normalized = re.sub(r"[^a-z0-9]+", "_", str(column).casefold()).strip("_")
+        if any(marker in normalized.split("_") for marker in percentage_markers) or normalized.startswith("margen_"):
+            for cell in ws.iter_rows(
+                min_row=2, max_row=ws.max_row, min_col=position, max_col=position
+            ):
+                cell[0].number_format = "0.00%"
+    for column in date_columns or set():
+        position = positions.get(column)
+        if position is None:
+            continue
+        for cell in ws.iter_rows(
+            min_row=2, max_row=ws.max_row, min_col=position, max_col=position
+        ):
+            if cell[0].data_type == "d":
+                cell[0].number_format = "dd/mm/yyyy"
 
 
 def _write_observations_sheet(
@@ -1221,7 +1331,12 @@ def _clean_download_sync(
     numeric_columns = {
         column for column, kind in result.get("column_types", {}).items() if kind == "numero"
     }
-    df_export = safe_export_dataframe(df, numeric_columns=numeric_columns)
+    date_columns = {
+        column for column, kind in result.get("column_types", {}).items() if kind == "fecha"
+    }
+    df_export = safe_export_dataframe(
+        df, numeric_columns=numeric_columns, canonical_numeric=True
+    )
     audit = _build_export_audit(
         filename, content, sheet, result, rules, mapping, scope
     )
@@ -1268,7 +1383,15 @@ def _clean_download_sync(
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     yellow, red, observations = _export_annotations(result, df)
-    _write_clean_sheet(wb, "Datos_limpios", df, yellow, red, numeric_columns=numeric_columns)
+    _write_clean_sheet(
+        wb,
+        "Datos_limpios",
+        df,
+        yellow,
+        red,
+        numeric_columns=numeric_columns,
+        date_columns=date_columns,
+    )
     _write_observations_sheet(wb, observations)
     _write_audit_sheet(wb, audit)
     output = io.BytesIO()
@@ -1312,6 +1435,7 @@ def _clean_download_book_uncached_sync(
     frames: dict[str, object] = {}
     mappings: dict[str, dict[str, str]] = {}
     results: dict[str, dict] = {}
+    annotations: dict[str, tuple[dict, dict]] = {}
     audit_frames: list[object] = []
     records: list[dict] = []
     processing_errors: list[str] = []
@@ -1347,7 +1471,9 @@ def _clean_download_book_uncached_sync(
             frames[name] = frame
             mappings[name] = result.get("mapeo", entry["mapping"])
             results[name] = result
-            observations.extend(_export_annotations(result, frame)[2])
+            yellow, red, sheet_observations = _export_annotations(result, frame)
+            annotations[name] = (yellow, red)
+            observations.extend(sheet_observations)
             audit_frames.append(
                 _build_export_audit(
                     filename, content, name, result, entry["rules"],
@@ -1398,6 +1524,13 @@ def _clean_download_book_uncached_sync(
     for record in records:
         record["analysis_provenance"] = provenance
 
+    analysis_numeric_columns: set[str] = set()
+    analysis_date_columns: set[str] = set()
+    if analysis_frame is not None:
+        analysis_numeric_columns, analysis_date_columns = _analysis_export_type_columns(
+            analysis_frame, results, analysis_mapping
+        )
+
     audit_parts = [frame for frame in audit_frames if not frame.empty]
     audit = (
         pd.concat(audit_parts, ignore_index=True)
@@ -1428,6 +1561,7 @@ def _clean_download_book_uncached_sync(
                             for column, kind in results[name].get("column_types", {}).items()
                             if kind == "numero"
                         },
+                        canonical_numeric=True,
                     ).to_csv(index=False, sep=";").encode("utf-8-sig"),
                 )
             archive.writestr(
@@ -1444,16 +1578,9 @@ def _clean_download_book_uncached_sync(
                     analysis_name,
                     safe_export_dataframe(
                         analysis_frame,
-                        numeric_columns={
-                            column
-                            for role, column in analysis_mapping.items()
-                            if role in {"monto", "costo", "cantidad"}
-                        }
-                        | {
-                            column
-                            for column in analysis_frame.columns
-                            if str(column).casefold().startswith(("utilidad_", "margen_", "costo_"))
-                        },
+                        numeric_columns=analysis_numeric_columns,
+                        date_columns=analysis_date_columns,
+                        canonical_numeric=True,
                     ).to_csv(index=False, sep=";").encode("utf-8-sig"),
                 )
             archive.writestr(
@@ -1467,7 +1594,7 @@ def _clean_download_book_uncached_sync(
         original_sheet = wb[name]
         index = wb.worksheets.index(original_sheet)
         wb.remove(original_sheet)
-        yellow, red, _ = _export_annotations(results[name], frame)
+        yellow, red = annotations[name]
         _write_clean_sheet(
             wb,
             name,
@@ -1480,6 +1607,11 @@ def _clean_download_book_uncached_sync(
                 for column, kind in results[name].get("column_types", {}).items()
                 if kind == "numero"
             },
+            date_columns={
+                column
+                for column, kind in results[name].get("column_types", {}).items()
+                if kind == "fecha"
+            },
         )
 
     used_names = {name.casefold() for name in wb.sheetnames}
@@ -1491,16 +1623,8 @@ def _clean_download_book_uncached_sync(
             analysis_frame,
             {},
             {},
-            numeric_columns={
-                column
-                for role, column in analysis_mapping.items()
-                if role in {"monto", "costo", "cantidad"}
-            }
-            | {
-                column
-                for column in analysis_frame.columns
-                if str(column).casefold().startswith(("utilidad_", "margen_", "costo_"))
-            },
+            numeric_columns=analysis_numeric_columns,
+            date_columns=analysis_date_columns,
         )
     _write_observations_sheet(wb, observations, _safe_excel_sheet_name("Observaciones", used_names))
     _write_audit_sheet(wb, audit, _safe_excel_sheet_name("Auditoria", used_names))
@@ -1576,7 +1700,11 @@ def _metrics_multi_sync(
     cache_dataset_id: str | None = None,
 ) -> dict:
     frames, mappings, results = _processed_manifest_frames(
-        filename, content, manifest, cache_dataset_id
+        filename,
+        content,
+        manifest,
+        cache_dataset_id,
+        set(analysis_scope["sheets"]),
     )
     _validate_scope_currencies(analysis_scope, mappings, results)
     try:
@@ -1597,6 +1725,35 @@ def _metrics_multi_sync(
     computed["calidad_datos"] = round(sum(qualities) / max(len(qualities), 1), 1)
     computed["analysis_scope"] = analysis_scope
     computed["analysis_provenance"] = provenance
+    pipeline_warnings: list[str] = []
+    detected_duplicates = 0
+    removed_duplicates = 0
+    for name in analysis_scope["sheets"]:
+        sheet_result = results[name]
+        detected_duplicates += int(
+            sheet_result.get("problemas", {}).get("duplicados", 0) or 0
+        )
+        removed_duplicates += int(
+            sheet_result.get("correcciones", {}).get("filas_duplicadas_eliminadas", 0)
+            or 0
+        )
+        pipeline_warnings.extend(
+            f"{name}: {warning}"
+            for warning in sheet_result.get("avisos", [])
+            if any(
+                marker in str(warning).casefold()
+                for marker in ("ambigu", "duplic", "repetici", "fecha", "porcent")
+            )
+        )
+    computed["advertencias"] = list(dict.fromkeys([
+        *computed.get("advertencias", []),
+        *pipeline_warnings,
+    ]))
+    computed["duplicados"] = {
+        "detectados": detected_duplicates,
+        "eliminados": removed_duplicates,
+        "conservados": max(detected_duplicates - removed_duplicates, 0),
+    }
     return computed
 
 
@@ -1606,11 +1763,156 @@ def _relationships_sync(
     manifest: dict,
     manual: dict | None = None,
     cache_dataset_id: str | None = None,
+    focus: dict | None = None,
 ) -> dict:
-    frames, mappings, _ = _processed_manifest_frames(
-        filename, content, manifest, cache_dataset_id
+    selected_sheets: set[str] | None = None
+    focused_transaction_sheets: set[str] = set()
+    manifest_names = {entry["nombre"] for entry in manifest["hojas"] if entry["procesar"]}
+    if isinstance(manual, dict):
+        requested_pair = {
+            str(manual.get("left_sheet", "")),
+            str(manual.get("right_sheet", "")),
+        }
+        if requested_pair <= manifest_names and len(requested_pair) == 2:
+            selected_sheets = requested_pair
+    elif isinstance(focus, dict):
+        requested = focus.get("sheets")
+        if isinstance(requested, list) and all(isinstance(name, str) for name in requested):
+            focused_transaction_sheets = {
+                name for name in requested if name in manifest_names
+            }
+            if focused_transaction_sheets:
+                # Primero procesa solo las ventas pedidas. El reporte de carga
+                # ya contiene las muestras de encabezados de todo el libro y
+                # permite descubrir maestras de costo sin procesarlas dos veces.
+                selected_sheets = set(focused_transaction_sheets)
+    frames, mappings, results = _processed_manifest_frames(
+        filename, content, manifest, cache_dataset_id, selected_sheets
     )
-    candidates = detect_relationships(frames, mappings)
+
+    if focused_transaction_sheets and results:
+        first_result = next(iter(results.values()))
+        profiles = first_result.get("carga", {}).get("clasificacion_hojas", [])
+        profiles_by_name = {
+            profile.get("nombre"): profile
+            for profile in profiles
+            if isinstance(profile, dict) and isinstance(profile.get("nombre"), str)
+        }
+        reference_sheets: set[str] = set()
+        for entry in manifest["hojas"]:
+            name = entry["nombre"]
+            if not entry["procesar"] or name in frames:
+                continue
+            profile = profiles_by_name.get(name, {})
+            structure = profile.get("estructura", {}) if isinstance(profile, dict) else {}
+            headers = structure.get("encabezados_muestra", []) if isinstance(structure, dict) else []
+            headers = [str(header) for header in headers if str(header).strip()]
+            detected = detect_column_roles(headers) if headers else {}
+            effective_mapping = {
+                **detected,
+                **(entry.get("mapping") or {}),
+            }
+            has_unit_cost = is_unit_cost_column(effective_mapping.get("costo"))
+            reference_profile = bool(
+                has_unit_cost
+                and not is_transaction_profile(headers, effective_mapping)
+            )
+            # Compatibilidad con libros previos cuyo manifiesto no conserva
+            # encabezados de muestra, pero sí una hoja llamada Productos.
+            if reference_profile or "producto" in name.casefold():
+                reference_sheets.add(name)
+        if reference_sheets:
+            extra_frames, extra_mappings, extra_results = _processed_manifest_frames(
+                filename,
+                content,
+                manifest,
+                cache_dataset_id,
+                reference_sheets,
+            )
+            frames.update(extra_frames)
+            mappings.update(extra_mappings)
+            results.update(extra_results)
+
+    def guard_currency(candidate: dict) -> dict:
+        """Bloquea ventas y costos declarados en monedas incompatibles."""
+        inspected = dict(candidate)
+        left_name = inspected["left_sheet"]
+        right_name = inspected["right_sheet"]
+        left_mapping = mappings.get(left_name, {})
+        right_mapping = mappings.get(right_name, {})
+        left_is_transaction = is_transaction_profile(
+            frames[left_name].columns, left_mapping
+        )
+        right_is_transaction = is_transaction_profile(
+            frames[right_name].columns, right_mapping
+        )
+        enriches_cost = bool(
+            inspected.get("purpose") == "enriquecer_costos"
+            or (
+                left_is_transaction
+                and is_unit_cost_column(right_mapping.get("costo"))
+                and not right_is_transaction
+            )
+        )
+        inspected.setdefault(
+            "purpose",
+            "enriquecer_costos" if enriches_cost else "otra_relacion",
+        )
+        inspected.setdefault(
+            "recommended",
+            bool(inspected.get("safe") and enriches_cost),
+        )
+        inspected["currency_compatible"] = True
+        if not enriches_cost:
+            return inspected
+        left_currency = results.get(left_name, {}).get("_moneda")
+        right_currency = results.get(right_name, {}).get("_moneda")
+        if not isinstance(left_currency, CurrencyDetection) or not isinstance(
+            right_currency, CurrencyDetection
+        ):
+            return inspected
+        if left_currency.mixta or right_currency.mixta:
+            inspected["safe"] = False
+            inspected["recommended"] = False
+            inspected["currency_compatible"] = False
+            inspected["reason"] = (
+                "Una de las hojas contiene monedas mezcladas; no se pueden "
+                "calcular costos ni utilidad con esa relacion."
+            )
+        elif left_currency.dominante != right_currency.dominante:
+            inspected["safe"] = False
+            inspected["recommended"] = False
+            inspected["currency_compatible"] = False
+            left_label = (
+                left_currency.dominante
+                if left_currency.detectadas
+                else f"sin moneda declarada (se asumio {left_currency.dominante})"
+            )
+            right_label = (
+                right_currency.dominante
+                if right_currency.detectadas
+                else f"sin moneda declarada (se asumio {right_currency.dominante})"
+            )
+            inspected["reason"] = (
+                f"Las ventas de {left_name} estan en {left_label} y "
+                f"los costos de {right_name} estan {right_label}; "
+                "no se relacionan sin una conversion explicita."
+            )
+        return inspected
+
+    candidates = [
+        guard_currency(candidate)
+        for candidate in detect_relationships(frames, mappings)
+    ]
+    candidates.sort(
+        key=lambda item: (
+            not item["safe"],
+            not item.get("recommended", False),
+            0 if item.get("purpose") == "enriquecer_costos" else 1,
+            -item["overlap"],
+            -item["coverage_left"],
+        )
+    )
     safe = [candidate for candidate in candidates if candidate["safe"]]
     manual_result = None
     if manual is not None:
@@ -1634,14 +1936,14 @@ def _relationships_sync(
         ):
             raise HTTPException(status_code=422, detail="Las hojas o claves manuales no son válidas.")
         stats = relation_stats(frames[left_name], left_keys, frames[right_name], right_keys)
-        manual_result = {
+        manual_result = guard_currency({
             "left_sheet": left_name,
             "right_sheet": right_name,
             "left_keys": left_keys,
             "right_keys": right_keys,
             "type": "left",
             **stats.to_dict(),
-        }
+        })
     return {
         "candidates": candidates,
         "safe_count": len(safe),
@@ -1658,17 +1960,24 @@ def _metrics_sync(
     date_to: str | None,
     sheet: str | None = None,
     eliminar_duplicados: bool = False,
+    rules: dict | None = None,
+    scope: dict | None = None,
+    cache_dataset_id: str | None = None,
+    cache_revision: int | None = None,
 ) -> dict:
     # Las métricas siempre se calculan sobre datos estandarizados y limpios.
     # Con el caché (§5.7), cambiar el periodo NO re-corre el pipeline completo.
     result = _analyze_cached(
         filename,
         content,
-        rules=None,
+        rules=rules,
         apply=True,
         mapping=mapping,
+        scope=scope,
         sheet=sheet,
         eliminar_duplicados=eliminar_duplicados,
+        cache_dataset_id=cache_dataset_id,
+        cache_revision=cache_revision,
     )
     df_clean = result["_df_limpio"]
     computed = compute_metrics(
@@ -1677,6 +1986,30 @@ def _metrics_sync(
     )
     computed["archivo"] = filename
     computed["calidad_datos"] = result["resumen"]["calidad_despues"]
+    # Las decisiones conservadoras del pipeline (duplicados no confirmados,
+    # fechas/números ambiguos) también deben acompañar a los KPI. Sin esto el
+    # Resumen parecía definitivo aunque Limpieza sí hubiese advertido el riesgo.
+    pipeline_warnings = [
+        str(warning)
+        for warning in result.get("avisos", [])
+        if any(
+            marker in str(warning).casefold()
+            for marker in ("ambigu", "duplic", "repetici", "fecha", "porcent")
+        )
+    ]
+    computed["advertencias"] = list(dict.fromkeys([
+        *computed.get("advertencias", []),
+        *pipeline_warnings,
+    ]))
+    detected_duplicates = int(result.get("problemas", {}).get("duplicados", 0) or 0)
+    removed_duplicates = int(
+        result.get("correcciones", {}).get("filas_duplicadas_eliminadas", 0) or 0
+    )
+    computed["duplicados"] = {
+        "detectados": detected_duplicates,
+        "eliminados": removed_duplicates,
+        "conservados": max(detected_duplicates - removed_duplicates, 0),
+    }
     return computed
 
 
@@ -1706,6 +2039,29 @@ def _restore_response(
     if sheet_sessions is not None:
         response["sheet_sessions"] = sheet_sessions
     if restore_state is not None:
+        stored_scope = restore_state.get("analysis_scope")
+        selection_mode = restore_state.get("selection_mode") or (
+            stored_scope.get("_selection_mode")
+            if isinstance(stored_scope, dict)
+            else None
+        ) or "all"
+        public_scope = None
+        if isinstance(stored_scope, dict):
+            scope_candidate = {
+                key: value
+                for key, value in stored_scope.items()
+                if key != "_selection_mode"
+            }
+            if all(
+                key in scope_candidate for key in ("mode", "sheets", "active_sheet")
+            ):
+                try:
+                    public_scope = validate_analysis_scope(
+                        scope_candidate,
+                        restore_state.get("available_sheets", []),
+                    )
+                except ValueError:
+                    public_scope = None
         response.update(
             {
                 "active_sheet": restore_state.get("active_sheet"),
@@ -1719,11 +2075,8 @@ def _restore_response(
                     ],
                 ),
                 "sheet_errors": restore_state.get("sheet_errors", {}),
-                "analysis_scope": restore_state.get("analysis_scope") or None,
-                "selection_mode": restore_state.get("selection_mode") or (
-                    (restore_state.get("analysis_scope") or {}).get("_selection_mode")
-                    if isinstance(restore_state.get("analysis_scope"), dict) else None
-                ) or "all",
+                "analysis_scope": public_scope,
+                "selection_mode": selection_mode,
                 "combine_sheets": bool(restore_state.get("combine_sheets", False)),
             }
         )
@@ -1746,6 +2099,15 @@ def _build_and_store_restore_snapshot(
     """Construye una hoja con resultados del servidor y la guarda atómicamente."""
     standardization = _standardize_sync(filename, content, sheet)
     effective_sheet = sheet or standardization.get("carga", {}).get("hoja_usada")
+    directed = (cleaning or {}).get("dirigida") or {}
+    cleaning_scope = (
+        {
+            "incluir": directed.get("columnas_incluir", []),
+            "excluir": directed.get("columnas_excluir", []),
+        }
+        if directed
+        else None
+    )
     metrics = (
         _metrics_sync(
             filename,
@@ -1755,6 +2117,10 @@ def _build_and_store_restore_snapshot(
             None,
             effective_sheet,
             eliminar_duplicados,
+            rules=(cleaning or {}).get("reglas_activas"),
+            scope=cleaning_scope,
+            cache_dataset_id=dataset_id,
+            cache_revision=revision,
         )
         if cleaning is not None
         else None
@@ -1959,6 +2325,146 @@ def _restore_latest_sync(user_id: str) -> dict:
     return response
 
 
+def _store_restore_state_sync(
+    dataset_id: str,
+    user_id: str,
+    restore_state: dict,
+    revision: int,
+    settings: Settings,
+) -> dict:
+    """Persiste solo estado global reutilizando un snapshot ya validado.
+
+    La RPC v2 exige una escritura de snapshot junto al estado. Para no
+    recalcular ni degradar una limpieza existente, se valida una fila vigente,
+    se conserva íntegra y solo se actualiza su revisión reservada. Si no hay
+    una base segura, se rechaza: nunca se fabrica ni se usa la RPC antigua.
+    """
+
+    record = fetch_restore_record(dataset_id, user_id, settings)
+    if record is None:
+        raise HTTPException(status_code=404, detail="El dataset no existe.")
+    if record.get("status") == "error":
+        raise HTTPException(
+            status_code=409,
+            detail="El dataset está en estado de error y no admite restauración.",
+        )
+    bundle = fetch_restore_state_bundle(dataset_id, user_id, settings)
+    if not isinstance(bundle, dict):
+        raise HTTPException(
+            status_code=409,
+            detail="Aún no existe un snapshot válido para guardar este estado.",
+        )
+    authoritative = bundle.get("state")
+    rows = bundle.get("sheets")
+    if not isinstance(authoritative, dict) or not isinstance(rows, list):
+        raise HTTPException(
+            status_code=409,
+            detail="El estado persistido del dataset está incompleto.",
+        )
+    if authoritative.get("dataset_id") not in (None, dataset_id) or authoritative.get(
+        "user_id"
+    ) not in (None, user_id):
+        raise HTTPException(status_code=403, detail="El dataset no pertenece al usuario.")
+    if authoritative.get("engine_version") != ENGINE_VERSION:
+        raise HTTPException(
+            status_code=409,
+            detail="El snapshot fue generado por otra versión del motor y debe recalcularse.",
+        )
+
+    requested_available = restore_state.get("available_sheets", [])
+    if not requested_available:
+        raise HTTPException(
+            status_code=422,
+            detail="restore_state.available_sheets no puede estar vacío.",
+        )
+    authoritative_available = authoritative.get("available_sheets", [])
+    if isinstance(authoritative_available, list) and authoritative_available:
+        if set(requested_available) != set(authoritative_available):
+            raise HTTPException(
+                status_code=409,
+                detail="Las hojas del estado no coinciden con el dataset vigente.",
+            )
+    active_sheet = restore_state.get("active_sheet")
+    if active_sheet and active_sheet not in requested_available:
+        raise HTTPException(
+            status_code=422,
+            detail="restore_state.active_sheet debe pertenecer a available_sheets.",
+        )
+
+    source_sha256 = authoritative.get("source_sha256")
+    valid_by_key: dict[str, dict] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if (
+            row.get("source_sha256") != source_sha256
+            or row.get("engine_version") != ENGINE_VERSION
+        ):
+            continue
+        raw = row.get("snapshot")
+        snapshot_status = (
+            "limpio"
+            if isinstance(raw, dict) and isinstance(raw.get("cleaning"), dict)
+            else "estandarizado"
+        )
+        valid = valid_restore_snapshot(
+            raw,
+            snapshot_status,
+            expected_revision=row.get("revision"),
+            expected_source_sha256=row.get("source_sha256"),
+            expected_rules_hash=row.get("rules_hash"),
+            expected_mapping_hash=row.get("mapping_hash"),
+            expected_sheet=row.get("sheet"),
+        )
+        if valid is not None:
+            valid_by_key[str(row.get("sheet_key"))] = valid
+    if not valid_by_key:
+        raise HTTPException(
+            status_code=409,
+            detail="No existe un snapshot vigente que pueda reutilizarse con seguridad.",
+        )
+
+    preferred_keys = [
+        active_sheet,
+        authoritative.get("active_sheet"),
+        "__single__",
+    ]
+    base_snapshot = next(
+        (
+            valid_by_key[key]
+            for key in preferred_keys
+            if isinstance(key, str) and key in valid_by_key
+        ),
+        None,
+    )
+    if base_snapshot is None:
+        base_snapshot = max(
+            valid_by_key.values(), key=lambda snapshot: snapshot["revision"]
+        )
+    snapshot = copy.deepcopy(base_snapshot)
+    snapshot["revision"] = revision
+    stored = store_restore_snapshot(
+        dataset_id,
+        user_id,
+        snapshot,
+        settings=settings,
+        restore_state=restore_state,
+    )
+    if not stored:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "El estado no pudo confirmarse mediante la escritura atómica. "
+                "Vuelve a intentar."
+            ),
+        )
+    return {
+        "status": "guardado",
+        "revision": revision,
+        "restore_state": restore_state,
+    }
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
@@ -1975,6 +2481,51 @@ async def restore_latest(
         require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
     )
     return await run_in_threadpool(_restore_latest_sync, user.id)
+
+
+@router.post("/restore/state")
+async def persist_restore_state(
+    dataset_id: UUID = Form(...),
+    restore_state: str = Form(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Guarda selección/errores multihoja sin recalcular datos.
+
+    Contrato multipart: ``dataset_id`` + ``restore_state`` JSON. La revisión
+    proviene exclusivamente de PostgreSQL y la escritura usa la RPC v2
+    guardada; no existe fallback directo ni degradación al snapshot legacy.
+    """
+
+    state = _validate_restore_state(restore_state)
+    await run_in_threadpool(
+        require_capability_for_user,
+        user.id,
+        Capability.VIEW_DASHBOARD,
+        settings,
+    )
+    dataset_key = str(dataset_id)
+    revision = await run_in_threadpool(
+        reserve_restore_snapshot_revision,
+        dataset_key,
+        user.id,
+        settings,
+    )
+    if revision is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo reservar una revisión segura para el estado.",
+        )
+    response = await run_in_threadpool(
+        _store_restore_state_sync,
+        dataset_key,
+        user.id,
+        state,
+        revision,
+        settings,
+    )
+    _restore_response_cache_invalidate(user.id)
+    return response
 
 
 @router.post("/standardize")
@@ -2286,6 +2837,9 @@ async def metrics(
     storage_path: str | None = Form(None),
     dataset_id: str | None = Form(None),
     mapping: str | None = Form(None),
+    rules: str | None = Form(None),
+    scope: str | None = Form(None),
+    revision: int | None = Form(None),
     eliminar_duplicados: bool = Form(False),
     date_from: str | None = Form(None),
     date_to: str | None = Form(None),
@@ -2318,9 +2872,12 @@ async def metrics(
             dataset_id,
         )
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
+    rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
+    scope_dict = _validate_scope(_parse_json_field(scope, "scope") or None)
     return await run_in_threadpool(
         _metrics_sync, filename, content, mapping_dict, date_from, date_to,
-        _clean_sheet_param(sheet), eliminar_duplicados,
+        _clean_sheet_param(sheet), eliminar_duplicados, rules_dict, scope_dict,
+        dataset_id, revision,
     )
 
 
@@ -2331,6 +2888,7 @@ async def sheet_relationships(
     dataset_id: str | None = Form(None),
     manifest: str = Form(...),
     relationship: str | None = Form(None),
+    focus: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -2348,4 +2906,5 @@ async def sheet_relationships(
         sheet_manifest,
         _parse_json_field(relationship, "relationship") if relationship else None,
         dataset_id,
+        _parse_json_field(focus, "focus") if focus else None,
     )
