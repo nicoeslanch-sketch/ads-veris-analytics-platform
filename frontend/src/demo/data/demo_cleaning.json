@@ -4,6 +4,7 @@
   "Se detectaron 2 repetición(es) exacta(s) en el archivo original. Se conservarán mientras no confirmes explícitamente su eliminación."
  ],
  "carga": {
+  "clasificacion_hojas": [],
   "filas_titulo_omitidas": 0,
   "formulas": null,
   "hoja_usada": null,

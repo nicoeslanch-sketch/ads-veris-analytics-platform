@@ -15,6 +15,7 @@
   "textos_normalizados": 3
  },
  "carga": {
+  "clasificacion_hojas": [],
   "filas_titulo_omitidas": 0,
   "formulas": null,
   "hoja_usada": null,

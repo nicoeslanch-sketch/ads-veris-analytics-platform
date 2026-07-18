@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -96,6 +96,33 @@ export default function Estandarizacion() {
     accessStatus,
   } = useFileImport()
   const checkingAccess = accessStatus === 'loading'
+  const sheetProfiles = standardization?.carga?.clasificacion_hojas ?? []
+  const profilesByName = useMemo(
+    () => Object.fromEntries(sheetProfiles.map((profile) => [profile.nombre, profile])),
+    [sheetProfiles],
+  )
+  const recommendedSheets = useMemo(
+    () => sheetProfiles
+      .filter((profile) => profile.recomendacion === 'procesar')
+      .map((profile) => profile.nombre),
+    [sheetProfiles],
+  )
+  const auxiliaryCount = sheetProfiles.filter((profile) => profile.clasificacion === 'auxiliar').length
+  const ambiguousCount = sheetProfiles.filter((profile) => profile.clasificacion === 'ambigua').length
+  const processingAllDespiteWarning = availableSheets.length > 1 &&
+    selectedSheets.length === availableSheets.length &&
+    sheetProfiles.some((profile) => profile.recomendacion === 'conservar_sin_procesar')
+
+  useEffect(() => {
+    if (!datasetId) return
+    const stored = window.localStorage.getItem(`adsveris:sheet-selection-mode:${datasetId}`)
+    if (stored === 'all' || stored === 'custom') setSelectionMode(stored)
+  }, [datasetId])
+
+  useEffect(() => {
+    if (!datasetId) return
+    window.localStorage.setItem(`adsveris:sheet-selection-mode:${datasetId}`, selectionMode)
+  }, [datasetId, selectionMode])
 
   const handleFile = async (selected: File) => {
     await importFile(selected)
@@ -129,6 +156,7 @@ export default function Estandarizacion() {
     selectionMode,
     availableSheets,
     sheetSessions,
+    selectedSheets,
   )
 
   useEffect(() => {
@@ -413,6 +441,19 @@ export default function Estandarizacion() {
         <Card className="mt-10 overflow-hidden !p-0">
           <div className="px-5 pt-5">
             <h2 className="text-sm font-semibold text-navy">Hojas del archivo</h2>
+            {sheetProfiles.length > 0 && (
+              <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                <div className="rounded-lg bg-green/10 px-3 py-2 text-navy">
+                  <strong>{sheetProfiles.filter((item) => item.clasificacion === 'datos').length}</strong> tabla(s) de datos
+                </div>
+                <div className="rounded-lg bg-gold/10 px-3 py-2 text-navy">
+                  <strong>{auxiliaryCount}</strong> auxiliar(es) para conservar
+                </div>
+                <div className="rounded-lg bg-navy/5 px-3 py-2 text-navy">
+                  <strong>{ambiguousCount}</strong> ambigua(s)
+                </div>
+              </div>
+            )}
             <p className="mt-1 text-xs text-navy/55">
               Todas las hojas se preparan automáticamente. Si eliges solo algunas,
               podrás marcarlas manualmente sin crear documentos separados.
@@ -428,13 +469,13 @@ export default function Estandarizacion() {
                   checked={selectionMode === 'all'}
                   onChange={() => {
                     setSelectionMode('all')
-                    setSelectedSheets(availableSheets)
+                    setSelectedSheets(recommendedSheets.length ? recommendedSheets : availableSheets)
                   }}
                   className="mt-0.5 accent-teal"
                 />
                 <span>
-                  <strong className="block text-sm text-navy">Todas las hojas</strong>
-                  <span className="text-xs text-navy/50">Recomendado</span>
+                  <strong className="block text-sm text-navy">Todas las hojas, con recomendacion</strong>
+                  <span className="text-xs text-navy/50">Procesa tablas y conserva auxiliares</span>
                 </span>
               </label>
               <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${selectionMode === 'custom' ? 'border-teal bg-teal/[0.06]' : 'border-navy/15'}`}>
@@ -455,6 +496,22 @@ export default function Estandarizacion() {
               <div className="mt-3 flex flex-wrap gap-3 text-xs font-semibold">
                   <button type="button" onClick={() => setSelectedSheets(availableSheets)} className="text-teal hover:underline">Seleccionar todas</button>
                   <button type="button" onClick={() => setSelectedSheets([])} className="text-navy/55 hover:text-navy">Quitar todas</button>
+              </div>
+            )}
+            {selectionMode === 'all' && recommendedSheets.length < availableSheets.length && (
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+                <span className="text-navy/55">
+                  Recomendamos procesar {recommendedSheets.length} y conservar {availableSheets.length - recommendedSheets.length} sin cambios.
+                </span>
+                <button type="button" onClick={() => setSelectedSheets(availableSheets)} className="font-semibold text-coral hover:underline">
+                  Procesar todas de todos modos
+                </button>
+              </div>
+            )}
+            {processingAllDespiteWarning && (
+              <div className="mt-3 flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/10 px-3 py-2 text-xs text-navy/75">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+                Procesar guias, controles u hojas ambiguas puede reducir la precision y aumentar considerablemente el tiempo de limpieza y exportacion.
               </div>
             )}
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -484,6 +541,7 @@ export default function Estandarizacion() {
             <div className="mt-4 divide-y divide-navy/10 rounded-lg border border-navy/10">
               {availableSheets.map((name) => {
                 const session = sheetSessions[name]
+                const profile = profilesByName[name]
                 const isSelected = selectedSheets.includes(name)
                 const isActive = name === activeSheet
                 const processed = Boolean(session?.standardization)
@@ -497,19 +555,17 @@ export default function Estandarizacion() {
                     key={name}
                     className={`flex min-w-0 items-center gap-3 px-3 py-2.5 text-xs ${isActive ? 'bg-teal/[0.05]' : ''}`}
                   >
-                    {selectionMode === 'custom' && (
-                      <input
-                        type="checkbox"
-                        aria-label={`Seleccionar hoja ${name}`}
-                        checked={isSelected}
-                        onChange={(event) => setSelectedSheets(
-                          event.target.checked
-                            ? [...selectedSheets, name]
-                            : selectedSheets.filter((item) => item !== name),
-                        )}
-                        className="h-4 w-4 shrink-0 accent-teal"
-                      />
-                    )}
+                    <input
+                      type="checkbox"
+                      aria-label={`Procesar hoja ${name}`}
+                      checked={isSelected}
+                      onChange={(event) => setSelectedSheets(
+                        event.target.checked
+                          ? [...selectedSheets, name]
+                          : selectedSheets.filter((item) => item !== name),
+                      )}
+                      className="h-4 w-4 shrink-0 accent-teal"
+                    />
                     <button
                       type="button"
                       onClick={() => void changeSheet(name)}
@@ -523,10 +579,20 @@ export default function Estandarizacion() {
                       ) : (
                         <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-navy/35" />
                       )}
-                      <span className="truncate font-semibold text-navy" title={name}>{name}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold text-navy" title={name}>{name}</span>
+                        {profile && (
+                          <span className="block truncate text-[11px] font-normal text-navy/45" title={profile.motivos.join(' ')}>
+                            {profile.clasificacion === 'datos' ? 'Tabla de datos' : profile.clasificacion === 'auxiliar' ? 'Auxiliar' : 'Ambigua'}
+                            {' - '}{profile.motivos[0]}
+                          </span>
+                        )}
+                      </span>
                       {isActive && <span className="shrink-0 font-medium text-teal">Activa</span>}
                     </button>
-                    <span className={session?.status === 'error' ? 'shrink-0 text-coral' : 'shrink-0 text-navy/55'}>{status}</span>
+                    <span className={session?.status === 'error' ? 'shrink-0 text-coral' : 'shrink-0 text-navy/55'}>
+                      {!isSelected ? 'Conservar sin procesar' : status}
+                    </span>
                     {session?.status === 'error' && (
                       <button type="button" onClick={() => void processSheets([name], false)} className="font-semibold text-teal hover:underline">Reintentar</button>
                     )}

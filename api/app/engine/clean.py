@@ -932,6 +932,19 @@ def analyze_and_clean(
         ),
         "filas_eliminadas": 0,
     }
+    detected_duplicate_rows = [
+        {
+            "fila_origen": int(source_rows[position]),
+            "hoja_origen": source_sheet,
+            "regla": "duplicado_exacto_original",
+            "categoria": "duplicado_detectado",
+            "aplicada": False,
+            "confianza": 1.0,
+            "motivo": "Coincide exactamente con una fila anterior del archivo original.",
+        }
+        for position, duplicated in enumerate(duplicated_mask)
+        if bool(duplicated)
+    ]
 
     # Enriquecer el reporte de calidad con lo que sabe la estandarización
     # y el mapeo universal (Fase 9): rol extendido + método y confianza.
@@ -1181,4 +1194,5 @@ def analyze_and_clean(
         "_df_limpio": df if apply else None,
         "_source_rows_limpio": clean_source_rows if apply else source_rows,
         "_filas_duplicadas_eliminadas": removed_duplicate_rows,
+        "_filas_duplicadas_detectadas": detected_duplicate_rows,
     }

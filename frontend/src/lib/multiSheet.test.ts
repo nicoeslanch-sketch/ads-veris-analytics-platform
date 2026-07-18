@@ -90,6 +90,7 @@ describe('estado multihoja', () => {
     const sheets = ['Enero', 'Febrero', 'Productos']
 
     expect(sheetsForAutomaticPreparation('all', sheets, sessions)).toEqual(['Febrero'])
+    expect(sheetsForAutomaticPreparation('all', sheets, sessions, ['Enero'])).toEqual([])
     expect(sheetsForAutomaticPreparation('custom', sheets, sessions)).toEqual([])
   })
 })

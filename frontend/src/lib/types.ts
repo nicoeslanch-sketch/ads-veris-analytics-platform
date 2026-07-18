@@ -3,6 +3,7 @@
 export type ColumnType = 'fecha' | 'numero' | 'texto'
 
 export interface StandardizeResult {
+  revision?: number
   archivo: string
   filas: number
   columnas: number
@@ -40,6 +41,7 @@ export interface CleanIssue {
 }
 
 export interface CleanResult {
+  revision?: number
   archivo: string
   resumen: {
     filas_antes: number
@@ -179,8 +181,28 @@ export interface IdentityInconsistencies {
 export interface LoadInfo {
   hoja_usada: string | null
   hojas_disponibles: string[]
+  clasificacion_hojas?: SheetClassification[]
   filas_titulo_omitidas: number
   formulas?: FormulaReport | null
+}
+
+export interface SheetClassification {
+  nombre: string
+  clasificacion: 'datos' | 'auxiliar' | 'ambigua'
+  recomendacion: 'procesar' | 'conservar_sin_procesar'
+  motivos: string[]
+  estructura: {
+    filas_muestra: number
+    filas_datos_muestra: number
+    columnas_muestra: number
+    celdas_no_vacias_muestra: number
+    densidad_muestra: number
+    fila_encabezado: number | null
+    formulas_muestra?: number
+    celdas_combinadas?: number
+    filas_estimadas?: number
+    columnas_estimadas?: number
+  }
 }
 
 export interface FormulaReport {
@@ -296,6 +318,7 @@ export interface SheetManifestEntry {
   eliminar_duplicados: boolean
   status?: SheetProcessingStatus
   error?: string
+  revision?: number
 }
 
 export interface SheetManifest {
@@ -323,6 +346,13 @@ export type AnalysisScope =
   | { mode: 'single'; sheets: string[]; active_sheet: string }
   | { mode: 'append'; sheets: string[]; active_sheet: string }
   | { mode: 'join'; sheets: string[]; active_sheet: string; join: AnalysisJoin }
+  | {
+      mode: 'append_join'
+      sheets: string[]
+      append_sheets: string[]
+      active_sheet: string
+      join: AnalysisJoin
+    }
 
 export interface RelationshipCandidate extends AnalysisJoin {
   coverage_left: number
@@ -338,6 +368,7 @@ export interface RelationshipCandidate extends AnalysisJoin {
 export interface RelationshipResult {
   candidates: RelationshipCandidate[]
   safe_count: number
+  manual?: RelationshipCandidate | null
   message: string | null
 }
 
@@ -480,6 +511,19 @@ export interface MetricsResult {
   advertencias: string[]
   analysis_scope?: AnalysisScope
   analysis_provenance?: Record<string, unknown>
+  tipo_analisis?: 'catalogo_productos'
+  analisis_productos?: {
+    productos: number
+    costos: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
+    precios_lista: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
+    margen_potencial: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
+    cobertura_costo_pct: number
+    ranking_costos: Array<{ producto: string; costo: number; precio_lista: number | null; margen_potencial_pct: number | null }>
+    categorias: Array<{ nombre: string; productos: number }>
+    marcas: Array<{ nombre: string; productos: number }>
+    activos: number | null
+    inactivos: number | null
+  }
 }
 
 /** Compact response from POST /restore/latest. */

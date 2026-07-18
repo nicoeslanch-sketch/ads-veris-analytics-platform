@@ -62,9 +62,10 @@ export function sheetsForAutomaticPreparation(
   mode: 'all' | 'custom',
   availableSheets: string[],
   sessions: Record<string, SheetPreparationState | undefined>,
+  selectedSheets: string[] = availableSheets,
 ): string[] {
   if (mode !== 'all') return []
-  return availableSheets.filter((name) => {
+  return availableSheets.filter((name) => selectedSheets.includes(name)).filter((name) => {
     const session = sessions[name]
     return !session?.standardization &&
       session?.status !== 'error' &&

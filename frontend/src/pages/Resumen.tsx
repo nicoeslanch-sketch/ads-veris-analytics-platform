@@ -34,6 +34,7 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
+import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import { useAuth } from '../auth/AuthContext'
 import { fullRangePeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
@@ -273,6 +274,7 @@ export default function Resumen() {
     setError(null)
     const fields: Record<string, string> = {
       eliminar_duplicados: String(eliminarDuplicados),
+      ...(datasetId ? { dataset_id: datasetId } : {}),
     }
     if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
     if (sheet) fields.sheet = sheet
@@ -343,7 +345,7 @@ export default function Resumen() {
 
   // El backend reemplaza toda suma monetaria por null cuando hay monedas
   // incompatibles. No construir tarjetas antes de mostrar el bloqueo global.
-  const kpis = metrics?.moneda_mixta ? undefined : metrics?.kpis
+  const kpis = metrics?.moneda_mixta || metrics?.analisis_productos ? undefined : metrics?.kpis
   const evolution = metrics?.evolucion_mensual ?? []
   // Fase 14: el gráfico identifica el mes parcial (asterisco + nota al pie)
   const mesParcial = evolution.find((m) => m.parcial) ?? null
@@ -527,6 +529,8 @@ export default function Resumen() {
         <div className="flex items-center gap-3 py-20 text-sm text-navy/60">
           <Loader2 className="h-5 w-5 animate-spin text-teal" /> Calculando indicadores...
         </div>
+      ) : metrics?.analisis_productos ? (
+        <ProductCatalogSummary analysis={metrics.analisis_productos} />
       ) : metrics && metrics.dimensiones?.monto === false ? (
         /* Fase 11: sin columna de monto el dashboard sería puro $0 — mejor
            decirlo claro y llevar al usuario al mapeo de columnas. */

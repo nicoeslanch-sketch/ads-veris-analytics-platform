@@ -12,7 +12,7 @@ se habilitan cuando el usuario conecte sus datos financieros.
 
 import re
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Any, Iterator
 
 import pandas as pd
 
@@ -372,6 +372,17 @@ def compute_metrics(
     roles = resolve_mapping(list(df.columns), mapping)
     roles = {role: col for role, col in roles.items() if col in df.columns}
     warnings: list[str] = []
+    normalized_columns = {
+        strip_accents_lower(str(column)).replace("_", " "): str(column)
+        for column in df.columns
+    }
+    product_catalog = bool(
+        roles.get("producto")
+        and roles.get("costo")
+        and not roles.get("fecha")
+        and not roles.get("cantidad")
+        and any("precio" in name and "lista" in name for name in normalized_columns)
+    )
 
     currency = _coerce_currency_detection(
         currency_hint,
@@ -865,6 +876,93 @@ def compute_metrics(
         ),
         "items": {ratio: None for ratio in FINANCIAL_RATIOS},
     }
+    if product_catalog:
+        product_column = roles["producto"]
+        cost_values = _numeric_series(df, roles.get("costo"))
+        price_column = next(
+            (
+                column
+                for normalized, column in normalized_columns.items()
+                if "precio" in normalized and "lista" in normalized
+            ),
+            roles.get("monto"),
+        )
+        price_values = _numeric_series(df, price_column)
+        paired = cost_values.notna() & price_values.notna()
+        margins = ((price_values - cost_values) / price_values.where(price_values != 0) * 100).where(paired)
+        brand_column = next(
+            (column for normalized, column in normalized_columns.items() if normalized == "marca"),
+            None,
+        )
+        status_column = next(
+            (column for normalized, column in normalized_columns.items() if normalized == "estado"),
+            None,
+        )
+
+        def stats(series: pd.Series) -> dict[str, float | None]:
+            valid = series.dropna().astype(float)
+            if valid.empty:
+                return {"promedio": None, "mediana": None, "minimo": None, "maximo": None}
+            return {
+                "promedio": round(float(valid.mean()), 2),
+                "mediana": round(float(valid.median()), 2),
+                "minimo": round(float(valid.min()), 2),
+                "maximo": round(float(valid.max()), 2),
+            }
+
+        ranking = pd.DataFrame(
+            {"producto": df[product_column].astype(str), "costo": cost_values, "precio_lista": price_values, "margen_potencial_pct": margins}
+        ).dropna(subset=["costo"]).sort_values("costo", ascending=False).head(12)
+
+        def counts(column: str | None) -> list[dict[str, Any]]:
+            if not column:
+                return []
+            values = df[column].loc[~physical_missing_mask(df[column])].astype(str).str.strip()
+            return [
+                {"nombre": str(name), "productos": int(total)}
+                for name, total in values.value_counts().head(20).items()
+            ]
+
+        statuses = (
+            df[status_column].astype(str).map(strip_accents_lower)
+            if status_column
+            else pd.Series([], dtype=str)
+        )
+        result["tipo_analisis"] = "catalogo_productos"
+        result["analisis_productos"] = {
+            "productos": int(df[product_column].loc[~physical_missing_mask(df[product_column])].nunique()),
+            "costos": stats(cost_values),
+            "precios_lista": stats(price_values),
+            "margen_potencial": stats(margins),
+            "cobertura_costo_pct": round(float(cost_values.notna().mean() * 100), 1) if len(df) else 0.0,
+            "ranking_costos": ranking.to_dict(orient="records"),
+            "categorias": counts(roles.get("categoria")),
+            "marcas": counts(brand_column),
+            "activos": int(statuses.isin({"activo", "activa", "vigente"}).sum()) if len(statuses) else None,
+            "inactivos": int(statuses.isin({"inactivo", "inactiva", "descontinuado"}).sum()) if len(statuses) else None,
+        }
+        # Un costo/precio unitario es una propiedad del catálogo, no un hecho
+        # transaccional. Se retiran las sumas comerciales genéricas para que
+        # ningún consumidor las presente como gasto o ingreso del negocio.
+        result["kpis"] = {
+            "transacciones": int(len(df)),
+            "productos": result["analisis_productos"]["productos"],
+            "ingresos_totales": None,
+            "ticket_promedio": None,
+            "gastos_totales": None,
+            "ganancia_neta": None,
+            "margen_utilidad_pct": None,
+            "flujo_caja": None,
+        }
+        result["evolucion_mensual"] = []
+        result["por_categoria"] = []
+        result["ventas_por_canal"] = []
+        result["top_productos"] = []
+        result["proyeccion"] = None
+        warnings.append(
+            "Esta hoja se interpreta como catálogo de productos: Costo_Unitario y Precio_Lista se resumen por producto y no se suman como ventas."
+        )
+        result["advertencias"] = warnings
     result["advertencias"] = warnings
     if currency.mixta:
         _block_monetary_outputs(result, currency)

@@ -45,6 +45,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
+import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
@@ -428,6 +429,7 @@ export default function Explorar() {
     setError(null)
     const fields: Record<string, string> = {
       eliminar_duplicados: String(eliminarDuplicados),
+      ...(datasetId ? { dataset_id: datasetId } : {}),
     }
     if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
     if (sheet) fields.sheet = sheet
@@ -527,6 +529,19 @@ export default function Explorar() {
           ctaLabel="Revisar en Limpieza"
           ctaTo="/limpieza"
         />
+      </>
+    )
+  }
+
+  if (metrics?.analisis_productos) {
+    return (
+      <>
+        <PageHeader
+          title="Explorar productos"
+          subtitle="Costos, precios de lista, margen potencial y composicion del catalogo."
+        />
+        <ActiveSheetSelector />
+        <ProductCatalogSummary analysis={metrics.analisis_productos} />
       </>
     )
   }

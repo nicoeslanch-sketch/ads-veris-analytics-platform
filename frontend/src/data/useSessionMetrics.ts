@@ -49,6 +49,7 @@ export function useSessionMetrics(): {
     setError(null)
     const fields: Record<string, string> = {
       eliminar_duplicados: String(eliminarDuplicados),
+      ...(datasetId ? { dataset_id: datasetId } : {}),
       ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
       ...(sheet ? { sheet } : {}),
       ...(sheetManifest && analysisScope

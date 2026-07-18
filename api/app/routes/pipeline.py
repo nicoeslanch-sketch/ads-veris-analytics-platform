@@ -68,6 +68,7 @@ from ..engine.metrics import compute_metrics, detect_currency
 from ..engine.multi_sheet import (
     build_analysis_frame,
     detect_relationships,
+    relation_stats,
     validate_analysis_scope,
 )
 from ..engine.standardize import normalize_headers, standardize_dataframe
@@ -443,6 +444,7 @@ _MANIFEST_ENTRY_KEYS = {
     "eliminar_duplicados",
     "status",
     "error",
+    "revision",
 }
 
 
@@ -509,6 +511,12 @@ def _parse_sheet_manifest(raw: str | None) -> dict | None:
                 status_code=422,
                 detail=f"eliminar_duplicados debe ser booleano en la hoja '{name}'.",
             )
+        revision = entry.get("revision", 0)
+        if not isinstance(revision, int) or revision < 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"revision debe ser un entero no negativo en la hoja '{name}'.",
+            )
         normalized.append(
             {
                 "nombre": name,
@@ -519,6 +527,7 @@ def _parse_sheet_manifest(raw: str | None) -> dict | None:
                 "eliminar_duplicados": remove_duplicates,
                 "status": str(entry.get("status", "pendiente"))[:30],
                 "error": str(entry.get("error", ""))[:500],
+                "revision": revision,
             }
         )
 
@@ -539,6 +548,7 @@ def _processed_manifest_frames(
     filename: str,
     content: bytes,
     manifest: dict,
+    cache_dataset_id: str | None = None,
 ) -> tuple[dict[str, object], dict[str, dict[str, str]], dict[str, dict]]:
     """Procesa el manifiesto en orden y conserva la configuracion por hoja."""
     frames: dict[str, object] = {}
@@ -556,6 +566,8 @@ def _processed_manifest_frames(
             scope=entry["scope"] or None,
             sheet=entry["nombre"],
             eliminar_duplicados=entry["eliminar_duplicados"],
+            cache_dataset_id=cache_dataset_id,
+            cache_revision=entry.get("revision") or None,
         )
         frames[entry["nombre"]] = result["_df_limpio"].copy()
         mappings[entry["nombre"]] = result.get("mapeo", entry["mapping"])
@@ -607,6 +619,9 @@ _CACHE_TOTAL_CELL_BUDGET = 2_400_000
 # Una entrada individual jamás puede superar el presupuesto completo
 # (el loader ya limita a 200.000 filas).
 _CACHE_MAX_ENTRY_CELLS = 2_400_000
+_AUDIT_CACHE_LOCK = threading.Lock()
+_AUDIT_CACHE: "OrderedDict[tuple, object]" = OrderedDict()
+_AUDIT_CACHE_MAX_ROWS = 100_000
 
 
 def _cache_entry_cells(result: dict, apply: bool) -> int:
@@ -640,9 +655,14 @@ def _cache_key(
     scope: dict | None,
     sheet: str | None = None,
     eliminar_duplicados: bool = False,
+    cache_dataset_id: str | None = None,
+    cache_revision: int | None = None,
 ) -> tuple:
     effective_rules = {**DEFAULT_RULES, **(rules or {})}
     return (
+        ENGINE_VERSION,
+        cache_dataset_id or "",
+        int(cache_revision or 0),
         hashlib.sha1(content).digest(),
         json.dumps(effective_rules, sort_keys=True),
         apply,
@@ -662,11 +682,21 @@ def _analyze_cached(
     scope: dict | None = None,
     sheet: str | None = None,
     eliminar_duplicados: bool = False,
+    cache_dataset_id: str | None = None,
+    cache_revision: int | None = None,
 ) -> dict:
     """analyze_and_clean con caché. El dict cacheado JAMÁS se muta: los
     endpoints construyen su respuesta con una copia superficial."""
     key = _cache_key(
-        content, rules, apply, mapping, scope, sheet, eliminar_duplicados
+        content,
+        rules,
+        apply,
+        mapping,
+        scope,
+        sheet,
+        eliminar_duplicados,
+        cache_dataset_id,
+        cache_revision,
     )
     with _CACHE_LOCK:
         cached = _CLEAN_CACHE.get(key)
@@ -717,6 +747,7 @@ def _analyze_cached(
     result["carga"] = {
         "hoja_usada": load_report.get("hoja_usada"),
         "hojas_disponibles": load_report.get("hojas_disponibles", []),
+        "clasificacion_hojas": load_report.get("clasificacion_hojas", []),
         "filas_titulo_omitidas": load_report.get("filas_titulo_omitidas", 0),
         "formulas": load_report.get("formulas"),
     }
@@ -803,6 +834,7 @@ def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -
         "carga": {
             "hoja_usada": load_report.get("hoja_usada"),
             "hojas_disponibles": load_report.get("hojas_disponibles", []),
+            "clasificacion_hojas": load_report.get("clasificacion_hojas", []),
             "filas_titulo_omitidas": load_report.get("filas_titulo_omitidas", 0),
             "formulas": load_report.get("formulas"),
         },
@@ -824,6 +856,8 @@ def _clean_sync(
     extra: dict | None = None,
     sheet: str | None = None,
     eliminar_duplicados: bool = False,
+    cache_dataset_id: str | None = None,
+    cache_revision: int | None = None,
 ) -> dict:
     result = _analyze_cached(
         filename,
@@ -834,6 +868,8 @@ def _clean_sync(
         scope=scope,
         sheet=sheet,
         eliminar_duplicados=eliminar_duplicados,
+        cache_dataset_id=cache_dataset_id,
+        cache_revision=cache_revision,
     )
     return _public_clean_response(result, filename, extra)
 
@@ -942,12 +978,18 @@ def _safe_excel_sheet_name(name: str, used: set[str]) -> str:
 
 
 def _write_clean_sheet(
-    wb, title: str, df, yellow: dict, red: dict, index: int | None = None
+    wb,
+    title: str,
+    df,
+    yellow: dict,
+    red: dict,
+    index: int | None = None,
+    numeric_columns: set[str] | None = None,
 ) -> None:
     from openpyxl.styles import Font, PatternFill
 
     ws = wb.create_sheet(title, index)
-    exported = safe_export_dataframe(df)
+    exported = safe_export_dataframe(df, numeric_columns=numeric_columns)
     ws.append(list(exported.columns))
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -1000,7 +1042,23 @@ def _build_export_audit(
     rules: dict,
     mapping: dict | None,
     scope: dict | None,
+    cache_revision: int | None = None,
 ):
+    audit_key = (
+        ENGINE_VERSION,
+        hashlib.sha256(content).digest(),
+        sheet or "",
+        json.dumps({**DEFAULT_RULES, **(rules or {})}, sort_keys=True),
+        json.dumps(mapping or {}, sort_keys=True),
+        json.dumps(scope or {}, sort_keys=True),
+        int(cache_revision or 0),
+        tuple(int(row) for row in result.get("_source_rows_limpio", [])),
+    )
+    with _AUDIT_CACHE_LOCK:
+        cached_audit = _AUDIT_CACHE.get(audit_key)
+        if cached_audit is not None:
+            _AUDIT_CACHE.move_to_end(audit_key)
+            return cached_audit.copy(deep=True)
     original, _ = _load_or_400(filename, content, sheet=sheet)
     original_headers = [str(column) for column in original.columns]
     original_source_rows = list(
@@ -1011,7 +1069,7 @@ def _build_export_audit(
         column: details.get("confianza_tipo")
         for column, details in result.get("reporte_calidad", {}).items()
     }
-    return build_audit_dataframe(
+    audit = build_audit_dataframe(
         filename=filename,
         original=original,
         cleaned=result["_df_limpio"],
@@ -1026,9 +1084,19 @@ def _build_export_audit(
         rules=rules,
         scope=scope,
         removed_rows=result.get("_filas_duplicadas_eliminadas", []),
+        detected_duplicate_rows=result.get("_filas_duplicadas_detectadas", []),
         source_sha256=hashlib.sha256(content).hexdigest(),
         original_headers=original_headers,
+        revision=cache_revision,
     )
+    with _AUDIT_CACHE_LOCK:
+        _AUDIT_CACHE[audit_key] = audit.copy(deep=True)
+        _AUDIT_CACHE.move_to_end(audit_key)
+        total_rows = sum(len(frame) for frame in _AUDIT_CACHE.values())
+        while len(_AUDIT_CACHE) > 1 and total_rows > _AUDIT_CACHE_MAX_ROWS:
+            _, removed = _AUDIT_CACHE.popitem(last=False)
+            total_rows -= len(removed)
+    return audit
 
 
 def _write_audit_sheet(wb, audit, title: str = "Auditoria") -> None:
@@ -1125,7 +1193,10 @@ def _clean_download_sync(
     )
     df = result["_df_limpio"].copy()
     stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
-    df_export = safe_export_dataframe(df)
+    numeric_columns = {
+        column for column, kind in result.get("column_types", {}).items() if kind == "numero"
+    }
+    df_export = safe_export_dataframe(df, numeric_columns=numeric_columns)
     audit = _build_export_audit(
         filename, content, sheet, result, rules, mapping, scope
     )
@@ -1172,7 +1243,7 @@ def _clean_download_sync(
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     yellow, red, observations = _export_annotations(result, df)
-    _write_clean_sheet(wb, "Datos_limpios", df, yellow, red)
+    _write_clean_sheet(wb, "Datos_limpios", df, yellow, red, numeric_columns=numeric_columns)
     _write_observations_sheet(wb, observations)
     _write_audit_sheet(wb, audit)
     output = io.BytesIO()
@@ -1191,6 +1262,7 @@ def _clean_download_book_sync(
     manifest: dict,
     export_format: str,
     analysis_scope: dict | None,
+    cache_dataset_id: str | None = None,
 ) -> tuple[bytes, str, str]:
     """Exportacion Fase 17: libro completo o ZIP multihoja auditable."""
     if not filename.lower().endswith(".xlsx"):
@@ -1225,6 +1297,7 @@ def _clean_download_book_sync(
             "mapeo": entry["mapping"],
             "source_sha256": source_hash,
             "analysis_scope": analysis_scope,
+            "revision": entry.get("revision", 0),
         }
         if not entry["procesar"]:
             observations.append(("-", name, "*", "hoja_no_procesada", "Conservada sin modificaciones."))
@@ -1240,6 +1313,8 @@ def _clean_download_book_sync(
                 scope=entry["scope"] or None,
                 sheet=name,
                 eliminar_duplicados=entry["eliminar_duplicados"],
+                cache_dataset_id=cache_dataset_id,
+                cache_revision=entry.get("revision") or None,
             )
             frame = result["_df_limpio"].copy()
             frames[name] = frame
@@ -1250,6 +1325,7 @@ def _clean_download_book_sync(
                 _build_export_audit(
                     filename, content, name, result, entry["rules"],
                     entry["mapping"] or None, entry["scope"] or None,
+                    entry.get("revision") or None,
                 )
             )
             records.append({
@@ -1272,11 +1348,16 @@ def _clean_download_book_sync(
             })
 
     analysis_frame = None
+    analysis_mapping: dict[str, str] = {}
     provenance = None
-    if analysis_scope:
+    # En modo single las hojas procesadas ya son la salida. Crear una copia
+    # adicional llamada Datos_relacionados era engañoso y duplicaba el peso.
+    if analysis_scope and analysis_scope["mode"] != "single":
         _validate_scope_currencies(analysis_scope, mappings, results)
         try:
-            analysis_frame, _, provenance = build_analysis_frame(frames, mappings, analysis_scope)
+            analysis_frame, analysis_mapping, provenance = build_analysis_frame(
+                frames, mappings, analysis_scope
+            )
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc))
     for record in records:
@@ -1305,7 +1386,14 @@ def _clean_download_book_sync(
                 safe_name = re.sub(r"[^\w\-]", "_", name) or "Hoja"
                 archive.writestr(
                     f"{safe_name}_limpio.csv",
-                    safe_export_dataframe(frame).to_csv(index=False, sep=";").encode("utf-8-sig"),
+                    safe_export_dataframe(
+                        frame,
+                        numeric_columns={
+                            column
+                            for column, kind in results[name].get("column_types", {}).items()
+                            if kind == "numero"
+                        },
+                    ).to_csv(index=False, sep=";").encode("utf-8-sig"),
                 )
             archive.writestr(
                 "Auditoria.csv",
@@ -1319,7 +1407,19 @@ def _clean_download_book_sync(
                 )
                 archive.writestr(
                     analysis_name,
-                    safe_export_dataframe(analysis_frame).to_csv(index=False, sep=";").encode("utf-8-sig"),
+                    safe_export_dataframe(
+                        analysis_frame,
+                        numeric_columns={
+                            column
+                            for role, column in analysis_mapping.items()
+                            if role in {"monto", "costo", "cantidad"}
+                        }
+                        | {
+                            column
+                            for column in analysis_frame.columns
+                            if str(column).casefold().startswith(("utilidad_", "margen_", "costo_"))
+                        },
+                    ).to_csv(index=False, sep=";").encode("utf-8-sig"),
                 )
             archive.writestr(
                 "manifest.json",
@@ -1333,12 +1433,40 @@ def _clean_download_book_sync(
         index = wb.worksheets.index(original_sheet)
         wb.remove(original_sheet)
         yellow, red, _ = _export_annotations(results[name], frame)
-        _write_clean_sheet(wb, name, frame, yellow, red, index=index)
+        _write_clean_sheet(
+            wb,
+            name,
+            frame,
+            yellow,
+            red,
+            index=index,
+            numeric_columns={
+                column
+                for column, kind in results[name].get("column_types", {}).items()
+                if kind == "numero"
+            },
+        )
 
     used_names = {name.casefold() for name in wb.sheetnames}
     if analysis_frame is not None:
         preferred = "Datos_combinados" if analysis_scope["mode"] == "append" else "Datos_relacionados"
-        _write_clean_sheet(wb, _safe_excel_sheet_name(preferred, used_names), analysis_frame, {}, {})
+        _write_clean_sheet(
+            wb,
+            _safe_excel_sheet_name(preferred, used_names),
+            analysis_frame,
+            {},
+            {},
+            numeric_columns={
+                column
+                for role, column in analysis_mapping.items()
+                if role in {"monto", "costo", "cantidad"}
+            }
+            | {
+                column
+                for column in analysis_frame.columns
+                if str(column).casefold().startswith(("utilidad_", "margen_", "costo_"))
+            },
+        )
     _write_observations_sheet(wb, observations, _safe_excel_sheet_name("Observaciones", used_names))
     _write_audit_sheet(wb, audit, _safe_excel_sheet_name("Auditoria", used_names))
     _write_manifest_sheet(wb, records, _safe_excel_sheet_name("Manifest", used_names))
@@ -1358,8 +1486,11 @@ def _metrics_multi_sync(
     analysis_scope: dict,
     date_from: str | None,
     date_to: str | None,
+    cache_dataset_id: str | None = None,
 ) -> dict:
-    frames, mappings, results = _processed_manifest_frames(filename, content, manifest)
+    frames, mappings, results = _processed_manifest_frames(
+        filename, content, manifest, cache_dataset_id
+    )
     _validate_scope_currencies(analysis_scope, mappings, results)
     try:
         frame, mapping, provenance = build_analysis_frame(frames, mappings, analysis_scope)
@@ -1382,13 +1513,52 @@ def _metrics_multi_sync(
     return computed
 
 
-def _relationships_sync(filename: str, content: bytes, manifest: dict) -> dict:
-    frames, mappings, _ = _processed_manifest_frames(filename, content, manifest)
+def _relationships_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    manual: dict | None = None,
+    cache_dataset_id: str | None = None,
+) -> dict:
+    frames, mappings, _ = _processed_manifest_frames(
+        filename, content, manifest, cache_dataset_id
+    )
     candidates = detect_relationships(frames, mappings)
     safe = [candidate for candidate in candidates if candidate["safe"]]
+    manual_result = None
+    if manual is not None:
+        allowed = {"left_sheet", "right_sheet", "left_keys", "right_keys", "type"}
+        if not isinstance(manual, dict) or set(manual) - allowed:
+            raise HTTPException(status_code=422, detail="La relación manual no es válida.")
+        left_name = str(manual.get("left_sheet", ""))
+        right_name = str(manual.get("right_sheet", ""))
+        left_keys = manual.get("left_keys")
+        right_keys = manual.get("right_keys")
+        if (
+            left_name not in frames
+            or right_name not in frames
+            or left_name == right_name
+            or not isinstance(left_keys, list)
+            or not isinstance(right_keys, list)
+            or not left_keys
+            or len(left_keys) != len(right_keys)
+            or len(left_keys) > 2
+            or not all(isinstance(key, str) and key for key in left_keys + right_keys)
+        ):
+            raise HTTPException(status_code=422, detail="Las hojas o claves manuales no son válidas.")
+        stats = relation_stats(frames[left_name], left_keys, frames[right_name], right_keys)
+        manual_result = {
+            "left_sheet": left_name,
+            "right_sheet": right_name,
+            "left_keys": left_keys,
+            "right_keys": right_keys,
+            "type": "left",
+            **stats.to_dict(),
+        }
     return {
         "candidates": candidates,
         "safe_count": len(safe),
+        "manual": manual_result,
         "message": None if safe else "No encontramos una conexion segura entre estas hojas. Puedes analizarlas por separado.",
     }
 
@@ -1738,6 +1908,8 @@ async def standardize(
     sheet_name = _clean_sheet_param(sheet)
     state = _validate_restore_state(restore_state)
     result = await run_in_threadpool(_standardize_sync, filename, content, sheet_name)
+    if revision is not None:
+        result["revision"] = revision
     if dataset_id and revision is not None:
         background_tasks.add_task(
             _store_standardization_restore_snapshot,
@@ -1786,8 +1958,10 @@ async def clean(
     state = _validate_restore_state(restore_state)
     result = await run_in_threadpool(
         _clean_sync, filename, content, rules_dict, apply, mapping_dict, None, None,
-        sheet_name, eliminar_duplicados,
+        sheet_name, eliminar_duplicados, dataset_id, revision,
     )
+    if revision is not None:
+        result["revision"] = revision
     if apply and dataset_id and revision is not None:
         background_tasks.add_task(
             _build_and_store_restore_snapshot,
@@ -1881,8 +2055,10 @@ async def clean_assisted(
     scope = {"incluir": plan.columnas_incluir, "excluir": plan.columnas_excluir}
     result = await run_in_threadpool(
         _clean_sync, filename, content, merged_rules, True, mapping_dict, scope,
-        None, sheet_name, eliminar_duplicados,
+        None, sheet_name, eliminar_duplicados, dataset_id, revision,
     )
+    if revision is not None:
+        result["revision"] = revision
 
     # 4) Registrar el consumo (best-effort) SOLO tras un run exitoso.
     consume_addon = bool(quota_info and quota_info.get("consume_addon"))
@@ -1924,6 +2100,7 @@ async def clean_assisted(
 async def clean_download(
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
     rules: str | None = Form(None),
     eliminar_duplicados: bool = Form(False),
     fmt: str = Form("xlsx"),
@@ -1981,6 +2158,7 @@ async def clean_download(
                     [entry["nombre"] for entry in sheet_manifest["hojas"]],
                 ) if combinar_hojas else None
             ),
+            dataset_id,
         )
         return StreamingResponse(
             iter([file_bytes]),
@@ -2005,6 +2183,7 @@ async def clean_download(
 async def metrics(
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
     mapping: str | None = Form(None),
     eliminar_duplicados: bool = Form(False),
     date_from: str | None = Form(None),
@@ -2035,6 +2214,7 @@ async def metrics(
             parsed_analysis_scope,
             date_from,
             date_to,
+            dataset_id,
         )
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     return await run_in_threadpool(
@@ -2047,7 +2227,9 @@ async def metrics(
 async def sheet_relationships(
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
     manifest: str = Form(...),
+    relationship: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -2059,5 +2241,10 @@ async def sheet_relationships(
     if sheet_manifest is None:
         raise HTTPException(status_code=422, detail="Envia un manifiesto de hojas.")
     return await run_in_threadpool(
-        _relationships_sync, filename, content, sheet_manifest
+        _relationships_sync,
+        filename,
+        content,
+        sheet_manifest,
+        _parse_json_field(relationship, "relationship") if relationship else None,
+        dataset_id,
     )

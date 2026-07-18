@@ -499,6 +499,7 @@ export default function Limpieza() {
         fmt,
         ...mappingFields(),
       }
+      if (datasetId) extra.dataset_id = datasetId
       if (directed) {
         extra.scope = JSON.stringify({
           incluir: directed.columnas_incluir,
@@ -595,8 +596,8 @@ export default function Limpieza() {
             restore_state: JSON.stringify({
               ...restoreState,
               active_sheet: name,
-              selected_sheets: names,
-              excluded_sheets: availableSheets.filter((sheetName) => !names.includes(sheetName)),
+              selected_sheets: selectedSheets,
+              excluded_sheets: availableSheets.filter((sheetName) => !selectedSheets.includes(sheetName)),
             }),
           }),
         )
@@ -657,6 +658,19 @@ export default function Limpieza() {
   const unprocessedSheetCount = sheetManifest
     ? sheetManifest.hojas.length - processedSheetCount
     : 0
+  const cleanedSheets = selectedSheets.filter((name) => Boolean(sheetSessions[name]?.cleaning))
+  const failedSheets = selectedSheets.filter((name) => sheetSessions[name]?.status === 'error')
+  const pendingSheets = selectedSheets.filter(
+    (name) => !sheetSessions[name]?.cleaning && sheetSessions[name]?.status !== 'error',
+  )
+  const aggregateRowsAfter = selectedSheets.reduce(
+    (total, name) => total + (
+      sheetSessions[name]?.cleaning?.resumen.filas_despues ??
+      sheetSessions[name]?.standardization?.filas ??
+      0
+    ),
+    0,
+  )
 
   const steps = [
     { title: 'Cargar datos', text: 'Archivo cargado', done: true, warn: false },
@@ -724,7 +738,7 @@ export default function Limpieza() {
               <p className="text-xl font-bold text-navy">
                 {formatNumber(applied && result ? result.resumen.filas_despues : standardization.filas)}
               </p>
-              <p className="text-xs text-navy/50">Registros totales</p>
+              <p className="text-xs text-navy/50">Vista activa: {sheet ?? 'hoja actual'}</p>
             </div>
           </div>
         </Card>
@@ -738,7 +752,7 @@ export default function Limpieza() {
               <p className="text-xl font-bold text-navy">
                 {formatNumber(applied && result ? result.resumen.columnas_despues : standardization.columnas)}
               </p>
-              <p className="text-xs text-navy/50">Variables detectadas</p>
+              <p className="text-xs text-navy/50">Vista activa: {sheet ?? 'hoja actual'}</p>
             </div>
           </div>
         </Card>
@@ -775,6 +789,55 @@ export default function Limpieza() {
 
       {/* Pasos de limpieza — barra horizontal compacta (Fase 8: sin columna
           lateral alargada; el ancho completo queda para los datos) */}
+      {availableSheets.length > 1 && (
+        <Card className="mt-6 !p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-navy">Estado de limpieza por hoja</h2>
+              <p className="mt-1 text-xs text-navy/55">
+                Totales de todas las hojas seleccionadas: {formatNumber(aggregateRowsAfter)} filas actuales.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <Badge tone="navy">{selectedSheets.length} seleccionadas</Badge>
+              <Badge tone="green">{cleanedSheets.length} limpias</Badge>
+              <Badge tone="gold">{pendingSheets.length} pendientes</Badge>
+              {failedSheets.length > 0 && <Badge tone="coral">{failedSheets.length} con error</Badge>}
+            </div>
+          </div>
+          <div className="mt-3 divide-y divide-navy/10 rounded-lg border border-navy/10">
+            {selectedSheets.map((name) => {
+              const session = sheetSessions[name]
+              const status = session?.status === 'error'
+                ? 'Error'
+                : session?.cleaning
+                  ? 'Limpia'
+                  : session?.status === 'limpiando'
+                    ? 'Limpiando...'
+                    : 'Pendiente'
+              return (
+                <div key={name} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+                  <span className="min-w-0 flex-1 truncate font-semibold text-navy" title={name}>{name}</span>
+                  {name === sheet && <span className="text-teal">Vista previa activa</span>}
+                  <span className={session?.status === 'error' ? 'text-coral' : 'text-navy/55'}>{status}</span>
+                  {session?.standardization && !session.cleaning && session.status !== 'error' && (
+                    <button type="button" onClick={() => void handleApplySheets([name])} disabled={applying} className="font-semibold text-teal hover:underline disabled:opacity-50">
+                      Limpiar esta hoja
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {failedSheets.length > 0 && (
+            <button type="button" onClick={() => void handleApplySheets(failedSheets)} disabled={applying} className="mt-3 inline-flex items-center gap-2 rounded-lg border border-coral/30 px-3 py-2 text-xs font-semibold text-coral disabled:opacity-50">
+              {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Reintentar solo las fallidas
+            </button>
+          )}
+        </Card>
+      )}
+
       <Card className="mt-6 !p-4">
         <ol className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {steps.map((step, index) => (
@@ -901,7 +964,10 @@ export default function Limpieza() {
                       {downloading === 'csv' ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : null}
+                      <span className="hidden">
                       {sheetManifest ? 'CSV + auditoría (hoja activa)' : 'CSV + auditoría (ZIP)'}
+                      </span>
+                      <span>ZIP CSV multihoja + auditoria</span>
                     </button>
                     <Link
                       to="/explorar"
@@ -936,7 +1002,7 @@ export default function Limpieza() {
             <Card>
               <div className="flex flex-wrap items-center gap-3">
                 <h2 className="text-base font-semibold text-navy">
-                  Vista previa de los datos originales
+                  Vista previa: {sheet ?? standardization.carga?.hoja_usada ?? 'hoja activa'}
                 </h2>
                 <Badge tone="gold">Antes de la limpieza</Badge>
               </div>

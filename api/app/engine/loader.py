@@ -20,10 +20,13 @@ Fase 8:
 """
 
 import csv
+import hashlib
 import io
 import re
+import threading
 import unicodedata
 import zipfile
+from collections import OrderedDict
 
 import pandas as pd
 
@@ -82,6 +85,125 @@ _VOLATILE_FORMULA_RE = re.compile(
     r"(?i)(?:ALEATORIO(?:\.ENTRE)?|RAND(?:BETWEEN)?|RANDBETWEEN|AHORA|NOW|HOY|TODAY|INDIRECTO|INDIRECT)\s*\("
 )
 _FORMULA_XML_TAG_RE = re.compile(rb"<(?:[A-Za-z_][\w.-]*:)?f(?:\s|/?>)")
+
+_AUXILIARY_SHEET_NAME_RE = re.compile(
+    r"(?i)(?:^|[_\s-])(guia|gu[ií]a|control|leeme|readme|instrucciones?|"
+    r"notas?|diccionario|portada|caratula|car[aá]tula)(?:$|[_\s-])"
+)
+_SHEET_STRUCTURE_CACHE_LOCK = threading.Lock()
+_SHEET_STRUCTURE_CACHE: "OrderedDict[str, dict[str, dict]]" = OrderedDict()
+_SHEET_STRUCTURE_CACHE_SIZE = 8
+_SHEET_CLASSIFICATION_CACHE: "OrderedDict[str, list[dict]]" = OrderedDict()
+
+
+def _sheet_structure_metadata(content: bytes, sheet_names: list[str]) -> dict[str, dict]:
+    """Lee solo metadatos estructurales que pandas no conserva.
+
+    La clasificación es una recomendación, por lo que un fallo de esta pasada
+    auxiliar nunca impide cargar el libro. Se acota a libros moderados para no
+    convertir la pantalla de selección en otro cuello de botella.
+    """
+    if len(content) > 8 * 1024 * 1024 or len(sheet_names) > 50:
+        return {}
+    cache_key = hashlib.sha256(content).hexdigest()
+    with _SHEET_STRUCTURE_CACHE_LOCK:
+        cached = _SHEET_STRUCTURE_CACHE.get(cache_key)
+        if cached is not None:
+            _SHEET_STRUCTURE_CACHE.move_to_end(cache_key)
+            return {name: dict(value) for name, value in cached.items()}
+    try:
+        import openpyxl
+
+        workbook = openpyxl.load_workbook(
+            io.BytesIO(content), data_only=False, read_only=False
+        )
+        metadata: dict[str, dict] = {}
+        for name in sheet_names:
+            worksheet = workbook[name]
+            formulas = 0
+            scan_rows = min(int(worksheet.max_row or 0), 80)
+            scan_cols = min(int(worksheet.max_column or 0), 80)
+            for row in worksheet.iter_rows(
+                min_row=1, max_row=max(scan_rows, 1), min_col=1, max_col=max(scan_cols, 1)
+            ):
+                formulas += sum(cell.data_type == "f" for cell in row)
+            metadata[name] = {
+                "formulas_muestra": formulas,
+                "celdas_combinadas": len(worksheet.merged_cells.ranges),
+                "filas_estimadas": int(worksheet.max_row or 0),
+                "columnas_estimadas": int(worksheet.max_column or 0),
+            }
+        workbook.close()
+        with _SHEET_STRUCTURE_CACHE_LOCK:
+            _SHEET_STRUCTURE_CACHE[cache_key] = metadata
+            _SHEET_STRUCTURE_CACHE.move_to_end(cache_key)
+            while len(_SHEET_STRUCTURE_CACHE) > _SHEET_STRUCTURE_CACHE_SIZE:
+                _SHEET_STRUCTURE_CACHE.popitem(last=False)
+        return {name: dict(value) for name, value in metadata.items()}
+    except Exception:
+        return {}
+
+
+def _classify_sheet_sample(
+    name: str, sample: pd.DataFrame, structure: dict | None = None
+) -> dict:
+    """Clasifica una hoja sin excluirla ni modificarla.
+
+    El resultado incluye evidencia para que la interfaz explique y permita
+    cambiar cada recomendación. No se usa para bloquear el procesamiento.
+    """
+    structure = structure or {}
+    cleaned = _clean_string_frame(sample)
+    populated_rows = int((cleaned != "").any(axis=1).sum()) if len(cleaned) else 0
+    populated_columns = int((cleaned != "").any(axis=0).sum()) if len(cleaned.columns) else 0
+    non_empty_cells = int((cleaned != "").sum().sum()) if len(cleaned) else 0
+    area = max(populated_rows * max(populated_columns, 1), 1)
+    density = non_empty_cells / area
+    header_row = _detect_header_row(cleaned) if len(cleaned) else 0
+    data_rows = max(populated_rows - header_row - 1, 0)
+    auxiliary_name = bool(_AUXILIARY_SHEET_NAME_RE.search(name.strip()))
+    formulas = int(structure.get("formulas_muestra", 0) or 0)
+    merged = int(structure.get("celdas_combinadas", 0) or 0)
+    reasons: list[str] = []
+
+    if auxiliary_name:
+        classification = "auxiliar"
+        reasons.append("El nombre indica guía, control, lectura o instrucciones.")
+    elif populated_columns >= 2 and data_rows >= 5 and density >= 0.35:
+        classification = "datos"
+        reasons.append(
+            f"Tiene estructura tabular ({data_rows} filas de datos y {populated_columns} columnas en la muestra)."
+        )
+    else:
+        classification = "ambigua"
+        reasons.append("La muestra no permite confirmar una tabla de datos con suficiente confianza.")
+
+    if header_row:
+        reasons.append(f"Hay {header_row} fila(s) de título antes del encabezado.")
+    if merged:
+        reasons.append(f"Contiene {merged} rango(s) de celdas combinadas.")
+    if formulas:
+        reasons.append(f"Contiene al menos {formulas} fórmula(s) en la muestra.")
+    if data_rows < 5:
+        reasons.append("Tiene pocas filas de datos.")
+    if populated_columns < 2:
+        reasons.append("No tiene al menos dos columnas pobladas.")
+
+    return {
+        "nombre": name,
+        "clasificacion": classification,
+        "recomendacion": "procesar" if classification == "datos" else "conservar_sin_procesar",
+        "motivos": reasons,
+        "estructura": {
+            "filas_muestra": populated_rows,
+            "filas_datos_muestra": data_rows,
+            "columnas_muestra": populated_columns,
+            "celdas_no_vacias_muestra": non_empty_cells,
+            "densidad_muestra": round(density, 3),
+            "fila_encabezado": header_row + 1 if populated_rows else None,
+            **structure,
+        },
+    }
 
 
 def _xlsx_contains_formulas(content: bytes) -> bool:
@@ -243,6 +365,36 @@ def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.Da
     sheet_names = list(book.sheet_names)
     report["hojas_disponibles"] = sheet_names
 
+    # La misma muestra que antes se usaba solo para elegir la hoja principal
+    # alimenta ahora una recomendación editable para TODAS las hojas. Ninguna
+    # clasificación excluye datos por sí sola.
+    profile_key = hashlib.sha256(content).hexdigest()
+    with _SHEET_STRUCTURE_CACHE_LOCK:
+        cached_profiles = _SHEET_CLASSIFICATION_CACHE.get(profile_key)
+        if cached_profiles is not None:
+            _SHEET_CLASSIFICATION_CACHE.move_to_end(profile_key)
+            profiles = [dict(profile) for profile in cached_profiles]
+        else:
+            profiles = []
+    if not profiles:
+        samples: dict[str, pd.DataFrame] = {}
+        for name in sheet_names:
+            samples[name] = _clean_string_frame(
+                book.parse(name, header=None, nrows=60, dtype=str, keep_default_na=False)
+            )
+        structure = _sheet_structure_metadata(content, sheet_names)
+        profiles = [
+            _classify_sheet_sample(name, samples[name], structure.get(name))
+            for name in sheet_names
+        ]
+        with _SHEET_STRUCTURE_CACHE_LOCK:
+            _SHEET_CLASSIFICATION_CACHE[profile_key] = profiles
+            _SHEET_CLASSIFICATION_CACHE.move_to_end(profile_key)
+            while len(_SHEET_CLASSIFICATION_CACHE) > _SHEET_STRUCTURE_CACHE_SIZE:
+                _SHEET_CLASSIFICATION_CACHE.popitem(last=False)
+    report["clasificacion_hojas"] = profiles
+    profiles_by_name = {profile["nombre"]: profile for profile in profiles}
+
     # Fase 10 §8.3: el usuario puede elegir la hoja; sin elección, se usa la
     # hoja con más celdas con datos (muestra de 60 filas por hoja).
     if sheet is not None and sheet in sheet_names:
@@ -261,10 +413,11 @@ def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.Da
         best_sheet = sheet_names[0]
         best_score = -1
         for name in sheet_names:
-            sample = _clean_string_frame(
-                book.parse(name, header=None, nrows=60, dtype=str, keep_default_na=False)
+            score = int(
+                profiles_by_name.get(name, {}).get("estructura", {}).get(
+                    "celdas_no_vacias_muestra", 0
+                )
             )
-            score = int((sample != "").sum().sum())
             if score > best_score:
                 best_sheet, best_score = name, score
         report["hoja_usada"] = best_sheet

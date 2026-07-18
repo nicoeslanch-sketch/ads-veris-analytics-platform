@@ -8,16 +8,18 @@ import sys
 path = sys.argv[1]
 unsafe = sys.argv[2] == "1"
 ventas = pd.DataFrame({
-    "ID Producto": ["A", "A", "B"],
-    "Fecha": ["01/01/2026", "02/01/2026", "03/01/2026"],
-    "Venta": [1000, 2000, 3000],
+    "ID Producto": ["A", "A", "B", "B", "C", "C"],
+    "Fecha": ["01/01/2026", "02/01/2026", "03/01/2026", "04/01/2026", "05/01/2026", "06/01/2026"],
+    "Cantidad": [1, 2, 1, 3, 2, 1],
+    "Venta": [1000, 2000, 3000, 4500, 2800, 1600],
 })
 febrero = ventas.copy()
-febrero["Fecha"] = ["01/02/2026", "02/02/2026", "03/02/2026"]
+febrero["Fecha"] = ["01/02/2026", "02/02/2026", "03/02/2026", "04/02/2026", "05/02/2026", "06/02/2026"]
 productos = pd.DataFrame({
-    "ID Producto": ["A", "A", "B"] if unsafe else ["A", "B"],
-    "Producto": ["Uno", "Uno duplicado", "Dos"] if unsafe else ["Uno", "Dos"],
-    "Categoria": ["X", "X", "Y"] if unsafe else ["X", "Y"],
+    "ID Producto": ["A", "A", "B", "C", "D", "E"] if unsafe else ["A", "B", "C", "D", "E"],
+    "Producto": ["Uno", "Uno duplicado", "Dos", "Tres", "Cuatro", "Cinco"] if unsafe else ["Uno", "Dos", "Tres", "Cuatro", "Cinco"],
+    "Categoria": ["X", "X", "Y", "Y", "Z", "Z"] if unsafe else ["X", "Y", "Y", "Z", "Z"],
+    "Costo_Unitario": [500, 550, 1200, 800, 700, 900] if unsafe else [500, 1200, 800, 700, 900],
 })
 with pd.ExcelWriter(path, engine="openpyxl") as writer:
     ventas.to_excel(writer, sheet_name="Enero", index=False)
@@ -38,7 +40,7 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await chooser.setFiles(workbook)
 
     await expect(page.getByText(/Dataset activo:/)).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText('Todas las hojas', { exact: true })).toBeVisible()
+    await expect(page.getByText(/Todas las hojas, con recomendacion/)).toBeVisible()
     await expect(page.getByText('3 de 3 hojas seleccionadas')).toHaveCount(0)
     await expect(page.getByText(/estructuras distintas/i)).toHaveCount(0)
     await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(3, { timeout: 90_000 })
@@ -66,6 +68,10 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await page.getByRole('button', { name: /Hojas relacionadas/ }).click()
     await expect(page.getByText(/Encontramos una conexion entre/).first()).toBeVisible({ timeout: 90_000 })
     await page.getByRole('button', { name: /Usar esta conexion/ }).first().click()
+    await page.getByRole('button', { name: /Apilar \+ relacionar/ }).click()
+    await expect(page.getByRole('button', { name: /Apilar y relacionar/ }).first()).toBeVisible({ timeout: 90_000 })
+    await page.getByRole('button', { name: /Apilar y relacionar/ }).first().click()
+    await expect(page.getByText('Cobertura de Costos')).toBeVisible({ timeout: 90_000 })
     await page.getByRole('link', { name: /Explorar datos/ }).first().click()
   await expect(page.getByText('Datos que estas analizando')).toBeVisible()
 })

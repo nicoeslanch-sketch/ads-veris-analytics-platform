@@ -222,8 +222,14 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       delete next[activeSheet]
       return next
     })
+    const recommended = (result.carga?.clasificacion_hojas ?? [])
+      .filter((profile) => profile.recomendacion === 'procesar')
+      .map((profile) => profile.nombre)
+      .filter((name) => sheets.includes(name))
     setSelectedSheetsState((previous) => (
-      previous.length ? previous : (sheets.length ? sheets : [activeSheet])
+      previous.length
+        ? previous
+        : (recommended.length ? recommended : (sheets.length ? sheets : [activeSheet]))
     ))
     setAnalysisScopeState((previous) => previous ?? {
       mode: 'single',
@@ -477,6 +483,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
           eliminar_duplicados: session?.eliminarDuplicados ?? false,
           status: session?.status ?? (selectedSheets.includes(name) ? 'pendiente' : 'no_seleccionada'),
           error: session?.error ?? sheetErrors[name] ?? '',
+          revision: session?.cleaning?.revision ?? session?.standardization?.revision ?? 0,
         }
       }),
     }

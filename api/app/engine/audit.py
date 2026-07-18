@@ -11,6 +11,7 @@ import pandas as pd
 from ..version import ENGINE_VERSION
 from .standardize import (
     is_missing,
+    map_unique,
     parse_date,
     parse_number,
     physical_missing_mask,
@@ -73,6 +74,8 @@ def build_audit_dataframe(
     removed_rows: list[dict],
     source_sha256: str,
     original_headers: list[str] | None = None,
+    detected_duplicate_rows: list[dict] | None = None,
+    revision: int | None = None,
 ) -> pd.DataFrame:
     """Registra cambios y valores conservados que requieren revisión.
 
@@ -87,6 +90,7 @@ def build_audit_dataframe(
         "rules_hash": _stable_hash(rules),
         "mapping_hash": _stable_hash(mapping),
         "scope": scope or {},
+        "revision": revision,
     }
     records: list[dict[str, Any]] = []
 
@@ -136,79 +140,92 @@ def build_audit_dataframe(
     original_positions = {
         int(source_row): position for position, source_row in enumerate(original_source_rows)
     }
-    for clean_position, source_row in enumerate(cleaned_source_rows):
-        original_position = original_positions.get(int(source_row))
-        if original_position is None:
-            continue
-        for column in cleaned.columns:
-            if column not in original.columns:
-                continue
-            before = original.iloc[original_position][column]
-            after = cleaned.iloc[clean_position][column]
-            before_text = _display(before)
-            after_text = _display(after)
+    valid_pairs = [
+        (clean_position, original_positions[int(source_row)], int(source_row))
+        for clean_position, source_row in enumerate(cleaned_source_rows)
+        if int(source_row) in original_positions
+    ]
+    if valid_pairs:
+        clean_positions, source_positions, aligned_rows = zip(*valid_pairs, strict=True)
+        common_columns = [column for column in cleaned.columns if column in original.columns]
+
+        # La versión anterior ejecutaba dos `.iloc` y varias Series de una celda
+        # dentro de un bucle fila × columna. Alinear una sola vez y calcular
+        # máscaras vectoriales conserva el mismo contrato con costo lineal.
+        before_frame = original.iloc[list(source_positions)][common_columns].reset_index(drop=True)
+        after_frame = cleaned.iloc[list(clean_positions)][common_columns].reset_index(drop=True)
+
+        def display_series(series: pd.Series) -> pd.Series:
+            missing = series.isna()
+            return series.astype(str).mask(missing, "")
+
+        for column in common_columns:
+            before_values = before_frame[column]
+            after_values = after_frame[column]
+            before_text = display_series(before_values)
+            after_text = display_series(after_values)
+            changed = before_text.ne(after_text)
             column_type = column_types.get(column, "texto")
             role = roles_by_column.get(column)
             confidence = column_confidence.get(column)
             context = {"tipo_columna": column_type, "rol": role}
-            if before_text != after_text:
-                add(
-                    int(source_row),
-                    column,
-                    before,
-                    after,
-                    _rule_for_change(column_type),
-                    "transformado",
-                    confidence,
-                    "automatica_regla_determinista",
-                    context,
-                )
-                continue
 
-            one = pd.Series([after_text])
-            if bool(physical_missing_mask(one).iloc[0]):
-                add(
-                    int(source_row),
-                    column,
-                    before,
-                    after,
-                    "nulo_fisico",
-                    "conservado_para_revision",
-                    1.0,
-                    "no_requerida",
-                    context,
-                )
-                continue
-            if bool(
-                semantic_missing_mask(one, role, column_type=column_type).iloc[0]
-            ):
-                add(
-                    int(source_row),
-                    column,
-                    before,
-                    after,
-                    "placeholder_semantico",
-                    "conservado_literalmente",
-                    1.0,
-                    "no_requerida",
-                    context,
-                )
-                continue
-            if not is_missing(after_text) and (
-                (column_type == "fecha" and parse_date(after_text) is None)
-                or (column_type == "numero" and parse_number(after_text) is None)
-            ):
-                add(
-                    int(source_row),
-                    column,
-                    before,
-                    after,
-                    "validacion_tipo",
-                    "conservado_para_revision",
-                    confidence,
-                    "no_requerida",
-                    context,
-                )
+            physical = physical_missing_mask(after_text) & ~changed
+            semantic = (
+                semantic_missing_mask(after_text, role, column_type=column_type)
+                & ~changed
+                & ~physical
+            )
+            invalid = pd.Series(False, index=after_text.index)
+            candidates = ~changed & ~physical & ~semantic & ~after_text.map(is_missing)
+            if column_type == "fecha":
+                parsed = map_unique(after_text, parse_date)
+                invalid = candidates & parsed.isna()
+            elif column_type == "numero":
+                parsed = map_unique(after_text, parse_number)
+                invalid = candidates & parsed.isna()
+
+            def add_mask(mask: pd.Series, rule: str, action: str, conf: float | None, confirmation: str) -> None:
+                for position in mask[mask].index:
+                    add(
+                        aligned_rows[position],
+                        column,
+                        before_values.iat[position],
+                        after_values.iat[position],
+                        rule,
+                        action,
+                        conf,
+                        confirmation,
+                        context,
+                    )
+
+            add_mask(
+                changed,
+                _rule_for_change(column_type),
+                "transformado",
+                confidence,
+                "automatica_regla_determinista",
+            )
+            add_mask(physical, "nulo_fisico", "conservado_para_revision", 1.0, "no_requerida")
+            add_mask(semantic, "placeholder_semantico", "conservado_literalmente", 1.0, "no_requerida")
+            add_mask(invalid, "validacion_tipo", "conservado_para_revision", confidence, "no_requerida")
+
+    removed_source_rows = {int(row["fila_origen"]) for row in removed_rows}
+    for duplicate in detected_duplicate_rows or []:
+        source_row = int(duplicate["fila_origen"])
+        if source_row in removed_source_rows:
+            continue
+        add(
+            source_row,
+            "*",
+            "fila repetida exacta",
+            "fila conservada",
+            "duplicado_exacto_original",
+            "duplicado_detectado_y_conservado",
+            1.0,
+            "pendiente_confirmacion",
+            {"motivo": duplicate.get("motivo")},
+        )
 
     for removed in removed_rows:
         source_row = int(removed["fila_origen"])
