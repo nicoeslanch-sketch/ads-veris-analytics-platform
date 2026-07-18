@@ -11,7 +11,11 @@ import { useAuth } from '../../auth/AuthContext'
 import { useDataset } from '../../data/DatasetContext'
 import { ApiError, apiPostJson } from '../../lib/api'
 import { useAccess } from '../../lib/access'
-import { restoredSheetStatus } from '../../lib/multiSheet'
+import {
+  restoredAnalysisSelection,
+  restoredSheetStatus,
+  withPublicAnalysisScope,
+} from '../../lib/multiSheet'
 import { supabaseConfigured } from '../../lib/supabase'
 import type { RestoreLatestResult } from '../../lib/types'
 
@@ -81,13 +85,20 @@ export default function DatasetBootstrap() {
             ]
           }),
         )
+        const restoredSelection = restoredAnalysisSelection(
+          restored.analysis_scope,
+          restored.selection_mode,
+        )
+        const restoredMetrics = restored.metrics
+          ? withPublicAnalysisScope(restored.metrics)
+          : null
         restoreDataset(
           placeholder,
           restored.dataset.id,
           restored.dataset.storage_path,
           restored.standardization,
           restored.cleaning ?? null,
-          restored.metrics ?? null,
+          restoredMetrics,
           restored.mapping ?? null,
           Boolean(restored.eliminar_duplicados),
           {
@@ -98,8 +109,8 @@ export default function DatasetBootstrap() {
             sheetSessions: restoredSessions,
             selectedSheets: restored.selected_sheets,
             sheetErrors: restored.sheet_errors,
-            analysisScope: restored.analysis_scope,
-            selectionMode: restored.selection_mode,
+            analysisScope: restoredSelection.analysisScope,
+            selectionMode: restoredSelection.selectionMode,
           },
         )
       } catch (err) {

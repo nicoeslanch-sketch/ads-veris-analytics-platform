@@ -10,6 +10,96 @@ import type {
 const BASIC_CRITICAL_ROLES = ['monto', 'fecha'] as const
 const MEDIUM_CONFIDENCE = 0.75
 
+type SheetSelectionMode = 'all' | 'custom'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function stringList(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? [...value]
+    : null
+}
+
+function publicJoin(value: unknown): AnalysisJoin | null {
+  if (!isRecord(value)) return null
+  const leftKeys = stringList(value.left_keys)
+  const rightKeys = stringList(value.right_keys)
+  if (
+    typeof value.left_sheet !== 'string' ||
+    typeof value.right_sheet !== 'string' ||
+    value.type !== 'left' ||
+    !leftKeys ||
+    !rightKeys
+  ) return null
+  return {
+    left_sheet: value.left_sheet,
+    right_sheet: value.right_sheet,
+    left_keys: leftKeys,
+    right_keys: rightKeys,
+    type: 'left',
+  }
+}
+
+/** Keeps persistence-only metadata out of API payloads. During a rolling
+ * deployment the database can contain fields that an older API does not yet
+ * understand, so the browser only exposes the public AnalysisScope contract. */
+export function publicAnalysisScope(value: unknown): AnalysisScope | null {
+  if (!isRecord(value)) return null
+  const sheets = stringList(value.sheets)
+  if (!sheets || typeof value.active_sheet !== 'string') return null
+  if (value.mode === 'single' || value.mode === 'append') {
+    return { mode: value.mode, sheets, active_sheet: value.active_sheet }
+  }
+  if (value.mode === 'join') {
+    const join = publicJoin(value.join)
+    return join ? { mode: 'join', sheets, active_sheet: value.active_sheet, join } : null
+  }
+  if (value.mode === 'append_join') {
+    const join = publicJoin(value.join)
+    const appendSheets = stringList(value.append_sheets)
+    return join && appendSheets
+      ? {
+          mode: 'append_join',
+          sheets,
+          append_sheets: appendSheets,
+          active_sheet: value.active_sheet,
+          join,
+        }
+      : null
+  }
+  return null
+}
+
+export function restoredAnalysisSelection(
+  value: unknown,
+  explicitMode?: SheetSelectionMode,
+): { analysisScope: AnalysisScope | null; selectionMode: SheetSelectionMode } {
+  const storedMode = isRecord(value) &&
+    (value._selection_mode === 'all' || value._selection_mode === 'custom')
+    ? value._selection_mode
+    : null
+  return {
+    analysisScope: publicAnalysisScope(value),
+    selectionMode: explicitMode ?? storedMode ?? 'all',
+  }
+}
+
+export function serializedAnalysisScope(value: unknown): string | null {
+  const scope = publicAnalysisScope(value)
+  return scope ? JSON.stringify(scope) : null
+}
+
+export function withPublicAnalysisScope<T extends object>(value: T): T {
+  const result = { ...value } as T & { analysis_scope?: unknown }
+  if (!Object.prototype.hasOwnProperty.call(result, 'analysis_scope')) return result
+  const scope = publicAnalysisScope(result.analysis_scope)
+  if (scope) result.analysis_scope = scope
+  else delete result.analysis_scope
+  return result
+}
+
 export function basicMappingQuestions(
   mapping: Record<string, string>,
   extended: Record<string, DictionaryMatch>,

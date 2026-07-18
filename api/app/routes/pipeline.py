@@ -559,7 +559,12 @@ def _parse_sheet_manifest(raw: str | None) -> dict | None:
 def _parse_analysis_scope(raw: str | None, available_sheets: list[str]) -> dict:
     value = _parse_json_field(raw, "analysis_scope") if raw else None
     try:
-        return validate_analysis_scope(value, available_sheets)
+        scope = validate_analysis_scope(value, available_sheets)
+        # `_selection_mode` pertenece solo al almacenamiento de restauracion.
+        # Se acepta por compatibilidad con snapshots/clientes anteriores, pero
+        # nunca debe circular por metricas, IA, exportaciones ni respuestas.
+        scope.pop("_selection_mode", None)
+        return scope
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 

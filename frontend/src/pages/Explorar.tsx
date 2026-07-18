@@ -51,6 +51,7 @@ import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { principalPorParticipacionBruta } from '../lib/metrics'
+import { serializedAnalysisScope } from '../lib/multiSheet'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
@@ -470,7 +471,8 @@ export default function Explorar() {
     if (sheet) fields.sheet = sheet
     if (sheetManifest && analysisScope) {
       fields.manifest = JSON.stringify(sheetManifest)
-      fields.analysis_scope = JSON.stringify(analysisScope)
+      const serializedScope = serializedAnalysisScope(analysisScope)
+      if (serializedScope) fields.analysis_scope = serializedScope
     }
     if (rango.from) fields.date_from = rango.from
     if (rango.to) fields.date_to = rango.to

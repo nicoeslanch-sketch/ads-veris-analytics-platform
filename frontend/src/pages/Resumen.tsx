@@ -46,6 +46,7 @@ import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { summaryContentKind } from '../lib/metrics'
+import { serializedAnalysisScope } from '../lib/multiSheet'
 import type { MetricsResult } from '../lib/types'
 
 type UsableMonetaryKpis = MetricsResult['kpis'] & {
@@ -326,7 +327,8 @@ export default function Resumen() {
     if (sheet) fields.sheet = sheet
     if (sheetManifest && analysisScope) {
       fields.manifest = JSON.stringify(sheetManifest)
-      fields.analysis_scope = JSON.stringify(analysisScope)
+      const serializedScope = serializedAnalysisScope(analysisScope)
+      if (serializedScope) fields.analysis_scope = serializedScope
     }
     if (period.from) fields.date_from = period.from
     if (period.to) fields.date_to = period.to

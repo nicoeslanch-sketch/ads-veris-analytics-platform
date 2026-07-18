@@ -12,12 +12,15 @@ import {
   sheetsForAutomaticCleaning,
   sheetsForAutomaticPreparation,
   relationshipPlainMessage,
+  restoredAnalysisSelection,
   restoredSheetStatus,
+  serializedAnalysisScope,
   selectAppendJoinCostCandidates,
   singleScope,
   standardizationScopeComplete,
   synchronizeAppendJoinSelection,
   updateBatchSheetErrors,
+  withPublicAnalysisScope,
 } from './multiSheet'
 import type { AnalysisScope, DictionaryMatch, RelationshipCandidate } from './types'
 
@@ -234,6 +237,29 @@ describe('estado multihoja', () => {
     expect(restoredSheetStatus('La limpieza fallo', true)).toBe('error')
     expect(restoredSheetStatus(null, true)).toBe('limpia')
     expect(restoredSheetStatus(undefined, false)).toBe('estandarizada')
+  })
+
+  it('separa el modo privado del alcance antes de llamar a una API', () => {
+    const storedScope = {
+      mode: 'single',
+      sheets: ['Ventas'],
+      active_sheet: 'Ventas',
+      _selection_mode: 'custom',
+    }
+
+    const restored = restoredAnalysisSelection(storedScope)
+
+    expect(restored).toEqual({
+      analysisScope: { mode: 'single', sheets: ['Ventas'], active_sheet: 'Ventas' },
+      selectionMode: 'custom',
+    })
+    expect(serializedAnalysisScope(storedScope)).toBe(
+      JSON.stringify({ mode: 'single', sheets: ['Ventas'], active_sheet: 'Ventas' }),
+    )
+    expect(withPublicAnalysisScope({ analysis_scope: storedScope, ingresos: 100 })).toEqual({
+      analysis_scope: { mode: 'single', sheets: ['Ventas'], active_sheet: 'Ventas' },
+      ingresos: 100,
+    })
   })
 
   it('no ofrece apilar hojas de distinta moneda aunque tengan las mismas columnas', () => {

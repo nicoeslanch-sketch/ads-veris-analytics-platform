@@ -2,6 +2,23 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.20.1] - 2026-07-18 - Flujo multihoja, costos y rendimiento
+
+- "Todas las hojas" ahora marca y prepara literalmente todas; modificar un
+  checkbox cambia de forma explícita a una selección personalizada.
+- Limpieza procesa automáticamente todo el alcance y permite elegir qué hoja
+  muestran las tarjetas, el diagnóstico y la vista previa.
+- Resumen y Explorar pueden apilar ventas compatibles y relacionarlas con un
+  catálogo many-to-one para calcular costos, utilidad, margen y cobertura.
+- Bloquea relaciones que multiplicarían filas y combinaciones de monedas
+  incompatibles, con mensajes comprensibles y sin exponer cardinalidad interna.
+- Acelera análisis repetidos y exportaciones; `lxml` reduce el tiempo de crear
+  el primer XLSX auditado y las descargas idénticas reutilizan bytes en caché.
+- El estado privado `_selection_mode` ya no circula por métricas ni IA, incluso
+  al restaurar snapshots antiguos durante un despliegue escalonado.
+- Sube `ENGINE_VERSION` a `0.20.1` para invalidar snapshots `0.20.0` que no
+  contienen estos resultados. No agrega ni ejecuta migraciones.
+
 ## [0.20.0] - 2026-07-17 - Fase 17: multihoja simple y análisis seguro
 
 - El plan Básico confirma solo campos críticos dudosos, uno por uno, sin

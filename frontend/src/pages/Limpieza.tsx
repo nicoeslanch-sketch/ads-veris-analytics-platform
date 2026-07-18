@@ -42,6 +42,7 @@ import {
   automaticCleaningSignature,
   basicMappingQuestions,
   cleaningScopeState,
+  serializedAnalysisScope,
   sheetsForAutomaticCleaning,
   updateBatchSheetErrors,
 } from '../lib/multiSheet'
@@ -685,7 +686,8 @@ export default function Limpieza() {
       if (sheetManifest) {
         extra.manifest = JSON.stringify(sheetManifest)
         extra.combinar_hojas = String(combineSheets)
-        if (analysisScope) extra.analysis_scope = JSON.stringify(analysisScope)
+        const serializedScope = serializedAnalysisScope(analysisScope)
+        if (serializedScope) extra.analysis_scope = serializedScope
       }
       await apiDownload('/clean/download', buildDatasetForm(file, storagePath, extra), `${stem}_limpio.${fmt}`)
     } catch (err) {

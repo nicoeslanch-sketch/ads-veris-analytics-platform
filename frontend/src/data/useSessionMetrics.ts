@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
 import { setActiveCurrency } from '../lib/format'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
+import { serializedAnalysisScope } from '../lib/multiSheet'
 import type { MetricsResult } from '../lib/types'
 import { useDataset } from './DatasetContext'
 
@@ -66,6 +67,7 @@ export function useSessionMetrics(): {
     latestRequest.current = requestId
     setLoading(true)
     setError(null)
+    const serializedScope = serializedAnalysisScope(analysisScope)
     const fields: Record<string, string> = {
       eliminar_duplicados: String(eliminarDuplicados),
       ...(datasetId ? { dataset_id: datasetId } : {}),
@@ -81,10 +83,10 @@ export function useSessionMetrics(): {
           }
         : {}),
       ...(sheet ? { sheet } : {}),
-      ...(sheetManifest && analysisScope
+      ...(sheetManifest && serializedScope
         ? {
             manifest: JSON.stringify(sheetManifest),
-            analysis_scope: JSON.stringify(analysisScope),
+            analysis_scope: serializedScope,
           }
         : {}),
     }

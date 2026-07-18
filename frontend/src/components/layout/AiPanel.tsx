@@ -17,6 +17,7 @@ import { useAccess } from '../../lib/access'
 import { ApiError, apiPost, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
 import { metricsCacheKey, requestMetrics } from '../../lib/analysisCache'
 import { setActiveCurrency } from '../../lib/format'
+import { serializedAnalysisScope } from '../../lib/multiSheet'
 import type { MetricsResult } from '../../lib/types'
 
 // ── Tipos locales ─────────────────────────────────────────────────────────────
@@ -126,6 +127,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
           directed: cleaning?.dirigida,
           manifest: sheetManifest,
         })
+        const serializedScope = serializedAnalysisScope(analysisScope)
         const fields: Record<string, string> = {
           eliminar_duplicados: String(eliminarDuplicados),
           ...(datasetId ? { dataset_id: datasetId } : {}),
@@ -141,10 +143,10 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
               }
             : {}),
           ...(sheet ? { sheet } : {}),
-          ...(sheetManifest && analysisScope
+          ...(sheetManifest && serializedScope
             ? {
                 manifest: JSON.stringify(sheetManifest),
-                analysis_scope: JSON.stringify(analysisScope),
+                analysis_scope: serializedScope,
               }
             : {}),
         }

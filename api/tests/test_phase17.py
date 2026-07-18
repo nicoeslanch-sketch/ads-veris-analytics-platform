@@ -20,6 +20,7 @@ from app.engine.multi_sheet import (
 from app.routes.pipeline import (
     _clean_download_book_sync,
     _metrics_multi_sync,
+    _parse_analysis_scope,
     _validate_restore_state,
 )
 
@@ -83,6 +84,24 @@ def test_analysis_scope_is_strict_and_normalized():
             {"mode": "append", "sheets": ["Ventas", "Otra"]},
             ["Ventas", "Productos"],
         )
+
+
+def test_private_selection_mode_never_leaves_restore_storage():
+    parsed = _parse_analysis_scope(
+        json.dumps({
+            "mode": "single",
+            "sheets": ["Ventas"],
+            "active_sheet": "Ventas",
+            "_selection_mode": "all",
+        }),
+        ["Ventas"],
+    )
+
+    assert parsed == {
+        "mode": "single",
+        "sheets": ["Ventas"],
+        "active_sheet": "Ventas",
+    }
 
 
 def test_append_compatible_sheets_adds_origin_without_changing_rows():

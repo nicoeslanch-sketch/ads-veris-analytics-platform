@@ -484,13 +484,13 @@ export default function Estandarizacion() {
                   checked={selectionMode === 'all'}
                   onChange={() => {
                     setSelectionMode('all')
-                    setSelectedSheets(recommendedSheets.length ? recommendedSheets : availableSheets)
+                    setSelectedSheets(availableSheets)
                   }}
                   className="mt-0.5 accent-teal"
                 />
                 <span>
-                  <strong className="block text-sm text-navy">Todas las hojas, con recomendacion</strong>
-                  <span className="text-xs text-navy/50">Procesa tablas y conserva auxiliares</span>
+                  <strong className="block text-sm text-navy">Todas las hojas</strong>
+                  <span className="text-xs text-navy/50">Marca y prepara cada hoja del archivo</span>
                 </span>
               </label>
               <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${selectionMode === 'custom' ? 'border-teal bg-teal/[0.06]' : 'border-navy/15'}`}>
@@ -516,10 +516,17 @@ export default function Estandarizacion() {
             {selectionMode === 'all' && recommendedSheets.length < availableSheets.length && (
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
                 <span className="text-navy/55">
-                  Recomendamos procesar {recommendedSheets.length} y conservar {availableSheets.length - recommendedSheets.length} sin cambios.
+                  Se prepararan todas. Detectamos {availableSheets.length - recommendedSheets.length} hoja(s) auxiliares que puedes conservar sin cambios.
                 </span>
-                <button type="button" onClick={() => setSelectedSheets(availableSheets)} className="font-semibold text-coral hover:underline">
-                  Procesar todas de todos modos
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectionMode('custom')
+                    setSelectedSheets(recommendedSheets)
+                  }}
+                  className="font-semibold text-teal hover:underline"
+                >
+                  Usar seleccion recomendada
                 </button>
               </div>
             )}
@@ -576,11 +583,14 @@ export default function Estandarizacion() {
                       type="checkbox"
                       aria-label={`Procesar hoja ${name}`}
                       checked={isSelected}
-                      onChange={(event) => setSelectedSheets(
-                        event.target.checked
-                          ? [...selectedSheets, name]
-                          : selectedSheets.filter((item) => item !== name),
-                      )}
+                      onChange={(event) => {
+                        setSelectionMode('custom')
+                        setSelectedSheets(
+                          event.target.checked
+                            ? [...selectedSheets, name]
+                            : selectedSheets.filter((item) => item !== name),
+                        )
+                      }}
                       className="h-4 w-4 shrink-0 accent-teal"
                     />
                     <button

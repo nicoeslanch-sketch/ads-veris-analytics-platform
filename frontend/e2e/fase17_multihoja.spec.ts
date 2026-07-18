@@ -40,9 +40,14 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await chooser.setFiles(workbook)
 
     await expect(page.getByText(/Dataset activo:/)).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText(/Todas las hojas, con recomendacion/)).toBeVisible()
+    await expect(page.getByText('Todas las hojas', { exact: true })).toBeVisible()
     await expect(page.getByText('3 de 3 hojas seleccionadas')).toHaveCount(0)
     await expect(page.getByText(/estructuras distintas/i)).toHaveCount(0)
+    const selectedSheets = page.getByRole('checkbox', { name: /Procesar hoja/ })
+    await expect(selectedSheets).toHaveCount(3)
+    for (let index = 0; index < 3; index += 1) {
+      await expect(selectedSheets.nth(index)).toBeChecked()
+    }
     await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(3, { timeout: 90_000 })
     await expect(page.getByRole('button', { name: /preparación|Preparar hojas/ })).toHaveCount(0)
     await expect(page.getByText('Enero', { exact: true })).toHaveCount(1)
@@ -88,6 +93,6 @@ test('Fase 17 bloquea una relacion many-to-many', async ({ page }, testInfo) => 
     await expect(page.getByText(/Todas las hojas están limpias/)).toBeVisible({ timeout: 90_000 })
     await page.getByRole('link', { name: /Resumen/ }).first().click()
     await page.getByRole('button', { name: /Ventas \+ costos/ }).click()
-    await expect(page.getByText(/No encontramos una conexion segura|No encontramos una conexión segura/)).toBeVisible({ timeout: 90_000 })
-  await expect(page.getByRole('button', { name: /Apilar y relacionar/ })).toHaveCount(0)
+    await expect(page.getByText(/repite identificadores y podría multiplicar ventas/i)).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByRole('button', { name: /Apilar y relacionar/ })).toHaveCount(0)
 })
