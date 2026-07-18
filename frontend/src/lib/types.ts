@@ -99,6 +99,16 @@ export interface CleanResult {
   mojibake_auditoria?: MojibakeAudit[]
   carga?: LoadInfo
   dirigida?: DirectedInfo
+  moneda?: string
+  moneda_mixta?: boolean
+  moneda_detalle?: {
+    dominante: string
+    detectadas: string[]
+    conteos: Record<string, number>
+    mixta: boolean
+    advertencia: string | null
+    conteos_por_columna: Record<string, Record<string, number>>
+  }
 }
 
 export interface DuplicateDetails {
@@ -445,6 +455,7 @@ export interface MetricsResult {
     meses_disponibles: string[]
     /** Fase 13 (P0.4): el mes seleccionado esta incompleto — la variacion compara dias equivalentes. */
     mes_parcial?: boolean
+    sin_fecha?: { filas: number; monto: number; excluidas_por_filtro: boolean }
   }
   kpis: {
     ingresos_totales: KpiValue
@@ -511,7 +522,7 @@ export interface MetricsResult {
   advertencias: string[]
   analysis_scope?: AnalysisScope
   analysis_provenance?: Record<string, unknown>
-  tipo_analisis?: 'catalogo_productos'
+  tipo_analisis?: 'catalogo_productos' | 'campanas_marketing' | 'inventario' | 'generico'
   analisis_productos?: {
     productos: number
     costos: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
@@ -523,6 +534,32 @@ export interface MetricsResult {
     marcas: Array<{ nombre: string; productos: number }>
     activos: number | null
     inactivos: number | null
+  }
+  analisis_campanas?: {
+    campanas: number
+    inversion: number
+    impresiones: number
+    clics: number
+    ctr_pct: number | null
+    cpc: number | null
+    plataformas: Array<{ nombre: string; registros: number }>
+    estados: Array<{ nombre: string; registros: number }>
+  }
+  analisis_inventario?: {
+    registros: number
+    productos: number
+    stock_total: number
+    stock_minimo_total: number
+    bajo_minimo: number
+    cobertura_stock_pct: number
+    sucursales: Array<{ nombre: string; registros: number }>
+    columna_actualizacion: string | null
+  }
+  analisis_generico?: {
+    registros: number
+    columnas: number
+    celdas_informadas_pct: number
+    columnas_disponibles: string[]
   }
 }
 
@@ -546,6 +583,7 @@ export interface RestoreLatestResult {
   selected_sheets?: string[]
   sheet_errors?: Record<string, string>
   analysis_scope?: AnalysisScope | null
+  selection_mode?: 'all' | 'custom'
   combine_sheets?: boolean
   sheet_sessions?: Record<string, {
     standardization: StandardizeResult

@@ -46,6 +46,7 @@ import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
+import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
@@ -542,6 +543,19 @@ export default function Explorar() {
         />
         <ActiveSheetSelector />
         <ProductCatalogSummary analysis={metrics.analisis_productos} />
+      </>
+    )
+  }
+
+  if (metrics && (metrics.analisis_campanas || metrics.analisis_inventario || metrics.analisis_generico)) {
+    return (
+      <>
+        <PageHeader
+          title="Explorar datos"
+          subtitle="Perfil adaptado al contenido real de esta hoja, sin inventar ventas."
+        />
+        <ActiveSheetSelector />
+        <AdaptiveProfileSummary metrics={metrics} />
       </>
     )
   }

@@ -490,14 +490,6 @@ def store_restore_snapshot(
             payload_v2 if uses_v2 else payload,
             settings,
         )
-        if uses_v2 and (
-            response.status_code == 404
-            or (
-                response.status_code == 400
-                and "store_restore_snapshot_guarded_v2" in response.text
-            )
-        ):
-            response = _post_rpc("store_restore_snapshot_guarded", payload, settings)
     except HTTPException as exc:
         logger.warning("Could not persist restore snapshot: %s", exc.detail)
         return False

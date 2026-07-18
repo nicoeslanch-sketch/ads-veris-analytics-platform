@@ -44,6 +44,7 @@ export interface DatasetRestoreState {
   sheet_errors: Record<string, string>
   analysis_scope: AnalysisScope | null
   combine_sheets: boolean
+  selection_mode: 'all' | 'custom'
 }
 
 export interface RestoreDatasetOptions {
@@ -54,6 +55,7 @@ export interface RestoreDatasetOptions {
   selectedSheets?: string[]
   sheetErrors?: Record<string, string>
   analysisScope?: AnalysisScope | null
+  selectionMode?: 'all' | 'custom'
 }
 
 /** Construye el periodo de un mes "YYYY-MM" (primer al último día). */
@@ -123,6 +125,7 @@ interface DatasetState {
   analysisScope: AnalysisScope | null
   sheetManifest: SheetManifest | null
   combineSheets: boolean
+  selectionMode: 'all' | 'custom'
   restoreState: DatasetRestoreState
   /** true mientras DatasetBootstrap restaura el último trabajo al iniciar
    * sesión/recargar — otros componentes (sidebar, selector de periodo,
@@ -144,14 +147,15 @@ interface DatasetState {
     eliminarDuplicados: boolean,
     options?: RestoreDatasetOptions,
   ) => void
-  setStandardization: (result: StandardizeResult) => void
-  setCleaning: (result: CleanResult) => void
+  setStandardization: (result: StandardizeResult, options?: { activate?: boolean }) => void
+  setCleaning: (result: CleanResult, options?: { activate?: boolean }) => void
   setMetrics: (result: MetricsResult) => void
   setPeriod: (period: Period) => void
   setMonthsAvailable: (months: string[]) => void
   setMappingOverride: (mapping: Record<string, string> | null) => void
   setEliminarDuplicados: (value: boolean) => void
   setCombineSheets: (value: boolean) => void
+  setSelectionMode: (value: 'all' | 'custom') => void
   setSelectedSheets: (sheets: string[]) => void
   setAnalysisScope: (scope: AnalysisScope) => void
   setSheetStatus: (
@@ -183,6 +187,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [sheetErrors, setSheetErrors] = useState<Record<string, string>>({})
   const [analysisScope, setAnalysisScopeState] = useState<AnalysisScope | null>(null)
   const [combineSheets, setCombineSheets] = useState(false)
+  const [selectionMode, setSelectionMode] = useState<'all' | 'custom'>('all')
   const [restoring, setRestoring] = useState(false)
 
   // Cada hoja mantiene su propia configuración. Al activarla se restaura solo
@@ -199,13 +204,17 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setEliminarDuplicados(session?.eliminarDuplicados ?? false)
   }, [sheetSessions])
 
-  const setStandardization = useCallback((result: StandardizeResult) => {
+  const setStandardization = useCallback((
+    result: StandardizeResult,
+    options: { activate?: boolean } = {},
+  ) => {
     const activeSheet = result.carga?.hoja_usada ?? null
     const sheets = result.carga?.hojas_disponibles ?? []
-    setStandardizationState(result)
+    const activate = options.activate !== false
+    if (activate) setStandardizationState(result)
     if (sheets.length) setAvailableSheets(sheets)
     if (!activeSheet) return
-    setSheetState(activeSheet)
+    if (activate) setSheetState(activeSheet)
     setSheetSessions((previous) => ({
       ...previous,
       [activeSheet]: {
@@ -238,14 +247,20 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const setCleaning = useCallback((result: CleanResult) => {
+  const setCleaning = useCallback((
+    result: CleanResult,
+    options: { activate?: boolean } = {},
+  ) => {
     const activeSheet = result.carga?.hoja_usada ?? sheet
     const removeDuplicates = Boolean(result.opciones_aplicacion?.eliminar_duplicados)
-    setCleaningState(result)
-    setMetricsState(null)
-    setMonthsAvailable([])
-    setPeriod(ALL_PERIOD)
-    setEliminarDuplicados(removeDuplicates)
+    const activate = options.activate !== false
+    if (activate) {
+      setCleaningState(result)
+      setMetricsState(null)
+      setMonthsAvailable([])
+      setPeriod(ALL_PERIOD)
+      setEliminarDuplicados(removeDuplicates)
+    }
     if (activeSheet) {
       setSheetSessions((previous) => ({
         ...previous,
@@ -319,6 +334,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setSheetErrors({})
       setAnalysisScopeState(null)
       setCombineSheets(false)
+      setSelectionMode('all')
     },
     [],
   )
@@ -373,6 +389,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       activeSheet ? { mode: 'single', sheets: [activeSheet], active_sheet: activeSheet } : null
     ))
     setCombineSheets(Boolean(options?.combineSheets))
+    setSelectionMode(options?.selectionMode ?? 'all')
   }, [])
 
   const reset = useCallback(() => {
@@ -394,6 +411,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setSheetErrors({})
     setAnalysisScopeState(null)
     setCombineSheets(false)
+    setSelectionMode('all')
   }, [])
 
   // Al cerrar sesión o cambiar de usuario en el mismo navegador, el dataset
@@ -499,7 +517,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     sheet_errors: sheetErrors,
     analysis_scope: analysisScope,
     combine_sheets: combineSheets,
-  }), [analysisScope, availableSheets, combineSheets, selectedSheets, sheet, sheetErrors])
+    selection_mode: selectionMode,
+  }), [analysisScope, availableSheets, combineSheets, selectedSheets, selectionMode, sheet, sheetErrors])
 
   const value = useMemo(
     () => ({
@@ -522,6 +541,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       analysisScope,
       sheetManifest,
       combineSheets,
+      selectionMode,
       restoreState,
       restoring,
       setRestoring,
@@ -536,6 +556,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setMappingOverride,
       setEliminarDuplicados: updateEliminarDuplicados,
       setCombineSheets,
+      setSelectionMode,
       setSelectedSheets,
       setAnalysisScope,
       setSheetStatus,
@@ -561,6 +582,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       analysisScope,
       sheetManifest,
       combineSheets,
+      selectionMode,
       restoreState,
       restoring,
       setSheet,

@@ -95,6 +95,7 @@ export default function DatasetBootstrap() {
             selectedSheets: restored.selected_sheets,
             sheetErrors: restored.sheet_errors,
             analysisScope: restored.analysis_scope,
+            selectionMode: restored.selection_mode,
           },
         )
       } catch (err) {

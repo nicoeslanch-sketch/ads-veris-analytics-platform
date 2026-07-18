@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   appendScope,
   basicMappingQuestions,
+  cleaningScopeState,
+  compatibleAppendSheets,
   joinScope,
   sheetPreparationAction,
   sheetSelectionCountLabel,
   sheetStatusLabel,
   sheetsForAutomaticPreparation,
   singleScope,
+  standardizationScopeComplete,
 } from './multiSheet'
 import type { DictionaryMatch } from './types'
 
@@ -92,5 +95,33 @@ describe('estado multihoja', () => {
     expect(sheetsForAutomaticPreparation('all', sheets, sessions)).toEqual(['Febrero'])
     expect(sheetsForAutomaticPreparation('all', sheets, sessions, ['Enero'])).toEqual([])
     expect(sheetsForAutomaticPreparation('custom', sheets, sessions)).toEqual([])
+  })
+
+  it('bloquea el avance hasta terminar exactamente el alcance seleccionado', () => {
+    const sessions = {
+      Enero: { standardization: { filas: 10 }, cleaning: { filas: 10 } },
+      Febrero: { standardization: { filas: 12 } },
+    }
+    expect(standardizationScopeComplete(['Enero', 'Febrero'], sessions)).toBe(true)
+    expect(standardizationScopeComplete(['Enero', 'Marzo'], sessions)).toBe(false)
+    expect(cleaningScopeState(['Enero', 'Febrero'], sessions)).toBe('partial')
+    expect(cleaningScopeState(
+      ['Enero', 'Febrero'],
+      { ...sessions, Febrero: { ...sessions.Febrero, status: 'error' } },
+    )).toBe('complete_with_errors')
+    expect(cleaningScopeState(['Enero'], sessions, true)).toBe('cleaning')
+  })
+
+  it('no ofrece apilar hojas de distinta moneda aunque tengan las mismas columnas', () => {
+    const result = (currency: string) => ({
+      preview: { columnas: ['Fecha', 'Monto'] },
+      column_types: { Fecha: 'fecha', Monto: 'numero' },
+      mapeo: { fecha: 'Fecha', monto: 'Monto' },
+      moneda: currency,
+    })
+    expect(compatibleAppendSheets(
+      ['CLP', 'USD', 'CLP2'],
+      { CLP: result('CLP'), USD: result('USD'), CLP2: result('CLP') },
+    )).toEqual(['CLP', 'CLP2'])
   })
 })

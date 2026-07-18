@@ -97,7 +97,7 @@ def test_grupo_sin_costos_no_inventa_margen(metrics_audit):
     """P3: ventas 40.000 con un solo costo pareado (el cero) — el margen de un
     grupo sin filas pareadas se omite, jamás un 0 falso."""
     canales = {c["nombre"]: c for c in metrics_audit["ventas_por_canal"]}
-    assert canales["Web"]["ingresos"] == 610000.0
+    assert canales["Online"]["ingresos"] == 610000.0
     assert canales["Tienda"]["ingresos"] == 260000.0
 
 

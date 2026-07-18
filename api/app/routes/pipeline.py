@@ -64,7 +64,7 @@ from ..engine.loader import (
 )
 from ..engine.ai_classifier import classify_columns_with_ai
 from ..engine.mapping import detect_column_roles, detect_columns_extended
-from ..engine.metrics import compute_metrics, detect_currency
+from ..engine.metrics import CurrencyDetection, compute_metrics, detect_currency
 from ..engine.multi_sheet import (
     build_analysis_frame,
     detect_relationships,
@@ -351,6 +351,11 @@ def _validate_restore_state(raw: str | None) -> dict:
         ) if available_names else None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    selection_mode = state.get("selection_mode", "all")
+    if selection_mode not in {"all", "custom"}:
+        raise HTTPException(status_code=422, detail="restore_state.selection_mode no es válido.")
+    if analysis_scope is not None:
+        analysis_scope["_selection_mode"] = selection_mode
     return {
         "active_sheet": active_sheet,
         "available_sheets": available_names,
@@ -360,6 +365,7 @@ def _validate_restore_state(raw: str | None) -> dict:
             key: value[:500] for key, value in sheet_errors.items() if key in available_names
         },
         "analysis_scope": analysis_scope,
+        "selection_mode": selection_mode,
         "combine_sheets": bool(state.get("combine_sheets", False)),
     }
 
@@ -622,6 +628,10 @@ _CACHE_MAX_ENTRY_CELLS = 2_400_000
 _AUDIT_CACHE_LOCK = threading.Lock()
 _AUDIT_CACHE: "OrderedDict[tuple, object]" = OrderedDict()
 _AUDIT_CACHE_MAX_ROWS = 100_000
+_EXPORT_CACHE_LOCK = threading.Lock()
+_EXPORT_CACHE: "OrderedDict[tuple, tuple[bytes, str, str]]" = OrderedDict()
+_EXPORT_INFLIGHT: dict[tuple, threading.Event] = {}
+_EXPORT_CACHE_MAX_ENTRIES = 3
 
 
 def _cache_entry_cells(result: dict, apply: bool) -> int:
@@ -767,10 +777,25 @@ def _analyze_cached(
 def _public_clean_response(result: dict, filename: str, extra: dict | None = None) -> dict:
     """Copia sin los campos internos "_" (el dict cacheado no se toca)."""
     response = {k: v for k, v in result.items() if not k.startswith("_")}
+    currency = result.get("_moneda")
+    if isinstance(currency, CurrencyDetection):
+        response["moneda"] = currency.dominante
+        response["moneda_mixta"] = currency.mixta
+        response["moneda_detalle"] = currency.to_dict()
     response["archivo"] = filename
     if extra:
         response.update(extra)
     return response
+
+
+def _request_excel_recalculation(workbook) -> None:
+    """Marca el libro para que Excel recalcule fórmulas conservadas al abrirlo."""
+    calculation = getattr(workbook, "calculation", None)
+    if calculation is None:
+        return
+    calculation.calcMode = "auto"
+    calculation.fullCalcOnLoad = True
+    calculation.forceFullCalc = True
 
 
 # ── Trabajo pesado con pandas: SIEMPRE fuera del event loop ─────────────────
@@ -1247,6 +1272,7 @@ def _clean_download_sync(
     _write_observations_sheet(wb, observations)
     _write_audit_sheet(wb, audit)
     output = io.BytesIO()
+    _request_excel_recalculation(wb)
     wb.save(output)
     output.seek(0)
     return (
@@ -1256,7 +1282,7 @@ def _clean_download_sync(
     )
 
 
-def _clean_download_book_sync(
+def _clean_download_book_uncached_sync(
     filename: str,
     content: bytes,
     manifest: dict,
@@ -1288,6 +1314,7 @@ def _clean_download_book_sync(
     results: dict[str, dict] = {}
     audit_frames: list[object] = []
     records: list[dict] = []
+    processing_errors: list[str] = []
 
     for entry in entries:
         name = entry["nombre"]
@@ -1339,6 +1366,7 @@ def _clean_download_book_sync(
             })
         except Exception as exc:
             error = str(exc)[:500]
+            processing_errors.append(f"{name}: {error}")
             observations.append(("-", name, "*", "error_procesamiento", error))
             records.append({
                 **base_record,
@@ -1346,6 +1374,13 @@ def _clean_download_book_sync(
                 "procesada": False,
                 "error": error,
             })
+
+    if processing_errors:
+        raise HTTPException(
+            status_code=422,
+            detail="No se exportó un libro parcial. Corrige o reintenta estas hojas: "
+            + "; ".join(processing_errors),
+        )
 
     analysis_frame = None
     analysis_mapping: dict[str, str] = {}
@@ -1471,12 +1506,64 @@ def _clean_download_book_sync(
     _write_audit_sheet(wb, audit, _safe_excel_sheet_name("Auditoria", used_names))
     _write_manifest_sheet(wb, records, _safe_excel_sheet_name("Manifest", used_names))
     output = io.BytesIO()
+    _request_excel_recalculation(wb)
     wb.save(output)
     return (
         output.getvalue(),
         f"{stem}_multihoja_limpio.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+def _clean_download_book_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    export_format: str,
+    analysis_scope: dict | None,
+    cache_dataset_id: str | None = None,
+) -> tuple[bytes, str, str]:
+    """Una sola exportación por contenido+revisión+alcance; clics repetidos reutilizan bytes."""
+    key = (
+        ENGINE_VERSION,
+        hashlib.sha256(content).digest(),
+        export_format,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+        json.dumps(analysis_scope or {}, sort_keys=True, separators=(",", ":")),
+        cache_dataset_id or "",
+    )
+    while True:
+        with _EXPORT_CACHE_LOCK:
+            cached = _EXPORT_CACHE.get(key)
+            if cached is not None:
+                _EXPORT_CACHE.move_to_end(key)
+                return cached
+            event = _EXPORT_INFLIGHT.get(key)
+            if event is None:
+                event = threading.Event()
+                _EXPORT_INFLIGHT[key] = event
+                producer = True
+            else:
+                producer = False
+        if producer:
+            break
+        event.wait(timeout=120)
+
+    try:
+        exported = _clean_download_book_uncached_sync(
+            filename, content, manifest, export_format, analysis_scope, cache_dataset_id
+        )
+        with _EXPORT_CACHE_LOCK:
+            _EXPORT_CACHE[key] = exported
+            _EXPORT_CACHE.move_to_end(key)
+            while len(_EXPORT_CACHE) > _EXPORT_CACHE_MAX_ENTRIES:
+                _EXPORT_CACHE.popitem(last=False)
+        return exported
+    finally:
+        with _EXPORT_CACHE_LOCK:
+            finished = _EXPORT_INFLIGHT.pop(key, None)
+            if finished is not None:
+                finished.set()
 
 
 def _metrics_multi_sync(
@@ -1633,6 +1720,10 @@ def _restore_response(
                 ),
                 "sheet_errors": restore_state.get("sheet_errors", {}),
                 "analysis_scope": restore_state.get("analysis_scope") or None,
+                "selection_mode": restore_state.get("selection_mode") or (
+                    (restore_state.get("analysis_scope") or {}).get("_selection_mode")
+                    if isinstance(restore_state.get("analysis_scope"), dict) else None
+                ) or "all",
                 "combine_sheets": bool(restore_state.get("combine_sheets", False)),
             }
         )
@@ -1680,15 +1771,20 @@ def _build_and_store_restore_snapshot(
         sheet=effective_sheet,
     )
     effective_state = dict(restore_state or {})
-    effective_state["active_sheet"] = effective_sheet
+    effective_state.setdefault("active_sheet", effective_sheet)
     if not effective_state.get("available_sheets"):
         effective_state["available_sheets"] = standardization.get("carga", {}).get(
             "hojas_disponibles", []
         )
     if persist:
-        store_restore_snapshot(
+        stored = store_restore_snapshot(
             dataset_id, user_id, snapshot, restore_state=effective_state
         )
+        if not stored:
+            raise HTTPException(
+                status_code=503,
+                detail="El resultado se calculó, pero no pudo confirmarse su persistencia. Vuelve a intentar.",
+            )
     return snapshot
 
 
@@ -1716,14 +1812,19 @@ def _store_standardization_restore_snapshot(
         sheet=effective_sheet,
     )
     effective_state = dict(restore_state or {})
-    effective_state["active_sheet"] = effective_sheet
+    effective_state.setdefault("active_sheet", effective_sheet)
     if not effective_state.get("available_sheets"):
         effective_state["available_sheets"] = standardization.get("carga", {}).get(
             "hojas_disponibles", []
         )
-    store_restore_snapshot(
+    stored = store_restore_snapshot(
         dataset_id, user_id, snapshot, restore_state=effective_state
     )
+    if not stored:
+        raise HTTPException(
+            status_code=503,
+            detail="La hoja se estandarizó, pero no pudo confirmarse su persistencia. Vuelve a intentar.",
+        )
     return snapshot
 
 
@@ -1911,7 +2012,7 @@ async def standardize(
     if revision is not None:
         result["revision"] = revision
     if dataset_id and revision is not None:
-        background_tasks.add_task(
+        await run_in_threadpool(
             _store_standardization_restore_snapshot,
             dataset_id,
             user.id,
@@ -1963,7 +2064,7 @@ async def clean(
     if revision is not None:
         result["revision"] = revision
     if apply and dataset_id and revision is not None:
-        background_tasks.add_task(
+        await run_in_threadpool(
             _build_and_store_restore_snapshot,
             dataset_id,
             user.id,
@@ -2080,7 +2181,7 @@ async def clean_assisted(
 
     result["dirigida"] = {"instrucciones": instructions, **plan.to_dict(), "cupo": cupo}
     if dataset_id and revision is not None:
-        background_tasks.add_task(
+        await run_in_threadpool(
             _build_and_store_restore_snapshot,
             dataset_id,
             user.id,

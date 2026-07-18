@@ -687,6 +687,27 @@ def _normalize_text_column(
     # Un placeholder semántico conserva exactamente el texto entregado.
     stripped = stripped.where(~semantic_mask, original)
     spacing_changes = int((stripped != original).sum())
+    channel_changes = 0
+    if role == "canal":
+        channel_equivalences = {
+            "tda": "Tienda",
+            "tienda": "Tienda",
+            "online": "Online",
+            "onlineweb": "Online",
+            "web": "Online",
+            "marketplace": "Marketplace",
+        }
+
+        def _canonical_channel(value: str) -> str:
+            if not value or is_missing(value) or is_semantic_placeholder(value, role):
+                return value
+            key = re.sub(r"[^a-z0-9]+", "", strip_accents_lower(value))
+            return channel_equivalences.get(key, value)
+
+        channel_normalized = map_unique(stripped, _canonical_channel)
+        channel_normalized = channel_normalized.where(~semantic_mask, original)
+        channel_changes = int((channel_normalized != stripped).sum())
+        stripped = channel_normalized
 
     frequencies: dict[str, dict[str, int]] = {}
     # La frecuencia contiene la misma informacion que recorrer cada fila,
@@ -838,6 +859,7 @@ def _normalize_text_column(
         "mojibake_detectado": mojibake_detected,
         "mojibake_reparado": mojibake_repaired,
         "fusiones_fuzzy": fuzzy_merges,
+        "equivalencias_canal": channel_changes,
     }, fuzzy_examples, mojibake_audit, suggestions
 
 
@@ -875,6 +897,7 @@ def standardize_dataframe(
         "mojibake_detectado": 0,
         "mojibake_reparado": 0,
         "fusiones_fuzzy": 0,
+        "equivalencias_canal": 0,
     }
 
     for col in result.columns:

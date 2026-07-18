@@ -277,7 +277,12 @@
    "2026-04",
    "2026-05",
    "2026-06"
-  ]
+  ],
+  "sin_fecha": {
+   "excluidas_por_filtro": false,
+   "filas": 0,
+   "monto": 0.0
+  }
  },
  "por_categoria": [
   {

@@ -291,6 +291,55 @@ def test_stress_workbook_verifiable_regressions():
     STRESS_PATH is None or not STRESS_PATH.is_file(),
     reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
 )
+def test_stress_append_join_exact_cost_regression():
+    from app.engine.standardize import parse_number
+    from app.routes.pipeline import _analyze_cached
+
+    content = STRESS_PATH.read_bytes()
+    sales = ["Ventas_Ene_Abr_2025", "Ventas_May_Ago_2025", "Ventas_Sep_Dic_2025"]
+    names = [*sales, "Productos"]
+    results = {
+        name: _analyze_cached(
+            STRESS_PATH.name,
+            content,
+            None,
+            True,
+            sheet=name,
+            eliminar_duplicados=name in sales,
+        )
+        for name in names
+    }
+    joined, mapping, provenance = build_analysis_frame(
+        {name: result["_df_limpio"] for name, result in results.items()},
+        {name: result["mapeo"] for name, result in results.items()},
+        {
+            "mode": "append_join",
+            "sheets": names,
+            "append_sheets": sales,
+            "active_sheet": sales[0],
+            "join": {
+                "left_sheet": sales[0],
+                "right_sheet": "Productos",
+                "left_keys": ["ID_Producto"],
+                "right_keys": ["ID_Producto"],
+                "type": "left",
+            },
+        },
+    )
+
+    assert len(joined) == 5430
+    assert float(joined[mapping["monto"]].map(parse_number).sum()) == 3_165_894_176
+    assert float(joined[mapping["costo"]].sum()) == 1_853_487_400
+    cost = provenance["join"]["costo_derivado"]
+    assert cost["filas_con_costo"] == 5043
+    assert cost["cobertura_costos_pct"] == 92.87
+    assert provenance["join"]["filas_sin_correspondencia"] == 54
+
+
+@pytest.mark.skipif(
+    STRESS_PATH is None or not STRESS_PATH.is_file(),
+    reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
+)
 def test_stress_relationship_allow_and_block_matrix():
     from app.engine.multi_sheet import detect_relationships
     from app.routes.pipeline import _analyze_cached

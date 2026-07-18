@@ -81,6 +81,57 @@ export function sheetSelectionCountLabel(
   return mode === 'all' ? null : `${selected} de ${total} hojas seleccionadas`
 }
 
+export function standardizationScopeComplete(
+  selectedSheets: string[],
+  sessions: Record<string, { standardization?: unknown } | undefined>,
+): boolean {
+  return selectedSheets.length > 0 && selectedSheets.every(
+    (name) => Boolean(sessions[name]?.standardization),
+  )
+}
+
+export function cleaningScopeState(
+  selectedSheets: string[],
+  sessions: Record<string, { standardization?: unknown; cleaning?: unknown; status?: string } | undefined>,
+  running = false,
+): 'pending' | 'cleaning' | 'partial' | 'complete' | 'complete_with_errors' {
+  if (running) return 'cleaning'
+  const errors = selectedSheets.filter((name) => sessions[name]?.status === 'error').length
+  const cleaned = selectedSheets.filter((name) => Boolean(sessions[name]?.cleaning)).length
+  if (errors > 0) return 'complete_with_errors'
+  if (selectedSheets.length > 0 && cleaned === selectedSheets.length) return 'complete'
+  if (cleaned > 0) return 'partial'
+  return 'pending'
+}
+
+interface AppendCompatibilityResult {
+  preview: { columnas: string[] }
+  column_types: Record<string, string>
+  mapeo: Record<string, string>
+  moneda?: string
+  moneda_mixta?: boolean
+  moneda_detalle?: { dominante: string }
+}
+
+export function compatibleAppendSheets(
+  sheets: string[],
+  results: Record<string, AppendCompatibilityResult | null | undefined>,
+): string[] {
+  const signature = (name: string) => {
+    const result = results[name]
+    if (!result || result.moneda_mixta) return null
+    return JSON.stringify({
+      columns: [...result.preview.columnas].sort(),
+      types: Object.entries(result.column_types).sort(([left], [right]) => left.localeCompare(right)),
+      mapping: Object.entries(result.mapeo).sort(([left], [right]) => left.localeCompare(right)),
+      currency: result.moneda_detalle?.dominante ?? result.moneda ?? 'CLP',
+    })
+  }
+  const base = sheets[0]
+  const baseSignature = base ? signature(base) : null
+  return sheets.filter((name) => baseSignature !== null && signature(name) === baseSignature)
+}
+
 export function singleScope(sheet: string): AnalysisScope {
   return { mode: 'single', sheets: [sheet], active_sheet: sheet }
 }

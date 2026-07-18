@@ -69,6 +69,7 @@
   "celdas_con_variantes_unificadas": 3,
   "celdas_textuales_unicas_modificadas": 3,
   "encabezados_normalizados": 0,
+  "equivalencias_canal": 0,
   "fechas_estandarizadas": 0,
   "fusiones_fuzzy": 0,
   "mojibake_detectado": 0,
@@ -103,6 +104,49 @@
   "sucursal": "Sucursal"
  },
  "mojibake_auditoria": [],
+ "moneda": "CLP",
+ "moneda_detalle": {
+  "advertencia": null,
+  "conteos": {
+   "ARS": 0,
+   "CLP": 0,
+   "COP": 0,
+   "EUR": 0,
+   "GBP": 0,
+   "MXN": 0,
+   "PEN": 0,
+   "UF": 0,
+   "USD": 0
+  },
+  "conteos_por_columna": {
+   "costo": {
+    "ARS": 0,
+    "CLP": 0,
+    "COP": 0,
+    "EUR": 0,
+    "GBP": 0,
+    "MXN": 0,
+    "PEN": 0,
+    "UF": 0,
+    "USD": 0
+   },
+   "monto": {
+    "ARS": 0,
+    "CLP": 0,
+    "COP": 0,
+    "EUR": 0,
+    "GBP": 0,
+    "MXN": 0,
+    "PEN": 0,
+    "UF": 0,
+    "USD": 0
+   }
+  },
+  "detectadas": [],
+  "dominante": "CLP",
+  "mixta": false
+ },
+ "moneda_mixta": false,
  "nulos_detalle": {
   "fisicos": 62,
   "posibles_estructurales": [],

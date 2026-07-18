@@ -136,6 +136,37 @@ def test_store_snapshot_grande_usa_tabla_dedicada_sin_limite_512k(monkeypatch):
     assert len(captured["json"]["p_snapshot"]["standardization"]["payload"]) > 512 * 1024
 
 
+def test_store_snapshot_no_degrada_a_rpc_antiguo_si_falta_estado_completo(monkeypatch):
+    from app import restore_cache
+
+    calls: list[str] = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        return httpx.Response(404, json={"message": "missing v2"})
+
+    monkeypatch.setattr(restore_cache.httpx, "post", fake_post)
+    settings = Settings(
+        supabase_url="https://example.supabase.co",
+        supabase_service_role_key="service-role-test",
+    )
+    saved = store_restore_snapshot(
+        "00000000-0000-0000-0000-000000000001",
+        "owner-123",
+        _snapshot(),
+        settings,
+        restore_state={
+            "selected_sheets": ["Ventas"],
+            "sheet_errors": {},
+            "analysis_scope": {"mode": "single", "sheets": ["Ventas"], "active_sheet": "Ventas"},
+        },
+    )
+
+    assert saved is False
+    assert len(calls) == 1
+    assert calls[0].endswith("/rpc/store_restore_snapshot_guarded_v2")
+
+
 def test_restore_latest_usa_snapshot_sin_descargar_archivo(
     client, auth_headers, monkeypatch
 ):

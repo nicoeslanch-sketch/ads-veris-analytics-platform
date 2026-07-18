@@ -44,7 +44,7 @@ def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> di
         return {"mode": "single", "sheets": [active] if active else [], "active_sheet": active}
     if not isinstance(raw, dict):
         raise ValueError("analysis_scope debe ser un objeto JSON.")
-    unknown = set(raw) - {"mode", "sheets", "active_sheet", "join", "append_sheets"}
+    unknown = set(raw) - {"mode", "sheets", "active_sheet", "join", "append_sheets", "_selection_mode"}
     if unknown:
         raise ValueError(f"analysis_scope contiene campos desconocidos: {', '.join(sorted(unknown))}.")
     mode = str(raw.get("mode", "single")).strip().lower()
@@ -69,6 +69,9 @@ def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> di
     if active_sheet not in sheets:
         raise ValueError("analysis_scope.active_sheet debe estar incluido en sheets.")
     normalized: dict[str, Any] = {"mode": mode, "sheets": sheets, "active_sheet": active_sheet}
+    selection_mode = raw.get("_selection_mode")
+    if selection_mode in {"all", "custom"}:
+        normalized["_selection_mode"] = selection_mode
     append_sheets: list[str] = []
     if mode == "append_join":
         append_raw = raw.get("append_sheets")
@@ -473,8 +476,9 @@ def join_related_frames(
             "columna_costo_venta": cost_name,
             "columna_utilidad_bruta": utility_name,
             "columna_margen_bruto": margin_name,
-            "filas_con_costo": int(paired_amount.sum()),
-            "cobertura_costos_pct": round(float(paired_amount.mean() * 100), 1) if len(merged) else 0.0,
+            "filas_con_costo": int(paired.sum()),
+            "filas_con_utilidad": int(paired_amount.sum()),
+            "cobertura_costos_pct": round(float(paired.mean() * 100), 2) if len(merged) else 0.0,
         }
     after_totals = _metric_totals(merged, left_mapping)
     if len(merged) != len(left):

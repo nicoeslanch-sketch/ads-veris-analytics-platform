@@ -98,6 +98,10 @@ def _legacy_semantically_compatible(role: str, normalized_column: str) -> bool:
         marker in compact for marker in ("preciounitario", "unitprice", "priceperunit")
     ):
         return False
+    if role == "cliente" and any(
+        marker in compact for marker in ("clic", "click", "impresion", "campana", "inversion")
+    ):
+        return False
     return True
 
 
@@ -119,7 +123,11 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
             if col in taken:
                 continue
             match = matches.get(col)
-            if not match or match.rol_motor != role:
+            if (
+                not match
+                or match.rol_motor != role
+                or not _legacy_semantically_compatible(role, str(col))
+            ):
                 continue
             rank = (_METHOD_RANK.get(match.metodo, 0), match.prioridad, -index)
             if best is None or rank > best[0]:

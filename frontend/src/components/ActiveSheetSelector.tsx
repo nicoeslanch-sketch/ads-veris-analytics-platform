@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDataset } from '../data/DatasetContext'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
+import { compatibleAppendSheets } from '../lib/multiSheet'
 import type { AnalysisScope, RelationshipCandidate, RelationshipResult } from '../lib/types'
 import { usePlan } from '../lib/usePlan'
 
@@ -31,14 +32,10 @@ export default function ActiveSheetSelector() {
     [availableSheets, selectedSheets, sheetSessions],
   )
   const compatibleSheets = useMemo(() => {
-    const base = cleanedSheets[0]
-    if (!base) return []
-    const baseColumns = sheetSessions[base]?.cleaning?.preview.columnas ?? []
-    const signature = [...baseColumns].sort().join('\u0000')
-    return cleanedSheets.filter((name) => {
-      const columns = sheetSessions[name]?.cleaning?.preview.columnas ?? []
-      return [...columns].sort().join('\u0000') === signature
-    })
+    return compatibleAppendSheets(
+      cleanedSheets,
+      Object.fromEntries(cleanedSheets.map((name) => [name, sheetSessions[name]?.cleaning])),
+    )
   }, [cleanedSheets, sheetSessions])
   const [mode, setMode] = useState<Mode>(analysisScope?.mode ?? 'single')
   const [appendSheets, setAppendSheets] = useState<string[]>(
@@ -203,10 +200,10 @@ export default function ActiveSheetSelector() {
         <h2 className="text-xs font-semibold text-navy/75">Datos que estas analizando</h2>
         <div className="flex max-w-full overflow-x-auto rounded-lg border border-navy/15 bg-white p-1">
           {([
-            ['single', 'Una hoja', Layers3],
-            ['append', 'Varias compatibles', Rows3],
-            ['join', 'Hojas relacionadas', Link2],
-            ['append_join', 'Apilar + relacionar', Link2],
+            ['single', 'Analizar una hoja', Layers3],
+            ['append', 'Apilar tablas compatibles', Rows3],
+            ['join', 'Relacionar tablas', Link2],
+            ['append_join', 'Apilar y luego relacionar', Link2],
           ] as const).map(([value, label, Icon]) => (
             <button
               key={value}

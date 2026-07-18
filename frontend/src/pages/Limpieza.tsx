@@ -38,7 +38,7 @@ import { saveCleaningJob, saveColumnMapping } from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
 import { useCapability, usePlan } from '../lib/usePlan'
-import { basicMappingQuestions } from '../lib/multiSheet'
+import { basicMappingQuestions, cleaningScopeState } from '../lib/multiSheet'
 import {
   DEFAULT_RULES,
   type CleanResult,
@@ -152,6 +152,7 @@ export default function Limpieza() {
     mappingOverride,
     setMappingOverride,
     sheet,
+    setSheet,
     availableSheets,
     selectedSheets,
     sheetSessions,
@@ -489,6 +490,13 @@ export default function Limpieza() {
 
   const handleDownload = async (fmt: 'xlsx' | 'csv') => {
     if (!file) return
+    const unfinished = selectedSheets.filter(
+      (name) => !sheetSessions[name]?.cleaning || sheetSessions[name]?.status === 'error',
+    )
+    if (unfinished.length > 0) {
+      setError(`Finaliza la limpieza de todo el alcance antes de descargar. Pendientes: ${unfinished.join(', ')}.`)
+      return
+    }
     setDownloading(fmt)
     setError(null)
     try {
@@ -570,6 +578,8 @@ export default function Limpieza() {
 
   const handleApplySheets = async (names: string[]) => {
     if (!file || names.length === 0) return
+    const target = sheet && names.includes(sheet) ? sheet : names[0]
+    if (target && sheetSessions[target]?.cleaning) setSheet(target)
     setApplying(true)
     setError(null)
     setPersistWarning(null)
@@ -595,13 +605,13 @@ export default function Limpieza() {
               : {}),
             restore_state: JSON.stringify({
               ...restoreState,
-              active_sheet: name,
+              active_sheet: target,
               selected_sheets: selectedSheets,
               excluded_sheets: availableSheets.filter((sheetName) => !selectedSheets.includes(sheetName)),
             }),
           }),
         )
-        setCleaning(response)
+        setCleaning(response, { activate: name === target })
         await saveCleaningJob(datasetId, response.reglas_activas, response)
       } catch (err) {
         const message = err instanceof ApiError ? err.message : 'No se pudo limpiar esta hoja.'
@@ -663,6 +673,15 @@ export default function Limpieza() {
   const pendingSheets = selectedSheets.filter(
     (name) => !sheetSessions[name]?.cleaning && sheetSessions[name]?.status !== 'error',
   )
+  const scopeState = cleaningScopeState(selectedSheets, sheetSessions, applying)
+  const cleaningComplete = scopeState === 'complete'
+  const cleaningLifecycle = {
+    pending: 'Pendiente',
+    cleaning: 'Limpieza en curso',
+    partial: 'Limpieza parcial',
+    complete: 'Dataset limpio',
+    complete_with_errors: 'Completa con errores',
+  }[scopeState]
   const aggregateRowsAfter = selectedSheets.reduce(
     (total, name) => total + (
       sheetSessions[name]?.cleaning?.resumen.filas_despues ??
@@ -681,8 +700,8 @@ export default function Limpieza() {
       warn: result !== null && hasProblems && !applied,
     },
     { title: 'Configurar reglas', text: 'Reglas automáticas activas', done: true, warn: false },
-    { title: 'Aplicar limpieza', text: applied ? 'Limpieza aplicada' : 'Aún no ejecutado', done: applied, warn: false },
-    { title: 'Dataset limpio', text: applied ? 'Listo para el análisis' : 'Pendiente', done: applied, warn: false },
+    { title: 'Aplicar limpieza', text: cleaningLifecycle, done: cleaningComplete, warn: failedSheets.length > 0 },
+    { title: 'Dataset limpio', text: cleaningComplete ? 'Listo para el análisis' : cleaningLifecycle, done: cleaningComplete, warn: failedSheets.length > 0 },
   ]
 
   return (
@@ -767,20 +786,20 @@ export default function Limpieza() {
             </div>
           </div>
         </Card>
-        <Card className={`!p-4 bg-gradient-to-br ${applied ? 'from-green/[0.08]' : 'from-gold/[0.08]'} to-transparent`}>
+        <Card className={`!p-4 bg-gradient-to-br ${cleaningComplete ? 'from-green/[0.08]' : 'from-gold/[0.08]'} to-transparent`}>
           <div className="flex items-start gap-3">
-            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${applied ? 'bg-green/10' : 'bg-gold/15'}`}>
-              <CheckCircle2 className={`h-5 w-5 ${applied ? 'text-green' : 'text-gold'}`} />
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${cleaningComplete ? 'bg-green/10' : 'bg-gold/15'}`}>
+              <CheckCircle2 className={`h-5 w-5 ${cleaningComplete ? 'text-green' : 'text-gold'}`} />
             </div>
             <div>
               <p className="text-xs text-navy/50">Estado</p>
               <p className="text-sm font-semibold text-navy">
-                {applied ? 'Dataset limpio' : 'Listo para limpiar'}
+                {cleaningLifecycle}
               </p>
               <p className="text-xs text-navy/50">
-                {applied
-                  ? 'Limpieza aplicada correctamente.'
-                  : 'Se detectaron problemas que puedes revisar.'}
+                {cleaningComplete
+                  ? `Las ${selectedSheets.length} hojas seleccionadas están limpias.`
+                  : `${cleanedSheets.length} limpias, ${pendingSheets.length} pendientes y ${failedSheets.length} con error.`}
               </p>
             </div>
           </div>
@@ -817,7 +836,7 @@ export default function Limpieza() {
                     : 'Pendiente'
               return (
                 <div key={name} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
-                  <span className="min-w-0 flex-1 truncate font-semibold text-navy" title={name}>{name}</span>
+                  <button type="button" onClick={() => setSheet(name)} className="min-w-0 flex-1 truncate text-left font-semibold text-navy hover:text-teal" title={`Vista previa: ${name}`}>{name}</button>
                   {name === sheet && <span className="text-teal">Vista previa activa</span>}
                   <span className={session?.status === 'error' ? 'text-coral' : 'text-navy/55'}>{status}</span>
                   {session?.standardization && !session.cleaning && session.status !== 'error' && (
@@ -945,7 +964,7 @@ export default function Limpieza() {
                   <div className="flex items-center gap-2.5">
                     <button
                       onClick={() => void handleDownload('xlsx')}
-                      disabled={downloading !== null}
+                      disabled={downloading !== null || applying || !cleaningComplete}
                       className="inline-flex items-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {downloading === 'xlsx' ? (
@@ -957,7 +976,7 @@ export default function Limpieza() {
                     </button>
                     <button
                       onClick={() => void handleDownload('csv')}
-                      disabled={downloading !== null}
+                      disabled={downloading !== null || applying || !cleaningComplete}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-teal/40 px-3.5 py-2.5 text-xs font-semibold text-teal transition-colors hover:bg-teal/5 disabled:cursor-not-allowed disabled:opacity-50"
                       title="Descargar datos CSV y auditoría dentro de un ZIP"
                     >
@@ -969,12 +988,14 @@ export default function Limpieza() {
                       </span>
                       <span>ZIP CSV multihoja + auditoria</span>
                     </button>
-                    <Link
-                      to="/explorar"
-                      className="inline-flex items-center gap-2 rounded-lg bg-navy px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-deep"
-                    >
-                      Continuar <ArrowRight className="h-4 w-4" />
-                    </Link>
+                    {cleaningComplete ? (
+                      <Link
+                        to="/explorar"
+                        className="inline-flex items-center gap-2 rounded-lg bg-navy px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-navy-deep"
+                      >
+                        Continuar <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    ) : <span className="rounded-lg bg-navy/10 px-4 py-2.5 text-xs font-semibold text-navy/55">Finaliza el alcance</span>}
                   </div>
                 )}
               </div>

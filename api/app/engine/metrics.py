@@ -383,6 +383,19 @@ def compute_metrics(
         and not roles.get("cantidad")
         and any("precio" in name and "lista" in name for name in normalized_columns)
     )
+    normalized_keys = {norm_key: column for norm_key, column in normalized_columns.items()}
+    campaign_profile = all(
+        any(token in name for name in normalized_keys)
+        for token in ("inversion", "impresiones", "clic")
+    )
+    inventory_profile = (
+        any("stock" == name or name.endswith(" stock") for name in normalized_keys)
+        and any("stock minimo" in name for name in normalized_keys)
+        and bool(roles.get("producto"))
+    )
+    transactional_profile = bool(
+        roles.get("monto") and (roles.get("fecha") or (roles.get("cantidad") and roles.get("producto")))
+    )
 
     currency = _coerce_currency_detection(
         currency_hint,
@@ -410,19 +423,29 @@ def compute_metrics(
         else pd.Series([None] * len(df))
     )
     has_dates = roles.get("fecha") is not None and dates_all.notna().any()
+    sin_fecha = 0
+    monto_sin_fecha = 0.0
     if not has_dates:
         warnings.append("No se detectó una columna de fecha; sin evolución mensual ni proyección.")
     else:
         # Fase 12: transparencia — ninguna fila se pierde en silencio. Las
         # ventas sin fecha legible SÍ suman al total del periodo completo,
         # pero no pueden ubicarse en la evolución mensual ni en filtros por mes.
-        sin_fecha = int((amounts_all.notna() & dates_all.isna()).sum())
+        undated_mask = amounts_all.notna() & dates_all.isna()
+        sin_fecha = int(undated_mask.sum())
+        monto_sin_fecha = float(amounts_all[undated_mask].sum())
         if sin_fecha:
-            warnings.append(
-                f"{sin_fecha} venta(s) no tienen fecha válida: se incluyen en los "
-                "totales del periodo completo, pero no aparecen en la evolución "
-                "mensual ni al filtrar por mes."
-            )
+            amount_label = f"{monto_sin_fecha:,.0f}".replace(",", ".")
+            if date_from or date_to:
+                warnings.append(
+                    f"El filtro excluye {sin_fecha} venta(s) sin fecha válida por un "
+                    f"monto de {amount_label}; no es posible ubicarlas dentro del rango."
+                )
+            else:
+                warnings.append(
+                    f"{sin_fecha} venta(s) no tienen fecha válida; por un monto de {amount_label}, "
+                    "se incluyen en el total global pero no en la evolución mensual."
+                )
 
     # ── Evolución mensual (siempre sobre el periodo completo) ──
     monthly = pd.DataFrame()
@@ -734,6 +757,11 @@ def compute_metrics(
             "hasta": date_to,
             "mes_parcial": bool(locals().get("mes_parcial_sel", False)),
             "meses_disponibles": [str(m) for m in monthly.index] if has_dates else [],
+            "sin_fecha": {
+                "filas": sin_fecha,
+                "monto": round(monto_sin_fecha, 2),
+                "excluidas_por_filtro": bool((date_from or date_to) and sin_fecha),
+            },
         },
         "kpis": kpis,
         "evolucion_mensual": evolucion,
@@ -876,6 +904,42 @@ def compute_metrics(
         ),
         "items": {ratio: None for ratio in FINANCIAL_RATIOS},
     }
+
+    def _non_sales_contract(kind: str, rows_label: str) -> None:
+        result["tipo_analisis"] = kind
+        result["kpis"] = {
+            "transacciones": None,
+            rows_label: int(len(df)),
+            "ingresos_totales": None,
+            "ticket_promedio": None,
+            "gastos_totales": None,
+            "ganancia_neta": None,
+            "margen_utilidad_pct": None,
+            "flujo_caja": None,
+        }
+        result["evolucion_mensual"] = []
+        result["por_categoria"] = []
+        result["ventas_por_canal"] = []
+        result["top_productos"] = []
+        result["proyeccion"] = None
+
+    def _column_containing(*tokens: str) -> str | None:
+        return next(
+            (
+                column for normalized, column in normalized_columns.items()
+                if all(token in normalized for token in tokens)
+            ),
+            None,
+        )
+
+    def _value_counts(column: str | None, limit: int = 20) -> list[dict[str, Any]]:
+        if not column:
+            return []
+        values = df[column].loc[~physical_missing_mask(df[column])].astype(str).str.strip()
+        return [
+            {"nombre": str(name), "registros": int(total)}
+            for name, total in values.value_counts().head(limit).items()
+        ]
     if product_catalog:
         product_column = roles["producto"]
         cost_values = _numeric_series(df, roles.get("costo"))
@@ -963,6 +1027,66 @@ def compute_metrics(
             "Esta hoja se interpreta como catálogo de productos: Costo_Unitario y Precio_Lista se resumen por producto y no se suman como ventas."
         )
         result["advertencias"] = warnings
+    elif campaign_profile:
+        investment_column = _column_containing("inversion")
+        impressions_column = _column_containing("impresion")
+        clicks_column = _column_containing("clic")
+        platform_column = _column_containing("plataforma")
+        status_column = _column_containing("estado")
+        investment = _numeric_series(df, investment_column)
+        impressions = _numeric_series(df, impressions_column)
+        clicks = _numeric_series(df, clicks_column)
+        total_investment = float(investment.dropna().sum())
+        total_impressions = float(impressions.dropna().sum())
+        total_clicks = float(clicks.dropna().sum())
+        _non_sales_contract("campanas_marketing", "campanas")
+        result["analisis_campanas"] = {
+            "campanas": int(len(df)),
+            "inversion": round(total_investment, 2),
+            "impresiones": round(total_impressions, 2),
+            "clics": round(total_clicks, 2),
+            "ctr_pct": round(total_clicks / total_impressions * 100, 2) if total_impressions else None,
+            "cpc": round(total_investment / total_clicks, 2) if total_clicks else None,
+            "plataformas": _value_counts(platform_column),
+            "estados": _value_counts(status_column),
+        }
+        warnings = [
+            "Esta hoja se interpreta como campañas de marketing: inversión, impresiones, clics, CTR y CPC no se presentan como ventas."
+        ]
+    elif inventory_profile:
+        stock_column = _column_containing("stock")
+        minimum_column = _column_containing("stock", "minimo")
+        updated_column = _column_containing("ultima", "actualizacion")
+        stock = _numeric_series(df, stock_column)
+        minimum = _numeric_series(df, minimum_column)
+        paired_stock = stock.notna() & minimum.notna()
+        _non_sales_contract("inventario", "registros_inventario")
+        result["analisis_inventario"] = {
+            "registros": int(len(df)),
+            "productos": int(df[roles["producto"]].loc[~physical_missing_mask(df[roles["producto"]])].nunique()),
+            "stock_total": round(float(stock.dropna().sum()), 2),
+            "stock_minimo_total": round(float(minimum.dropna().sum()), 2),
+            "bajo_minimo": int((paired_stock & (stock < minimum)).sum()),
+            "cobertura_stock_pct": round(float(stock.notna().mean() * 100), 1) if len(df) else 0.0,
+            "sucursales": _value_counts(roles.get("sucursal")),
+            "columna_actualizacion": updated_column,
+        }
+        warnings = [
+            "Esta hoja se interpreta como inventario: el stock se resume como existencia y no como ventas o ingresos."
+        ]
+    elif not transactional_profile:
+        _non_sales_contract("generico", "registros")
+        valid_cells = int(sum((~physical_missing_mask(df[column])).sum() for column in df.columns))
+        total_cells = max(int(df.shape[0] * df.shape[1]), 1)
+        result["analisis_generico"] = {
+            "registros": int(len(df)),
+            "columnas": int(len(df.columns)),
+            "celdas_informadas_pct": round(valid_cells / total_cells * 100, 1),
+            "columnas_disponibles": [str(column) for column in df.columns],
+        }
+        warnings = [
+            "No se identificó una tabla transaccional de ventas. Se muestra un perfil estructural sin inventar ingresos ni transacciones."
+        ]
     result["advertencias"] = warnings
     if currency.mixta:
         _block_monetary_outputs(result, currency)
