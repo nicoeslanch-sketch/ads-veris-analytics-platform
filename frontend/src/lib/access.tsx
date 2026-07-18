@@ -99,6 +99,8 @@ const AccessContext = createContext<AccessState | undefined>(undefined)
 // remontaje (StrictMode, hot reload) no debe repetir la consulta.
 let cachedUserId: string | null = null
 let cachedAccess: AccessInfo | null = null
+let cachedAccessFetchedAt = 0
+const ACCESS_FOCUS_TTL_MS = 30_000
 
 export function AccessProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
@@ -135,6 +137,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
         if (requestSeq.current !== seq) return
         cachedUserId = userId
         cachedAccess = info
+        cachedAccessFetchedAt = Date.now()
         setState({ status: 'resolved', access: info })
       })
       .catch(() => {
@@ -163,6 +166,13 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!supabaseConfigured) return
     const onFocus = () => {
+      // The native file picker restores focus almost immediately. Reuse a
+      // recent authoritative response instead of pausing the upload again.
+      if (
+        cachedUserId === userId &&
+        cachedAccess &&
+        Date.now() - cachedAccessFetchedAt < ACCESS_FOCUS_TTL_MS
+      ) return
       cachedAccess = null
       fetchAccess()
     }
@@ -174,6 +184,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     (info: AccessInfo) => {
       cachedUserId = userId
       cachedAccess = info
+      cachedAccessFetchedAt = Date.now()
       requestSeq.current += 1 // invalida respuestas en vuelo más antiguas
       setState({ status: 'resolved', access: info })
     },

@@ -323,3 +323,26 @@ def test_restore_multihoja_recupera_sesiones_activa_excluidas_y_combinacion(monk
     assert set(body["sheet_sessions"]) == {"Enero", "Febrero"}
     assert body["excluded_sheets"] == ["Notas"]
     assert body["combine_sheets"] is True
+
+
+def test_restore_response_cache_isolated_and_invalidated_by_user(monkeypatch):
+    from app.routes import pipeline as pl
+
+    monkeypatch.setattr(
+        pl,
+        "get_settings",
+        lambda: Settings(app_env="production", _env_file=None),
+    )
+    with pl._RESTORE_RESPONSE_CACHE_LOCK:
+        pl._RESTORE_RESPONSE_CACHE.clear()
+
+    key = "owner-1:00000000-0000-0000-0000-000000000001:limpio"
+    response = {"dataset": {"id": "dataset-1"}, "source": "snapshot"}
+    pl._restore_response_cache_store(key, response)
+
+    restored = pl._restore_response_cache_get(key)
+    assert restored == response
+    assert restored is not response
+
+    pl._restore_response_cache_invalidate("owner-1")
+    assert pl._restore_response_cache_get(key) is None
