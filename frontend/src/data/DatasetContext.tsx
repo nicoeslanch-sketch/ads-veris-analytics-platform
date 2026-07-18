@@ -57,6 +57,9 @@ export interface RestoreDatasetOptions {
   sheetErrors?: Record<string, string>
   analysisScope?: AnalysisScope | null
   selectionMode?: 'all' | 'custom'
+  /** Revisión observada al iniciar la restauración. Si el usuario ya
+   * eligió otro archivo, la respuesta antigua se descarta. */
+  expectedRevision?: number
 }
 
 /** Construye el periodo de un mes "YYYY-MM" (primer al último día). */
@@ -134,9 +137,15 @@ interface DatasetState {
    * defecto que luego cambia (Bug: "Sin fuentes conectadas" parpadeaba
    * antes de que apareciera el archivo real). */
   restoring: boolean
+  datasetRevision: number
   setRestoring: (value: boolean) => void
   setSheet: (sheet: string | null) => void
   setUploaded: (file: File, datasetId: string | null, storagePath: string | null) => void
+  setUploadPersistence: (
+    file: File,
+    datasetId: string | null,
+    storagePath: string | null,
+  ) => boolean
   restoreDataset: (
     file: File,
     datasetId: string,
@@ -147,8 +156,11 @@ interface DatasetState {
     mappingOverride: Record<string, string> | null,
     eliminarDuplicados: boolean,
     options?: RestoreDatasetOptions,
-  ) => void
-  setStandardization: (result: StandardizeResult, options?: { activate?: boolean }) => void
+  ) => boolean
+  setStandardization: (
+    result: StandardizeResult,
+    options?: { activate?: boolean; expectedFile?: File },
+  ) => boolean
   setCleaning: (result: CleanResult, options?: { activate?: boolean }) => void
   setMetrics: (result: MetricsResult) => void
   setPeriod: (period: Period) => void
@@ -190,6 +202,14 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [combineSheets, setCombineSheets] = useState(false)
   const [selectionMode, setSelectionMode] = useState<'all' | 'custom'>('all')
   const [restoring, setRestoring] = useState(false)
+  const [datasetRevision, setDatasetRevision] = useState(0)
+  const datasetRevisionRef = useRef(0)
+  const activeFileRef = useRef<File | null>(null)
+
+  const advanceDatasetRevision = useCallback(() => {
+    datasetRevisionRef.current += 1
+    setDatasetRevision(datasetRevisionRef.current)
+  }, [])
 
   // Cada hoja mantiene su propia configuración. Al activarla se restaura solo
   // su estado; métricas y periodo siempre se recalculan para evitar mezclas.
@@ -207,14 +227,15 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
 
   const setStandardization = useCallback((
     result: StandardizeResult,
-    options: { activate?: boolean } = {},
+    options: { activate?: boolean; expectedFile?: File } = {},
   ) => {
+    if (options.expectedFile && activeFileRef.current !== options.expectedFile) return false
     const activeSheet = result.carga?.hoja_usada ?? null
     const sheets = result.carga?.hojas_disponibles ?? []
     const activate = options.activate !== false
     if (activate) setStandardizationState(result)
     if (sheets.length) setAvailableSheets(sheets)
-    if (!activeSheet) return
+    if (!activeSheet) return true
     if (activate) setSheetState(activeSheet)
     setSheetSessions((previous) => ({
       ...previous,
@@ -242,6 +263,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       sheets: [activeSheet],
       active_sheet: activeSheet,
     })
+    return true
   }, [])
 
   const setCleaning = useCallback((
@@ -318,6 +340,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const setUploaded = useCallback(
     (newFile: File, newDatasetId: string | null, newStoragePath: string | null) => {
       clearAnalysisCaches()
+      activeFileRef.current = newFile
+      advanceDatasetRevision()
       setFile(newFile)
       setDatasetId(newDatasetId)
       setStoragePath(newStoragePath)
@@ -338,8 +362,19 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setCombineSheets(false)
       setSelectionMode('all')
     },
-    [],
+    [advanceDatasetRevision],
   )
+
+  const setUploadPersistence = useCallback((
+    expectedFile: File,
+    newDatasetId: string | null,
+    newStoragePath: string | null,
+  ) => {
+    if (activeFileRef.current !== expectedFile) return false
+    setDatasetId(newDatasetId)
+    setStoragePath(newStoragePath)
+    return true
+  }, [])
 
   /** Rehydrate the complete pipeline in one render. */
   const restoreDataset = useCallback((
@@ -353,6 +388,10 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     restoredEliminarDuplicados: boolean,
     options?: RestoreDatasetOptions,
   ) => {
+    if (
+      options?.expectedRevision !== undefined &&
+      options.expectedRevision !== datasetRevisionRef.current
+    ) return false
     clearAnalysisCaches()
     const inferredActiveSheet =
       restoredCleaning?.carga?.hoja_usada ??
@@ -372,6 +411,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     if (activeSheet && !sessions[activeSheet]) sessions[activeSheet] = restoredSession
     const activeSession = activeSheet ? sessions[activeSheet] : undefined
 
+    activeFileRef.current = restoredFile
     setFile(restoredFile)
     setDatasetId(restoredDatasetId)
     setStoragePath(restoredStoragePath)
@@ -393,10 +433,13 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     ))
     setCombineSheets(Boolean(options?.combineSheets))
     setSelectionMode(options?.selectionMode ?? 'all')
+    return true
   }, [])
 
   const reset = useCallback(() => {
     clearAnalysisCaches()
+    activeFileRef.current = null
+    advanceDatasetRevision()
     setFile(null)
     setDatasetId(null)
     setStoragePath(null)
@@ -416,7 +459,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setAnalysisScopeState(null)
     setCombineSheets(false)
     setSelectionMode('all')
-  }, [])
+  }, [advanceDatasetRevision])
 
   // Al cerrar sesión o cambiar de usuario en el mismo navegador, el dataset
   // de la sesión anterior no debe seguir vivo (archivos, métricas ni panel IA).
@@ -551,9 +594,11 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       selectionMode,
       restoreState,
       restoring,
+      datasetRevision,
       setRestoring,
       setSheet,
       setUploaded,
+      setUploadPersistence,
       restoreDataset,
       setStandardization,
       setCleaning,
@@ -592,8 +637,10 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       selectionMode,
       restoreState,
       restoring,
+      datasetRevision,
       setSheet,
       setUploaded,
+      setUploadPersistence,
       restoreDataset,
       setStandardization,
       setMappingOverride,

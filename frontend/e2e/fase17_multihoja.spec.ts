@@ -29,6 +29,90 @@ with pd.ExcelWriter(path, engine="openpyxl") as writer:
   execFileSync('python', ['-c', script, path, unsafe ? '1' : '0'])
 }
 
+function standardizationResponse(filename: string, value: string) {
+  return {
+    archivo: filename,
+    avisos: [],
+    cambios: {
+      celdas_con_espacios_normalizados: 0,
+      celdas_con_variantes_unificadas: 0,
+      celdas_textuales_unicas_modificadas: 0,
+      encabezados_normalizados: 0,
+      equivalencias_canal: 0,
+      fechas_estandarizadas: 0,
+      fusiones_fuzzy: 0,
+      mojibake_detectado: 0,
+      mojibake_reparado: 0,
+      numeros_estandarizados: 0,
+      placeholders_detectados: 0,
+      textos_normalizados: 0,
+    },
+    carga: {
+      clasificacion_hojas: [],
+      filas_titulo_omitidas: 0,
+      formulas: null,
+      hoja_usada: null,
+      hojas_disponibles: [],
+    },
+    column_confidence: { Valor: 1 },
+    column_types: { Valor: 'texto' },
+    columnas: 1,
+    filas: 1,
+    mapeo: {},
+    mapeo_extendido: {},
+    mojibake_auditoria: [],
+    preview: {
+      antes: [[value]],
+      columnas: ['Valor'],
+      despues: [[value]],
+    },
+  }
+}
+
+test('el ultimo archivo elegido prevalece aunque una carga anterior responda despues', async ({ page }) => {
+  let previousRequestStarted = false
+  await page.route('**/standardize', async (route) => {
+    const body = route.request().postData() ?? ''
+    const previous = body.includes('archivo_anterior.csv')
+    if (previous) {
+      previousRequestStarted = true
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+    }
+    try {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(standardizationResponse(
+          previous ? 'archivo_anterior.csv' : 'archivo_nuevo.csv',
+          previous ? 'anterior' : 'nuevo',
+        )),
+      })
+    } catch {
+      // La peticion anterior debe ser abortada al elegir el archivo nuevo.
+    }
+  })
+
+  await page.goto('/estandarizacion')
+  const input = page.locator('input[type="file"]')
+  await input.setInputFiles({
+    name: 'archivo_anterior.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Valor\nanterior\n'),
+  })
+  await expect.poll(() => previousRequestStarted).toBe(true)
+  await input.setInputFiles({
+    name: 'archivo_nuevo.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Valor\nnuevo\n'),
+  })
+
+  await expect(page.getByText('Dataset activo: archivo_nuevo.csv')).toBeVisible()
+  await expect(page.getByRole('table').getByText('archivo_nuevo.csv', { exact: true })).toBeVisible()
+  await page.waitForTimeout(1_200)
+  await expect(page.getByText('Dataset activo: archivo_nuevo.csv')).toBeVisible()
+  await expect(page.getByText('archivo_anterior.csv', { exact: true })).toHaveCount(0)
+})
+
 test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async ({ page }, testInfo) => {
   const workbook = testInfo.outputPath('ventas_multihoja.xlsx')
   createWorkbook(workbook)

@@ -83,6 +83,8 @@ export default function Estandarizacion() {
     reset,
   } = useDataset()
   const inputRef = useRef<HTMLInputElement>(null)
+  const currentFileRef = useRef<File | null>(file)
+  const sheetAbortRef = useRef<AbortController | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [changingSheet, setChangingSheet] = useState(false)
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; sheet: string } | null>(null)
@@ -99,6 +101,14 @@ export default function Estandarizacion() {
     accessStatus,
   } = useFileImport()
   const checkingAccess = accessStatus === 'loading'
+
+  useEffect(() => {
+    currentFileRef.current = file
+    sheetAbortRef.current?.abort()
+    sheetAbortRef.current = null
+    setChangingSheet(false)
+    setBatchProgress(null)
+  }, [file])
   const sheetProfiles = standardization?.carga?.clasificacion_hojas ?? []
   const profilesByName = useMemo(
     () => Object.fromEntries(sheetProfiles.map((profile) => [profile.nombre, profile])),
@@ -167,6 +177,10 @@ export default function Estandarizacion() {
       return
     }
     const previousSheet = sheet
+    const sourceFile = file
+    sheetAbortRef.current?.abort()
+    const controller = new AbortController()
+    sheetAbortRef.current = controller
     setChangingSheet(true)
     setSheetError(null)
     setSheet(name) // invalida limpieza/métricas: la hoja son otros datos
@@ -178,9 +192,12 @@ export default function Estandarizacion() {
           ...(datasetId ? { dataset_id: datasetId } : {}),
           restore_state: JSON.stringify({ ...restoreState, active_sheet: name }),
         }),
+        { signal: controller.signal },
       )
-      setStandardization(result)
+      if (currentFileRef.current !== sourceFile) return
+      setStandardization(result, { expectedFile: sourceFile })
     } catch (err) {
+      if (currentFileRef.current !== sourceFile) return
       // Fase 11: si la hoja falla, se vuelve a la anterior — el contexto no
       // puede quedar apuntando a una hoja que nunca se procesó.
       setSheet(previousSheet)
@@ -188,12 +205,17 @@ export default function Estandarizacion() {
         err instanceof ApiError ? err.message : 'No se pudo procesar esa hoja.',
       )
     } finally {
-      setChangingSheet(false)
+      if (currentFileRef.current === sourceFile) setChangingSheet(false)
+      if (sheetAbortRef.current === controller) sheetAbortRef.current = null
     }
   }
 
   const processSheets = async (names: string[], replaceSelection = true) => {
     if (!file || changingSheet || names.length === 0) return
+    const sourceFile = file
+    sheetAbortRef.current?.abort()
+    const controller = new AbortController()
+    sheetAbortRef.current = controller
     const previousSheet = sheet
     const target = previousSheet && names.includes(previousSheet) ? previousSheet : names[0]
     const effectiveSelection = replaceSelection ? names : selectedSheets
@@ -204,6 +226,7 @@ export default function Estandarizacion() {
     const pendingNames = names.filter((name) => !sheetSessions[name]?.standardization)
     let position = 0
     for (const name of pendingNames) {
+      if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
       position += 1
       setBatchProgress({ current: position, total: pendingNames.length, sheet: name })
       setSheetStatus(name, 'estandarizando')
@@ -220,16 +243,22 @@ export default function Estandarizacion() {
               excluded_sheets: availableSheets.filter((sheetName) => !effectiveSelection.includes(sheetName)),
             }),
           }),
+          { signal: controller.signal },
         )
-        setStandardization(result, { activate: name === target })
+        if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
+        setStandardization(result, { activate: name === target, expectedFile: sourceFile })
       } catch (err) {
+        if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
         const message = err instanceof ApiError ? err.message : 'No se pudo procesar esta hoja.'
         setSheetStatus(name, 'error', message)
       }
     }
-    if (target && sheetSessions[target]?.standardization) setSheet(target)
-    setBatchProgress(null)
-    setChangingSheet(false)
+    if (currentFileRef.current === sourceFile) {
+      if (target && sheetSessions[target]?.standardization) setSheet(target)
+      setBatchProgress(null)
+      setChangingSheet(false)
+    }
+    if (sheetAbortRef.current === controller) sheetAbortRef.current = null
   }
 
   useEffect(() => {

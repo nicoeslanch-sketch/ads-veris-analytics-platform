@@ -4,7 +4,7 @@
  * ejecuta /standardize. Devuelve true si el archivo quedó estandarizado.
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import {
   insertDataset,
@@ -19,7 +19,7 @@ import { useDataset } from './DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 
 export function useFileImport() {
-  const { setUploaded, setStandardization } = useDataset()
+  const { setUploaded, setUploadPersistence, setStandardization } = useDataset()
   // Bug: subir un archivo real mientras se ve la demo ficticia dejaba el
   // banner y los números de "Comercial Andes SpA" activos hasta que el
   // usuario salía manualmente — confundía datos ficticios con reales.
@@ -34,6 +34,10 @@ export function useFileImport() {
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
   // Fase 13: cuentas sin acceso — cada intento de subir abre el panel comercial.
   const [planBlocked, setPlanBlocked] = useState(false)
+  const importSequenceRef = useRef(0)
+  const importAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => () => importAbortRef.current?.abort(), [])
 
   /** Puerta previa a CUALQUIER byte o llamada: las páginas la consultan antes
    * de abrir el selector de archivos, leer un drop o llamar a la API
@@ -80,12 +84,27 @@ export function useFileImport() {
       setError('Formato no soportado. Sube un Excel moderno (.xlsx) o CSV (.csv); si tienes un .xls antiguo, guárdalo como .xlsx primero.')
       return false
     }
+    importAbortRef.current?.abort()
+    const controller = new AbortController()
+    importAbortRef.current = controller
+    const sequence = ++importSequenceRef.current
+    const isCurrent = () => (
+      importSequenceRef.current === sequence && !controller.signal.aborted
+    )
     setImporting(true)
     try {
       if (!(await waitForUploadAccess())) return false
+      if (!isCurrent()) return false
+      // El archivo elegido pasa a ser autoritativo antes de Storage/API. Esto
+      // cancela una restauración pendiente y evita que el documento anterior
+      // reaparezca mientras el nuevo termina de subirse.
+      demo.exit()
+      setUploaded(selected, null, null)
       // Persistencia best-effort: Storage + fila en datasets (si hay Supabase)
       const storagePath = await uploadToStorage(selected)
+      if (!isCurrent()) return false
       const datasetId = await insertDataset(selected, storagePath, options.source ?? 'excel_csv')
+      if (!isCurrent()) return false
       if (supabaseConfigured && (!storagePath || !datasetId)) {
         // No bloquea el pipeline, pero el usuario debe saber que no quedó guardado
         setPersistWarning(
@@ -93,8 +112,7 @@ export function useFileImport() {
             '(revisa el bucket y las políticas RLS en Supabase).',
         )
       }
-      demo.exit()
-      setUploaded(selected, datasetId, storagePath)
+      if (!setUploadPersistence(selected, datasetId, storagePath)) return false
 
       // Fase 8: retención de Storage (fire-and-forget). Poda archivos viejos
       // según el plan del usuario; jamás bloquea ni rompe la carga.
@@ -107,8 +125,10 @@ export function useFileImport() {
         buildDatasetForm(selected, storagePath, {
           ...(datasetId ? { dataset_id: datasetId } : {}),
         }),
+        { signal: controller.signal },
       )
-      setStandardization(result)
+      if (!isCurrent()) return false
+      if (!setStandardization(result, { expectedFile: selected })) return false
       // History persistence is best-effort and must not extend the processing
       // spinner after the usable result has already arrived.
       void markStandardized(datasetId, result).then((marked) => {
@@ -120,10 +140,15 @@ export function useFileImport() {
       })
       return true
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Ocurrió un error al estandarizar.')
+      if (isCurrent()) {
+        setError(err instanceof ApiError ? err.message : 'Ocurrió un error al estandarizar.')
+      }
       return false
     } finally {
-      setImporting(false)
+      if (importSequenceRef.current === sequence) {
+        setImporting(false)
+        if (importAbortRef.current === controller) importAbortRef.current = null
+      }
     }
   }
 

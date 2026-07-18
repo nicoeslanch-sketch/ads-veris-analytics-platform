@@ -25,7 +25,12 @@ const AUTO_RESTORE_TIMEOUT_MS = 90_000
 export default function DatasetBootstrap() {
   const { user } = useAuth()
   const { status: accessStatus, can } = useAccess()
-  const { file, restoreDataset, setRestoring: setContextRestoring } = useDataset()
+  const {
+    file,
+    datasetRevision,
+    restoreDataset,
+    setRestoring: setContextRestoring,
+  } = useDataset()
   const [restoring, setRestoring] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState<string | null>(null)
   const cancelledRef = useRef(false)
@@ -52,6 +57,7 @@ export default function DatasetBootstrap() {
     let active = true
     const controller = new AbortController()
     restoreAbortRef.current = controller
+    const restoreRevision = datasetRevision
 
     const run = async () => {
       setRestoring('documento reciente')
@@ -111,6 +117,7 @@ export default function DatasetBootstrap() {
             sheetErrors: restored.sheet_errors,
             analysisScope: restoredSelection.analysisScope,
             selectionMode: restoredSelection.selectionMode,
+            expectedRevision: restoreRevision,
           },
         )
       } catch (err) {
@@ -139,8 +146,12 @@ export default function DatasetBootstrap() {
     return () => {
       active = false
       controller.abort()
+      attemptedUsers.add(user.id)
+      if (restoreAbortRef.current === controller) restoreAbortRef.current = null
+      setRestoring(null)
+      setContextRestoring(false)
     }
-  }, [user, file, restoreDataset, accessStatus, can, setContextRestoring])
+  }, [user, file, datasetRevision, restoreDataset, accessStatus, can, setContextRestoring])
 
   if (!restoring && restoreError) {
     return (
