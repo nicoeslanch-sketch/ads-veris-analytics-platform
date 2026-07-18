@@ -3,6 +3,8 @@ import {
   appendScope,
   basicMappingQuestions,
   joinScope,
+  sheetPreparationAction,
+  sheetSelectionCountLabel,
   sheetStatusLabel,
   singleScope,
 } from './multiSheet'
@@ -58,5 +60,23 @@ describe('estado multihoja', () => {
       right_keys: ['ID'],
       type: 'left',
     }).mode).toBe('join')
+  })
+
+  it('oculta resumen y preparacion redundantes cuando estan todas listas', () => {
+    const sessions = {
+      Enero: { standardization: { filas: 10 } },
+      Febrero: { standardization: { filas: 12 } },
+    }
+    expect(sheetSelectionCountLabel('all', 2, 2)).toBeNull()
+    expect(sheetPreparationAction(['Enero', 'Febrero'], sessions)).toBeNull()
+  })
+
+  it('distingue preparar por primera vez de actualizar una seleccion parcial', () => {
+    expect(sheetPreparationAction(['Enero', 'Febrero'], {})).toBe('prepare')
+    expect(sheetPreparationAction(
+      ['Enero', 'Febrero'],
+      { Enero: { standardization: { filas: 10 } } },
+    )).toBe('update')
+    expect(sheetSelectionCountLabel('custom', 1, 2)).toBe('1 de 2 hojas seleccionadas')
   })
 })
