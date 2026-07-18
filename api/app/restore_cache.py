@@ -153,12 +153,28 @@ def fetch_restore_state_bundle(
             "user_id": f"eq.{user_id}",
             "select": (
                 "dataset_id,user_id,revision,active_sheet,available_sheets,"
-                "excluded_sheets,combine_sheets,source_sha256,engine_version"
+                "excluded_sheets,selected_sheets,sheet_errors,analysis_scope,"
+                "combine_sheets,source_sha256,engine_version"
             ),
             "limit": "1",
         },
         settings,
     )
+    # Compatibilidad durante un despliegue escalonado antes de 0021.
+    if state_response.status_code == 400:
+        state_response = _get(
+            "dataset_restore_states",
+            {
+                "dataset_id": f"eq.{safe_dataset_id}",
+                "user_id": f"eq.{user_id}",
+                "select": (
+                    "dataset_id,user_id,revision,active_sheet,available_sheets,"
+                    "excluded_sheets,combine_sheets,source_sha256,engine_version"
+                ),
+                "limit": "1",
+            },
+            settings,
+        )
     if state_response.status_code != 200:
         return None
     states = state_response.json()
@@ -438,12 +454,29 @@ def store_restore_snapshot(
         "p_combine_sheets": bool(state.get("combine_sheets", False)),
         "p_engine_version": ENGINE_VERSION,
     }
+    payload_v2 = {
+        **payload,
+        "p_selected_sheets": state.get("selected_sheets", []),
+        "p_sheet_errors": state.get("sheet_errors", {}),
+        "p_analysis_scope": state.get("analysis_scope", {}),
+    }
+    uses_v2 = any(
+        key in state for key in ("selected_sheets", "sheet_errors", "analysis_scope")
+    )
     try:
         response = _post_rpc(
-            "store_restore_snapshot_guarded",
-            payload,
+            "store_restore_snapshot_guarded_v2" if uses_v2 else "store_restore_snapshot_guarded",
+            payload_v2 if uses_v2 else payload,
             settings,
         )
+        if uses_v2 and (
+            response.status_code == 404
+            or (
+                response.status_code == 400
+                and "store_restore_snapshot_guarded_v2" in response.text
+            )
+        ):
+            response = _post_rpc("store_restore_snapshot_guarded", payload, settings)
     except HTTPException as exc:
         logger.warning("Could not persist restore snapshot: %s", exc.detail)
         return False

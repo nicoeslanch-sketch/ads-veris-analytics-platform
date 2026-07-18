@@ -64,6 +64,11 @@ from ..engine.loader import (
 from ..engine.ai_classifier import classify_columns_with_ai
 from ..engine.mapping import detect_column_roles, detect_columns_extended
 from ..engine.metrics import compute_metrics, detect_currency
+from ..engine.multi_sheet import (
+    build_analysis_frame,
+    detect_relationships,
+    validate_analysis_scope,
+)
 from ..engine.standardize import normalize_headers, standardize_dataframe
 from ..restore_cache import (
     build_restore_snapshot,
@@ -265,10 +270,35 @@ def _validate_restore_state(raw: str | None) -> dict:
 
     available_names = clean_names(available)
     excluded_names = [name for name in clean_names(excluded) if name in available_names]
+    sheet_errors = state.get("sheet_errors", {})
+    if not isinstance(sheet_errors, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in sheet_errors.items()
+    ):
+        raise HTTPException(status_code=422, detail="restore_state.sheet_errors debe ser un objeto.")
+    selected = state.get("selected_sheets")
+    selected_names = (
+        [name for name in clean_names(selected) if name in available_names]
+        if isinstance(selected, list)
+        else [name for name in available_names if name not in excluded_names]
+    )
+    analysis_raw = state.get("analysis_scope")
+    try:
+        analysis_scope = validate_analysis_scope(
+            analysis_raw if isinstance(analysis_raw, dict) else None,
+            available_names,
+        ) if available_names else None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     return {
         "active_sheet": active_sheet,
         "available_sheets": available_names,
         "excluded_sheets": excluded_names,
+        "selected_sheets": selected_names,
+        "sheet_errors": {
+            key: value[:500] for key, value in sheet_errors.items() if key in available_names
+        },
+        "analysis_scope": analysis_scope,
         "combine_sheets": bool(state.get("combine_sheets", False)),
     }
 
@@ -351,6 +381,8 @@ _MANIFEST_ENTRY_KEYS = {
     "mapping",
     "scope",
     "eliminar_duplicados",
+    "status",
+    "error",
 }
 
 
@@ -425,12 +457,77 @@ def _parse_sheet_manifest(raw: str | None) -> dict | None:
                 "mapping": _validate_mapping(mapping) or {},
                 "scope": _validate_scope(scope) or {},
                 "eliminar_duplicados": remove_duplicates,
+                "status": str(entry.get("status", "pendiente"))[:30],
+                "error": str(entry.get("error", ""))[:500],
             }
         )
 
     if not any(entry["procesar"] for entry in normalized):
         raise HTTPException(status_code=422, detail="Selecciona al menos una hoja para procesar.")
     return {"hojas": normalized}
+
+
+def _parse_analysis_scope(raw: str | None, available_sheets: list[str]) -> dict:
+    value = _parse_json_field(raw, "analysis_scope") if raw else None
+    try:
+        return validate_analysis_scope(value, available_sheets)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _processed_manifest_frames(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+) -> tuple[dict[str, object], dict[str, dict[str, str]], dict[str, dict]]:
+    """Procesa el manifiesto en orden y conserva la configuracion por hoja."""
+    frames: dict[str, object] = {}
+    mappings: dict[str, dict[str, str]] = {}
+    results: dict[str, dict] = {}
+    for entry in manifest["hojas"]:
+        if not entry["procesar"]:
+            continue
+        result = _analyze_cached(
+            filename,
+            content,
+            entry["rules"],
+            apply=True,
+            mapping=entry["mapping"] or None,
+            scope=entry["scope"] or None,
+            sheet=entry["nombre"],
+            eliminar_duplicados=entry["eliminar_duplicados"],
+        )
+        frames[entry["nombre"]] = result["_df_limpio"].copy()
+        mappings[entry["nombre"]] = result.get("mapeo", entry["mapping"])
+        results[entry["nombre"]] = result
+    return frames, mappings, results
+
+
+def _validate_scope_currencies(
+    analysis_scope: dict,
+    mappings: dict[str, dict[str, str]],
+    results: dict[str, dict],
+) -> None:
+    """Impide combinar indicadores monetarios de monedas incompatibles."""
+    currencies: set[str] = set()
+    for sheet in analysis_scope["sheets"]:
+        mapping = mappings.get(sheet, {})
+        if not any(mapping.get(role) for role in ("monto", "costo")):
+            continue
+        currency = results.get(sheet, {}).get("_moneda")
+        if currency is None:
+            continue
+        if currency.mixta:
+            raise HTTPException(
+                status_code=422,
+                detail="Hay monedas incompatibles dentro de una de las hojas seleccionadas.",
+            )
+        currencies.add(currency.dominante)
+    if len(currencies) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Las hojas seleccionadas usan monedas incompatibles y no se pueden analizar juntas.",
+        )
 
 
 # ── Caché del pipeline (§5.7 + Fase 11) ──────────────────────────────────────
@@ -521,13 +618,6 @@ def _analyze_cached(
 
     # Moneda (Fase 10 §4.4): se detecta sobre los valores CRUDOS — la
     # estandarización quita los símbolos y después ya no hay evidencia.
-    raw_roles = {**detect_column_roles(list(df.columns)), **(mapping or {})}
-    monto_col = raw_roles.get("monto")
-    costo_col = raw_roles.get("costo")
-    currency = detect_currency(
-        df[monto_col] if monto_col in df.columns else None,
-        df[costo_col] if costo_col in df.columns else None,
-    )
     standardized = _standardize_frame_cached(
         filename,
         content,
@@ -535,12 +625,29 @@ def _analyze_cached(
         mapping,
         original=df,
     )
+    standardized_frame, standardization_report = standardized
+    effective_mapping = {
+        **_validated_detected_mapping(standardized_frame, standardization_report),
+        **(mapping or {}),
+    }
+    raw_columns = list(df.columns)
+    raw_by_standardized = {
+        standardized_name: raw_columns[index]
+        for index, standardized_name in enumerate(standardized_frame.columns)
+        if index < len(raw_columns)
+    }
+    monto_col = raw_by_standardized.get(effective_mapping.get("monto"))
+    costo_col = raw_by_standardized.get(effective_mapping.get("costo"))
+    currency = detect_currency(
+        df[monto_col] if monto_col in df.columns else None,
+        df[costo_col] if costo_col in df.columns else None,
+    )
 
     result = analyze_and_clean(
         df,
         rules,
         apply,
-        mapping=mapping,
+        mapping=effective_mapping,
         scope=scope,
         eliminar_duplicados=eliminar_duplicados,
         standardized=standardized,
@@ -578,6 +685,25 @@ def _public_clean_response(result: dict, filename: str, extra: dict | None = Non
 # ── Trabajo pesado con pandas: SIEMPRE fuera del event loop ─────────────────
 
 
+def _validated_detected_mapping(frame, report: dict) -> dict[str, str]:
+    """Descarta roles criticos incompatibles con los valores observados."""
+    detected = detect_column_roles(list(frame.columns))
+    expected_types = {
+        "fecha": "fecha",
+        "monto": "numero",
+        "costo": "numero",
+        "cantidad": "numero",
+    }
+    for role, expected_type in expected_types.items():
+        column = detected.get(role)
+        if not column:
+            continue
+        confidence = float(report.get("column_confidence", {}).get(column, 0.0))
+        if report.get("column_types", {}).get(column) != expected_type or confidence < 0.60:
+            detected.pop(role, None)
+    return detected
+
+
 def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -> dict:
     df_original, load_report = _load_or_400(filename, content, sheet=sheet)
     df_std, report = _standardize_frame_cached(
@@ -602,13 +728,14 @@ def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -
     # Vista previa antes/después con los mismos encabezados normalizados.
     before = df_original.copy()
     before.columns = df_std.columns
+    detected_mapping = _validated_detected_mapping(df_std, report)
     return {
         "archivo": filename,
         "filas": len(df_std),
         "columnas": len(df_std.columns),
         "column_types": report["column_types"],
         "column_confidence": report["column_confidence"],
-        "mapeo": detect_column_roles(list(df_std.columns)),
+        "mapeo": detected_mapping,
         "mapeo_extendido": {col: match.to_dict() for col, match in extended.items()},
         "cambios": report["cambios"],
         "mojibake_auditoria": report.get("mojibake_auditoria", []),
@@ -754,10 +881,12 @@ def _safe_excel_sheet_name(name: str, used: set[str]) -> str:
     return candidate
 
 
-def _write_clean_sheet(wb, title: str, df, yellow: dict, red: dict) -> None:
+def _write_clean_sheet(
+    wb, title: str, df, yellow: dict, red: dict, index: int | None = None
+) -> None:
     from openpyxl.styles import Font, PatternFill
 
-    ws = wb.create_sheet(title)
+    ws = wb.create_sheet(title, index)
     exported = safe_export_dataframe(df)
     ws.append(list(exported.columns))
     for cell in ws[1]:
@@ -775,10 +904,12 @@ def _write_clean_sheet(wb, title: str, df, yellow: dict, red: dict) -> None:
         ws.cell(row=row + 2, column=positions[column]).fill = red_fill
 
 
-def _write_observations_sheet(wb, observations: list[tuple]) -> None:
+def _write_observations_sheet(
+    wb, observations: list[tuple], title: str = "Observaciones"
+) -> None:
     from openpyxl.styles import Font
 
-    ws = wb.create_sheet("Observaciones")
+    ws = wb.create_sheet(title)
     ws.append(["Fila origen", "Hoja", "Columna", "Tipo", "Detalle"])
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -840,10 +971,10 @@ def _build_export_audit(
     )
 
 
-def _write_audit_sheet(wb, audit) -> None:
+def _write_audit_sheet(wb, audit, title: str = "Auditoria") -> None:
     from openpyxl.styles import Font
 
-    ws = wb.create_sheet("Auditoria")
+    ws = wb.create_sheet(title)
     exported = safe_export_dataframe(audit)
     ws.append(list(exported.columns))
     for cell in ws[1]:
@@ -877,6 +1008,39 @@ def _write_audit_sheet(wb, audit) -> None:
     ws.column_dimensions["E"].width = 28
     ws.column_dimensions["F"].width = 28
     ws.column_dimensions["L"].width = 60
+
+
+def _write_manifest_sheet(wb, records: list[dict], title: str = "Manifest") -> None:
+    from openpyxl.styles import Font
+
+    columns = [
+        "hoja", "estado", "procesada", "filas_antes", "filas_despues",
+        "reglas", "mapeo", "error", "version_motor", "source_sha256",
+        "alcance_analisis", "procedencia_analisis",
+    ]
+    ws = wb.create_sheet(title)
+    ws.append(columns)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for record in records:
+        ws.append([
+            record.get("hoja"),
+            record.get("estado"),
+            record.get("procesada"),
+            record.get("filas_antes"),
+            record.get("filas_despues"),
+            json.dumps(record.get("reglas", {}), ensure_ascii=False, sort_keys=True),
+            json.dumps(record.get("mapeo", {}), ensure_ascii=False, sort_keys=True),
+            record.get("error", ""),
+            ENGINE_VERSION,
+            record.get("source_sha256"),
+            json.dumps(record.get("analysis_scope"), ensure_ascii=False, sort_keys=True),
+            json.dumps(record.get("analysis_provenance"), ensure_ascii=False, sort_keys=True),
+        ])
+    ws.freeze_panes = "A2"
+    ws.column_dimensions["F"].width = 36
+    ws.column_dimensions["G"].width = 36
+    ws.column_dimensions["H"].width = 42
 
 
 def _clean_download_sync(
@@ -961,159 +1125,212 @@ def _clean_download_sync(
     )
 
 
-def _clean_download_multi_sync(
+def _clean_download_book_sync(
     filename: str,
     content: bytes,
     manifest: dict,
-    combine_sheets: bool,
+    export_format: str,
+    analysis_scope: dict | None,
 ) -> tuple[bytes, str, str]:
-    """Exporta exactamente las hojas declaradas por el cliente.
-
-    El caché acelera cada análisis, pero nunca participa en la decisión de qué
-    hojas están procesadas. El manifiesto debe enumerar todas las hojas reales.
-    """
+    """Exportacion Fase 17: libro completo o ZIP multihoja auditable."""
     if not filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=422, detail="La descarga multihoja requiere un archivo .xlsx.")
+
+    import openpyxl
+    import pandas as pd
 
     entries = manifest["hojas"]
     _, load_report = _load_or_400(filename, content, sheet=entries[0]["nombre"])
     available = list(load_report.get("hojas_disponibles", []))
     declared = [entry["nombre"] for entry in entries]
-    missing = [name for name in available if name not in declared]
-    unknown = [name for name in declared if name not in available]
-    if missing or unknown or len(declared) != len(available):
-        details: list[str] = []
-        if missing:
-            details.append(f"faltan: {', '.join(missing)}")
-        if unknown:
-            details.append(f"no existen: {', '.join(unknown)}")
+    if set(declared) != set(available) or len(declared) != len(available):
         raise HTTPException(
             status_code=422,
-            detail="El manifiesto debe enumerar todas las hojas del Excel (" + "; ".join(details) + ").",
+            detail="El manifiesto debe enumerar todas las hojas del Excel exactamente una vez.",
         )
 
-    import openpyxl
-    import pandas as pd
-
-    wb = openpyxl.Workbook()
-    wb.remove(wb.active)
-    used_names = {"observaciones"}
-    if combine_sheets:
-        used_names.add("datos_combinados")
+    source_hash = hashlib.sha256(content).hexdigest()
     observations: list[tuple] = []
-    processed_frames: list[tuple[str, object]] = []
+    frames: dict[str, object] = {}
+    mappings: dict[str, dict[str, str]] = {}
+    results: dict[str, dict] = {}
     audit_frames: list[object] = []
+    records: list[dict] = []
 
     for entry in entries:
-        sheet_name = entry["nombre"]
+        name = entry["nombre"]
+        base_record = {
+            "hoja": name,
+            "reglas": entry["rules"],
+            "mapeo": entry["mapping"],
+            "source_sha256": source_hash,
+            "analysis_scope": analysis_scope,
+        }
         if not entry["procesar"]:
-            observations.append(
-                (
-                    "—",
-                    sheet_name,
-                    "*",
-                    "hoja_no_procesada",
-                    "Hoja incluida en el manifiesto, pero el usuario decidió no procesarla.",
-                )
-            )
-            audit_frames.append(
-                pd.DataFrame.from_records(
-                    [
-                        {
-                            "archivo": filename,
-                            "hoja": sheet_name,
-                            "fila_origen": "—",
-                            "columna": "*",
-                            "valor_original": "—",
-                            "valor_final": "—",
-                            "regla": "manifiesto_multihoja",
-                            "accion": "hoja_excluida",
-                            "confianza": 1.0,
-                            "confirmacion": "confirmada_por_usuario",
-                            "version_motor": ENGINE_VERSION,
-                            "metadatos": json.dumps(
-                                {"procesar": False}, ensure_ascii=False
-                            ),
-                        }
-                    ],
-                    columns=AUDIT_COLUMNS,
-                )
-            )
+            observations.append(("-", name, "*", "hoja_no_procesada", "Conservada sin modificaciones."))
+            records.append({**base_record, "estado": "no_procesada", "procesada": False})
             continue
-        result = _analyze_cached(
-            filename,
-            content,
-            entry["rules"],
-            apply=True,
-            mapping=entry["mapping"] or None,
-            scope=entry["scope"] or None,
-            sheet=sheet_name,
-            eliminar_duplicados=entry["eliminar_duplicados"],
-        )
-        frame = result["_df_limpio"].copy()
-        yellow, red, sheet_observations = _export_annotations(result, frame)
-        export_name = _safe_excel_sheet_name(sheet_name, used_names)
-        _write_clean_sheet(wb, export_name, frame, yellow, red)
-        observations.extend(sheet_observations)
-        processed_frames.append((sheet_name, frame))
-        audit_frames.append(
-            _build_export_audit(
+        try:
+            result = _analyze_cached(
                 filename,
                 content,
-                sheet_name,
-                result,
                 entry["rules"],
-                entry["mapping"] or None,
-                entry["scope"] or None,
+                apply=True,
+                mapping=entry["mapping"] or None,
+                scope=entry["scope"] or None,
+                sheet=name,
+                eliminar_duplicados=entry["eliminar_duplicados"],
             )
-        )
+            frame = result["_df_limpio"].copy()
+            frames[name] = frame
+            mappings[name] = result.get("mapeo", entry["mapping"])
+            results[name] = result
+            observations.extend(_export_annotations(result, frame)[2])
+            audit_frames.append(
+                _build_export_audit(
+                    filename, content, name, result, entry["rules"],
+                    entry["mapping"] or None, entry["scope"] or None,
+                )
+            )
+            records.append({
+                **base_record,
+                "estado": "procesada",
+                "procesada": True,
+                "mapeo": mappings[name],
+                "filas_antes": result["resumen"]["filas_antes"],
+                "filas_despues": result["resumen"]["filas_despues"],
+                "error": "",
+            })
+        except Exception as exc:
+            error = str(exc)[:500]
+            observations.append(("-", name, "*", "error_procesamiento", error))
+            records.append({
+                **base_record,
+                "estado": "error",
+                "procesada": False,
+                "error": error,
+            })
 
-    if combine_sheets:
-        if len(processed_frames) < 2:
-            raise HTTPException(
-                status_code=422,
-                detail="Se necesitan al menos dos hojas procesadas para combinarlas.",
-            )
-        first_columns = list(processed_frames[0][1].columns)
-        if "hoja_origen" in first_columns:
-            raise HTTPException(
-                status_code=422,
-                detail="No se pueden combinar las hojas porque ya existe una columna 'hoja_origen'.",
-            )
-        first_set = set(first_columns)
-        if any(set(frame.columns) != first_set for _, frame in processed_frames[1:]):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Solo se pueden combinar hojas con el mismo conjunto de encabezados "
-                    "normalizados. No se realizan uniones por claves automáticamente."
-                ),
-            )
-        combined_parts = []
-        for source_name, frame in processed_frames:
-            part = frame.reindex(columns=first_columns).copy()
-            part.insert(0, "hoja_origen", source_name)
-            combined_parts.append(part)
-        combined = pd.concat(combined_parts, ignore_index=True)
-        _write_clean_sheet(wb, "Datos_combinados", combined, {}, {})
+    analysis_frame = None
+    provenance = None
+    if analysis_scope:
+        _validate_scope_currencies(analysis_scope, mappings, results)
+        try:
+            analysis_frame, _, provenance = build_analysis_frame(frames, mappings, analysis_scope)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+    for record in records:
+        record["analysis_provenance"] = provenance
 
-    _write_observations_sheet(wb, observations)
-    non_empty_audit_frames = [frame for frame in audit_frames if not frame.empty]
+    audit_parts = [frame for frame in audit_frames if not frame.empty]
     audit = (
-        pd.concat(non_empty_audit_frames, ignore_index=True)
-        if non_empty_audit_frames
+        pd.concat(audit_parts, ignore_index=True)
+        if audit_parts
         else pd.DataFrame(columns=AUDIT_COLUMNS)
     )
-    _write_audit_sheet(wb, audit)
+    stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
+    manifest_payload = {
+        "archivo_origen": filename,
+        "version_motor": ENGINE_VERSION,
+        "source_sha256": source_hash,
+        "analysis_scope": analysis_scope,
+        "analysis_provenance": provenance,
+        "hojas": records,
+    }
+
+    if export_format == "csv":
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, frame in frames.items():
+                safe_name = re.sub(r"[^\w\-]", "_", name) or "Hoja"
+                archive.writestr(
+                    f"{safe_name}_limpio.csv",
+                    safe_export_dataframe(frame).to_csv(index=False, sep=";").encode("utf-8-sig"),
+                )
+            archive.writestr(
+                "Auditoria.csv",
+                safe_export_dataframe(audit).to_csv(index=False, sep=";").encode("utf-8-sig"),
+            )
+            if analysis_frame is not None:
+                analysis_name = (
+                    "Datos_combinados.csv"
+                    if analysis_scope["mode"] == "append"
+                    else "Datos_relacionados.csv"
+                )
+                archive.writestr(
+                    analysis_name,
+                    safe_export_dataframe(analysis_frame).to_csv(index=False, sep=";").encode("utf-8-sig"),
+                )
+            archive.writestr(
+                "manifest.json",
+                json.dumps(manifest_payload, ensure_ascii=False, indent=2).encode("utf-8"),
+            )
+        return output.getvalue(), f"{stem}_multihoja_limpio.zip", "application/zip"
+
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+    for name, frame in frames.items():
+        original_sheet = wb[name]
+        index = wb.worksheets.index(original_sheet)
+        wb.remove(original_sheet)
+        yellow, red, _ = _export_annotations(results[name], frame)
+        _write_clean_sheet(wb, name, frame, yellow, red, index=index)
+
+    used_names = {name.casefold() for name in wb.sheetnames}
+    if analysis_frame is not None:
+        preferred = "Datos_combinados" if analysis_scope["mode"] == "append" else "Datos_relacionados"
+        _write_clean_sheet(wb, _safe_excel_sheet_name(preferred, used_names), analysis_frame, {}, {})
+    _write_observations_sheet(wb, observations, _safe_excel_sheet_name("Observaciones", used_names))
+    _write_audit_sheet(wb, audit, _safe_excel_sheet_name("Auditoria", used_names))
+    _write_manifest_sheet(wb, records, _safe_excel_sheet_name("Manifest", used_names))
     output = io.BytesIO()
     wb.save(output)
-    output.seek(0)
-    stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
     return (
         output.getvalue(),
         f"{stem}_multihoja_limpio.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+def _metrics_multi_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    analysis_scope: dict,
+    date_from: str | None,
+    date_to: str | None,
+) -> dict:
+    frames, mappings, results = _processed_manifest_frames(filename, content, manifest)
+    _validate_scope_currencies(analysis_scope, mappings, results)
+    try:
+        frame, mapping, provenance = build_analysis_frame(frames, mappings, analysis_scope)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    hint_sheet = (
+        analysis_scope["join"]["left_sheet"]
+        if analysis_scope["mode"] == "join"
+        else analysis_scope["active_sheet"]
+    )
+    currency_hint = results[hint_sheet].get("_moneda")
+    computed = compute_metrics(
+        frame, mapping, date_from=date_from, date_to=date_to, currency_hint=currency_hint
+    )
+    computed["archivo"] = filename
+    qualities = [results[name]["resumen"]["calidad_despues"] for name in analysis_scope["sheets"]]
+    computed["calidad_datos"] = round(sum(qualities) / max(len(qualities), 1), 1)
+    computed["analysis_scope"] = analysis_scope
+    computed["analysis_provenance"] = provenance
+    return computed
+
+
+def _relationships_sync(filename: str, content: bytes, manifest: dict) -> dict:
+    frames, mappings, _ = _processed_manifest_frames(filename, content, manifest)
+    candidates = detect_relationships(frames, mappings)
+    safe = [candidate for candidate in candidates if candidate["safe"]]
+    return {
+        "candidates": candidates,
+        "safe_count": len(safe),
+        "message": None if safe else "No encontramos una conexion segura entre estas hojas. Puedes analizarlas por separado.",
+    }
 
 
 def _metrics_sync(
@@ -1138,7 +1355,7 @@ def _metrics_sync(
     )
     df_clean = result["_df_limpio"]
     computed = compute_metrics(
-        df_clean, mapping, date_from=date_from, date_to=date_to,
+        df_clean, result.get("mapeo", mapping), date_from=date_from, date_to=date_to,
         currency_hint=result.get("_moneda"),
     )
     computed["archivo"] = filename
@@ -1177,6 +1394,15 @@ def _restore_response(
                 "active_sheet": restore_state.get("active_sheet"),
                 "available_sheets": restore_state.get("available_sheets", []),
                 "excluded_sheets": restore_state.get("excluded_sheets", []),
+                "selected_sheets": restore_state.get(
+                    "selected_sheets",
+                    [
+                        name for name in restore_state.get("available_sheets", [])
+                        if name not in restore_state.get("excluded_sheets", [])
+                    ],
+                ),
+                "sheet_errors": restore_state.get("sheet_errors", {}),
+                "analysis_scope": restore_state.get("analysis_scope") or None,
                 "combine_sheets": bool(restore_state.get("combine_sheets", False)),
             }
         )
@@ -1616,6 +1842,7 @@ async def clean_download(
     sheet: str | None = Form(None),
     manifest: str | None = Form(None),
     combinar_hojas: bool = Form(False),
+    analysis_scope: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
@@ -1637,17 +1864,32 @@ async def clean_download(
             detail="Para combinar hojas debes enviar un manifiesto explícito.",
         )
     if sheet_manifest is not None:
-        if export_format != "xlsx":
+        if export_format not in {"xlsx", "csv"}:
             raise HTTPException(
                 status_code=422,
                 detail="La descarga multihoja solo está disponible en formato XLSX.",
             )
         file_bytes, out_name, media_type = await run_in_threadpool(
-            _clean_download_multi_sync,
+            _clean_download_book_sync,
             filename,
             content,
             sheet_manifest,
-            combinar_hojas,
+            export_format,
+            _parse_analysis_scope(
+                analysis_scope,
+                [entry["nombre"] for entry in sheet_manifest["hojas"]],
+            ) if analysis_scope else (
+                validate_analysis_scope(
+                    {
+                        "mode": "append",
+                        "sheets": [entry["nombre"] for entry in sheet_manifest["hojas"] if entry["procesar"]],
+                        "active_sheet": next(
+                            entry["nombre"] for entry in sheet_manifest["hojas"] if entry["procesar"]
+                        ),
+                    },
+                    [entry["nombre"] for entry in sheet_manifest["hojas"]],
+                ) if combinar_hojas else None
+            ),
         )
         return StreamingResponse(
             iter([file_bytes]),
@@ -1677,6 +1919,8 @@ async def metrics(
     date_from: str | None = Form(None),
     date_to: str | None = Form(None),
     sheet: str | None = Form(None),
+    manifest: str | None = Form(None),
+    analysis_scope: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -1686,8 +1930,43 @@ async def metrics(
         require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
     )
     filename, content = await _read_input(file, storage_path, user)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if sheet_manifest is not None:
+        if not analysis_scope:
+            raise HTTPException(status_code=422, detail="Las metricas multihoja requieren analysis_scope.")
+        available = [entry["nombre"] for entry in sheet_manifest["hojas"]]
+        parsed_analysis_scope = _parse_analysis_scope(analysis_scope, available)
+        return await run_in_threadpool(
+            _metrics_multi_sync,
+            filename,
+            content,
+            sheet_manifest,
+            parsed_analysis_scope,
+            date_from,
+            date_to,
+        )
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     return await run_in_threadpool(
         _metrics_sync, filename, content, mapping_dict, date_from, date_to,
         _clean_sheet_param(sheet), eliminar_duplicados,
+    )
+
+
+@router.post("/sheets/relationships")
+async def sheet_relationships(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    manifest: str = Form(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    )
+    filename, content = await _read_input(file, storage_path, user)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if sheet_manifest is None:
+        raise HTTPException(status_code=422, detail="Envia un manifiesto de hojas.")
+    return await run_in_threadpool(
+        _relationships_sync, filename, content, sheet_manifest
     )

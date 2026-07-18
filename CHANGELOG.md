@@ -2,6 +2,24 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.20.0] - 2026-07-17 - Fase 17: multihoja simple y análisis seguro
+
+- El plan Básico confirma solo campos críticos dudosos, uno por uno, sin
+  confianza, métodos ni vocabulario técnico; Analista y Gold conservan la vista avanzada.
+- Permite elegir todas o algunas hojas y estandarizarlas/limpiarlas en orden,
+  con progreso, error y reintento independientes.
+- Resumen y Explorar comparten un alcance: una hoja, hojas compatibles apiladas
+  con `hoja_origen`, o una relación many-to-one confirmada.
+- Detecta claves simples y compuestas mediante cobertura, solapamiento,
+  unicidad, cardinalidad y tipos; bloquea many-to-many y cambios de filas o totales.
+- La descarga XLSX conserva todas las hojas originales y agrega Observaciones,
+  Auditoría y Manifest. CSV multihoja se entrega como ZIP auditable.
+- Corrige `TipoCliente`: ahora es `tipo_cliente`, nunca categoría de producto.
+- La migración aditiva `0021_multi_sheet_analysis.sql` persiste selección,
+  errores y alcance analítico; se entrega sin aplicar.
+
+Diseño, umbrales y operación: [`docs/FASE_17_MULTIHOJA.md`](./docs/FASE_17_MULTIHOJA.md).
+
 ## [0.19.0] - 2026-07-17 - Fase 16: integridad auditable y restauración atómica
 
 - Conserva literales reservados en columnas textuales y separa nulo físico,

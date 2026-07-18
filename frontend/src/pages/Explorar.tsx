@@ -362,7 +362,7 @@ export default function Explorar() {
   // El "Rango" de Explorar comparte estado con el selector de periodo global
   // del topbar (Bug #8): antes eran dos filtros independientes y cambiar uno
   // no se reflejaba en el otro ni en el gráfico/hallazgos de esta página.
-  const { file, cleaning, datasetId, storagePath, uploadedAt, metrics: contextMetrics, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, eliminarDuplicados, period: rango, setPeriod: setRango } = useDataset()
+  const { file, cleaning, datasetId, storagePath, uploadedAt, metrics: contextMetrics, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, sheetManifest, analysisScope, eliminarDuplicados, period: rango, setPeriod: setRango } = useDataset()
   // Fase 14: la demo ficticia sirve métricas congeladas del bundle (sin backend)
   const demo = useDemo()
   const ready = Boolean(file && cleaning) || demo.active
@@ -387,7 +387,7 @@ export default function Explorar() {
 
   useEffect(() => {
     setMetrics(null)
-  }, [sheet])
+  }, [analysisScope, sheet])
 
   // Métricas del rango seleccionado (uploadedAt distingue cargas con igual nombre)
   useEffect(() => {
@@ -395,11 +395,12 @@ export default function Explorar() {
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Mapeo manual y reintento en la clave: cambiar el mapeo refresca el análisis
-    const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
+    const key = `${datasetKey}|${rango.from}|${rango.to}|${sheet ?? ''}|${JSON.stringify(analysisScope ?? {})}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     const snapshotMatchesRange = Boolean(
       contextMetrics &&
+      JSON.stringify(contextMetrics.analysis_scope ?? null) === JSON.stringify(analysisScope ?? null) &&
       !rango.from &&
       !rango.to &&
       !contextMetrics.periodo.desde &&
@@ -430,6 +431,10 @@ export default function Explorar() {
     }
     if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
     if (sheet) fields.sheet = sheet
+    if (sheetManifest && analysisScope) {
+      fields.manifest = JSON.stringify(sheetManifest)
+      fields.analysis_scope = JSON.stringify(analysisScope)
+    }
     if (rango.from) fields.date_from = rango.from
     if (rango.to) fields.date_to = rango.to
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
@@ -460,7 +465,7 @@ export default function Explorar() {
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, mappingOverride, eliminarDuplicados, retryTick])
+  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, retryTick])
 
   // Al cambiar el análisis, la recomendación anterior deja de aplicar
   useEffect(() => {

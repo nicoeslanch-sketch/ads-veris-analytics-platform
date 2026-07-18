@@ -3,7 +3,7 @@
 Los puntos del plan "todo en 10" que NO viven en el código del repo viven
 aquí como checklist operacional. Cada sección dice qué hacer, dónde y cómo
 verificarlo. (Los puntos que SÍ son código ya están implementados — ver
-CHANGELOG [0.19.0].)
+CHANGELOG [0.20.0].)
 
 ## 1. Entornos (producción / staging / desarrollo)
 
@@ -22,7 +22,8 @@ CHANGELOG [0.19.0].)
 ## 2. Checklist de release (orden exacto)
 
 1. CI verde (pytest + Vitest + build + job de seguridad).
-2. Migraciones nuevas ejecutadas en STAGING y smoke test ahí.
+2. Migraciones nuevas ejecutadas en STAGING y smoke test ahí. Para Fase 17:
+   `0021_multi_sheet_analysis.sql` después de `0020`.
 3. Migraciones en producción (Supabase → SQL Editor, en orden).
 4. Deploy backend (Render) → `GET /version` coincide con el SHA.
 5. Deploy frontend (Vercel).

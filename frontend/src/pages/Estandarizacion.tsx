@@ -65,14 +65,18 @@ export default function Estandarizacion() {
     setSheet,
     availableSheets,
     sheetSessions,
+    selectedSheets,
     combineSheets,
     restoreState,
     setCombineSheets,
+    setSelectedSheets,
+    setSheetStatus,
     reset,
   } = useDataset()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
   const [changingSheet, setChangingSheet] = useState(false)
+  const [selectionMode, setSelectionMode] = useState<'all' | 'custom'>('all')
   const [sheetError, setSheetError] = useState<string | null>(null)
   // Flujo compartido con Conectores: Storage + datasets + /standardize
   const {
@@ -145,6 +149,41 @@ export default function Estandarizacion() {
     } finally {
       setChangingSheet(false)
     }
+  }
+
+  const processSheets = async (names: string[], replaceSelection = true) => {
+    if (!file || changingSheet || names.length === 0) return
+    const previousSheet = sheet
+    const effectiveSelection = replaceSelection ? names : selectedSheets
+    if (replaceSelection) setSelectedSheets(names)
+    setChangingSheet(true)
+    setSheetError(null)
+    for (const name of names) {
+      if (sheetSessions[name]?.standardization) continue
+      setSheetStatus(name, 'estandarizando')
+      try {
+        const result = await apiPost<StandardizeResult>(
+          '/standardize',
+          buildDatasetForm(file, storagePath, {
+            sheet: name,
+            ...(datasetId ? { dataset_id: datasetId } : {}),
+            restore_state: JSON.stringify({
+              ...restoreState,
+              active_sheet: name,
+              selected_sheets: effectiveSelection,
+              excluded_sheets: availableSheets.filter((sheetName) => !effectiveSelection.includes(sheetName)),
+            }),
+          }),
+        )
+        setStandardization(result)
+      } catch (err) {
+        const message = err instanceof ApiError ? err.message : 'No se pudo procesar esta hoja.'
+        setSheetStatus(name, 'error', message)
+      }
+    }
+    const target = previousSheet && names.includes(previousSheet) ? previousSheet : names[0]
+    if (target && sheetSessions[target]?.standardization) setSheet(target)
+    setChangingSheet(false)
   }
 
   const totalChanges = standardization
@@ -345,6 +384,104 @@ export default function Estandarizacion() {
               Abre cada hoja que quieras procesar. Cambiar de hoja no crea un documento
               nuevo y su configuración queda guardada por separado durante esta sesión.
             </p>
+            <fieldset className="mt-4 grid gap-2 sm:grid-cols-2">
+              <legend className="mb-2 text-sm font-semibold text-navy">
+                Que hojas quieres preparar?
+              </legend>
+              <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${selectionMode === 'all' ? 'border-teal bg-teal/[0.06]' : 'border-navy/15'}`}>
+                <input
+                  type="radio"
+                  name="sheet-selection"
+                  checked={selectionMode === 'all'}
+                  onChange={() => {
+                    setSelectionMode('all')
+                    setSelectedSheets(availableSheets)
+                  }}
+                  className="mt-0.5 accent-teal"
+                />
+                <span>
+                  <strong className="block text-sm text-navy">Todas las hojas</strong>
+                  <span className="text-xs text-navy/50">Recomendado</span>
+                </span>
+              </label>
+              <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${selectionMode === 'custom' ? 'border-teal bg-teal/[0.06]' : 'border-navy/15'}`}>
+                <input
+                  type="radio"
+                  name="sheet-selection"
+                  checked={selectionMode === 'custom'}
+                  onChange={() => setSelectionMode('custom')}
+                  className="mt-0.5 accent-teal"
+                />
+                <span>
+                  <strong className="block text-sm text-navy">Elegir hojas</strong>
+                  <span className="text-xs text-navy/50">Prepara solo las que necesitas</span>
+                </span>
+              </label>
+            </fieldset>
+            {selectionMode === 'custom' && (
+              <div className="mt-3 rounded-lg border border-navy/10 bg-navy/[0.02] p-3">
+                <div className="mb-2 flex gap-3 text-xs font-semibold">
+                  <button type="button" onClick={() => setSelectedSheets(availableSheets)} className="text-teal hover:underline">Seleccionar todas</button>
+                  <button type="button" onClick={() => setSelectedSheets([])} className="text-navy/55 hover:text-navy">Quitar todas</button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {availableSheets.map((name) => (
+                    <label key={name} className="flex min-w-0 items-center gap-2 text-xs text-navy/75">
+                      <input
+                        type="checkbox"
+                        checked={selectedSheets.includes(name)}
+                        onChange={(event) => setSelectedSheets(
+                          event.target.checked
+                            ? [...selectedSheets, name]
+                            : selectedSheets.filter((item) => item !== name),
+                        )}
+                        className="h-4 w-4 accent-teal"
+                      />
+                      <span className="truncate" title={name}>{name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-navy/55">
+                {selectedSheets.length} de {availableSheets.length} hojas seleccionadas
+              </p>
+              <button
+                type="button"
+                disabled={changingSheet || selectedSheets.length === 0}
+                onClick={() => void processSheets(selectionMode === 'all' ? availableSheets : selectedSheets)}
+                className="inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {changingSheet && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Preparar hojas seleccionadas
+              </button>
+            </div>
+            <div className="mt-4 divide-y divide-navy/10 rounded-lg border border-navy/10">
+              {availableSheets.map((name) => {
+                const session = sheetSessions[name]
+                const status = !selectedSheets.includes(name)
+                  ? 'No seleccionada'
+                  : session?.status === 'error'
+                    ? 'Error'
+                    : session?.cleaning
+                      ? 'Estandarizada y limpia'
+                      : session?.standardization
+                        ? 'Estandarizada'
+                        : session?.status === 'estandarizando'
+                          ? 'Procesando...'
+                          : 'Pendiente'
+                return (
+                  <div key={name} className="flex min-w-0 items-center gap-3 px-3 py-2.5 text-xs">
+                    <span className="min-w-0 flex-1 truncate font-semibold text-navy" title={name}>{name}</span>
+                    <span className={session?.status === 'error' ? 'text-coral' : 'text-navy/55'}>{status}</span>
+                    {session?.status === 'error' && (
+                      <button type="button" onClick={() => void processSheets([name], false)} className="font-semibold text-teal hover:underline">Reintentar</button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
           <div
             role="tablist"

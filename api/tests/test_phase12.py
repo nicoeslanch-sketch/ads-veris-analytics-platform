@@ -517,8 +517,9 @@ def test_descarga_multihoja_usa_manifiesto_y_combina_solo_con_confirmacion(
     assert response.status_code == 200
     exported = openpyxl.load_workbook(io.BytesIO(response.content), data_only=False)
     assert exported.sheetnames == [
-        "Enero", "Febrero", "Datos_combinados", "Observaciones", "Auditoria"
+        "Enero", "Febrero", "Notas", "Datos_combinados", "Observaciones", "Auditoria", "Manifest"
     ]
+    assert exported["Notas"]["A2"].value == "Hoja informativa que el usuario no procesó"
     assert exported["Enero"].max_row == 3
     assert exported["Febrero"].max_row == 3
     combined = list(exported["Datos_combinados"].iter_rows(values_only=True))

@@ -206,7 +206,7 @@ function ChartTooltip({
 export default function Resumen() {
   const { user } = useAuth()
   const location = useLocation()
-  const { file, datasetId, storagePath, cleaning, metrics: contextMetrics, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, eliminarDuplicados } = useDataset()
+  const { file, datasetId, storagePath, cleaning, metrics: contextMetrics, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, sheetManifest, analysisScope, eliminarDuplicados } = useDataset()
   // Fase 14: la demo ficticia entrega métricas congeladas del bundle — jamás
   // escribe en el DatasetContext ni llama al backend.
   const demo = useDemo()
@@ -232,7 +232,7 @@ export default function Resumen() {
 
   useEffect(() => {
     setMetrics(null)
-  }, [sheet])
+  }, [analysisScope, sheet])
 
   useEffect(() => {
     if (demo.active) return // la demo no consulta /metrics: snapshot congelado
@@ -246,11 +246,12 @@ export default function Resumen() {
     }
     // El mapeo manual y el reintento forman parte de la clave: cambiar el mapeo
     // en Limpieza refresca el dashboard, y "Reintentar" fuerza una nueva llamada.
-    const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
+    const key = `${datasetKey}|${period.from}|${period.to}|${sheet ?? ''}|${JSON.stringify(analysisScope ?? {})}|${JSON.stringify(mappingOverride ?? {})}|${eliminarDuplicados}|${retryTick}`
     if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     const snapshotMatchesPeriod = Boolean(
       contextMetrics &&
+      JSON.stringify(contextMetrics.analysis_scope ?? null) === JSON.stringify(analysisScope ?? null) &&
       !period.from &&
       !period.to &&
       !contextMetrics.periodo.desde &&
@@ -275,6 +276,10 @@ export default function Resumen() {
     }
     if (mappingOverride) fields.mapping = JSON.stringify(mappingOverride)
     if (sheet) fields.sheet = sheet
+    if (sheetManifest && analysisScope) {
+      fields.manifest = JSON.stringify(sheetManifest)
+      fields.analysis_scope = JSON.stringify(analysisScope)
+    }
     if (period.from) fields.date_from = period.from
     if (period.to) fields.date_to = period.to
     apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields), {
@@ -313,7 +318,7 @@ export default function Resumen() {
       // queda "ya pedida" con la petición abortada, la página no carga jamás.
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
-  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable, setPeriod])
+  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable, setPeriod])
 
   if (!ready && !demo.active) {
     return (

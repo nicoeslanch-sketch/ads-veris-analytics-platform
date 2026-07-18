@@ -37,7 +37,8 @@ import { apiGet, apiPost, apiDownload, buildDatasetForm, ApiError } from '../lib
 import { saveCleaningJob, saveColumnMapping } from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
-import { useCapability } from '../lib/usePlan'
+import { useCapability, usePlan } from '../lib/usePlan'
+import { basicMappingQuestions } from '../lib/multiSheet'
 import {
   DEFAULT_RULES,
   type CleanResult,
@@ -151,15 +152,21 @@ export default function Limpieza() {
     mappingOverride,
     setMappingOverride,
     sheet,
+    availableSheets,
+    selectedSheets,
+    sheetSessions,
     sheetManifest,
     combineSheets,
+    analysisScope,
     restoreState,
     eliminarDuplicados,
+    setSheetStatus,
   } = useDataset()
   const [detection, setDetection] = useState<CleanResult | null>(null)
   const [rules, setRules] = useState<CleaningRules>(DEFAULT_RULES)
   const [detecting, setDetecting] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [applySameRules, setApplySameRules] = useState(true)
   const [downloading, setDownloading] = useState<'xlsx' | 'csv' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
@@ -192,6 +199,10 @@ export default function Limpieza() {
   const [mappingExpanded, setMappingExpanded] = useState(
     Boolean(mappingNavigation?.openMapping || missingAmount || lowConfidenceRoles.length),
   )
+  const { plan } = usePlan()
+  const basicMapping = plan === 'basico'
+  const [confirmedBasicRoles, setConfirmedBasicRoles] = useState<string[]>([])
+  const [basicReviewExpanded, setBasicReviewExpanded] = useState(false)
 
   // ── Limpieza dirigida (Analista/Gold) y descarga de base limpia (Analista+) ──
   const aiCleaning = useCapability('ai_cleaning')
@@ -400,6 +411,21 @@ export default function Limpieza() {
   const relevantMappingRoles = [...assignedMappingRoles, ...missingRelevantRoles]
   const hasMappingCorrections = correctedRoles.size > 0
   const mappingNeedsAttention = missingAmount || lowConfidenceRoles.length > 0
+  const basicCriticalRoleNames = basicMappingQuestions(
+    effectiveMapping,
+    extendedMapping,
+    confirmedBasicRoles,
+  )
+  const basicCriticalRoles = MAPPING_ROLES.filter(({ role }) => basicCriticalRoleNames.includes(role))
+  const basicQuestion = basicCriticalRoles[0]
+  const basicSelectedColumn = basicQuestion ? (effectiveMapping[basicQuestion.role] ?? '') : ''
+  const basicColumnIndex = availableColumns.indexOf(basicSelectedColumn)
+  const basicExamples = basicColumnIndex >= 0
+    ? (standardization?.preview.despues ?? [])
+        .map((row) => row[basicColumnIndex])
+        .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+        .slice(0, 5)
+    : []
 
   const mappingFields = (): Record<string, string> => ({
     ...(mappingOverride ? { mapping: JSON.stringify(mappingOverride) } : {}),
@@ -479,9 +505,10 @@ export default function Limpieza() {
           excluir: directed.columnas_excluir,
         })
       }
-      if (fmt === 'xlsx' && sheetManifest) {
+      if (sheetManifest) {
         extra.manifest = JSON.stringify(sheetManifest)
         extra.combinar_hojas = String(combineSheets)
+        if (analysisScope) extra.analysis_scope = JSON.stringify(analysisScope)
       }
       await apiDownload('/clean/download', buildDatasetForm(file, storagePath, extra), `${stem}_limpio.${fmt}`)
     } catch (err) {
@@ -534,6 +561,53 @@ export default function Limpieza() {
   const handleConfirmedDuplicateRemoval = () => {
     setDuplicateConfirmOpen(false)
     void handleApply(true)
+  }
+
+  const preparedSheets = selectedSheets.filter(
+    (name) => Boolean(sheetSessions[name]?.standardization),
+  )
+
+  const handleApplySheets = async (names: string[]) => {
+    if (!file || names.length === 0) return
+    setApplying(true)
+    setError(null)
+    setPersistWarning(null)
+    for (const name of names) {
+      const session = sheetSessions[name]
+      if (!session?.standardization) continue
+      setSheetStatus(name, 'limpiando')
+      try {
+        const response = await apiPost<CleanResult>(
+          '/clean',
+          buildDatasetForm(file, storagePath, {
+            apply: 'true',
+            rules: JSON.stringify(
+              basicMapping || applySameRules
+                ? rules
+                : (session.cleaning?.reglas_activas ?? rules),
+            ),
+            eliminar_duplicados: String(session.eliminarDuplicados),
+            ...(datasetId ? { dataset_id: datasetId } : {}),
+            sheet: name,
+            ...(session.mappingOverride
+              ? { mapping: JSON.stringify(session.mappingOverride) }
+              : {}),
+            restore_state: JSON.stringify({
+              ...restoreState,
+              active_sheet: name,
+              selected_sheets: names,
+              excluded_sheets: availableSheets.filter((sheetName) => !names.includes(sheetName)),
+            }),
+          }),
+        )
+        setCleaning(response)
+        await saveCleaningJob(datasetId, response.reglas_activas, response)
+      } catch (err) {
+        const message = err instanceof ApiError ? err.message : 'No se pudo limpiar esta hoja.'
+        setSheetStatus(name, 'error', message)
+      }
+    }
+    setApplying(false)
   }
 
   /** Botón del chat: limpieza dirigida con las variables escritas. */
@@ -1089,7 +1163,93 @@ export default function Limpieza() {
             {/* Fase 12 B6: resumen primero; selectores solo al pedir ajuste o
                 cuando falta un rol crítico / la confianza semántica es baja. */}
             <div ref={mappingSectionRef}>
-              <Card className={mappingNeedsAttention ? 'border-gold/40' : ''}>
+              {basicMapping && (
+                <Card className={mappingNeedsAttention ? 'border-gold/40' : ''}>
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-teal/10">
+                      <CheckCircle2 className="h-4.5 w-4.5 text-teal" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-sm font-semibold text-navy">Entendimos tu archivo</h2>
+                      <p className="mt-1 text-xs text-navy/55">
+                        {assignedMappingRoles.length} datos identificados
+                        {basicCriticalRoles.length > 0
+                          ? ` · necesitamos confirmar ${basicCriticalRoles.length}`
+                          : ' · no necesitas configurar nada'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {basicQuestion && (
+                    <div className="mt-4 rounded-lg border border-gold/30 bg-gold/[0.06] p-4">
+                      <label className="block text-sm font-semibold text-navy" htmlFor="basic-column-question">
+                        {basicQuestion.role === 'monto'
+                          ? 'En que columna esta el total vendido?'
+                          : 'En que columna esta la fecha de cada movimiento?'}
+                      </label>
+                      <select
+                        id="basic-column-question"
+                        value={basicSelectedColumn}
+                        onChange={(event) => handleMappingChange(basicQuestion.role, event.target.value)}
+                        className="mt-3 w-full rounded-md border border-navy/20 bg-white px-3 py-2.5 text-sm text-navy outline-none focus:border-teal"
+                      >
+                        <option value="">Seleccionar columna</option>
+                        {availableColumns.map((candidate) => (
+                          <option key={candidate} value={candidate}>{candidate}</option>
+                        ))}
+                      </select>
+                      {basicExamples.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2" aria-label="Ejemplos de la columna">
+                          {basicExamples.map((example) => (
+                            <span key={example} className="max-w-full truncate rounded-md bg-white px-2 py-1 text-xs text-navy/65">
+                              {example}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={!basicSelectedColumn}
+                          onClick={() => setConfirmedBasicRoles((current) => [...current, basicQuestion.role])}
+                          className="rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          Confirmar y continuar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleMappingChange(basicQuestion.role, '')
+                            setConfirmedBasicRoles((current) => [...current, basicQuestion.role])
+                          }}
+                          className="rounded-lg border border-navy/15 bg-white px-4 py-2 text-xs font-semibold text-navy"
+                        >
+                          Mi archivo no tiene este dato
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setBasicReviewExpanded((current) => !current)}
+                    className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-teal"
+                  >
+                    {basicReviewExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    {basicReviewExpanded ? 'Ocultar interpretacion' : 'Revisar como interpretamos mi archivo'}
+                  </button>
+                  {basicReviewExpanded && (
+                    <div className="mt-3 flex flex-wrap gap-2 border-t border-navy/10 pt-3">
+                      {assignedMappingRoles.map(({ role, label }) => (
+                        <span key={role} className="rounded-md bg-navy/[0.04] px-2.5 py-1 text-xs text-navy/70">
+                          <strong>{label}:</strong> {effectiveMapping[role]}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              )}
+              <Card className={`${basicMapping ? 'hidden' : ''} ${mappingNeedsAttention ? 'border-gold/40' : ''}`}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -1230,10 +1390,47 @@ export default function Limpieza() {
               <p className="text-sm text-navy/60">
                 Limpieza con reglas por defecto, disponible en todos los planes.
               </p>
+              {preparedSheets.length > 1 && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <span className="w-full text-right text-xs text-navy/50">
+                    Se limpiaran {preparedSheets.length} hojas: {preparedSheets.join(', ')}
+                  </span>
+                  {!basicMapping && (
+                    <label className="mr-auto flex items-center gap-2 text-xs text-navy/65">
+                      <input
+                        type="checkbox"
+                        checked={applySameRules}
+                        onChange={(event) => setApplySameRules(event.target.checked)}
+                        className="h-4 w-4 accent-teal"
+                      />
+                      Aplicar las mismas reglas a todas
+                    </label>
+                  )}
+                  {!basicMapping && sheet && (
+                    <button
+                      type="button"
+                      onClick={() => void handleApplySheets([sheet])}
+                      disabled={applying || detecting || !result}
+                      className="rounded-lg border border-navy/20 bg-white px-4 py-2.5 text-xs font-semibold text-navy disabled:opacity-50"
+                    >
+                      Limpiar hoja actual
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleApplySheets(preparedSheets)}
+                    disabled={applying || detecting || !result}
+                    className="inline-flex items-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                  >
+                    {applying && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Limpiar todas las hojas preparadas
+                  </button>
+                </div>
+              )}
               <button
                 onClick={() => void handleApply()}
                 disabled={applying || assistedRunning || detecting || !result}
-                className="inline-flex items-center gap-2 rounded-lg bg-teal px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50"
+                className={`${preparedSheets.length > 1 ? 'hidden' : 'inline-flex'} items-center gap-2 rounded-lg bg-teal px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50`}
               >
                 {applying ? (
                   <>
