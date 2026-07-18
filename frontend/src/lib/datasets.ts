@@ -59,7 +59,8 @@ export async function insertDataset(
     console.warn('[persistencia] Falló el insert en datasets:', error.message)
     return null
   }
-  try { await logActivity('carga', `Archivo cargado: ${file.name}`, data.id) } catch { /* best-effort */ }
+  // Activity logging is not part of the critical upload path.
+  void logActivity('carga', `Archivo cargado: ${file.name}`, data.id).catch(() => undefined)
   return data.id as string
 }
 
@@ -73,6 +74,7 @@ export async function markStandardized(
       .from('datasets')
       .update({ rows: result.filas, columns: result.columnas, status: 'estandarizado' })
       .eq('id', datasetId)
+      .in('status', ['cargado', 'estandarizado'])
     if (datasetError) {
       console.warn('[persistencia] Falló el update de datasets:', datasetError.message)
       return false

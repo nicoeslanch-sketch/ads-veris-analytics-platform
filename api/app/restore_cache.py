@@ -135,12 +135,12 @@ def reserve_restore_snapshot_revision(
     return revision if revision > 0 else None
 
 
-def fetch_restore_state_bundle(
+def fetch_restore_state_metadata(
     dataset_id: str,
     user_id: str,
     settings: Settings | None = None,
 ) -> dict[str, Any] | None:
-    """Estado global y snapshots por hoja, leídos de tablas dedicadas."""
+    """Authoritative global restore state, including its monotonic revision."""
 
     settings = settings or get_settings()
     safe_dataset_id = _valid_uuid(dataset_id)
@@ -154,7 +154,7 @@ def fetch_restore_state_bundle(
             "select": (
                 "dataset_id,user_id,revision,active_sheet,available_sheets,"
                 "excluded_sheets,selected_sheets,sheet_errors,analysis_scope,"
-                "combine_sheets,source_sha256,engine_version"
+                "combine_sheets,source_sha256,engine_version,updated_at"
             ),
             "limit": "1",
         },
@@ -169,7 +169,7 @@ def fetch_restore_state_bundle(
                 "user_id": f"eq.{user_id}",
                 "select": (
                     "dataset_id,user_id,revision,active_sheet,available_sheets,"
-                    "excluded_sheets,combine_sheets,source_sha256,engine_version"
+                    "excluded_sheets,combine_sheets,source_sha256,engine_version,updated_at"
                 ),
                 "limit": "1",
             },
@@ -179,6 +179,27 @@ def fetch_restore_state_bundle(
         return None
     states = state_response.json()
     if not isinstance(states, list) or not states or not isinstance(states[0], dict):
+        return None
+    return states[0]
+
+
+def fetch_restore_state_bundle(
+    dataset_id: str,
+    user_id: str,
+    settings: Settings | None = None,
+    *,
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Estado global y snapshots por hoja, leídos de tablas dedicadas."""
+
+    settings = settings or get_settings()
+    safe_dataset_id = _valid_uuid(dataset_id)
+    if not _configured(settings) or safe_dataset_id is None:
+        return None
+    authoritative_state = state or fetch_restore_state_metadata(
+        safe_dataset_id, user_id, settings
+    )
+    if authoritative_state is None:
         return None
 
     sheets_response = _get(
@@ -199,7 +220,7 @@ def fetch_restore_state_bundle(
     sheets = sheets_response.json()
     if not isinstance(sheets, list):
         return None
-    return {"state": states[0], "sheets": sheets}
+    return {"state": authoritative_state, "sheets": sheets}
 
 
 def fetch_latest_restore_record(

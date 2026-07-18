@@ -109,12 +109,15 @@ export function useFileImport() {
         }),
       )
       setStandardization(result)
-      const marked = await markStandardized(datasetId, result)
-      if (!marked && supabaseConfigured && datasetId) {
-        setPersistWarning(
-          'El archivo se estandarizó correctamente, pero no se pudo guardar todo el detalle en el historial.',
-        )
-      }
+      // History persistence is best-effort and must not extend the processing
+      // spinner after the usable result has already arrived.
+      void markStandardized(datasetId, result).then((marked) => {
+        if (!marked && supabaseConfigured && datasetId) {
+          setPersistWarning(
+            'El archivo se estandarizó correctamente, pero no se pudo guardar todo el detalle en el historial.',
+          )
+        }
+      })
       return true
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Ocurrió un error al estandarizar.')

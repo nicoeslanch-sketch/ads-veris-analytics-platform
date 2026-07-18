@@ -28,6 +28,7 @@ import json
 import os
 import re
 import threading
+import time
 import zipfile
 from collections import OrderedDict
 
@@ -76,6 +77,7 @@ from ..restore_cache import (
     fetch_latest_cleaning_config,
     fetch_latest_restore_record,
     fetch_restore_state_bundle,
+    fetch_restore_state_metadata,
     reserve_restore_snapshot_revision,
     store_restore_snapshot,
     valid_restore_snapshot,
@@ -95,6 +97,64 @@ _FRAME_CACHE_LOCK = threading.Lock()
 _FRAME_CACHE: "OrderedDict[tuple, tuple[object, dict]]" = OrderedDict()
 _FRAME_CACHE_CELL_BUDGET = 1_600_000
 _FRAME_CACHE_MAX_ENTRY_CELLS = 1_200_000
+
+# Reopening the app should not repeatedly fetch and deserialize the same
+# validated snapshots. Writes invalidate this short, per-user production cache.
+_RESTORE_RESPONSE_CACHE_LOCK = threading.Lock()
+_RESTORE_RESPONSE_CACHE: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
+_RESTORE_RESPONSE_CACHE_TTL_SECONDS = 10 * 60
+_RESTORE_RESPONSE_CACHE_MAX_USERS = 8
+
+
+def _restore_response_cache_get(cache_key: str) -> dict | None:
+    if get_settings().app_env != "production":
+        return None
+    now = time.monotonic()
+    with _RESTORE_RESPONSE_CACHE_LOCK:
+        cached = _RESTORE_RESPONSE_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        stored_at, response = cached
+        if now - stored_at > _RESTORE_RESPONSE_CACHE_TTL_SECONDS:
+            _RESTORE_RESPONSE_CACHE.pop(cache_key, None)
+            return None
+        _RESTORE_RESPONSE_CACHE.move_to_end(cache_key)
+        return copy.deepcopy(response)
+
+
+def _restore_response_cache_store(cache_key: str, response: dict) -> None:
+    if get_settings().app_env != "production" or response.get("dataset") is None:
+        return
+    with _RESTORE_RESPONSE_CACHE_LOCK:
+        _RESTORE_RESPONSE_CACHE[cache_key] = (time.monotonic(), copy.deepcopy(response))
+        _RESTORE_RESPONSE_CACHE.move_to_end(cache_key)
+        while len(_RESTORE_RESPONSE_CACHE) > _RESTORE_RESPONSE_CACHE_MAX_USERS:
+            _RESTORE_RESPONSE_CACHE.popitem(last=False)
+
+
+def _restore_response_cache_invalidate(user_id: str) -> None:
+    with _RESTORE_RESPONSE_CACHE_LOCK:
+        prefix = f"{user_id}:"
+        for cache_key in list(_RESTORE_RESPONSE_CACHE):
+            if cache_key.startswith(prefix):
+                _RESTORE_RESPONSE_CACHE.pop(cache_key, None)
+
+
+def _restore_response_cache_key(
+    user_id: str,
+    record: dict,
+    state: dict | None,
+) -> str | None:
+    if not isinstance(state, dict):
+        return None
+    revision = state.get("revision")
+    updated_at = state.get("updated_at")
+    if not isinstance(revision, int) or revision <= 0 or not isinstance(updated_at, str):
+        return None
+    return (
+        f"{user_id}:{record['id']}:{record.get('status', '')}:"
+        f"{revision}:{updated_at}"
+    )
 
 
 def _clone_frame(df):
@@ -1502,8 +1562,26 @@ def _restore_latest_sync(user_id: str) -> dict:
     record = fetch_latest_restore_record(user_id)
     if record is None:
         return {"dataset": None, "source": "empty"}
+    production_cache = get_settings().app_env == "production"
+    authoritative_state = (
+        fetch_restore_state_metadata(record["id"], user_id)
+        if production_cache
+        else None
+    )
+    cache_key = _restore_response_cache_key(user_id, record, authoritative_state)
+    if cache_key is not None:
+        cached_response = _restore_response_cache_get(cache_key)
+        if cached_response is not None:
+            return cached_response
 
-    bundle = fetch_restore_state_bundle(record["id"], user_id)
+    if authoritative_state is not None:
+        bundle = fetch_restore_state_bundle(
+            record["id"], user_id, state=authoritative_state
+        )
+    elif production_cache:
+        bundle = None
+    else:
+        bundle = fetch_restore_state_bundle(record["id"], user_id)
     if bundle is not None:
         state = bundle["state"]
         valid_by_key: dict[str, dict] = {}
@@ -1554,13 +1632,16 @@ def _restore_latest_sync(user_id: str) -> dict:
                 if snapshot.get("sheet") is not None
             }
             state = {**state, "active_sheet": active_sheet}
-            return _restore_response(
+            response = _restore_response(
                 record,
                 active,
                 "snapshot",
                 sheet_sessions=sessions,
                 restore_state=state,
             )
+            if cache_key is not None:
+                _restore_response_cache_store(cache_key, response)
+            return response
 
     # La revisión se reserva ANTES de descargar y recalcular el archivo.
     revision = reserve_restore_snapshot_revision(record["id"], user_id)
@@ -1598,7 +1679,13 @@ def _restore_latest_sync(user_id: str) -> dict:
         safe_revision,
         persist=revision is not None,
     )
-    return _restore_response(record, snapshot, "computed")
+    response = _restore_response(record, snapshot, "computed")
+    if production_cache and revision is not None:
+        refreshed_state = fetch_restore_state_metadata(record["id"], user_id)
+        refreshed_key = _restore_response_cache_key(user_id, record, refreshed_state)
+        if refreshed_state and refreshed_state.get("revision") == revision and refreshed_key:
+            _restore_response_cache_store(refreshed_key, response)
+    return response
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -1630,6 +1717,7 @@ async def standardize(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
+    _restore_response_cache_invalidate(user.id)
     # La revisión se reserva al entrar al endpoint, antes de cualquier descarga
     # o cálculo que pueda invertir el orden de dos peticiones concurrentes.
     revision = (
@@ -1679,6 +1767,8 @@ async def clean(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
+    if apply:
+        _restore_response_cache_invalidate(user.id)
     revision = (
         await run_in_threadpool(
             reserve_restore_snapshot_revision, dataset_id, user.id, settings
@@ -1736,6 +1826,7 @@ async def clean_assisted(
     interpretar instrucciones (costura IA determinista) → correr el motor
     dirigido → registrar el consumo SOLO si corrió OK. Si las instrucciones
     no se reconocen, responde 422 y el intento NO se descuenta."""
+    _restore_response_cache_invalidate(user.id)
     revision = (
         await run_in_threadpool(
             reserve_restore_snapshot_revision, dataset_id, user.id, settings
