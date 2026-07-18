@@ -1,5 +1,8 @@
 """Fast restoration: persistent snapshot first, full pipeline as fallback."""
 
+import time
+from statistics import median
+
 import httpx
 
 from app.config import Settings
@@ -336,9 +339,11 @@ def test_restore_response_cache_isolated_and_invalidated_by_user(monkeypatch):
     with pl._RESTORE_RESPONSE_CACHE_LOCK:
         pl._RESTORE_RESPONSE_CACHE.clear()
 
-    key = "owner-1:00000000-0000-0000-0000-000000000001:limpio"
+    key = "owner-1:00000000-0000-0000-0000-000000000001:limpio:10:t1"
+    other_key = "owner-2:00000000-0000-0000-0000-000000000002:limpio:20:t2"
     response = {"dataset": {"id": "dataset-1"}, "source": "snapshot"}
     pl._restore_response_cache_store(key, response)
+    pl._restore_response_cache_store(other_key, response)
 
     restored = pl._restore_response_cache_get(key)
     assert restored == response
@@ -346,3 +351,129 @@ def test_restore_response_cache_isolated_and_invalidated_by_user(monkeypatch):
 
     pl._restore_response_cache_invalidate("owner-1")
     assert pl._restore_response_cache_get(key) is None
+    assert pl._restore_response_cache_get(other_key) == response
+
+
+def _authoritative_bundle(snapshot: dict, state: dict) -> dict:
+    return {
+        "state": state,
+        "sheets": [
+            {
+                "sheet_key": "__single__",
+                "revision": snapshot["revision"],
+                "source_sha256": snapshot["source_sha256"],
+                "rules_hash": snapshot["rules_hash"],
+                "mapping_hash": snapshot["mapping_hash"],
+                "sheet": snapshot["sheet"],
+                "engine_version": snapshot["engine_version"],
+                "snapshot": snapshot,
+            }
+        ],
+    }
+
+
+def _configure_production_restore(monkeypatch, pl, revision: dict, bundle_delay: float = 0):
+    user_id = "owner-cache-test"
+    dataset_id = "00000000-0000-0000-0000-000000000010"
+    bundle_calls: list[int] = []
+
+    monkeypatch.setattr(
+        pl,
+        "get_settings",
+        lambda: Settings(app_env="production", _env_file=None),
+    )
+    monkeypatch.setattr(
+        pl,
+        "fetch_latest_restore_record",
+        lambda _user_id: {
+            "id": dataset_id,
+            "name": "fixture.csv",
+            "source": "excel_csv",
+            "storage_path": f"{user_id}/fixture.csv",
+            "status": "limpio",
+        },
+    )
+
+    def metadata(_dataset_id, _user_id):
+        current = revision["value"]
+        return {
+            "dataset_id": dataset_id,
+            "user_id": user_id,
+            "revision": current,
+            "active_sheet": None,
+            "available_sheets": [],
+            "excluded_sheets": [],
+            "combine_sheets": False,
+            "source_sha256": SOURCE_SHA,
+            "engine_version": _snapshot(current)["engine_version"],
+            "updated_at": f"2026-07-17T00:00:{current:02d}+00:00",
+        }
+
+    def bundle(_dataset_id, _user_id, *, state=None):
+        if bundle_delay:
+            time.sleep(bundle_delay)
+        current = revision["value"]
+        bundle_calls.append(current)
+        snapshot = _snapshot(current)
+        snapshot["standardization"] = {
+            **snapshot["standardization"],
+            "revision_marker": current,
+        }
+        return _authoritative_bundle(snapshot, state or metadata(_dataset_id, _user_id))
+
+    monkeypatch.setattr(pl, "fetch_restore_state_metadata", metadata)
+    monkeypatch.setattr(pl, "fetch_restore_state_bundle", bundle)
+    monkeypatch.setattr(
+        pl,
+        "download_from_storage",
+        lambda _path: (_ for _ in ()).throw(AssertionError("no debe descargar")),
+    )
+    with pl._RESTORE_RESPONSE_CACHE_LOCK:
+        pl._RESTORE_RESPONSE_CACHE.clear()
+    return user_id, bundle_calls
+
+
+def test_restore_cache_descarta_respuesta_si_cambia_revision(monkeypatch):
+    from app.routes import pipeline as pl
+
+    revision = {"value": 10}
+    user_id, bundle_calls = _configure_production_restore(monkeypatch, pl, revision)
+
+    first = pl._restore_latest_sync(user_id)
+    repeated = pl._restore_latest_sync(user_id)
+    revision["value"] = 11
+    changed = pl._restore_latest_sync(user_id)
+
+    assert first["standardization"]["revision_marker"] == 10
+    assert repeated["standardization"]["revision_marker"] == 10
+    assert changed["standardization"]["revision_marker"] == 11
+    assert bundle_calls == [10, 11]
+
+
+def test_restore_timing_initial_and_repeated_same_fixture(monkeypatch):
+    from app.routes import pipeline as pl
+
+    revision = {"value": 12}
+    user_id, bundle_calls = _configure_production_restore(
+        monkeypatch, pl, revision, bundle_delay=0.03
+    )
+
+    initial_samples: list[float] = []
+    repeated_samples: list[float] = []
+    for _ in range(5):
+        pl._restore_response_cache_invalidate(user_id)
+        started = time.perf_counter()
+        pl._restore_latest_sync(user_id)
+        initial_samples.append((time.perf_counter() - started) * 1000)
+        started = time.perf_counter()
+        pl._restore_latest_sync(user_id)
+        repeated_samples.append((time.perf_counter() - started) * 1000)
+
+    initial_ms = median(initial_samples)
+    repeated_ms = median(repeated_samples)
+
+    print(
+        f"restore_fixture initial_ms={initial_ms:.3f} repeated_ms={repeated_ms:.3f}"
+    )
+    assert bundle_calls == [12] * 5
+    assert repeated_ms < initial_ms
