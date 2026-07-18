@@ -24,6 +24,7 @@ import {
   sheetPreparationAction,
   sheetSelectionCountLabel,
   sheetStatusLabel,
+  sheetsForAutomaticPreparation,
 } from '../lib/multiSheet'
 import type { StandardizeResult } from '../lib/types'
 
@@ -124,6 +125,11 @@ export default function Estandarizacion() {
     selectedSheets.length,
     availableSheets.length,
   )
+  const sheetsToPrepareAutomatically = sheetsForAutomaticPreparation(
+    selectionMode,
+    availableSheets,
+    sheetSessions,
+  )
 
   useEffect(() => {
     if (!canCombineSheets && combineSheets) setCombineSheets(false)
@@ -196,6 +202,22 @@ export default function Estandarizacion() {
     if (target && sheetSessions[target]?.standardization) setSheet(target)
     setChangingSheet(false)
   }
+
+  useEffect(() => {
+    if (
+      !file ||
+      processing ||
+      changingSheet ||
+      sheetsToPrepareAutomatically.length === 0
+    ) return
+
+    void processSheets(sheetsToPrepareAutomatically, false)
+  }, [
+    changingSheet,
+    file,
+    processing,
+    sheetsToPrepareAutomatically.join('\u0000'),
+  ])
 
   const totalChanges = standardization
     ? standardization.cambios.textos_normalizados +
@@ -392,8 +414,8 @@ export default function Estandarizacion() {
           <div className="px-5 pt-5">
             <h2 className="text-sm font-semibold text-navy">Hojas del archivo</h2>
             <p className="mt-1 text-xs text-navy/55">
-              Abre cada hoja que quieras procesar. Cambiar de hoja no crea un documento
-              nuevo y su configuración queda guardada por separado durante esta sesión.
+              Todas las hojas se preparan automáticamente. Si eliges solo algunas,
+              podrás marcarlas manualmente sin crear documentos separados.
             </p>
             <fieldset className="mt-4 grid gap-2 sm:grid-cols-2">
               <legend className="mb-2 text-sm font-semibold text-navy">
@@ -439,15 +461,23 @@ export default function Estandarizacion() {
               {selectionCountLabel && (
                 <p className="text-xs text-navy/55">{selectionCountLabel}</p>
               )}
-              {preparationAction && (
+              {selectionMode === 'all' && changingSheet && (
+                <p className="ml-auto inline-flex items-center gap-2 text-xs font-semibold text-teal">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Estandarizando todas las hojas...
+                </p>
+              )}
+              {selectionMode === 'custom' && preparationAction && (
                 <button
                   type="button"
                   disabled={changingSheet || selectedSheets.length === 0}
-                  onClick={() => void processSheets(selectionMode === 'all' ? availableSheets : selectedSheets)}
+                  onClick={() => void processSheets(selectedSheets)}
                   className="ml-auto inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {changingSheet && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {preparationAction === 'update' ? 'Actualizar preparación' : 'Preparar hojas seleccionadas'}
+                  {preparationAction === 'update'
+                    ? 'Actualizar preparación'
+                    : 'Preparar hojas seleccionadas'}
                 </button>
               )}
             </div>

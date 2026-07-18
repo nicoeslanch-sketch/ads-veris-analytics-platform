@@ -41,6 +41,7 @@ export type SheetPreparationAction = 'prepare' | 'update' | null
 
 interface SheetPreparationState {
   standardization?: unknown
+  status?: string
 }
 
 /** Decides whether the selection still needs work without coupling the UI to
@@ -53,6 +54,22 @@ export function sheetPreparationAction(
   const prepared = selectedSheets.filter((name) => Boolean(sessions[name]?.standardization)).length
   if (prepared === selectedSheets.length) return null
   return prepared > 0 ? 'update' : 'prepare'
+}
+
+/** In "all" mode every pending sheet is prepared automatically. Failed sheets
+ * stay manual so a persistent error cannot start an automatic retry loop. */
+export function sheetsForAutomaticPreparation(
+  mode: 'all' | 'custom',
+  availableSheets: string[],
+  sessions: Record<string, SheetPreparationState | undefined>,
+): string[] {
+  if (mode !== 'all') return []
+  return availableSheets.filter((name) => {
+    const session = sessions[name]
+    return !session?.standardization &&
+      session?.status !== 'error' &&
+      session?.status !== 'estandarizando'
+  })
 }
 
 export function sheetSelectionCountLabel(

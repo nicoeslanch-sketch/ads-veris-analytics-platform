@@ -38,10 +38,9 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await chooser.setFiles(workbook)
 
     await expect(page.getByText(/Dataset activo:/)).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText('Todas las hojas')).toBeVisible()
+    await expect(page.getByText('Todas las hojas', { exact: true })).toBeVisible()
     await expect(page.getByText('3 de 3 hojas seleccionadas')).toHaveCount(0)
     await expect(page.getByText(/estructuras distintas/i)).toHaveCount(0)
-    await page.getByRole('button', { name: 'Actualizar preparación' }).click()
     await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(3, { timeout: 90_000 })
     await expect(page.getByRole('button', { name: /preparación|Preparar hojas/ })).toHaveCount(0)
     await expect(page.getByText('Enero', { exact: true })).toHaveCount(1)
@@ -81,7 +80,6 @@ test('Fase 17 bloquea una relacion many-to-many', async ({ page }, testInfo) => 
     const chooser = await chooserPromise
     await chooser.setFiles(workbook)
     await expect(page.getByText(/Dataset activo:/)).toBeVisible({ timeout: 60_000 })
-    await page.getByRole('button', { name: 'Actualizar preparación' }).click()
     await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(3, { timeout: 90_000 })
     await page.getByRole('link', { name: /Limpieza de datos/ }).first().click()
     await page.getByRole('button', { name: /Limpiar todas las hojas preparadas/ }).click()

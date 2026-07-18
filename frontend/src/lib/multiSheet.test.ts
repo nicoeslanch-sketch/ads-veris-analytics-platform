@@ -6,6 +6,7 @@ import {
   sheetPreparationAction,
   sheetSelectionCountLabel,
   sheetStatusLabel,
+  sheetsForAutomaticPreparation,
   singleScope,
 } from './multiSheet'
 import type { DictionaryMatch } from './types'
@@ -78,5 +79,17 @@ describe('estado multihoja', () => {
       { Enero: { standardization: { filas: 10 } } },
     )).toBe('update')
     expect(sheetSelectionCountLabel('custom', 1, 2)).toBe('1 de 2 hojas seleccionadas')
+  })
+
+  it('prepara automaticamente todas las hojas pendientes solo en modo todas', () => {
+    const sessions = {
+      Enero: { standardization: { filas: 10 }, status: 'estandarizada' },
+      Febrero: { status: 'pendiente' },
+      Productos: { status: 'error' },
+    }
+    const sheets = ['Enero', 'Febrero', 'Productos']
+
+    expect(sheetsForAutomaticPreparation('all', sheets, sessions)).toEqual(['Febrero'])
+    expect(sheetsForAutomaticPreparation('custom', sheets, sessions)).toEqual([])
   })
 })
