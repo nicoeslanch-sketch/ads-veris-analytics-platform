@@ -37,6 +37,32 @@ export function sheetStatusLabel(
   return 'Pendiente'
 }
 
+export type SheetPreparationAction = 'prepare' | 'update' | null
+
+interface SheetPreparationState {
+  standardization?: unknown
+}
+
+/** Decides whether the selection still needs work without coupling the UI to
+ * the persistence layer. A fully prepared selection has no action at all. */
+export function sheetPreparationAction(
+  selectedSheets: string[],
+  sessions: Record<string, SheetPreparationState | undefined>,
+): SheetPreparationAction {
+  if (selectedSheets.length === 0) return null
+  const prepared = selectedSheets.filter((name) => Boolean(sessions[name]?.standardization)).length
+  if (prepared === selectedSheets.length) return null
+  return prepared > 0 ? 'update' : 'prepare'
+}
+
+export function sheetSelectionCountLabel(
+  mode: 'all' | 'custom',
+  selected: number,
+  total: number,
+): string | null {
+  return mode === 'all' ? null : `${selected} de ${total} hojas seleccionadas`
+}
+
 export function singleScope(sheet: string): AnalysisScope {
   return { mode: 'single', sheets: [sheet], active_sheet: sheet }
 }

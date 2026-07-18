@@ -20,6 +20,11 @@ import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
 import { cleanFilename, formatDateTime, formatNumber } from '../lib/format'
+import {
+  sheetPreparationAction,
+  sheetSelectionCountLabel,
+  sheetStatusLabel,
+} from '../lib/multiSheet'
 import type { StandardizeResult } from '../lib/types'
 
 const BENEFITS = [
@@ -113,6 +118,12 @@ export default function Estandarizacion() {
   const canCombineSheets =
     processedColumnSets.length >= 2 &&
     processedColumnSets.every((columns) => columns === processedColumnSets[0])
+  const preparationAction = sheetPreparationAction(selectedSheets, sheetSessions)
+  const selectionCountLabel = sheetSelectionCountLabel(
+    selectionMode,
+    selectedSheets.length,
+    availableSheets.length,
+  )
 
   useEffect(() => {
     if (!canCombineSheets && combineSheets) setCombineSheets(false)
@@ -419,62 +430,73 @@ export default function Estandarizacion() {
               </label>
             </fieldset>
             {selectionMode === 'custom' && (
-              <div className="mt-3 rounded-lg border border-navy/10 bg-navy/[0.02] p-3">
-                <div className="mb-2 flex gap-3 text-xs font-semibold">
+              <div className="mt-3 flex flex-wrap gap-3 text-xs font-semibold">
                   <button type="button" onClick={() => setSelectedSheets(availableSheets)} className="text-teal hover:underline">Seleccionar todas</button>
                   <button type="button" onClick={() => setSelectedSheets([])} className="text-navy/55 hover:text-navy">Quitar todas</button>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {availableSheets.map((name) => (
-                    <label key={name} className="flex min-w-0 items-center gap-2 text-xs text-navy/75">
+              </div>
+            )}
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              {selectionCountLabel && (
+                <p className="text-xs text-navy/55">{selectionCountLabel}</p>
+              )}
+              {preparationAction && (
+                <button
+                  type="button"
+                  disabled={changingSheet || selectedSheets.length === 0}
+                  onClick={() => void processSheets(selectionMode === 'all' ? availableSheets : selectedSheets)}
+                  className="ml-auto inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {changingSheet && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {preparationAction === 'update' ? 'Actualizar preparación' : 'Preparar hojas seleccionadas'}
+                </button>
+              )}
+            </div>
+            <div className="mt-4 divide-y divide-navy/10 rounded-lg border border-navy/10">
+              {availableSheets.map((name) => {
+                const session = sheetSessions[name]
+                const isSelected = selectedSheets.includes(name)
+                const isActive = name === activeSheet
+                const processed = Boolean(session?.standardization)
+                const status = sheetStatusLabel(
+                  session?.status ?? (processed ? 'estandarizada' : undefined),
+                  isSelected,
+                  Boolean(session?.cleaning),
+                )
+                return (
+                  <div
+                    key={name}
+                    className={`flex min-w-0 items-center gap-3 px-3 py-2.5 text-xs ${isActive ? 'bg-teal/[0.05]' : ''}`}
+                  >
+                    {selectionMode === 'custom' && (
                       <input
                         type="checkbox"
-                        checked={selectedSheets.includes(name)}
+                        aria-label={`Seleccionar hoja ${name}`}
+                        checked={isSelected}
                         onChange={(event) => setSelectedSheets(
                           event.target.checked
                             ? [...selectedSheets, name]
                             : selectedSheets.filter((item) => item !== name),
                         )}
-                        className="h-4 w-4 accent-teal"
+                        className="h-4 w-4 shrink-0 accent-teal"
                       />
-                      <span className="truncate" title={name}>{name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-navy/55">
-                {selectedSheets.length} de {availableSheets.length} hojas seleccionadas
-              </p>
-              <button
-                type="button"
-                disabled={changingSheet || selectedSheets.length === 0}
-                onClick={() => void processSheets(selectionMode === 'all' ? availableSheets : selectedSheets)}
-                className="inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {changingSheet && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Preparar hojas seleccionadas
-              </button>
-            </div>
-            <div className="mt-4 divide-y divide-navy/10 rounded-lg border border-navy/10">
-              {availableSheets.map((name) => {
-                const session = sheetSessions[name]
-                const status = !selectedSheets.includes(name)
-                  ? 'No seleccionada'
-                  : session?.status === 'error'
-                    ? 'Error'
-                    : session?.cleaning
-                      ? 'Estandarizada y limpia'
-                      : session?.standardization
-                        ? 'Estandarizada'
-                        : session?.status === 'estandarizando'
-                          ? 'Procesando...'
-                          : 'Pendiente'
-                return (
-                  <div key={name} className="flex min-w-0 items-center gap-3 px-3 py-2.5 text-xs">
-                    <span className="min-w-0 flex-1 truncate font-semibold text-navy" title={name}>{name}</span>
-                    <span className={session?.status === 'error' ? 'text-coral' : 'text-navy/55'}>{status}</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void changeSheet(name)}
+                      disabled={changingSheet}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:opacity-60"
+                    >
+                      {changingSheet && isActive ? (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-teal" />
+                      ) : processed ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green" />
+                      ) : (
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full border border-navy/35" />
+                      )}
+                      <span className="truncate font-semibold text-navy" title={name}>{name}</span>
+                      {isActive && <span className="shrink-0 font-medium text-teal">Activa</span>}
+                    </button>
+                    <span className={session?.status === 'error' ? 'shrink-0 text-coral' : 'shrink-0 text-navy/55'}>{status}</span>
                     {session?.status === 'error' && (
                       <button type="button" onClick={() => void processSheets([name], false)} className="font-semibold text-teal hover:underline">Reintentar</button>
                     )}
@@ -483,47 +505,8 @@ export default function Estandarizacion() {
               })}
             </div>
           </div>
-          <div
-            role="tablist"
-            aria-label="Hojas del archivo Excel"
-            className="mt-4 flex max-w-full gap-1 overflow-x-auto border-b border-navy/10 px-5"
-          >
-            {availableSheets.map((name) => {
-              const processed = Boolean(sheetSessions[name]?.standardization)
-              const selected = name === activeSheet
-              return (
-                <button
-                  key={name}
-                  role="tab"
-                  aria-selected={selected}
-                  onClick={() => void changeSheet(name)}
-                  disabled={changingSheet}
-                  className={`flex min-w-max items-center gap-2 border-b-2 px-3 py-3 text-xs font-semibold transition-colors disabled:opacity-60 ${
-                    selected
-                      ? 'border-teal text-teal'
-                      : 'border-transparent text-navy/65 hover:border-navy/20 hover:text-navy'
-                  }`}
-                >
-                  {changingSheet && selected ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : processed ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-green" />
-                  ) : (
-                    <span className="h-2.5 w-2.5 rounded-full border border-navy/35" />
-                  )}
-                  <span>{name}</span>
-                  <span className="font-normal text-navy/45">
-                    {processed ? 'Procesada' : 'Sin procesar'}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-            <p className="text-xs text-navy/60">
-              Estás viendo: <strong className="text-navy">{activeSheet ?? '—'}</strong>
-            </p>
-            {canCombineSheets && (
+          {canCombineSheets && (
+            <div className="flex flex-wrap items-center gap-3 px-5 py-4">
               <label className="flex cursor-pointer items-start gap-2 text-xs text-navy">
                 <input
                   type="checkbox"
@@ -538,13 +521,7 @@ export default function Estandarizacion() {
                   </span>
                 </span>
               </label>
-            )}
-          </div>
-          {processedSheets.length >= 2 && !canCombineSheets && (
-            <p className="border-t border-gold/20 bg-gold/[0.06] px-5 py-3 text-xs text-navy/65">
-              Estas hojas tienen estructuras distintas. No se unirán automáticamente:
-              relacionarlas requiere que indiques una clave común.
-            </p>
+            </div>
           )}
           {sheetError && (
             <p className="border-t border-coral/30 bg-coral/5 px-5 py-3 text-xs text-coral">
