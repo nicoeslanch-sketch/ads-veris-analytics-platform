@@ -554,6 +554,16 @@ export default function Limpieza() {
     effectiveMapping,
     extendedMapping,
     confirmedBasicRoles,
+    (result ?? standardization)?.column_types,
+  )
+  // Fase 18: hoja sin columnas de fecha/monto (una maestra de clientes o
+  // sucursales) — no hay nada que confirmar y la UI debe explicarlo en vez de
+  // mostrar "0 datos identificados · necesitamos confirmar 2".
+  const basicNonTransactional = Boolean(
+    (result ?? standardization) &&
+      basicCriticalRoleNames.length === 0 &&
+      !effectiveMapping.monto &&
+      !effectiveMapping.fecha,
   )
   const basicCriticalRoles = MAPPING_ROLES.filter(({ role }) => basicCriticalRoleNames.includes(role))
   const basicQuestion = basicCriticalRoles[0]
@@ -1124,6 +1134,14 @@ export default function Limpieza() {
                   </div>
                 )}
               </div>
+              {downloading !== null && (
+                <p className="mt-3 flex items-center gap-2 rounded-lg bg-teal/[0.06] px-3 py-2 text-xs text-navy/65" aria-live="polite">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-teal" />
+                  Estamos armando tu archivo con todas las hojas, la auditoría celda a celda y las
+                  observaciones. La primera descarga puede tardar; si repites la misma descarga sale
+                  al instante.
+                </p>
+              )}
             </Card>
 
             {result.avisos && result.avisos.length > 0 && (
@@ -1391,10 +1409,17 @@ export default function Limpieza() {
                     <div className="min-w-0 flex-1">
                       <h2 className="text-sm font-semibold text-navy">Entendimos tu archivo</h2>
                       <p className="mt-1 text-xs text-navy/55">
-                        {assignedMappingRoles.length} datos identificados
-                        {basicCriticalRoles.length > 0
-                          ? ` · necesitamos confirmar ${basicCriticalRoles.length}`
-                          : ' · no necesitas configurar nada'}
+                        {basicNonTransactional
+                          ? 'Esta hoja no parece una tabla de ventas: no encontramos columnas de fecha ni de montos. La limpiaremos igual y el Resumen se adaptará a su contenido (clientes, sucursales, inventario u otro).'
+                          : assignedMappingRoles.length > 0
+                            ? `Identificamos ${assignedMappingRoles.length} dato(s) automáticamente${
+                                basicCriticalRoles.length > 0
+                                  ? ` · necesitamos que confirmes ${basicCriticalRoles.length}`
+                                  : ' · no necesitas configurar nada'
+                              }`
+                            : basicCriticalRoles.length > 0
+                              ? `Necesitamos que confirmes ${basicCriticalRoles.length} dato(s) para calcular tus indicadores`
+                              : 'No necesitas configurar nada'}
                       </p>
                     </div>
                   </div>
@@ -1403,9 +1428,14 @@ export default function Limpieza() {
                     <div className="mt-4 rounded-lg border border-gold/30 bg-gold/[0.06] p-4">
                       <label className="block text-sm font-semibold text-navy" htmlFor="basic-column-question">
                         {basicQuestion.role === 'monto'
-                          ? 'En que columna esta el total vendido?'
-                          : 'En que columna esta la fecha de cada movimiento?'}
+                          ? '¿En qué columna está el total vendido?'
+                          : '¿En qué columna está la fecha de cada movimiento?'}
                       </label>
+                      <p className="mt-1 text-[11px] leading-relaxed text-navy/55">
+                        {basicQuestion.role === 'monto'
+                          ? 'La usamos para calcular tus ingresos. Si esta hoja no registra ventas, elige "Mi archivo no tiene este dato" — podrás limpiarla y analizarla igual.'
+                          : 'La usamos para armar la evolución mensual. Si esta hoja no tiene fechas, elige "Mi archivo no tiene este dato" — podrás limpiarla y analizarla igual.'}
+                      </p>
                       <select
                         id="basic-column-question"
                         value={basicSelectedColumn}
@@ -1604,22 +1634,24 @@ export default function Limpieza() {
           </>
         )}
 
-        {/* Barra de acción: botón "Limpiar datos" (todos los planes) */}
+        {/* Barra de acción: botón "Limpiar datos" (todos los planes).
+            Fase 18: franja en azul marino de marca con botón protagonista —
+            la barra blanca anterior se perdía entre las tarjetas. */}
         {!cleaningComplete && (
-          <Card className="!p-4 bg-gradient-to-r from-teal/[0.04] to-transparent">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <section className="rounded-2xl bg-gradient-to-r from-navy to-navy-deep p-5 shadow-md ring-1 ring-navy/20 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <p className="text-sm font-semibold text-navy">Todo listo para limpiar</p>
-                <p className="mt-1 text-xs text-navy/55">
+                <p className="text-base font-semibold text-white">Todo listo para limpiar</p>
+                <p className="mt-1 text-xs text-white/70">
                   {selectedSheets.length > 1
                     ? `Al continuar, limpiaremos una por una las ${pendingPreparedSheets.length} hojas pendientes de las ${selectedSheets.length} seleccionadas.`
                     : 'Aplicaremos las reglas elegidas a esta hoja. Nada se modifica hasta que pulses el botón.'}
                 </p>
               </div>
               {selectedSheets.length > 1 && (
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-3">
                   {!basicMapping && (
-                    <label className="mr-auto flex items-center gap-2 text-xs text-navy/65">
+                    <label className="mr-auto flex items-center gap-2 text-xs text-white/75">
                       <input
                         type="checkbox"
                         checked={applySameRules}
@@ -1633,9 +1665,9 @@ export default function Limpieza() {
                     type="button"
                     onClick={() => void handleApplySheets(pendingPreparedSheets)}
                     disabled={applying || detecting || !result || pendingPreparedSheets.length === 0}
-                    className="inline-flex items-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-xl bg-teal px-7 py-3.5 text-base font-bold text-white shadow-lg transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {applying && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {applying && <Loader2 className="h-5 w-5 animate-spin" />}
                     {applying ? 'Limpiando datos...' : 'Limpiar datos'}
                   </button>
                 </div>
@@ -1643,20 +1675,20 @@ export default function Limpieza() {
               <button
                 onClick={() => void handleApply()}
                 disabled={applying || assistedRunning || detecting || !result}
-                className={`${selectedSheets.length > 1 ? 'hidden' : 'inline-flex'} items-center gap-2 rounded-lg bg-teal px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50`}
+                className={`${selectedSheets.length > 1 ? 'hidden' : 'inline-flex'} items-center gap-2 rounded-xl bg-teal px-8 py-3.5 text-base font-bold text-white shadow-lg transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50`}
               >
                 {applying ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Limpiando...
+                    <Loader2 className="h-5 w-5 animate-spin" /> Limpiando...
                   </>
                 ) : (
                   <>
-                    Limpiar datos <ArrowRight className="h-4 w-4" />
+                    Limpiar datos <ArrowRight className="h-5 w-5" />
                   </>
                 )}
               </button>
             </div>
-          </Card>
+          </section>
         )}
 
         {/* ── Chat de limpieza dirigida (Analista/Gold) ── */}

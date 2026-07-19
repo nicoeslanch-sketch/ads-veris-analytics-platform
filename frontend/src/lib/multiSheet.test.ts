@@ -53,6 +53,17 @@ describe('mapeo simple del plan Basico', () => {
   it('avanza de una pregunta a la vez cuando una ya fue confirmada', () => {
     expect(basicMappingQuestions({}, {}, ['monto'])).toEqual(['fecha'])
   })
+
+  it('no pregunta por roles sin columnas candidatas (hoja no transaccional)', () => {
+    // Una maestra de clientes sin fechas ni números no debe preguntar nada.
+    expect(
+      basicMappingQuestions({}, {}, [], { ID_Cliente: 'texto', Nombre: 'texto' }),
+    ).toEqual([])
+    // Con una columna numérica pero sin fechas, solo pregunta por el monto.
+    expect(
+      basicMappingQuestions({}, {}, [], { Total: 'numero', Nombre: 'texto' }),
+    ).toEqual(['monto'])
+  })
 })
 
 describe('estado multihoja', () => {

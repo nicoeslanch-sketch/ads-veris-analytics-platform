@@ -2,6 +2,68 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.21.0] - 2026-07-19 - Fase 18: auditoría del estrés multihoja, resúmenes con gráficos y limpieza más clara
+
+Verificación independiente contra la Prueba de Estrés Multihoja: todos los
+KPI del dashboard (por hoja, filtrados, maestras y vista combinada con costos)
+se reprodujeron de forma exacta salvo los hallazgos que esta versión corrige.
+
+### Motor — exactitud
+
+- `"1,234"` ambiguo: cuando la columna está dominada por enteros de miles
+  (montos CLP) y no tiene decimales reales, se interpreta como MILES por
+  consistencia de magnitud, con aviso; antes se leía como `1.234` decimal y
+  restaba ~$106 mil de los ingresos combinados del archivo de estrés.
+- Forma canónica estable entre hojas: las variantes de mayúsculas eligen la
+  forma tipo Título ("Persona"/"Empresa"); antes cada hoja exportaba una
+  variante distinta (`Persona`, `PERSONA`, `empresa`) según sus frecuencias.
+- Grupos sin etiqueta "nan": una categoría ausente tras una relación sin
+  correspondencia (por ejemplo el producto P-999 sin maestro) se muestra como
+  "Sin clasificar"; los literales textuales conservados mantienen su grupo.
+- Filtro de periodo consistente: un `date_to` con granularidad de mes
+  ("2025-12") cubre el mes completo — el KPI y la evolución mensual ya no
+  divergen ante consumidores de la API que no expanden el fin de mes.
+- Identificador de fila exige unicidad ≥ 50%: `ID_Sucursal` en una tabla de
+  ventas es clave foránea y sus repeticiones ya no se reportan como conflicto.
+
+### Resúmenes adaptativos y relaciones
+
+- Inventario: stock, quiebres y stocks negativos POR SUCURSAL con gráficos.
+- Campañas: inversión, clics, CTR y CPC POR PLATAFORMA con gráficos y control
+  de negocio "más clics que impresiones".
+- Perfil genérico con contenido: subtipo (clientes, sucursales, trabajadores,
+  metas), distribuciones categóricas graficadas y resumen de columnas
+  numéricas — cualquier hoja recibe un resumen útil sin inventar ventas.
+- Agrupaciones flexibles: "Ventas por Sucursal/Región/Zona/…" a partir de
+  cualquier columna categórica del archivo, incluidas las enriquecidas por
+  "Relacionar otras hojas" (ventas ↔ sucursales por ID_Sucursal, etc.), con
+  tarjetas y gráficos en el Resumen. Bloqueadas si la moneda es mixta.
+
+### Exportación
+
+- Observaciones ahora también registra: ambigüedades numéricas por columna,
+  duplicados exactos conservados (pendientes de confirmación), identificadores
+  repetidos con contenido distinto, porcentajes fuera de 0–100% y posibles
+  montos inconsistentes con cantidad × precio × (1 − descuento).
+- Hojas limpias legibles: encabezado con color de marca, primera fila fija y
+  anchos de columna según el contenido (la exportación anterior perdía toda la
+  presentación).
+- Neutralización de fórmulas vectorizada: solo las celdas sospechosas pasan
+  por la revisión celda a celda — primera descarga del libro grande más rápida.
+
+### Limpieza (UI)
+
+- Franja "Todo listo para limpiar" en azul marino de marca con el botón
+  "Limpiar datos" más grande y protagonista.
+- El mapeo Básico ya no pregunta "¿en qué columna está la fecha?" en hojas sin
+  columnas de ese tipo (maestras de clientes/sucursales): explica que la hoja
+  no es transaccional y que igual se puede limpiar y analizar. Cada pregunta
+  explica para qué se usa el dato y qué pasa si no existe.
+- Nota de progreso visible mientras se prepara la descarga.
+
+Sube `ENGINE_VERSION` a `0.21.0` (invalida snapshots de motores anteriores).
+No agrega migraciones: `0021` sigue siendo la última.
+
 ## [0.20.1] - 2026-07-18 - Flujo multihoja, costos y rendimiento
 
 - "Todas las hojas" ahora marca y prepara literalmente todas; modificar un

@@ -352,6 +352,11 @@ def _row_identifier_diagnostics(df: pd.DataFrame, source_rows: list[int]) -> tup
         missing = physical_missing_mask(df[col])
         present = df.loc[~missing, col]
         unique_values = int(present.nunique(dropna=False))
+        # Fase 18: el nombre no basta — "ID_Sucursal" dentro de una tabla de
+        # ventas repite por diseño (clave foránea) y sus repeticiones NO son
+        # conflictos. Solo una columna con unicidad alta identifica filas.
+        if len(present) and unique_values / len(present) < 0.5:
+            continue
         repeated_values = int(present[present.duplicated(keep=False)].nunique(dropna=False))
         conflicts = 0
         if repeated_values:

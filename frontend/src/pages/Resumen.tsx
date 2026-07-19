@@ -17,6 +17,8 @@ import {
   Wallet,
 } from 'lucide-react'
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Cell,
   Line,
@@ -41,7 +43,7 @@ import { fullRangePeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
-import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort } from '../lib/charts'
+import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, truncateLabel } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
@@ -1029,6 +1031,17 @@ export default function Resumen() {
                   </Card>
                 </div>
               </div>
+
+              {/* Fase 18: agrupaciones flexibles — ventas por sucursal, región,
+                  zona u otras columnas categóricas del archivo (incluidas las
+                  enriquecidas por "Relacionar otras hojas"). */}
+              {(metrics.agrupaciones_flexibles ?? []).length > 0 && (
+                <div className="order-6 grid items-start gap-6 lg:grid-cols-2">
+                  {(metrics.agrupaciones_flexibles ?? []).map((agrupacion) => (
+                    <FlexibleGroupCard key={agrupacion.columna} agrupacion={agrupacion} />
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="contents xl:block xl:space-y-6">
@@ -1088,5 +1101,53 @@ export default function Resumen() {
         </div>
       ) : null}
     </>
+  )
+}
+
+/** Fase 18: gráfico de una agrupación flexible (ventas por sucursal/región…). */
+function FlexibleGroupCard({
+  agrupacion,
+}: {
+  agrupacion: NonNullable<MetricsResult['agrupaciones_flexibles']>[number]
+}) {
+  const rows = agrupacion.grupos.slice(0, 10).map((grupo) => ({
+    ...grupo,
+    etiqueta: truncateLabel(grupo.nombre, 18),
+  }))
+  return (
+    <Card className="min-w-0">
+      <h2 className="text-base font-semibold text-navy">Ventas por {agrupacion.columna}</h2>
+      <p className="mt-1 text-xs text-navy/55">
+        Ingresos netos según la columna «{agrupacion.columna}» de tu archivo
+        {agrupacion.grupos_totales > rows.length
+          ? ` (top ${rows.length} de ${agrupacion.grupos_totales} valores)`
+          : ''}
+        .
+      </p>
+      <div className="mt-4" style={{ height: Math.max(rows.length * 30 + 40, 140) }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
+            <XAxis
+              type="number"
+              tickFormatter={formatCLPCompact}
+              tick={{ fill: AXIS_INK, fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              type="category"
+              dataKey="etiqueta"
+              width={120}
+              tick={{ fill: AXIS_INK, fontSize: 11 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip formatter={(value) => formatCLP(Number(value))} />
+            <Bar dataKey="ingresos" name="Ingresos" fill={CHART.ingresos} radius={[0, 3, 3, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </Card>
   )
 }

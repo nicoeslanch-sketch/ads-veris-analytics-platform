@@ -1,6 +1,21 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 17 completas en código.**
+**Estado actual: Fases 0 a 18 completas en código.**
+La Fase 18 (`CHANGELOG` [0.21.0]) audita la plataforma contra la Prueba de
+Estrés Multihoja (todos los KPI reproducidos de forma independiente) y corrige
+lo encontrado: convención de `"1,234"` por magnitud de la columna, canónicos
+estables entre hojas (TipoCliente), grupos sin etiqueta "nan", filtro mensual
+consistente y conflictos de ID sin falsos positivos de claves foráneas. Además
+lleva gráficos a TODOS los resúmenes adaptativos (inventario y campañas por
+sucursal/plataforma; clientes, sucursales, trabajadores y metas con
+distribuciones), agrega "Ventas por {columna}" flexibles (sucursal, región,
+zona… incluidas columnas enriquecidas al relacionar hojas), amplía la
+cobertura de negocio de Observaciones en la exportación, hace legibles las
+hojas exportadas y aclara la Limpieza (franja de acción en navy, botón mayor,
+preguntas de mapeo solo con columnas candidatas). Motor `0.21.0`; la última
+migración sigue siendo **0021**.
+
+**Historial de Fase 17.**
 La Fase 17 (`CHANGELOG` [0.20.0]) simplifica el mapeo Básico y completa el
 procesamiento, limpieza, análisis, exportación y restauración multihoja. Las
 relaciones solo permiten one-to-one/many-to-one confirmadas y demuestran que

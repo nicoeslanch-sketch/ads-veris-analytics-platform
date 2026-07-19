@@ -350,19 +350,34 @@ def column_dot3_convention(series: pd.Series) -> str:
 
 
 def column_comma3_convention(series: pd.Series) -> tuple[str, int]:
-    """Convención para el caso ambiguo "#,###" (Fase 12b §P0.4).
+    """Convención para el caso ambiguo "#,###" (Fase 12b §P0.4, Fase 18 §magnitud).
 
     "1,234" puede ser 1.234 (decimal es-CL) o mil doscientos treinta y cuatro
     (miles US). Se decide por evidencia de la MISMA columna:
     - valores con coma y 1–2 decimales ("12,5") o formato "1.234,56" → decimal;
-    - valores con comas múltiples ("1,234,567") o formato "1,234.56" → miles.
+    - valores con comas múltiples ("1,234,567") o formato "1,234.56" → miles;
+    - sin separadores en disputa, la MAGNITUD de los valores planos decide:
+      una columna dominada por enteros de miles (montos CLP típicos) convierte
+      "1,234" en 1.234 pesos — cinco órdenes de magnitud bajo sus pares — si
+      se lee como decimal. En ese caso la lectura consistente es miles.
     Devuelve (convención, cantidad_de_valores_ambiguos). Sin evidencia se
     mantiene 'decimal' (convención es-CL) y el llamador AVISA la ambigüedad."""
     decimal_votes = miles_votes = ambiguous = 0
+    plain_grandes = plain_chicos = 0
     for value in _sample_values(series):
         text, _ = _strip_number_decorations(value)
         text = text.lstrip("-")
-        if not re.match(r"^[\d.,]+$", text) or "," not in text:
+        if not re.match(r"^[\d.,]+$", text):
+            continue
+        if "," not in text:
+            # Enteros/valores planos: evidencia de magnitud. El cero no vota —
+            # no informa la escala de la columna.
+            if re.fullmatch(r"\d+", text):
+                integer = int(text)
+                if integer >= 1000:
+                    plain_grandes += 1
+                elif integer > 0:
+                    plain_chicos += 1
             continue
         if "." in text:
             if text.rfind(",") > text.rfind("."):
@@ -379,6 +394,15 @@ def column_comma3_convention(series: pd.Series) -> tuple[str, int]:
         elif len(right) == 3:
             ambiguous += 1  # 1,234 — el caso en disputa
     if miles_votes and not decimal_votes:
+        return "miles", ambiguous
+    if (
+        ambiguous
+        and not decimal_votes
+        and not miles_votes
+        and plain_grandes > plain_chicos
+    ):
+        # Sin ningún decimal real en la columna y con mayoría de enteros
+        # >= 1000, "1,234" se lee como miles por consistencia de magnitud.
         return "miles", ambiguous
     return "decimal", ambiguous
 
@@ -730,8 +754,20 @@ def _normalize_text_column(
         bucket[value] = int(count)
 
     def _pick_canonical(variants: dict[str, int]) -> str:
-        # Más frecuente; ante empate, prefiere la forma con mayúscula inicial.
-        return max(variants.items(), key=lambda kv: (kv[1], kv[0][:1].isupper(), kv[0]))[0]
+        # Fase 18: la forma canónica debe ser ESTABLE entre hojas del mismo
+        # libro. Elegir solo por frecuencia hacía que "Persona", "PERSONA" y
+        # "empresa" ganaran en hojas distintas según el azar de sus conteos, y
+        # el libro exportado quedaba inconsistente entre hojas. Se prefiere la
+        # forma tipo Título (inicial mayúscula, no todo mayúsculas); la
+        # frecuencia decide solo entre formas del mismo estilo.
+        def _estilo(text: str) -> int:
+            if text[:1].isupper() and not text.isupper():
+                return 2  # "Persona", "Viña del Mar"
+            if text.isupper():
+                return 1  # "PERSONA"
+            return 0  # "persona", claves sin letras
+
+        return max(variants.items(), key=lambda kv: (_estilo(kv[0]), kv[1], kv[0]))[0]
 
     canonical = {key: _pick_canonical(variants) for key, variants in frequencies.items()}
 
@@ -999,6 +1035,17 @@ def standardize_dataframe(
                     "interpretaron como DECIMAL por convención chilena; si tus "
                     "datos vienen en formato estadounidense, corrígelo en el "
                     "origen o revisa esos montos."
+                )
+            elif ambiguous_commas and comma_convention == "miles":
+                # Fase 18: la magnitud de la columna (o su formato US) decidió
+                # miles. Sigue siendo una decisión sobre datos ambiguos y el
+                # usuario debe poder revisarla.
+                date_avisos.append(
+                    f"La columna '{col}' tiene {ambiguous_commas} valor(es) como "
+                    "'1,234', ambiguos entre decimal (es-CL) y miles (US). Se "
+                    "interpretaron como MILES por consistencia con los demás "
+                    "valores de la columna; si en tu origen son decimales, "
+                    "revisa esos montos."
                 )
 
             def _standardize_number(value: str) -> str:

@@ -88,7 +88,7 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
      reservadas al inicio, escritura atómica y estado/snapshots multihoja con RLS)
    - `supabase/migrations/0021_multi_sheet_analysis.sql` (**Fase 17**: agrega
      selección de hojas, errores por hoja y alcance de análisis confirmado al
-     snapshot v3; aplicar antes del backend 0.20.0. Esta rama no la ejecuta)
+     snapshot v3; aplicar antes del backend 0.20.0+. Esta rama no la ejecuta)
 3. **Política de contraseñas** (Fase 13/14 — la validación del formulario es
    solo UX; la política REAL vive aquí): en **Authentication → Providers →
    Email → Password requirements**, exige mínimo **8 caracteres** con

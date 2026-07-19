@@ -999,6 +999,79 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
             for row_idx in missing[missing].index:
                 red[(row_idx, col)] = f"Dato faltante en una columna casi completa ({label})."
 
+        # ── Fase 18: porcentajes fuera de rango o con escala mixta ──
+        # Un descuento de 1.1 (110%) o de -0.2 casi siempre es un error de
+        # captura; se marca y se observa, nunca se corrige solo.
+        header = str(col).casefold()
+        if ctype == "numero" and any(
+            token in header for token in ("pct", "porcentaje", "percent", "descuento")
+        ):
+            parsed_pct = map_unique(series.astype(str).reset_index(drop=True), parse_number)
+            frac_scale = int(((parsed_pct >= 0) & (parsed_pct <= 1)).sum())
+            over_one = (parsed_pct > 1) & (parsed_pct <= 100)
+            out_mask = (parsed_pct < 0) | (parsed_pct > 100)
+            if frac_scale >= int(over_one.sum()):
+                # La columna trabaja en fracciones (0.15 = 15%): todo lo que
+                # supere 1 equivale a más de 100%.
+                out_mask = out_mask | over_one
+            for row_idx in out_mask[out_mask].index[:500]:
+                key = (int(row_idx), col)
+                if key not in yellow and key not in red:
+                    yellow[key] = (
+                        "Porcentaje fuera del rango 0–100%: revisar (se conservó "
+                        "el valor original)."
+                    )
+
+    # ── Fase 18: coherencia monto ≈ cantidad × precio × (1 − descuento) ──
+    # Solo cuando el archivo trae todas las piezas legibles; una diferencia
+    # relevante se observa como posible inconsistencia, sin corregir nada.
+    roles_map = result.get("mapeo", {})
+    monto_col = roles_map.get("monto")
+    cantidad_col = roles_map.get("cantidad")
+    precio_col = next(
+        (
+            str(column) for column in df.columns
+            if "precio" in str(column).casefold() and str(column) != monto_col
+        ),
+        None,
+    )
+    descuento_col = next(
+        (str(column) for column in df.columns if "descuento" in str(column).casefold()),
+        None,
+    )
+    if monto_col in df.columns and cantidad_col in df.columns and precio_col:
+        base = df.reset_index(drop=True)
+        monto_vals = map_unique(base[monto_col].astype(str), parse_number)
+        cantidad_vals = map_unique(base[cantidad_col].astype(str), parse_number)
+        precio_vals = map_unique(base[precio_col].astype(str), parse_number)
+        if descuento_col in (base.columns if descuento_col else []):
+            descuento_vals = map_unique(base[descuento_col].astype(str), parse_number)
+            # Solo descuentos en escala de fracción [0, 1]; el resto de filas
+            # no se evalúa (su escala es dudosa y no queremos falsos positivos).
+            descuento_ok = (descuento_vals >= 0) & (descuento_vals <= 1)
+        else:
+            descuento_vals = pd.Series(0.0, index=base.index)
+            descuento_ok = pd.Series(True, index=base.index)
+        candidatos = (
+            monto_vals.notna()
+            & cantidad_vals.notna()
+            & precio_vals.notna()
+            & descuento_vals.notna()
+            & descuento_ok
+            & (monto_vals >= 0)
+        )
+        esperado = cantidad_vals * precio_vals * (1 - descuento_vals)
+        tolerancia = esperado.abs().clip(lower=50.0) * 0.02
+        incoherentes = candidatos & ((monto_vals - esperado).abs() > tolerancia)
+        for row_idx in incoherentes[incoherentes].index[:300]:
+            key = (int(row_idx), monto_col)
+            if key not in yellow and key not in red:
+                yellow[key] = (
+                    "Posible monto inconsistente: difiere de cantidad × precio "
+                    f"× (1 − descuento) ≈ {esperado.iat[row_idx]:,.0f}".replace(",", ".")
+                    + " — revisar."
+                )
+
     observations = [
         (source_rows[row], source_sheet, col, "revisar", message)
         for (row, col), message in yellow.items()
@@ -1015,6 +1088,65 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         )
         for detail in result.get("_filas_duplicadas_eliminadas", [])
     ]
+
+    # ── Fase 18: cobertura de negocio adicional en Observaciones ──
+    # 1. Ambigüedades numéricas y de fecha detectadas por columna (los avisos
+    #    de estandarización también deben viajar en el archivo exportado).
+    for aviso in result.get("avisos", []):
+        text = str(aviso)
+        if "ambigu" not in text.casefold():
+            continue
+        match = re.search(r"columna '([^']+)'", text)
+        observations.append(
+            ("-", source_sheet, match.group(1) if match else "*", "revisar", text[:400])
+        )
+
+    # 2. Duplicados exactos DETECTADOS pero conservados (la eliminación
+    #    requiere confirmación del usuario y el archivo debe decirlo).
+    removed_rows = {
+        int(detail["fila_origen"])
+        for detail in result.get("_filas_duplicadas_eliminadas", [])
+    }
+    for detail in result.get("_filas_duplicadas_detectadas", []):
+        source_row = int(detail["fila_origen"])
+        if source_row in removed_rows:
+            continue
+        observations.append((
+            source_row,
+            source_sheet,
+            "*",
+            "duplicado_conservado",
+            "Fila duplicada exacta conservada: la eliminación requiere tu confirmación en Limpieza.",
+        ))
+
+    # 3. Identificadores repetidos con contenido distinto (no son duplicados
+    #    eliminables; alguien debe decidir cuál registro es el correcto).
+    duplicate_detail = result.get("duplicados_detalle") or {}
+    conflict_examples = duplicate_detail.get("ejemplos_conflictos_id", []) or []
+    for conflict in conflict_examples:
+        filas = ", ".join(str(fila) for fila in (conflict.get("filas_origen") or [])[:10])
+        observations.append((
+            "-",
+            source_sheet,
+            conflict.get("columna", "*"),
+            "conflicto_id",
+            (
+                f"El identificador '{conflict.get('identificador')}' se repite con "
+                f"contenido distinto (filas {filas}): revisa cuál es el registro correcto."
+            ),
+        ))
+    total_conflicts = int(duplicate_detail.get("conflictos_id", 0) or 0)
+    if total_conflicts > len(conflict_examples):
+        observations.append((
+            "-",
+            source_sheet,
+            "*",
+            "conflicto_id",
+            (
+                f"En total {total_conflicts} identificador(es) se repiten con contenido "
+                "distinto; se listan los primeros ejemplos."
+            ),
+        ))
     return yellow, red, observations
 
 
@@ -1114,10 +1246,24 @@ def _write_clean_sheet(
         canonical_numeric=True,
     )
     ws.append(list(exported.columns))
+    # Fase 18: la hoja limpia debe seguir siendo LEGIBLE al abrirla — un
+    # encabezado plano y columnas colapsadas hacían parecer que la limpieza
+    # empeoró el archivo. Encabezado con color de marca, primera fila fija y
+    # anchos calculados desde el contenido real.
+    header_fill = PatternFill(start_color="1A3A52", end_color="1A3A52", fill_type="solid")
     for cell in ws[1]:
-        cell.font = Font(bold=True)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
     for row in exported.itertuples(index=False, name=None):
         ws.append(list(row))
+    ws.freeze_panes = "A2"
+    from openpyxl.utils import get_column_letter
+
+    sample = exported.head(200)
+    for position, column in enumerate(exported.columns, start=1):
+        contenido = int(sample[column].astype(str).str.len().max()) if len(sample) else 0
+        width = max(len(str(column)), contenido, 8) + 2
+        ws.column_dimensions[get_column_letter(position)].width = min(width, 42)
 
     yellow_fill = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
     red_fill = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")

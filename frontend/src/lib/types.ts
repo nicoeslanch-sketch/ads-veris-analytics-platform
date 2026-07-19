@@ -574,6 +574,17 @@ export interface MetricsResult {
     cpc: number | null
     plataformas: Array<{ nombre: string; registros: number }>
     estados: Array<{ nombre: string; registros: number }>
+    /** Fase 18: métricas por plataforma para graficar. */
+    por_plataforma?: Array<{
+      nombre: string
+      campanas: number
+      inversion: number
+      impresiones: number
+      clics: number
+      ctr_pct: number | null
+      cpc: number | null
+    }>
+    clics_sobre_impresiones?: number
   }
   analisis_inventario?: {
     registros: number
@@ -581,8 +592,17 @@ export interface MetricsResult {
     stock_total: number
     stock_minimo_total: number
     bajo_minimo: number
+    stocks_negativos?: number
     cobertura_stock_pct: number
     sucursales: Array<{ nombre: string; registros: number }>
+    /** Fase 18: existencia y quiebres por sucursal para graficar. */
+    por_sucursal?: Array<{
+      nombre: string
+      registros: number
+      stock: number
+      bajo_minimo: number
+      stocks_negativos: number
+    }>
     columna_actualizacion: string | null
   }
   analisis_generico?: {
@@ -590,7 +610,29 @@ export interface MetricsResult {
     columnas: number
     celdas_informadas_pct: number
     columnas_disponibles: string[]
+    /** Fase 18: perfil con contenido para hojas de clientes, sucursales,
+     * trabajadores, metas u otras no transaccionales. */
+    subtipo?: 'clientes' | 'sucursales' | 'trabajadores' | 'metas' | null
+    distribuciones?: Array<{
+      columna: string
+      valores: Array<{ nombre: string; registros: number }>
+      valores_totales: number
+    }>
+    numericas?: Array<{
+      columna: string
+      total: number
+      promedio: number
+      minimo: number
+      maximo: number
+    }>
   }
+  /** Fase 18: agrupaciones de ventas por columnas categóricas adicionales
+   * (sucursal, región, zona…), incluidas las enriquecidas por una relación. */
+  agrupaciones_flexibles?: Array<{
+    columna: string
+    grupos: GroupRow[]
+    grupos_totales: number
+  }>
 }
 
 /** Compact response from POST /restore/latest. */

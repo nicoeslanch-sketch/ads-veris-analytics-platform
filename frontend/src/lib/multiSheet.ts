@@ -104,11 +104,21 @@ export function basicMappingQuestions(
   mapping: Record<string, string>,
   extended: Record<string, DictionaryMatch>,
   confirmed: string[] = [],
+  columnTypes?: Record<string, string>,
 ): string[] {
+  // Fase 18: si la hoja NO tiene ninguna columna del tipo pedido (una maestra
+  // de clientes no trae fechas de venta ni montos), preguntar "¿en qué columna
+  // está la fecha?" solo confunde. Sin candidatas, la pregunta se omite y la
+  // UI explica que la hoja no es transaccional.
+  const hasCandidate = (role: string): boolean => {
+    if (!columnTypes) return true
+    const wanted = role === 'fecha' ? 'fecha' : 'numero'
+    return Object.values(columnTypes).some((tipo) => tipo === wanted)
+  }
   return BASIC_CRITICAL_ROLES.filter((role) => {
     if (confirmed.includes(role)) return false
     const column = mapping[role]
-    if (!column) return true
+    if (!column) return hasCandidate(role)
     const match = extended[column]
     return Boolean(
       match && match.rol_motor === role && match.confianza < MEDIUM_CONFIDENCE,

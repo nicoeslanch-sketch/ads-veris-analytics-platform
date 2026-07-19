@@ -228,7 +228,13 @@ def _block_monetary_outputs(result: dict, detection: CurrencyDetection) -> None:
     # evita que un consumidor use accidentalmente valores calculados antes del
     # bloqueo y mantiene operativas las dimensiones no monetarias.
     result["evolucion_mensual"] = []
-    for key in ("por_categoria", "ventas_por_canal", "top_productos", "por_dia_semana"):
+    for key in (
+        "por_categoria",
+        "ventas_por_canal",
+        "top_productos",
+        "por_dia_semana",
+        "agrupaciones_flexibles",
+    ):
         if key in result:
             result[key] = []
     if "lideres_productos" in result:
@@ -481,7 +487,18 @@ def _group_sum(
     pareadas (ingreso Y costo) — misma regla que el KPI global (Fase 12: antes
     el margen por grupo dividía por los ingresos totales del grupo, y con
     cobertura parcial de costos quedaba subestimado)."""
-    frame = pd.DataFrame({"grupo": groups, "monto": amounts})
+    # Fase 18: una clave AUSENTE (NaN tras una relación sin correspondencia o
+    # una celda vacía) se agrupaba con la etiqueta "nan" — ilegible y fácil de
+    # confundir con una categoría real. Solo lo físicamente ausente cae en
+    # "Sin clasificar": un literal textual "null"/"NaT" es un dato conservado
+    # (Fase 16) y sigue siendo su propio grupo.
+    def _etiqueta_grupo(value) -> str:
+        if pd.isna(value):
+            return "Sin clasificar"
+        text = str(value).strip()
+        return text if text else "Sin clasificar"
+
+    frame = pd.DataFrame({"grupo": groups.map(_etiqueta_grupo), "monto": amounts})
     has_costs = costs is not None
     if has_costs:
         frame["costo"] = costs
@@ -506,7 +523,7 @@ def _group_sum(
         brutas = float(g.loc[g["monto"] > 0, "monto"].sum())
         devoluciones_grupo = float(g.loc[g["monto"] < 0, "monto"].sum())
         item = {
-            "nombre": str(name) if str(name).strip() else "Sin clasificar",
+            "nombre": str(name),
             "ingresos": round(ingresos, 2),
             "porcentaje": round(ingresos / total * 100, 1),
             "ventas_brutas": round(brutas, 2),
@@ -816,8 +833,14 @@ def compute_metrics(
         )
 
     # ── Selección por rango de fechas ──
+    # Fase 18: un límite superior con granularidad de MES ("2025-12") cubre el
+    # mes completo. pd.to_datetime lo convertía en el día 1 y los KPI perdían
+    # los días 2–31 mientras la evolución mensual sí los mostraba.
     start = pd.to_datetime(date_from) if date_from else None
-    end = pd.to_datetime(date_to) if date_to else None
+    if date_to and re.fullmatch(r"\d{4}-\d{2}", str(date_to).strip()):
+        end = pd.Period(str(date_to).strip(), freq="M").end_time.normalize()
+    else:
+        end = pd.to_datetime(date_to) if date_to else None
     if has_dates and (start is not None or end is not None):
         mask = dates_all.map(
             lambda d: bool(
@@ -1158,6 +1181,53 @@ def compute_metrics(
                 for idx, row in agg.sort_index().iterrows()
             ]
 
+    # ── Fase 18: dimensiones flexibles (ventas por sucursal/región/zona/…) ──
+    # Cualquier columna categórica razonable que NO sea ya un rol usado (canal,
+    # categoría, producto…) genera su propia agrupación: cubre columnas propias
+    # (Region, Zona, Tipo) y columnas enriquecidas por "Relacionar otras hojas"
+    # (Sucursal, Comuna, Region de la maestra). El frontend las grafica.
+    if bool(amounts_all.notna().any()):
+        used_columns = {str(column) for column in roles.values() if column}
+        priority_tokens = (
+            "sucursal", "region", "comuna", "zona", "ciudad", "pais",
+            "plataforma", "segmento", "tipo", "canal", "metodo", "forma",
+        )
+        skip_tokens = ("comentario", "observa", "nota", "descripcion", "email", "telefono", "direccion")
+        id_prefixes = ("id", "codigo", "sku", "folio", "uuid", "rut", "numero", "nro")
+        candidates: list[tuple[int, str]] = []
+        for column in selection.columns:
+            name = str(column)
+            if name in used_columns or name == "hoja_origen":
+                continue
+            normalized = strip_accents_lower(name).replace("_", " ")
+            compact = re.sub(r"[^a-z0-9]", "", normalized)
+            if compact.startswith(id_prefixes):
+                continue
+            if any(token in normalized for token in skip_tokens):
+                continue
+            values = selection[name]
+            filled = ~physical_missing_mask(values)
+            if len(values) == 0 or float(filled.mean()) < 0.6:
+                continue
+            unique = values[filled].astype(str).str.strip().nunique()
+            if unique < 2 or unique > 30:
+                continue
+            has_priority = any(token in normalized for token in priority_tokens)
+            candidates.append((0 if has_priority else 1, name))
+        candidates.sort()
+        flexibles: list[dict] = []
+        for _, name in candidates[:4]:
+            grupos = _group_sum(selection[name], amounts, group_costs)
+            if len(grupos) < 2:
+                continue
+            flexibles.append({
+                "columna": name,
+                "grupos": grupos[:12],
+                "grupos_totales": len(grupos),
+            })
+        if flexibles:
+            result["agrupaciones_flexibles"] = flexibles
+
     # Fase 14: la proyección se calcula SOLO sobre meses completos — un mes
     # parcial al final deprimía la tasa de crecimiento con una caída ficticia.
     # Los meses proyectados siguen siendo los 3 POSTERIORES al final real de
@@ -1322,6 +1392,33 @@ def compute_metrics(
         total_impressions = float(impressions.dropna().sum())
         total_clicks = float(clicks.dropna().sum())
         _non_sales_contract("campanas_marketing", "campanas")
+        # Fase 18: métricas POR PLATAFORMA para graficar (inversión, clics,
+        # CTR y CPC por plataforma) y control de negocio clics > impresiones.
+        por_plataforma: list[dict[str, Any]] = []
+        if platform_column:
+            plat_frame = pd.DataFrame({
+                "plataforma": df[platform_column].astype(str).str.strip(),
+                "inversion": investment,
+                "impresiones": impressions,
+                "clics": clicks,
+            })
+            plat_frame = plat_frame[plat_frame["plataforma"] != ""]
+            for name, g in plat_frame.groupby("plataforma"):
+                inv = float(g["inversion"].dropna().sum())
+                imp = float(g["impresiones"].dropna().sum())
+                clk = float(g["clics"].dropna().sum())
+                por_plataforma.append({
+                    "nombre": str(name),
+                    "campanas": int(len(g)),
+                    "inversion": round(inv, 2),
+                    "impresiones": round(imp, 2),
+                    "clics": round(clk, 2),
+                    "ctr_pct": round(clk / imp * 100, 2) if imp else None,
+                    "cpc": round(inv / clk, 2) if clk else None,
+                })
+            por_plataforma.sort(key=lambda item: item["inversion"], reverse=True)
+        ctr_par = clicks.notna() & impressions.notna() & (impressions > 0)
+        ctr_sobre_100 = int((ctr_par & (clicks > impressions)).sum())
         result["analisis_campanas"] = {
             "campanas": int(len(df)),
             "inversion": round(total_investment, 2),
@@ -1331,10 +1428,17 @@ def compute_metrics(
             "cpc": round(total_investment / total_clicks, 2) if total_clicks else None,
             "plataformas": _value_counts(platform_column),
             "estados": _value_counts(status_column),
+            "por_plataforma": por_plataforma,
+            "clics_sobre_impresiones": ctr_sobre_100,
         }
         warnings = [
             "Esta hoja se interpreta como campañas de marketing: inversión, impresiones, clics, CTR y CPC no se presentan como ventas."
         ]
+        if ctr_sobre_100:
+            warnings.append(
+                f"{ctr_sobre_100} campaña(s) registran más clics que impresiones "
+                "(CTR sobre 100%): revisa esos registros en el origen."
+            )
     elif inventory_profile:
         stock_column = _column_containing("stock")
         minimum_column = _column_containing("stock", "minimo")
@@ -1343,28 +1447,113 @@ def compute_metrics(
         minimum = _numeric_series(df, minimum_column)
         paired_stock = stock.notna() & minimum.notna()
         _non_sales_contract("inventario", "registros_inventario")
+        # Fase 18: stock POR SUCURSAL para graficar dónde está la existencia y
+        # dónde se concentran los quiebres; más controles de stock negativo.
+        stocks_negativos = int((stock < 0).sum())
+        por_sucursal: list[dict[str, Any]] = []
+        sucursal_column = roles.get("sucursal")
+        if sucursal_column:
+            inv_frame = pd.DataFrame({
+                "sucursal": df[sucursal_column].astype(str).str.strip(),
+                "stock": stock,
+                "bajo": (paired_stock & (stock < minimum)),
+                "negativo": stock < 0,
+            })
+            inv_frame = inv_frame[inv_frame["sucursal"] != ""]
+            for name, g in inv_frame.groupby("sucursal"):
+                por_sucursal.append({
+                    "nombre": str(name),
+                    "registros": int(len(g)),
+                    "stock": round(float(g["stock"].dropna().sum()), 2),
+                    "bajo_minimo": int(g["bajo"].sum()),
+                    "stocks_negativos": int(g["negativo"].sum()),
+                })
+            por_sucursal.sort(key=lambda item: item["stock"], reverse=True)
         result["analisis_inventario"] = {
             "registros": int(len(df)),
             "productos": int(df[roles["producto"]].loc[~physical_missing_mask(df[roles["producto"]])].nunique()),
             "stock_total": round(float(stock.dropna().sum()), 2),
             "stock_minimo_total": round(float(minimum.dropna().sum()), 2),
             "bajo_minimo": int((paired_stock & (stock < minimum)).sum()),
+            "stocks_negativos": stocks_negativos,
             "cobertura_stock_pct": round(float(stock.notna().mean() * 100), 1) if len(df) else 0.0,
             "sucursales": _value_counts(roles.get("sucursal")),
+            "por_sucursal": por_sucursal,
             "columna_actualizacion": updated_column,
         }
         warnings = [
             "Esta hoja se interpreta como inventario: el stock se resume como existencia y no como ventas o ingresos."
         ]
+        if stocks_negativos:
+            warnings.append(
+                f"{stocks_negativos} registro(s) de inventario tienen stock "
+                "negativo: pueden ser ajustes pendientes o errores de captura."
+            )
     elif not transactional_profile:
         _non_sales_contract("generico", "registros")
         valid_cells = int(sum((~physical_missing_mask(df[column])).sum() for column in df.columns))
         total_cells = max(int(df.shape[0] * df.shape[1]), 1)
+
+        # Fase 18: perfil estructural CON contenido — distribuciones de las
+        # columnas categóricas y resumen de las numéricas, para que hojas de
+        # clientes, sucursales, trabajadores, metas u otras tengan un resumen
+        # útil y graficable sin inventar ventas.
+        def _subtipo_generico() -> str | None:
+            tokens = " ".join(
+                strip_accents_lower(str(column)).replace("_", " ")
+                for column in df.columns
+            )
+            if any(t in tokens for t in ("cargo", "sueldo", "salario", "empleado", "trabajador", "contrato")):
+                return "trabajadores"
+            if any(t in tokens for t in ("meta", "objetivo", "cumplimiento", "presupuesto")):
+                return "metas"
+            if roles.get("cliente") or any(t in tokens for t in ("email", "telefono", "rut")):
+                return "clientes"
+            if roles.get("sucursal") or any(t in tokens for t in ("comuna", "region", "direccion")):
+                return "sucursales"
+            return None
+
+        distribuciones: list[dict[str, Any]] = []
+        numericas: list[dict[str, Any]] = []
+        id_prefixes = ("id", "codigo", "sku", "folio", "uuid", "rut", "numero", "nro")
+        skip_tokens = ("email", "telefono", "direccion", "comentario", "observa", "nota", "descripcion", "nombre")
+        for column in df.columns:
+            name = str(column)
+            normalized = strip_accents_lower(name).replace("_", " ")
+            compact = re.sub(r"[^a-z0-9]", "", normalized)
+            if compact.startswith(id_prefixes) or any(t in normalized for t in skip_tokens):
+                continue
+            values = df[name]
+            filled = ~physical_missing_mask(values)
+            if not bool(filled.any()):
+                continue
+            numeric_values = _numeric_series(df, name)
+            numeric_ratio = float(numeric_values.notna().sum()) / max(int(filled.sum()), 1)
+            unique = values[filled].astype(str).str.strip().nunique()
+            if numeric_ratio >= 0.8 and unique > 12 and len(numericas) < 4:
+                valid = numeric_values.dropna().astype(float)
+                numericas.append({
+                    "columna": name,
+                    "total": round(float(valid.sum()), 2),
+                    "promedio": round(float(valid.mean()), 2),
+                    "minimo": round(float(valid.min()), 2),
+                    "maximo": round(float(valid.max()), 2),
+                })
+            elif 2 <= unique <= 30 and len(distribuciones) < 4:
+                distribuciones.append({
+                    "columna": name,
+                    "valores": _value_counts(name, limit=12),
+                    "valores_totales": int(unique),
+                })
+
         result["analisis_generico"] = {
             "registros": int(len(df)),
             "columnas": int(len(df.columns)),
             "celdas_informadas_pct": round(valid_cells / total_cells * 100, 1),
             "columnas_disponibles": [str(column) for column in df.columns],
+            "subtipo": _subtipo_generico(),
+            "distribuciones": distribuciones,
+            "numericas": numericas,
         }
         warnings = [
             "No se identificó una tabla transaccional de ventas. Se muestra un perfil estructural sin inventar ingresos ni transacciones."

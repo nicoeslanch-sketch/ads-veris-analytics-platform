@@ -88,4 +88,18 @@ def safe_export_dataframe(
         typed = original.astype(object).copy()
         typed.loc[valid] = parsed.loc[valid]
         exported[column] = typed
-    return exported.apply(lambda column: column.map(neutralize_excel_formula))
+    # Neutralización dirigida: detectar los prefijos peligrosos con operaciones
+    # vectorizadas y llamar a la función celda a celda SOLO en los sospechosos.
+    # Aplicarla sobre las ~400.000 celdas del libro multihoja era uno de los
+    # costos dominantes de la exportación.
+    for column in exported.columns:
+        series = exported[column]
+        if pd.api.types.is_numeric_dtype(series):
+            continue
+        text = series.astype(str).str.lstrip()
+        suspects = series.notna() & text.str.startswith(("=", "+", "-", "@"))
+        if bool(suspects.any()):
+            exported.loc[suspects, column] = series.loc[suspects].map(
+                neutralize_excel_formula
+            )
+    return exported
