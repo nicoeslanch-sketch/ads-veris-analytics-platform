@@ -676,9 +676,61 @@ def test_english_month_names_and_explicit_percentages_are_normalized():
     assert parse_date("03-Aug-25").strftime("%Y-%m-%d") == "2025-08-03"
 
     standardized, _ = standardize_dataframe(
-        pd.DataFrame({"Descuento_Pct": ["20%", "0.2", "110%"]})
+        pd.DataFrame({"Descuento_Pct": ["20%", "20", "0.2", "110%", "150"]})
     )
-    assert standardized["Descuento_Pct"].tolist() == ["0.2", "0.2", "1.1"]
+    assert standardized["Descuento_Pct"].tolist() == ["0.2", "0.2", "0.2", "1.1", "1.5"]
+
+
+def test_cost_master_is_recommended_for_sales_relationship():
+    sales = pd.DataFrame(
+        {
+            "Fecha": ["01/01/2026", "02/01/2026", "03/01/2026"],
+            "SKU_Producto": ["SKU-1", "SKU-2", "SKU-3"],
+            "Cantidad": [2, 1, 3],
+            "Venta_CLP": [2000, 1500, 3600],
+        }
+    )
+    costs = pd.DataFrame(
+        {
+            "SKU_Producto": ["SKU-1", "SKU-2", "SKU-3"],
+            "Producto": ["A", "B", "C"],
+            "Costo Unitario": [600, 900, 700],
+            "Costo Total Unitario": [650, 950, 750],
+            "Fecha Vigencia": ["01/01/2026"] * 3,
+        }
+    )
+    mappings = {
+        "Ventas": {
+            "fecha": "Fecha",
+            "producto": "SKU_Producto",
+            "cantidad": "Cantidad",
+            "monto": "Venta_CLP",
+        },
+        "Costos_Productos": {
+            "producto": "Producto",
+            "costo": "Costo Unitario",
+            "monto": "Costo Total Unitario",
+            "fecha": "Fecha Vigencia",
+        },
+    }
+
+    candidates = detect_relationships(
+        {"Ventas": sales, "Costos_Productos": costs}, mappings
+    )
+
+    assert candidates
+    assert candidates[0]["left_sheet"] == "Ventas"
+    assert candidates[0]["right_sheet"] == "Costos_Productos"
+    assert candidates[0]["left_keys"] == ["SKU_Producto"]
+    assert candidates[0]["right_keys"] == ["SKU_Producto"]
+    assert candidates[0]["safe"] is True
+    assert candidates[0]["recommended"] is True
+    assert candidates[0]["purpose"] == "enriquecer_costos"
+
+    metrics = compute_metrics(costs, mappings["Costos_Productos"])
+    assert metrics["tipo_analisis"] == "catalogo_productos"
+    assert metrics["analisis_productos"]["referencia_tipo"] == "costo_total_unitario"
+    assert metrics["kpis"]["ingresos_totales"] is None
 
 
 def test_metrics_honors_canonical_decimal_chosen_by_standardization():

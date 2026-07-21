@@ -407,7 +407,7 @@ export default function ActiveSheetSelector() {
         <div className="mt-3 rounded-lg border border-navy/10 bg-white p-3">
           {mode === 'append_join' && (
             <div className="mb-3 border-b border-navy/10 pb-3">
-              <p className="text-xs text-navy/55">Buscamos automáticamente ID_Producto, apilamos las ventas compatibles y agregamos costos de Productos sin cambiar filas ni ingresos. No necesitas elegir columnas.</p>
+              <p className="text-xs text-navy/55">Buscamos automáticamente una clave común (por ejemplo SKU o ID), apilamos las ventas compatibles y agregamos los costos sin cambiar filas ni ingresos. No necesitas elegir columnas.</p>
               <p className="mt-2 text-xs font-semibold text-navy">Cambiar hojas de ventas</p>
               <div className="mt-2 flex flex-wrap gap-3">
                 {compatibleSheets.map((name) => (

@@ -41,6 +41,16 @@ DATE_HINTS = ("fecha", "date", "periodo", "emision", "vencimiento")
 _DATE_SHAPE = re.compile(r"^\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\s*$")
 _NUMBER_SHAPE = re.compile(r"^\s*-?\s*\$?\s*-?[\d.,]+\s*$")
 
+
+def is_percentage_column(column: str) -> bool:
+    """True when the header declares a rate or percentage."""
+
+    normalized = strip_accents_lower(str(column)).replace("_", " ")
+    return normalized.strip() == "pct" or any(
+        token in normalized
+        for token in ("descuento", "porcentaje", "percent", " pct", "tasa")
+    )
+
 # Fase 8 §5.14: símbolos/códigos de moneda y decoraciones frecuentes en
 # planillas reales de Chile/LatAm: "$ 1.200.000", "CLP 850.000", "US$1.500",
 # "1.200 USD", "€200", "12%", y negativos contables "(1.500)".
@@ -1077,6 +1087,7 @@ def standardize_dataframe(
         else:
             convention = column_dot3_convention(result[col])
             numeric_conventions[col] = convention
+            percentage_column = is_percentage_column(col)
             comma_convention, ambiguous_commas = column_comma3_convention(result[col])
             ambiguous_samples = comma3_ambiguous_rows(result[col], limit=5)
             if ambiguous_commas:
@@ -1120,11 +1131,12 @@ def standardize_dataframe(
                     dot3_convention=convention,
                     comma3_convention=comma_convention,
                 )
-                # Un porcentaje explicito representa una fraccion en Excel y
-                # en los calculos: "20%" debe ser 0.2, igual que un 0.2 ya
-                # numerico. Antes quedaba 20 y "110%" quedaba 110, mezclando
-                # dos escalas dentro de Descuento_Pct.
-                if number is not None and "%" in str(value):
+                # En una columna semantica, 20%, 20 y 0.2 representan 20%.
+                # Un 150 se convierte en 1.5 y sigue marcado fuera de rango.
+                if number is not None and (
+                    "%" in str(value)
+                    or (percentage_column and abs(number) > 1)
+                ):
                     number /= 100
                 return str(value).strip() if number is None else format_number(number)
 

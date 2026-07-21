@@ -549,6 +549,7 @@ export interface MetricsResult {
   tipo_analisis?: 'catalogo_productos' | 'campanas_marketing' | 'inventario' | 'generico'
   analisis_productos?: {
     productos: number
+    referencia_tipo?: 'precio_lista' | 'costo_total_unitario' | null
     costos: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
     precios_lista: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
     margen_potencial: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }

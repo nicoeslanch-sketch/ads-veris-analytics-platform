@@ -100,7 +100,7 @@ def exclude_from_statistical_outliers(column: str, role: str | None = None) -> b
 
 _DOCUMENT_ID_TOKENS = {
     "folio", "factura", "boleta", "documento", "doc", "dte", "ticket",
-    "orden", "pedido", "guia",
+    "orden", "pedido", "guia", "despacho", "envio", "shipment", "delivery",
 }
 _ENTITY_ID_TOKENS = {"rut", "sku"}
 _ATTRIBUTE_ID_TOKENS = {
@@ -916,9 +916,9 @@ def analyze_and_clean(
     preview = _preview_with_issues(df, column_types, duplicated_mask, caches, source_rows)
 
     group_stats = _duplicate_group_stats(loaded_original, source_rows)
-    row_ids, conflicts_id, conflict_examples = _row_identifier_diagnostics(
-        loaded_original, source_rows
-    )
+    # Los conflictos se evalúan sobre la versión estandarizada. Diferencias
+    # puramente visuales son duplicados normalizados, no movimientos distintos.
+    row_ids, conflicts_id, conflict_examples = _row_identifier_diagnostics(df, source_rows)
     possible_omitted_granularity = bool(
         not row_ids
         and group_stats["tamano_maximo_grupo"] >= DUPLICATE_LARGE_GROUP_THRESHOLD

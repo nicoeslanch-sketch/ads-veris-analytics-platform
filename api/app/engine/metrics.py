@@ -307,7 +307,15 @@ def is_product_catalog_profile(
         for column, normalized in normalized_columns.items()
         if "precio" in normalized and "lista" in normalized
     }
-    if not price_list_columns:
+    total_unit_cost_columns = {
+        column
+        for column, normalized in normalized_columns.items()
+        if "costo" in normalized
+        and "total" in normalized
+        and any(token in normalized for token in ("unitario", "por unidad", "unit"))
+    }
+    catalog_reference_columns = price_list_columns | total_unit_cost_columns
+    if not catalog_reference_columns:
         return False
 
     transaction_id_tokens = (
@@ -316,6 +324,8 @@ def is_product_catalog_profile(
         "numero venta",
         "numero boleta",
         "numero factura",
+        "id compra",
+        "numero compra",
     )
     has_transaction_id = any(
         any(token in normalized for token in transaction_id_tokens)
@@ -323,7 +333,10 @@ def is_product_catalog_profile(
     ) or any(
         any(
             marker in re.sub(r"[^a-z0-9]", "", normalized)
-            for marker in ("idventa", "idtransaccion", "numeroventa", "numeroboleta", "numerofactura")
+            for marker in (
+                "idventa", "idtransaccion", "numeroventa", "numeroboleta",
+                "numerofactura", "idcompra", "numerocompra",
+            )
         )
         for normalized in normalized_columns.values()
     )
@@ -341,6 +354,8 @@ def is_product_catalog_profile(
         "operation",
         "invoice",
         "order",
+        "compra",
+        "purchase",
     )
     metadata_date_tokens = (
         "actualizacion",
@@ -377,7 +392,9 @@ def is_product_catalog_profile(
         has_operational_date or (mapped_date and not mapped_date_is_metadata)
     )
     mapped_amount = roles.get("monto")
-    amount_is_list_price = mapped_amount is None or mapped_amount in price_list_columns
+    amount_is_catalog_reference = (
+        mapped_amount is None or mapped_amount in catalog_reference_columns
+    )
 
     # Protege incluso ante un override manual que asigne Precio_Lista a monto
     # aunque el archivo conserve una columna comercial inequívoca.
@@ -393,7 +410,7 @@ def is_product_catalog_profile(
         "sales",
     }
     distinct_transaction_amount = any(
-        column not in price_list_columns
+        column not in catalog_reference_columns
         and column != roles.get("costo")
         and bool(
             set(re.split(r"[^a-z0-9]+", normalized.strip()))
@@ -406,7 +423,7 @@ def is_product_catalog_profile(
         and roles.get("costo")
         and not has_transaction_date
         and not has_transaction_id
-        and amount_is_list_price
+        and amount_is_catalog_reference
         and not distinct_transaction_amount
     )
 
@@ -664,6 +681,17 @@ def compute_metrics(
             column
             for normalized, column in normalized_columns.items()
             if "precio" in normalized and "lista" in normalized
+        ),
+        None,
+    )
+    total_unit_cost_column = next(
+        (
+            column
+            for normalized, column in normalized_columns.items()
+            if "costo" in normalized
+            and "total" in normalized
+            and any(token in normalized for token in ("unitario", "por unidad", "unit"))
+            and column != roles.get("costo")
         ),
         None,
     )
@@ -1327,7 +1355,14 @@ def compute_metrics(
     if product_catalog:
         product_column = roles["producto"]
         cost_values = _numeric_series(df, roles.get("costo"))
-        price_column = price_list_column or roles.get("monto")
+        price_column = price_list_column or total_unit_cost_column or roles.get("monto")
+        reference_type = (
+            "precio_lista"
+            if price_list_column
+            else "costo_total_unitario"
+            if total_unit_cost_column
+            else None
+        )
         price_values = _numeric_series(df, price_column)
         paired = cost_values.notna() & price_values.notna()
         margins = ((price_values - cost_values) / price_values.where(price_values != 0) * 100).where(paired)
@@ -1372,6 +1407,7 @@ def compute_metrics(
         result["tipo_analisis"] = "catalogo_productos"
         result["analisis_productos"] = {
             "productos": int(df[product_column].loc[~physical_missing_mask(df[product_column])].nunique()),
+            "referencia_tipo": reference_type,
             "costos": stats(cost_values),
             "precios_lista": stats(price_values),
             "margen_potencial": stats(margins),
@@ -1411,8 +1447,14 @@ def compute_metrics(
         result["ventas_por_canal"] = []
         result["top_productos"] = []
         result["proyeccion"] = None
+        reference_label = (
+            "Costo_Total_Unitario"
+            if reference_type == "costo_total_unitario"
+            else "Precio_Lista"
+        )
         warnings.append(
-            "Esta hoja se interpreta como catálogo de productos: Costo_Unitario y Precio_Lista se resumen por producto y no se suman como ventas."
+            "Esta hoja se interpreta como catálogo de productos: "
+            f"Costo_Unitario y {reference_label} se resumen por producto y no se suman como ventas."
         )
         result["advertencias"] = warnings
     elif campaign_profile:

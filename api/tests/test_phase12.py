@@ -107,6 +107,29 @@ def test_conflicto_de_id_se_reporta_como_conflicto_no_duplicado(client, auth_hea
     assert body["resumen"]["filas_despues"] == 2
 
 
+def test_formato_normalizado_no_inventa_conflicto_de_id():
+    result = analyze_and_clean(
+        pd.DataFrame(
+            {
+                "ID": ["MOV-1", "MOV-1"],
+                "Producto": ["Producto A", " producto  a "],
+                "Ventas": ["$ 1.000", "1000"],
+            }
+        ),
+        None,
+        False,
+    )
+
+    assert result["problemas"]["duplicados"] == 0
+    assert result["problemas"]["duplicados_probables"] == 1
+    assert result["duplicados_detalle"]["conflictos_id"] == 0
+
+
+@pytest.mark.parametrize("header", ["ID_Despacho", "Número Envío", "Delivery ID"])
+def test_identificador_logistico_es_documento(header):
+    assert classify_identifier_kind(header) == "documento"
+
+
 def test_grupo_grande_advierte_granularidad_omitida(client, auth_headers):
     csv = "Producto;Ventas\nA;100\nA;100\nA;100\n"
     body = _clean(client, auth_headers, csv).json()

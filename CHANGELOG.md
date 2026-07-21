@@ -2,6 +2,25 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.21.2] - 2026-07-21 - Auditoría del libro avanzado multihoja
+
+- `Descuento_Pct` interpreta de forma consistente `20%`, `20` y `0.2` como
+  20%; los valores realmente fuera de `0-100%` se siguen conservando y
+  señalando para revisión.
+- Los cambios solo de formato ya no generan falsos conflictos de ID y los
+  identificadores de despacho o envío se tratan como documentos, no como la
+  identidad única de una fila.
+- Las maestras de costos con `Costo_Total_Unitario` y fecha de vigencia se
+  reconocen como catálogos. La relación automática de ventas con costos por
+  SKU vuelve a ser segura y recomendada, sin presentar costos maestros como
+  ingresos.
+- La interfaz ya no promete una columna fija `ID_Producto`: explica que puede
+  usar una clave común como SKU o ID y adapta las etiquetas del resumen cuando
+  la referencia es costo total unitario.
+
+Sube `ENGINE_VERSION` a `0.21.2`. No agrega migraciones: `0021` sigue siendo
+la última.
+
 ## [0.21.1] - 2026-07-21 - Revisión de limpieza y controles auditables
 
 - Una limpieza terminada puede volver a abrir su diagnóstico desde Resumen o

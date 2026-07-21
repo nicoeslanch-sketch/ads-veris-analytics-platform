@@ -15,7 +15,10 @@ hojas exportadas y aclara la Limpieza (franja de acción en navy, botón mayor,
 preguntas de mapeo solo con columnas candidatas). El parche `0.21.1` permite
 revisar y repetir una limpieza sin resubir el archivo, simplifica la relación
 automática de ventas con costos y corrige conteos auditables de columnas
-completas. Motor `0.21.1`; la última migración sigue siendo **0021**.
+completas. El parche `0.21.2` valida el libro avanzado multihoja: unifica la
+escala de porcentajes, elimina falsos conflictos de ID y reconoce maestras de
+costos con fecha de vigencia para relacionarlas por SKU. Motor `0.21.2`; la
+última migración sigue siendo **0021**.
 
 **Historial de Fase 17.**
 La Fase 17 (`CHANGELOG` [0.20.0]) simplifica el mapeo Básico y completa el

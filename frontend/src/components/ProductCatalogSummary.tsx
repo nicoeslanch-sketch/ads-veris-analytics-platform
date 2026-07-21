@@ -25,20 +25,25 @@ function pct(value: number | null) {
 
 export default function ProductCatalogSummary({ analysis }: { analysis: ProductAnalysis }) {
   const totals = analysis.totales_catalogo_unitario
+  const costReference = analysis.referencia_tipo === 'costo_total_unitario'
+  const referenceLabel = costReference ? 'Costo total unitario' : 'Precio lista'
+  const differenceLabel = costReference ? 'Componente adicional' : 'Margen potencial'
   const cards = [
     ['Productos', formatNumber(analysis.productos)],
     ['Costo promedio', money(analysis.costos.promedio)],
     ['Costo mediano', money(analysis.costos.mediana)],
     ['Rango de costo', `${money(analysis.costos.minimo)} - ${money(analysis.costos.maximo)}`],
-    ['Precio lista promedio', money(analysis.precios_lista.promedio)],
-    ['Margen potencial promedio', pct(analysis.margen_potencial.promedio)],
+    [`${referenceLabel} promedio`, money(analysis.precios_lista.promedio)],
+    [`${differenceLabel} promedio`, pct(analysis.margen_potencial.promedio)],
     ['Cobertura de costos', `${formatNumber(analysis.cobertura_costo_pct)}%`],
-    ['Estado', `${formatNumber(analysis.activos ?? 0)} activos - ${formatNumber(analysis.inactivos ?? 0)} inactivos`],
+    ...(analysis.activos != null || analysis.inactivos != null
+      ? [['Estado', `${formatNumber(analysis.activos ?? 0)} activos - ${formatNumber(analysis.inactivos ?? 0)} inactivos`]]
+      : []),
     ...(totals
       ? [
           ['Costo catálogo (1 unidad/SKU)', money(totals.costo)],
-          ['Precio lista catálogo (1 unidad/SKU)', money(totals.precio_lista)],
-          ['Utilidad potencial (1 unidad/SKU)', money(totals.utilidad_potencial)],
+          [`${referenceLabel} catálogo (1 unidad/SKU)`, money(totals.precio_lista)],
+          [`${differenceLabel} (1 unidad/SKU)`, money(totals.utilidad_potencial)],
         ]
       : []),
   ]
@@ -62,7 +67,7 @@ export default function ProductCatalogSummary({ analysis }: { analysis: ProductA
       </p>
       {comparison.length > 0 && (
         <Card>
-          <h2 className="text-sm font-semibold text-navy">Costo unitario vs. precio de lista</h2>
+          <h2 className="text-sm font-semibold text-navy">Costo unitario vs. {referenceLabel.toLowerCase()}</h2>
           <p className="mt-1 text-xs text-navy/55">Los 10 productos con mayor costo unitario.</p>
           <div className="mt-4 h-80">
             <ResponsiveContainer width="100%" height="100%">
@@ -86,7 +91,7 @@ export default function ProductCatalogSummary({ analysis }: { analysis: ProductA
                 <Tooltip formatter={(value) => formatCLP(Number(value))} />
                 <Legend />
                 <Bar dataKey="costo" name="Costo unitario" fill={CHART.gastos} radius={[0, 3, 3, 0]} />
-                <Bar dataKey="precio_lista" name="Precio de lista" fill={CHART.ingresos} radius={[0, 3, 3, 0]} />
+                <Bar dataKey="precio_lista" name={referenceLabel} fill={CHART.ingresos} radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
