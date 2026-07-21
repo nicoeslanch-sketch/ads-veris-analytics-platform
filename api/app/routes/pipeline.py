@@ -61,6 +61,7 @@ from ..engine.export import safe_export_dataframe
 from ..engine.loader import (
     SOURCE_ROWS_ATTR,
     UnsupportedFileError,
+    load_dataframes_with_reports,
     load_dataframe_with_report,
 )
 from ..engine.ai_classifier import classify_columns_with_ai
@@ -180,6 +181,11 @@ def _frame_cache_get(key: tuple):
         _FRAME_CACHE.move_to_end(key)
         frame, report = cached
     return _clone_frame(frame), copy.deepcopy(report)
+
+
+def _frame_cache_has(key: tuple) -> bool:
+    with _FRAME_CACHE_LOCK:
+        return key in _FRAME_CACHE
 
 
 def _frame_cache_store(key: tuple, frame, report: dict) -> None:
@@ -722,6 +728,7 @@ def _analyze_cached(
     eliminar_duplicados: bool = False,
     cache_dataset_id: str | None = None,
     cache_revision: int | None = None,
+    preloaded: tuple[object, dict] | None = None,
 ) -> dict:
     """analyze_and_clean con caché. El dict cacheado JAMÁS se muta: los
     endpoints construyen su respuesta con una copia superficial."""
@@ -742,7 +749,13 @@ def _analyze_cached(
             _CLEAN_CACHE.move_to_end(key)
             return cached
 
-    df, load_report = _load_or_400(filename, content, sheet=sheet)
+    if preloaded is None:
+        df, load_report = _load_or_400(filename, content, sheet=sheet)
+    else:
+        df, load_report = preloaded
+        _frame_cache_store(
+            _frame_key("raw", filename, content, sheet), df, load_report
+        )
 
     # Moneda (Fase 10 §4.4): se detecta sobre los valores CRUDOS — la
     # estandarización quita los símbolos y después ya no hay evidencia.
@@ -1329,6 +1342,7 @@ def _build_export_audit(
     mapping: dict | None,
     scope: dict | None,
     cache_revision: int | None = None,
+    original_frame=None,
 ):
     audit_key = (
         ENGINE_VERSION,
@@ -1345,7 +1359,11 @@ def _build_export_audit(
         if cached_audit is not None:
             _AUDIT_CACHE.move_to_end(audit_key)
             return cached_audit.copy(deep=True)
-    original, _ = _load_or_400(filename, content, sheet=sheet)
+    original = (
+        _clone_frame(original_frame)
+        if original_frame is not None
+        else _load_or_400(filename, content, sheet=sheet)[0]
+    )
     original_headers = [str(column) for column in original.columns]
     original_source_rows = list(
         original.attrs.get(SOURCE_ROWS_ATTR, range(2, len(original) + 2))
@@ -1572,8 +1590,18 @@ def _clean_download_book_uncached_sync(
     import pandas as pd
 
     entries = manifest["hojas"]
-    _, load_report = _load_or_400(filename, content, sheet=entries[0]["nombre"])
-    available = list(load_report.get("hojas_disponibles", []))
+    processed_names = [entry["nombre"] for entry in entries if entry["procesar"]]
+    missing_names = [
+        name
+        for name in processed_names
+        if not _frame_cache_has(_frame_key("raw", filename, content, name))
+    ]
+    try:
+        preloaded, available = load_dataframes_with_reports(
+            filename, content, missing_names
+        )
+    except UnsupportedFileError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     declared = [entry["nombre"] for entry in entries]
     if set(declared) != set(available) or len(declared) != len(available):
         raise HTTPException(
@@ -1617,6 +1645,7 @@ def _clean_download_book_uncached_sync(
                 eliminar_duplicados=entry["eliminar_duplicados"],
                 cache_dataset_id=cache_dataset_id,
                 cache_revision=entry.get("revision") or None,
+                preloaded=preloaded.get(name),
             )
             frame = result["_df_limpio"].copy()
             frames[name] = frame
@@ -1630,6 +1659,7 @@ def _clean_download_book_uncached_sync(
                     filename, content, name, result, entry["rules"],
                     entry["mapping"] or None, entry["scope"] or None,
                     entry.get("revision") or None,
+                    preloaded.get(name, (None, {}))[0],
                 )
             )
             records.append({

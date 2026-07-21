@@ -156,11 +156,33 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     const download = await downloadPromise
     expect(download.suggestedFilename()).toMatch(/multihoja_limpio\.xlsx$/)
 
+    await page.setViewportSize({ width: 1600, height: 1000 })
     await page.getByRole('link', { name: /Resumen/ }).first().click()
     await expect(page.getByText('Datos que estas analizando')).toBeVisible({ timeout: 60_000 })
     await page.getByRole('button', { name: /Solo apilar ventas/ }).click()
     await expect(page.getByText(/hoja_origen/)).toBeVisible()
     await expect(page.getByText('Evolución de Ingresos')).toBeVisible({ timeout: 90_000 })
+    const compactFlow = page.getByTestId('summary-compact-flow')
+    await expect(compactFlow).toBeVisible()
+    const compactLayout = await compactFlow.evaluate((element) => {
+      const children = Array.from(element.children) as HTMLElement[]
+      return {
+        columnCount: getComputedStyle(element).columnCount,
+        flowHeight: element.getBoundingClientRect().height,
+        totalCardHeight: children.reduce(
+          (total, child) => total + child.getBoundingClientRect().height,
+          0,
+        ),
+        avoidsSplits: children.every(
+          (child) => getComputedStyle(child).breakInside === 'avoid',
+        ),
+        cardCount: children.length,
+      }
+    })
+    expect(compactLayout.columnCount).toBe('2')
+    expect(compactLayout.cardCount).toBeGreaterThan(1)
+    expect(compactLayout.avoidsSplits).toBe(true)
+    expect(compactLayout.flowHeight).toBeLessThan(compactLayout.totalCardHeight - 20)
 
     await page.getByRole('button', { name: /Ventas \+ costos/ }).click()
     await expect(page.getByText(/apilamos 2 hojas de ventas y agregamos los costos/i)).toBeVisible({ timeout: 90_000 })

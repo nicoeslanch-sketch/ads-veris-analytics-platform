@@ -866,15 +866,14 @@ export default function Resumen() {
               </Card>
               )}
 
-              {/* El bloque inferior ocupa el ancho principal y mantiene dos
-                  subcolumnas independientes: Sucursal no estira Proyección,
-                  y Top Productos no deja una fila vacía debajo. */}
-              <div className="order-5 grid items-start gap-6 lg:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                <div
-                  className={canal.length > 0 ? 'contents lg:block lg:space-y-6' : 'hidden'}
-                >
+              {/* Las tarjetas dinámicas fluyen por altura: ninguna reserva el
+                  alto de su vecina ni deja huecos antes de la siguiente. */}
+              <div
+                data-testid="summary-compact-flow"
+                className="order-5 columns-1 gap-6 lg:columns-2 xl:columns-1 2xl:columns-2"
+              >
                   {canal.length > 0 && (
-                  <Card className="order-1 min-w-0">
+                  <Card className="mb-6 min-w-0 break-inside-avoid">
                     <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
                     <div className="mt-2 flex flex-col items-center gap-3">
                       <div className="relative h-44 w-44 shrink-0">
@@ -926,13 +925,9 @@ export default function Resumen() {
                     </div>
                   </Card>
                   )}
-                </div>
 
-                <div
-                  className={canal.length > 0 ? 'contents lg:block lg:space-y-6' : 'contents'}
-                >
                   {topProducts.length > 0 && (
-                  <Card className="order-2 min-w-0">
+                  <Card className="mb-6 min-w-0 break-inside-avoid">
                     <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
                     <ul className="mt-4 space-y-3">
                       {topProducts.map((product) => (
@@ -961,7 +956,7 @@ export default function Resumen() {
                   </Card>
                   )}
 
-                  <Card className="order-3 min-w-0">
+                  <Card className="mb-6 min-w-0 break-inside-avoid">
                     {/* Fase 12b §20: es una EXTRAPOLACIÓN del promedio observado, no
                         una predicción — el copy no debe prometer más que el método. */}
                     <h2 className="text-base font-semibold text-navy">
@@ -1029,19 +1024,16 @@ export default function Resumen() {
                       </p>
                     )}
                   </Card>
-                </div>
-              </div>
 
               {/* Fase 18: agrupaciones flexibles — ventas por sucursal, región,
                   zona u otras columnas categóricas del archivo (incluidas las
                   enriquecidas por "Relacionar otras hojas"). */}
-              {(metrics.agrupaciones_flexibles ?? []).length > 0 && (
-                <div className="order-6 grid items-start gap-6 lg:grid-cols-2">
                   {(metrics.agrupaciones_flexibles ?? []).map((agrupacion) => (
+                    <div key={agrupacion.columna} className="mb-6 break-inside-avoid">
                     <FlexibleGroupCard key={agrupacion.columna} agrupacion={agrupacion} />
+                    </div>
                   ))}
-                </div>
-              )}
+              </div>
             </div>
 
             <div className="contents xl:block xl:space-y-6">

@@ -368,9 +368,17 @@ def _detect_header_row(raw: pd.DataFrame) -> int:
     return 0
 
 
-def _load_excel(content: bytes, report: dict, sheet: str | None = None) -> pd.DataFrame:
-    _guard_xlsx_zip(content)
-    book = pd.ExcelFile(io.BytesIO(content))
+def _load_excel(
+    content: bytes,
+    report: dict,
+    sheet: str | None = None,
+    *,
+    book: pd.ExcelFile | None = None,
+) -> pd.DataFrame:
+    """Carga una hoja; ``book`` permite reutilizar el parser en libros multihoja."""
+    if book is None:
+        _guard_xlsx_zip(content)
+        book = pd.ExcelFile(io.BytesIO(content))
     sheet_names = list(book.sheet_names)
     report["hojas_disponibles"] = sheet_names
 
@@ -489,6 +497,9 @@ def _scan_xlsx_formulas(
     headers: list[str],
     source_rows: list[int],
     report: dict,
+    *,
+    workbook=None,
+    contains_formulas: bool | None = None,
 ) -> None:
     """Audita fórmulas en una pasada por el área real de datos seleccionada."""
     formula_report: dict = {
@@ -505,16 +516,20 @@ def _scan_xlsx_formulas(
     # La enorme mayoria de las bases no contiene formulas. Revisar los tags
     # del XML evita un segundo recorrido celda por celda; cuando hay formulas,
     # conservamos abajo el analisis detallado y sus alertas.
-    if not _xlsx_contains_formulas(content):
+    if contains_formulas is None:
+        contains_formulas = _xlsx_contains_formulas(content)
+    if not contains_formulas:
         return
 
+    owns_workbook = workbook is None
     try:
         import openpyxl
         from .mapping import detect_columns_extended
 
-        workbook = openpyxl.load_workbook(
-            io.BytesIO(content), data_only=False, read_only=True
-        )
+        if workbook is None:
+            workbook = openpyxl.load_workbook(
+                io.BytesIO(content), data_only=False, read_only=True
+            )
         worksheet = workbook[sheet]
         allowed_rows = set(source_rows)
         fixed_by_column = {header: 0 for header in headers}
@@ -578,7 +593,8 @@ def _scan_xlsx_formulas(
                     "usará como respaldo para decidir duplicados."
                 )
         formula_report["por_columna"] = formula_by_column
-        workbook.close()
+        if owns_workbook:
+            workbook.close()
     except Exception as exc:  # análisis auxiliar: jamás debe romper la carga
         formula_report.update(
             {
@@ -594,7 +610,13 @@ def _scan_xlsx_formulas(
 
 
 def load_dataframe_with_report(
-    filename: str, content: bytes, sheet: str | None = None
+    filename: str,
+    content: bytes,
+    sheet: str | None = None,
+    *,
+    _excel_book: pd.ExcelFile | None = None,
+    _formula_workbook=None,
+    _contains_formulas: bool | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """Carga el archivo y devuelve (df, reporte_de_carga con avisos)."""
     report: dict = {
@@ -636,7 +658,7 @@ def load_dataframe_with_report(
         df.attrs[SOURCE_ROWS_ATTR] = _csv_source_rows(text, separator, len(df))
         df.attrs[SOURCE_SHEET_ATTR] = None
     else:
-        df = _load_excel(content, report, sheet=sheet)
+        df = _load_excel(content, report, sheet=sheet, book=_excel_book)
 
     # Fase 12b §30: el límite era solo de FILAS — un archivo de 200.000 filas
     # × 500 columnas era "aceptado" y tumbaba pandas/openpyxl. Límite claro
@@ -688,8 +710,61 @@ def load_dataframe_with_report(
             [str(column) for column in df.columns],
             source_rows,
             report,
+            workbook=_formula_workbook,
+            contains_formulas=_contains_formulas,
         )
     return df, report
+
+
+def load_dataframes_with_reports(
+    filename: str,
+    content: bytes,
+    sheets: list[str],
+) -> tuple[dict[str, tuple[pd.DataFrame, dict]], list[str]]:
+    """Carga varias hojas compartiendo una sola apertura del libro.
+
+    Cada hoja pasa por las mismas validaciones, detecciÃ³n de encabezados y
+    auditorÃ­a de fÃ³rmulas que la carga individual. Solo se evita repetir el
+    parseo inmutable del archivo completo para cada hoja.
+    """
+    if not (filename or "").lower().endswith(".xlsx"):
+        raise UnsupportedFileError("La carga multihoja requiere un archivo .xlsx.")
+    _guard_xlsx_zip(content)
+    book = pd.ExcelFile(io.BytesIO(content))
+    available = list(book.sheet_names)
+    requested = list(dict.fromkeys(sheets))
+    missing = [name for name in requested if name not in available]
+    if missing:
+        book.close()
+        raise UnsupportedFileError(
+            "No existen estas hojas en el archivo: " + ", ".join(missing)
+        )
+
+    contains_formulas = _xlsx_contains_formulas(content)
+    formula_workbook = None
+    try:
+        if requested and contains_formulas:
+            import openpyxl
+
+            formula_workbook = openpyxl.load_workbook(
+                io.BytesIO(content), data_only=False, read_only=True
+            )
+        loaded = {
+            name: load_dataframe_with_report(
+                filename,
+                content,
+                sheet=name,
+                _excel_book=book,
+                _formula_workbook=formula_workbook,
+                _contains_formulas=contains_formulas,
+            )
+            for name in requested
+        }
+        return loaded, available
+    finally:
+        if formula_workbook is not None:
+            formula_workbook.close()
+        book.close()
 
 
 def load_dataframe(filename: str, content: bytes) -> pd.DataFrame:

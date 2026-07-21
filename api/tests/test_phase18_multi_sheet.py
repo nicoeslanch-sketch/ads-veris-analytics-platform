@@ -10,7 +10,7 @@ import pytest
 
 from app.engine.audit import build_audit_dataframe
 from app.engine.export import safe_export_dataframe
-from app.engine.loader import load_dataframe_with_report
+from app.engine.loader import load_dataframe_with_report, load_dataframes_with_reports
 from app.engine.metrics import compute_metrics
 from app.engine.multi_sheet import (
     build_analysis_frame,
@@ -56,6 +56,74 @@ def test_sheet_classification_is_explainable_and_never_removes_sheets():
     assert profiles["LEEME_NO_PROCESAR"]["recomendacion"] == "conservar_sin_procesar"
     assert profiles["Presentacion"]["clasificacion"] == "ambigua"
     assert all(profile["motivos"] for profile in profiles.values())
+
+
+def test_bulk_sheet_loader_matches_individual_results_and_opens_excel_once(monkeypatch):
+    content = _classified_workbook()
+    real_excel_file = pd.ExcelFile
+    openings = 0
+
+    def counted_excel_file(*args, **kwargs):
+        nonlocal openings
+        openings += 1
+        return real_excel_file(*args, **kwargs)
+
+    monkeypatch.setattr(pd, "ExcelFile", counted_excel_file)
+    loaded, available = load_dataframes_with_reports(
+        "libro.xlsx", content, ["Ventas", "LEEME_NO_PROCESAR"]
+    )
+
+    assert openings == 1
+    assert available == ["Ventas", "LEEME_NO_PROCESAR", "Presentacion"]
+    for sheet in ("Ventas", "LEEME_NO_PROCESAR"):
+        expected, expected_report = load_dataframe_with_report(
+            "libro.xlsx", content, sheet=sheet
+        )
+        actual, actual_report = loaded[sheet]
+        pd.testing.assert_frame_equal(actual, expected)
+        assert actual.attrs == expected.attrs
+        assert actual_report == expected_report
+
+
+def test_bulk_sheet_loader_audits_formulas_in_every_requested_sheet():
+    workbook = openpyxl.Workbook()
+    first = workbook.active
+    first.title = "Enero"
+    first.append(["ID", "Monto"])
+    first.append(["A", "=100+50"])
+    first.append(["B", 200])
+    second = workbook.create_sheet("Febrero")
+    second.append(["ID", "Monto"])
+    second.append(["C", "=300+50"])
+    second.append(["D", 400])
+    output = io.BytesIO()
+    workbook.save(output)
+
+    loaded, _ = load_dataframes_with_reports(
+        "formulas.xlsx", output.getvalue(), ["Enero", "Febrero"]
+    )
+
+    for sheet in ("Enero", "Febrero"):
+        formula_report = loaded[sheet][1]["formulas"]
+        assert formula_report["disponible"] is True
+        assert formula_report["total"] == 1
+        assert formula_report["por_columna"]["Monto"]["valores_fijos"] == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "dayfirst", "expected"),
+    [
+        ("01/05/2026", True, "2026-05-01"),
+        ("05/22/2026", True, "2026-05-22"),
+        ("2026-05-01 00:00:00", True, "2026-05-01"),
+        ("1/5/26", True, "2026-05-01"),
+        ("02/03/2026", False, "2026-02-03"),
+    ],
+)
+def test_fast_numeric_date_parser_preserves_existing_semantics(value, dayfirst, expected):
+    parsed = parse_date(value, dayfirst=dayfirst)
+    assert parsed is not None
+    assert parsed.strftime("%Y-%m-%d") == expected
 
 
 def test_append_then_join_derives_cost_without_changing_rows_or_income():

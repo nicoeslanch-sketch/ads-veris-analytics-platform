@@ -313,6 +313,29 @@ def parse_date(value: str, dayfirst: bool = True) -> pd.Timestamp | None:
     # el 1 de mayo se convertía en 5 de enero.
     if re.match(r"^\d{4}[-/.]", text):
         effective_dayfirst = False
+    # Ruta estricta para las fechas numÃ©ricas habituales. Crear el Timestamp
+    # directamente evita invocar el parser general de pandas miles de veces
+    # durante limpieza, auditorÃ­a y exportaciÃ³n multihoja. Los formatos menos
+    # comunes conservan exactamente el fallback anterior.
+    parts = re.split(r"[-/.]", text)
+    if len(parts) == 3 and all(part.isdigit() for part in parts):
+        first_raw, second_raw, third_raw = parts
+        try:
+            if len(first_raw) == 4:
+                year, month, day = int(first_raw), int(second_raw), int(third_raw)
+            elif len(third_raw) in {2, 4}:
+                year = int(third_raw)
+                if len(third_raw) == 2:
+                    year += 2000 if year < 70 else 1900
+                if effective_dayfirst:
+                    day, month = int(first_raw), int(second_raw)
+                else:
+                    month, day = int(first_raw), int(second_raw)
+            else:
+                raise ValueError
+            return pd.Timestamp(year=year, month=month, day=day)
+        except (ValueError, OverflowError):
+            return None
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         parsed = pd.to_datetime(text, dayfirst=effective_dayfirst, errors="coerce")
