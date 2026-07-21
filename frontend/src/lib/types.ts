@@ -632,6 +632,7 @@ export interface MetricsResult {
     columna: string
     grupos: GroupRow[]
     grupos_totales: number
+    fuera_de_rango?: { filas: number; monto_asociado: number }
   }>
 }
 

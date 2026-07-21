@@ -29,6 +29,22 @@ with pd.ExcelWriter(path, engine="openpyxl") as writer:
   execFileSync('python', ['-c', script, path, unsafe ? '1' : '0'])
 }
 
+function createDuplicateWorkbook(path: string) {
+  const script = String.raw`
+import pandas as pd
+import sys
+path = sys.argv[1]
+rows = pd.DataFrame({
+    "ID Venta": ["V-1", "V-2", "V-2", "V-3"],
+    "Fecha": ["01/01/2026", "02/01/2026", "02/01/2026", "03/01/2026"],
+    "Producto": ["A", "B", "B", "C"],
+    "Monto": [1000, 2000, 2000, 3000],
+})
+rows.to_excel(path, sheet_name="Ventas", index=False)
+`
+  execFileSync('python', ['-c', script, path])
+}
+
 function standardizationResponse(filename: string, value: string) {
   return {
     archivo: filename,
@@ -185,12 +201,56 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     expect(compactLayout.flowHeight).toBeLessThan(compactLayout.totalCardHeight - 20)
 
     await page.getByRole('button', { name: /Ventas \+ costos/ }).click()
-    await expect(page.getByText(/apilamos 2 hojas de ventas y agregamos los costos/i)).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByText('Ventas + costos activo')).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByText(/2 hojas de ventas combinadas/)).toBeVisible()
+    await expect(page.getByRole('button', { name: /Apilar y relacionar/ })).toHaveCount(0)
+    await page.getByRole('checkbox', { name: 'Enero' }).uncheck()
+    await expect(page.getByText(/Febrero ↔ Productos/)).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByText('Ventas + costos activo')).toBeVisible()
+    await page.getByRole('checkbox', { name: 'Enero' }).check()
+    await expect(page.getByText(/2 hojas de ventas combinadas/)).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByRole('button', { name: /Apilar y relacionar/ })).toHaveCount(0)
     await expect(page.getByText('Cobertura de Costos')).toBeVisible({ timeout: 90_000 })
     await expect(page.getByText('Costo Conocido')).toBeVisible()
     await expect(page.getByText('$17.400', { exact: true })).toBeVisible()
     await page.getByRole('link', { name: /Explorar datos/ }).first().click()
   await expect(page.getByText('Datos que estas analizando')).toBeVisible()
+})
+
+test('permite revisar una limpieza terminada y volver a limpiar sin subir el archivo', async ({ page }, testInfo) => {
+  const workbook = testInfo.outputPath('ventas_con_duplicado.xlsx')
+  createDuplicateWorkbook(workbook)
+
+  await page.goto('/estandarizacion')
+  const chooserPromise = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: /Subir archivo/ }).click()
+  const chooser = await chooserPromise
+  await chooser.setFiles(workbook)
+  await expect(page.getByText(/Dataset activo:/)).toBeVisible({ timeout: 60_000 })
+  await page.getByRole('link', { name: /Limpieza de datos/ }).first().click()
+  await expect(page.getByText('Problemas detectados')).toBeVisible({ timeout: 90_000 })
+  await page.getByRole('button', { name: 'Limpiar datos', exact: true }).click()
+  await expect(page.getByText(/Todas las hojas están limpias/)).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText(/1 detectados/)).toBeVisible()
+  await expect(page.getByText(/0 eliminados/)).toBeVisible()
+
+  await page.getByRole('link', { name: /Resumen/ }).first().click()
+  await expect(page.getByText(/Se detectaron 1 duplicados exactos/)).toBeVisible({ timeout: 90_000 })
+  await page.getByRole('link', { name: 'Ver detalle y ajustar' }).click()
+  await expect(page).toHaveURL(/\/limpieza\?revision=1$/)
+  await expect(page.getByText('Revisando el diagnóstico original')).toBeVisible()
+  await expect(page.getByText('Problemas detectados')).toBeVisible({ timeout: 90_000 })
+  await page.getByRole('button', { name: /Eliminar duplicados exactos \(1\)/ }).click()
+  await page.getByRole('button', { name: 'Incluir en la próxima limpieza' }).click()
+  await expect(page.getByRole('button', { name: /Conservar duplicados en la próxima limpieza/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Volver a limpiar', exact: true }).click()
+
+  await expect(page.getByText(/Todas las hojas están limpias/)).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText(/1 eliminados/)).toBeVisible()
+  await page.getByRole('button', { name: 'Ver detalle y ajustar' }).click()
+  await expect(page.getByText('Revisando el diagnóstico original')).toBeVisible()
+  await page.getByRole('button', { name: 'Volver al resultado limpio' }).click()
+  await expect(page.getByText(/1 eliminados/)).toBeVisible()
 })
 
 test('Fase 17 bloquea una relacion many-to-many', async ({ page }, testInfo) => {

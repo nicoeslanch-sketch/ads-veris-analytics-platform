@@ -560,6 +560,31 @@ def _group_sum(
     return rows
 
 
+def _is_percentage_column(column: str) -> bool:
+    normalized = strip_accents_lower(column).replace("_", " ")
+    return normalized.strip() == "pct" or any(
+        token in normalized for token in ("descuento", "porcentaje", "percent", " pct")
+    )
+
+
+def _percentage_buckets(df: pd.DataFrame, column: str) -> tuple[pd.Series, pd.Series]:
+    """Groups canonical proportions without mixing invalid business values."""
+    values = _numeric_series(df, column)
+    labels = pd.Series("Sin dato", index=df.index, dtype="object")
+    labels.loc[values == 0] = "Sin descuento"
+    for lower, upper, label in (
+        (0, 0.05, "1–5%"),
+        (0.05, 0.10, "6–10%"),
+        (0.10, 0.20, "11–20%"),
+        (0.20, 0.50, "21–50%"),
+        (0.50, 1.00, "51–100%"),
+    ):
+        labels.loc[(values > lower) & (values <= upper)] = label
+    out_of_range = values.notna() & ((values < 0) | (values > 1))
+    labels.loc[out_of_range] = "Fuera de rango"
+    return labels, out_of_range
+
+
 def _sort_by_gross_share(rows: list[dict]) -> list[dict]:
     """Ordena solo los rankings de concentración por participación bruta.
 
@@ -1210,21 +1235,32 @@ def compute_metrics(
             if len(values) == 0 or float(filled.mean()) < 0.6:
                 continue
             unique = values[filled].astype(str).str.strip().nunique()
-            if unique < 2 or unique > 30:
+            percentage_column = _is_percentage_column(name)
+            if unique < 2 or (unique > 30 and not percentage_column):
                 continue
             has_priority = any(token in normalized for token in priority_tokens)
-            candidates.append((0 if has_priority else 1, name))
+            candidates.append((-1 if percentage_column else (0 if has_priority else 1), name))
         candidates.sort()
         flexibles: list[dict] = []
         for _, name in candidates[:4]:
-            grupos = _group_sum(selection[name], amounts, group_costs)
+            out_of_range = pd.Series(False, index=selection.index)
+            grouping = selection[name]
+            if _is_percentage_column(name):
+                grouping, out_of_range = _percentage_buckets(selection, name)
+            grupos = _group_sum(grouping, amounts, group_costs)
             if len(grupos) < 2:
                 continue
-            flexibles.append({
+            item = {
                 "columna": name,
                 "grupos": grupos[:12],
                 "grupos_totales": len(grupos),
-            })
+            }
+            if bool(out_of_range.any()):
+                item["fuera_de_rango"] = {
+                    "filas": int(out_of_range.sum()),
+                    "monto_asociado": round(float(amounts.loc[out_of_range].dropna().sum()), 2),
+                }
+            flexibles.append(item)
         if flexibles:
             result["agrupaciones_flexibles"] = flexibles
 

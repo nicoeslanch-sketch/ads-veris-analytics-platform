@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowRight,
@@ -146,6 +146,7 @@ function QualityRing({ quality }: { quality: number }) {
 
 export default function Limpieza() {
   const location = useLocation()
+  const navigate = useNavigate()
   const demo = useDemo()
   const {
     file,
@@ -167,6 +168,7 @@ export default function Limpieza() {
     analysisScope,
     restoreState,
     eliminarDuplicados,
+    setEliminarDuplicados,
     setSheetStatus,
   } = useDataset()
   const [detection, setDetection] = useState<CleanResult | null>(null)
@@ -184,6 +186,9 @@ export default function Limpieza() {
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
   const [duplicateConfirmOpen, setDuplicateConfirmOpen] = useState(false)
   const [duplicateRemovalPending, setDuplicateRemovalPending] = useState(false)
+  const [reviewMode, setReviewMode] = useState(
+    () => new URLSearchParams(location.search).get('revision') === '1',
+  )
   const cancelDuplicateRef = useRef<HTMLButtonElement | null>(null)
   const detectStartedFor = useRef<string | null>(null)
   const cleaningRunRef = useRef(false)
@@ -226,6 +231,11 @@ export default function Limpieza() {
   const [directed, setDirected] = useState<DirectedInfo | null>(null)
   const [usage, setUsage] = useState<PlansUsage | null>(null)
 
+  const closeReview = useCallback(() => {
+    setReviewMode(false)
+    if (location.search) navigate('/limpieza', { replace: true })
+  }, [location.search, navigate])
+
   const refreshUsage = () => {
     apiGet<PlansUsage>('/plans/usage')
       .then(setUsage)
@@ -234,14 +244,14 @@ export default function Limpieza() {
 
   const handleApplySheets = useCallback(async (
     names: string[],
-    options: { retryErrors?: boolean } = {},
+    options: { retryErrors?: boolean; reclean?: boolean } = {},
   ) => {
     if (!file || names.length === 0 || cleaningRunRef.current) return
     const runnable = names.filter((name) => {
       const session = sheetSessions[name]
       return Boolean(session?.standardization) &&
-        !session?.cleaning &&
-        (session?.status !== 'error' || options.retryErrors) &&
+        (options.reclean || !session?.cleaning) &&
+        (session?.status !== 'error' || options.retryErrors || options.reclean) &&
         session?.status !== 'limpiando'
     })
     if (runnable.length === 0) return
@@ -262,6 +272,7 @@ export default function Limpieza() {
       ),
     }
     let batchSheetErrors = { ...batchRestoreState.sheet_errors }
+    let failedCount = 0
     try {
       for (const [index, name] of runnable.entries()) {
         const session = sheetSessions[name]
@@ -300,6 +311,7 @@ export default function Limpieza() {
           setCleaning(response, { activate: name === target })
           await saveCleaningJob(datasetId, response.reglas_activas, response)
         } catch (err) {
+          failedCount += 1
           const message = err instanceof ApiError ? err.message : 'No se pudo limpiar esta hoja.'
           batchSheetErrors = updateBatchSheetErrors(batchSheetErrors, name, message)
           setSheetStatus(name, 'error', message)
@@ -331,11 +343,13 @@ export default function Limpieza() {
       cleaningRunRef.current = false
       setCleaningProgress(null)
       setApplying(false)
+      if (options.reclean && failedCount === 0) closeReview()
     }
   }, [
     applySameRules,
     availableSheets,
     basicMapping,
+    closeReview,
     datasetId,
     file,
     restoreState,
@@ -352,6 +366,12 @@ export default function Limpieza() {
   useEffect(() => {
     refreshUsage()
   }, [])
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('revision') === '1') {
+      setReviewMode(true)
+    }
+  }, [location.search])
 
   useEffect(() => {
     setRules(cleaning?.reglas_activas ?? DEFAULT_RULES)
@@ -390,7 +410,7 @@ export default function Limpieza() {
   }, [duplicateConfirmOpen])
 
   useEffect(() => {
-    if (!file || cleaning || applying) return
+    if (!file || (cleaning && !reviewMode) || applying) return
     const key = [
       datasetId ?? storagePath ?? `${file.name}:${file.lastModified}:${uploadedAt?.getTime() ?? 0}`,
       sheet ?? '',
@@ -438,6 +458,7 @@ export default function Limpieza() {
     sheet,
     mappingOverride,
     applying,
+    reviewMode,
   ])
 
   if (!file || !standardization) {
@@ -509,8 +530,9 @@ export default function Limpieza() {
     )
   }
 
-  const result = cleaning ?? detection
+  const result = reviewMode ? detection : (cleaning ?? detection)
   const applied = cleaning !== null
+  const showingCompleted = applied && !reviewMode
   const problemCategories = result
     ? PROBLEM_LABELS.map((category) => ({
         ...category,
@@ -519,13 +541,15 @@ export default function Limpieza() {
     : []
   const hasProblems = problemCategories.length > 0
   const quality = result
-    ? applied
+    ? showingCompleted
       ? result.resumen.calidad_despues
       : result.resumen.calidad_antes
     : null
   const duplicateDetails = result?.duplicados_detalle
   const exactDuplicates = duplicateDetails?.exactos ?? result?.problemas.duplicados ?? 0
-  const selectedDuplicates = duplicateRemovalPending
+  const selectedDuplicates = reviewMode && eliminarDuplicados
+    ? exactDuplicates
+    : duplicateRemovalPending
     ? exactDuplicates
     : duplicateDetails?.filas_seleccionadas_para_eliminar ?? 0
   const removedDuplicates = duplicateDetails?.filas_eliminadas ?? 0
@@ -606,7 +630,7 @@ export default function Limpieza() {
     : []
 
   const issueMap = new Map<string, string>()
-  if (result && !applied) {
+  if (result && !showingCompleted) {
     for (const issue of result.preview.issues) {
       issueMap.set(`${issue.fila}:${issue.columna}`, issue.tipo)
     }
@@ -633,7 +657,10 @@ export default function Limpieza() {
           changedColumn !== automaticMapping[changedRole],
       ),
     )
-    setMappingOverride(Object.keys(compactOverride).length ? compactOverride : null)
+    setMappingOverride(
+      Object.keys(compactOverride).length ? compactOverride : null,
+      { preserveCleaning: reviewMode },
+    )
     void saveColumnMapping(datasetId, nextEffective) // best-effort (migración 0008)
   }
 
@@ -709,6 +736,7 @@ export default function Limpieza() {
         }),
       )
       await finishApply(response)
+      closeReview()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo aplicar la limpieza.')
     } finally {
@@ -719,6 +747,10 @@ export default function Limpieza() {
 
   const handleConfirmedDuplicateRemoval = () => {
     setDuplicateConfirmOpen(false)
+    if (reviewMode) {
+      setEliminarDuplicados(true)
+      return
+    }
     void handleApply(true)
   }
 
@@ -746,6 +778,7 @@ export default function Limpieza() {
       )
       setDirected(response.dirigida ?? null)
       await finishApply(response)
+      closeReview()
       refreshUsage()
     } catch (err) {
       setAssistedError(
@@ -777,6 +810,9 @@ export default function Limpieza() {
   const pendingPreparedSheets = pendingSheets.filter(
     (name) => Boolean(sheetSessions[name]?.standardization),
   )
+  const cleaningRunSheets = reviewMode
+    ? selectedSheets.filter((name) => Boolean(sheetSessions[name]?.standardization))
+    : pendingPreparedSheets
   const scopeState = cleaningScopeState(selectedSheets, sheetSessions, applying)
   const cleaningComplete = scopeState === 'complete'
   const cleaningLifecycle = {
@@ -1031,10 +1067,28 @@ export default function Limpieza() {
           </div>
         )}
 
-        {applied && result ? (
+        {reviewMode && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-teal/30 bg-teal/[0.06] px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-navy">Revisando el diagnóstico original</p>
+              <p className="mt-0.5 text-xs text-navy/60">
+                Tu resultado limpio actual sigue guardado. Ajusta reglas o duplicados y luego vuelve a limpiar.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={closeReview}
+              className="rounded-lg border border-teal/35 bg-white px-3 py-2 text-xs font-semibold text-teal"
+            >
+              Volver al resultado limpio
+            </button>
+          </div>
+        )}
+
+        {showingCompleted && result ? (
           <>
             <Card className="border-green/30 bg-gradient-to-br from-green/[0.07] to-transparent">
-              <div className="flex items-start gap-3">
+              <div className="flex flex-col items-start gap-3 sm:flex-row">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-green/15">
                   <CheckCircle2 className="h-6 w-6 text-green" />
                 </div>
@@ -1072,6 +1126,13 @@ export default function Limpieza() {
                     </p>
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewMode(true)}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-teal/35 bg-white px-3.5 py-2 text-xs font-semibold text-teal hover:bg-teal/[0.04]"
+                >
+                  <FileWarning className="h-4 w-4" /> Ver detalle y ajustar
+                </button>
               </div>
             </Card>
 
@@ -1285,12 +1346,22 @@ export default function Limpieza() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setDuplicateConfirmOpen(true)}
+                    onClick={() => {
+                      if (reviewMode && eliminarDuplicados) setEliminarDuplicados(false)
+                      else setDuplicateConfirmOpen(true)
+                    }}
+                    aria-pressed={reviewMode ? eliminarDuplicados : undefined}
                     disabled={applying || assistedRunning || detecting}
-                    className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-coral px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-coral/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`inline-flex shrink-0 items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      reviewMode && eliminarDuplicados
+                        ? 'bg-navy hover:bg-navy-deep'
+                        : 'bg-coral hover:bg-coral/90'
+                    }`}
                   >
                     <Trash2 className="h-4 w-4" />
-                    Eliminar duplicados exactos ({formatNumber(exactDuplicates)})
+                    {reviewMode && eliminarDuplicados
+                      ? 'Conservar duplicados en la próxima limpieza'
+                      : `Eliminar duplicados exactos (${formatNumber(exactDuplicates)})`}
                   </button>
                 </div>
                 {granularityWarning && (
@@ -1637,14 +1708,18 @@ export default function Limpieza() {
         {/* Barra de acción: botón "Limpiar datos" (todos los planes).
             Fase 18: franja en azul marino de marca con botón protagonista —
             la barra blanca anterior se perdía entre las tarjetas. */}
-        {!cleaningComplete && (
+        {(!cleaningComplete || reviewMode) && (
           <section className="rounded-2xl bg-gradient-to-r from-navy to-navy-deep p-5 shadow-md ring-1 ring-navy/20 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <p className="text-base font-semibold text-white">Todo listo para limpiar</p>
+                <p className="text-base font-semibold text-white">
+                  {reviewMode ? 'Ajustes listos para aplicar' : 'Todo listo para limpiar'}
+                </p>
                 <p className="mt-1 text-xs text-white/70">
                   {selectedSheets.length > 1
-                    ? `Al continuar, limpiaremos una por una las ${pendingPreparedSheets.length} hojas pendientes de las ${selectedSheets.length} seleccionadas.`
+                    ? reviewMode
+                      ? `Volveremos a procesar una por una las ${cleaningRunSheets.length} hojas seleccionadas, sin que tengas que subir el archivo otra vez.`
+                      : `Al continuar, limpiaremos una por una las ${pendingPreparedSheets.length} hojas pendientes de las ${selectedSheets.length} seleccionadas.`
                     : 'Aplicaremos las reglas elegidas a esta hoja. Nada se modifica hasta que pulses el botón.'}
                 </p>
               </div>
@@ -1663,17 +1738,17 @@ export default function Limpieza() {
                   )}
                   <button
                     type="button"
-                    onClick={() => void handleApplySheets(pendingPreparedSheets)}
-                    disabled={applying || detecting || !result || pendingPreparedSheets.length === 0}
+                    onClick={() => void handleApplySheets(cleaningRunSheets, { reclean: reviewMode })}
+                    disabled={applying || detecting || !result || cleaningRunSheets.length === 0}
                     className="inline-flex items-center gap-2 rounded-xl bg-teal px-7 py-3.5 text-base font-bold text-white shadow-lg transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {applying && <Loader2 className="h-5 w-5 animate-spin" />}
-                    {applying ? 'Limpiando datos...' : 'Limpiar datos'}
+                    {applying ? 'Limpiando datos...' : reviewMode ? 'Volver a limpiar' : 'Limpiar datos'}
                   </button>
                 </div>
               )}
               <button
-                onClick={() => void handleApply()}
+                onClick={() => void handleApply(reviewMode ? eliminarDuplicados : false)}
                 disabled={applying || assistedRunning || detecting || !result}
                 className={`${selectedSheets.length > 1 ? 'hidden' : 'inline-flex'} items-center gap-2 rounded-xl bg-teal px-8 py-3.5 text-base font-bold text-white shadow-lg transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:bg-teal/50`}
               >
@@ -1683,7 +1758,7 @@ export default function Limpieza() {
                   </>
                 ) : (
                   <>
-                    Limpiar datos <ArrowRight className="h-5 w-5" />
+                    {reviewMode ? 'Volver a limpiar' : 'Limpiar datos'} <ArrowRight className="h-5 w-5" />
                   </>
                 )}
               </button>
@@ -1692,7 +1767,7 @@ export default function Limpieza() {
         )}
 
         {/* ── Chat de limpieza dirigida (Analista/Gold) ── */}
-        {!applied && (
+        {!showingCompleted && (
           <Card className="border-navy/15 !p-5 bg-gradient-to-br from-gold/[0.04] to-transparent">
             <div className="flex items-center gap-2">
               <Wand2 className="h-5 w-5 text-teal" />
@@ -1823,7 +1898,9 @@ export default function Limpieza() {
                 'Dos filas idénticas pueden ser registros legítimos si el archivo omitió una variable diferenciadora. Verifica el origen antes de continuar.'}
             </p>
             <p className="mt-3 text-xs font-medium text-coral">
-              Esta acción modifica la base procesada y no se puede deshacer dentro de esta sesión.
+              {reviewMode
+                ? 'La selección se aplicará recién cuando pulses “Volver a limpiar”. Puedes cambiarla antes.'
+                : 'Esta acción volverá a procesar la hoja desde el archivo original.'}
             </p>
             <div className="mt-5 flex justify-end gap-2.5">
               <button
@@ -1840,7 +1917,7 @@ export default function Limpieza() {
                 className="inline-flex items-center gap-2 rounded-lg bg-coral px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-coral/90"
               >
                 <Trash2 className="h-4 w-4" />
-                Eliminar duplicados exactos
+                {reviewMode ? 'Incluir en la próxima limpieza' : 'Eliminar duplicados exactos'}
               </button>
             </div>
           </div>

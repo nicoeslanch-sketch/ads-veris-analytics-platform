@@ -78,7 +78,9 @@ def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> di
     unknown_sheets = [name for name in sheets if name not in available_sheets]
     if unknown_sheets:
         raise ValueError(f"Hojas desconocidas en analysis_scope: {', '.join(unknown_sheets)}.")
-    minimum = 1 if mode == "single" else (3 if mode == "append_join" else 2)
+    # append_join accepts one sales sheet plus one reference sheet. The left
+    # sheet is only a representative when several sales sheets are stacked.
+    minimum = 1 if mode == "single" else 2
     if len(sheets) < minimum:
         raise ValueError(f"El modo {mode} requiere al menos {minimum} hoja(s).")
     active = raw.get("active_sheet")
@@ -95,8 +97,8 @@ def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> di
         if not isinstance(append_raw, list) or not all(isinstance(item, str) for item in append_raw):
             raise ValueError("append_join requiere append_sheets.")
         append_sheets = list(dict.fromkeys(item.strip() for item in append_raw if item.strip()))
-        if len(append_sheets) < 2 or any(name not in sheets for name in append_sheets):
-            raise ValueError("append_join requiere al menos dos hojas compatibles incluidas.")
+        if len(append_sheets) < 1 or any(name not in sheets for name in append_sheets):
+            raise ValueError("append_join requiere al menos una hoja de ventas incluida.")
         normalized["append_sheets"] = append_sheets
     if mode in {"join", "append_join"}:
         join = raw.get("join")
@@ -487,9 +489,12 @@ def _metric_totals(frame: pd.DataFrame, mapping: dict[str, str]) -> dict[str, fl
 
 
 def append_compatible_frames(
-    frames: dict[str, pd.DataFrame], mappings: dict[str, dict[str, str]]
+    frames: dict[str, pd.DataFrame],
+    mappings: dict[str, dict[str, str]],
+    *,
+    allow_single: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, str], dict[str, Any]]:
-    if len(frames) < 2:
+    if len(frames) < 2 and not (allow_single and len(frames) == 1):
         raise ValueError("Se necesitan al menos dos hojas para apilar.")
     names = list(frames)
     first_name = names[0]
@@ -684,7 +689,7 @@ def build_analysis_frame(
     append_names = scope["append_sheets"]
     append_frames = {name: selected[name] for name in append_names}
     appended, appended_mapping, append_provenance = append_compatible_frames(
-        append_frames, mappings
+        append_frames, mappings, allow_single=True
     )
     right_name = scope["join"]["right_sheet"]
     synthetic_left = "__ventas_apiladas__"

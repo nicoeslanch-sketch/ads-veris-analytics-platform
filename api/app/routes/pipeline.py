@@ -1103,11 +1103,27 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     ]
 
     # ── Fase 18: cobertura de negocio adicional en Observaciones ──
-    # 1. Ambigüedades numéricas y de fecha detectadas por columna (los avisos
-    #    de estandarización también deben viajar en el archivo exportado).
+    # 1. Ambigüedades numéricas y de fecha detectadas por columna. Numeric
+    # summaries use the complete column (not the inference sample) and expose
+    # row samples so Observaciones reconciles with Auditoria.
+    numeric_ambiguities = result.get("_ambiguedades_numericas", {})
+    for column, detail in numeric_ambiguities.items():
+        count = int(detail.get("cantidad", 0) or 0)
+        convention = str(detail.get("convencion", "decimal")).upper()
+        sample_rows = ", ".join(str(row) for row in detail.get("filas_muestra", []))
+        observations.append((
+            "-",
+            source_sheet,
+            column,
+            "ambiguedad_numerica_resumen",
+            f"{count} valores como '1,234' se interpretaron como {convention}."
+            + (f" Filas de muestra: {sample_rows}." if sample_rows else ""),
+        ))
     for aviso in result.get("avisos", []):
         text = str(aviso)
         if "ambigu" not in text.casefold():
+            continue
+        if "1,234" in text and numeric_ambiguities:
             continue
         match = re.search(r"columna '([^']+)'", text)
         observations.append(
@@ -1681,6 +1697,25 @@ def _clean_download_book_uncached_sync(
                 "procesada": False,
                 "error": error,
             })
+
+    ambiguity_by_column: dict[str, int] = {}
+    for result in results.values():
+        for column, detail in result.get("_ambiguedades_numericas", {}).items():
+            ambiguity_by_column[column] = ambiguity_by_column.get(column, 0) + int(
+                detail.get("cantidad", 0) or 0
+            )
+    ambiguity_total = sum(ambiguity_by_column.values())
+    if ambiguity_total:
+        breakdown = ", ".join(
+            f"{count} en {column}" for column, count in sorted(ambiguity_by_column.items())
+        )
+        observations.append((
+            "-",
+            "Todas las hojas procesadas",
+            "*",
+            "ambiguedad_numerica_total",
+            f"{ambiguity_total} valores ambiguos fueron interpretados por la convención de su columna: {breakdown}.",
+        ))
 
     if processing_errors:
         raise HTTPException(

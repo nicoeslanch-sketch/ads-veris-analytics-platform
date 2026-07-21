@@ -51,7 +51,7 @@ import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { principalPorParticipacionBruta } from '../lib/metrics'
-import { serializedAnalysisScope } from '../lib/multiSheet'
+import { analysisScopesEqual, serializedAnalysisScope } from '../lib/multiSheet'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
@@ -414,7 +414,6 @@ export default function Explorar() {
       manifest: sheetManifest,
       retry: retryTick,
     })
-    if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     const cached = getCachedMetrics(key)
     if (cached) {
@@ -429,7 +428,7 @@ export default function Explorar() {
     }
     const snapshotMatchesRange = Boolean(
       contextMetrics &&
-      JSON.stringify(contextMetrics.analysis_scope ?? null) === JSON.stringify(analysisScope ?? null) &&
+      analysisScopesEqual(contextMetrics.analysis_scope, analysisScope) &&
       !rango.from &&
       !rango.to &&
       !contextMetrics.periodo.desde &&

@@ -1,4 +1,4 @@
-import { AlertTriangle, Layers3, Link2, Loader2, Rows3 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Layers3, Link2, Loader2, Rows3 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDataset } from '../data/DatasetContext'
@@ -8,7 +8,6 @@ import {
   compatibleAppendSheets,
   relationshipPlainMessage,
   selectAppendJoinCostCandidates,
-  synchronizeAppendJoinSelection,
 } from '../lib/multiSheet'
 import type { AnalysisScope, RelationshipCandidate, RelationshipResult } from '../lib/types'
 import { usePlan } from '../lib/usePlan'
@@ -26,6 +25,7 @@ export default function ActiveSheetSelector() {
     sheetSessions,
     sheetManifest,
     analysisScope,
+    metrics,
     setAnalysisScope,
     setSheet,
   } = useDataset()
@@ -61,6 +61,7 @@ export default function ActiveSheetSelector() {
   const [manualRight, setManualRight] = useState(cleanedSheets[1] ?? '')
   const [manualLeftKeys, setManualLeftKeys] = useState<string[]>(['', ''])
   const [manualRightKeys, setManualRightKeys] = useState<string[]>(['', ''])
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   useEffect(() => {
     if (analysisScope) setMode(analysisScope.mode)
@@ -74,10 +75,10 @@ export default function ActiveSheetSelector() {
   }, [cleanedSheets, manualLeft, manualRight])
 
   useEffect(() => {
-    if (compatibleSheets.length < 2) return
+    if (compatibleSheets.length < 1) return
     setAppendSheets((current) => {
       const stillCompatible = current.filter((name) => compatibleSheets.includes(name))
-      const next = stillCompatible.length >= 2 ? stillCompatible : compatibleSheets
+      const next = stillCompatible.length >= 1 ? stillCompatible : compatibleSheets
       return next.length === current.length && next.every((name, index) => name === current[index])
         ? current
         : next
@@ -92,6 +93,26 @@ export default function ActiveSheetSelector() {
     setManualLeftKeys([candidate.left_keys[0] ?? '', candidate.left_keys[1] ?? ''])
     setManualRightKeys([candidate.right_keys[0] ?? '', candidate.right_keys[1] ?? ''])
   }, [candidates])
+
+  const activeAppendJoin = mode === 'append_join' && analysisScope?.mode === 'append_join'
+    ? analysisScope
+    : null
+  const activeRelationCandidate = activeAppendJoin
+    ? candidates.find((candidate) => (
+        candidate.left_sheet === activeAppendJoin.join.left_sheet &&
+        candidate.right_sheet === activeAppendJoin.join.right_sheet &&
+        candidate.left_keys.join('|') === activeAppendJoin.join.left_keys.join('|')
+      )) ?? null
+    : null
+  const analysisProvenance = metrics?.analysis_provenance as
+    | { rows?: unknown; join?: { filas_sin_correspondencia?: unknown } }
+    | undefined
+  const activeRows = typeof analysisProvenance?.rows === 'number'
+    ? analysisProvenance.rows
+    : null
+  const unmatchedRows = typeof analysisProvenance?.join?.filas_sin_correspondencia === 'number'
+    ? analysisProvenance.join.filas_sin_correspondencia
+    : null
 
   if (!file || cleanedSheets.length <= 1) return null
 
@@ -114,52 +135,32 @@ export default function ActiveSheetSelector() {
   }
 
   const chooseAppendJoin = (names: string[]) => {
-    // La respuesta en vuelo fue calculada con la selección anterior. Mientras
-    // llega, no aceptar cambios que dejarían esa respuesta asociada a otras
-    // hojas distintas de las enviadas al backend.
     if (detecting) return
     const unique = compatibleSheets.filter((name) => names.includes(name))
-    if (analysisScope?.mode !== 'append_join') {
-      setAppendSheets((current) => (
-        unique.length === current.length && unique.every((name, index) => name === current[index])
-          ? current
-          : unique
-      ))
-      return
-    }
-    const update = synchronizeAppendJoinSelection(analysisScope, unique, compatibleSheets)
-    if (update.blocked === 'left_sheet_required') {
-      setRelationMessage(
-        `Mantén ${analysisScope.join.left_sheet}: es la hoja cuya llave ya validamos para agregar los costos.`,
-      )
-      return
-    }
-    if (update.blocked === 'minimum_two_sheets') {
-      setRelationMessage('Selecciona al menos dos hojas de ventas para apilar y agregar costos.')
+    if (unique.length < 1) {
+      setRelationMessage('Selecciona al menos una hoja de ventas para agregar sus costos.')
       return
     }
     setAppendSheets((current) => (
-      update.appendSheets.length === current.length &&
-      update.appendSheets.every((name, index) => name === current[index])
+      unique.length === current.length && unique.every((name, index) => name === current[index])
         ? current
-        : update.appendSheets
+        : unique
     ))
-    if (update.scope !== analysisScope) {
-      setAnalysisScope(update.scope)
-      setRelationMessage(
-        `Actualizado: se apilarán ${update.appendSheets.length} hojas de ventas y se agregarán los costos de ${update.scope.join.right_sheet}.`,
-      )
-    }
+    void findRelationships('append_join', unique)
   }
 
-  const findRelationships = async (nextMode: 'join' | 'append_join' = 'join') => {
+  const findRelationships = async (
+    nextMode: 'join' | 'append_join' = 'join',
+    requestedAppendSheets?: string[],
+  ) => {
     if (!sheetManifest || detecting) return
     setMode(nextMode)
     setDetecting(true)
     setRelationMessage(null)
     try {
-      const retainedAppendSelection = compatibleSheets.filter((name) => appendSheets.includes(name))
-      const appendSelection = retainedAppendSelection.length >= 2
+      const requested = requestedAppendSheets ?? appendSheets
+      const retainedAppendSelection = compatibleSheets.filter((name) => requested.includes(name))
+      const appendSelection = retainedAppendSelection.length >= 1
         ? retainedAppendSelection
         : compatibleSheets
       const focus = nextMode === 'append_join' ? { sheets: appendSelection } : null
@@ -185,7 +186,7 @@ export default function ActiveSheetSelector() {
         .sort((left, right) => Number(Boolean(right.recommended)) - Number(Boolean(left.recommended)))
       setCandidates(safeCandidates)
       const recommended = costSelection?.automatic ?? null
-      if (recommended && appendSelection.length >= 2) {
+      if (recommended && appendSelection.length >= 1) {
         setAppendSheets((current) => (
           appendSelection.length === current.length &&
           appendSelection.every((name, index) => name === current[index])
@@ -291,9 +292,9 @@ export default function ActiveSheetSelector() {
     setSheet(candidate.left_sheet)
     if (mode === 'append_join') {
       const retained = compatibleSheets.filter((name) => appendSheets.includes(name))
-      const appendSelection = retained.length >= 2 ? retained : compatibleSheets
-      if (appendSelection.length < 2 || !appendSelection.includes(candidate.left_sheet)) {
-        setRelationMessage('Selecciona al menos dos hojas de ventas compatibles que incluyan la hoja vinculada.')
+      const appendSelection = retained.length >= 1 ? retained : compatibleSheets
+      if (appendSelection.length < 1 || !appendSelection.includes(candidate.left_sheet)) {
+        setRelationMessage('Selecciona al menos una hoja de ventas que use la clave validada.')
         return
       }
       setAnalysisScope({
@@ -407,21 +408,15 @@ export default function ActiveSheetSelector() {
           {mode === 'append_join' && (
             <div className="mb-3 border-b border-navy/10 pb-3">
               <p className="text-xs text-navy/55">Buscamos automáticamente ID_Producto, apilamos las ventas compatibles y agregamos costos de Productos sin cambiar filas ni ingresos. No necesitas elegir columnas.</p>
+              <p className="mt-2 text-xs font-semibold text-navy">Cambiar hojas de ventas</p>
               <div className="mt-2 flex flex-wrap gap-3">
                 {compatibleSheets.map((name) => (
                   <label key={name} className="flex items-center gap-1.5 text-xs text-navy/70">
                     <input
                       type="checkbox"
                       checked={appendSheets.includes(name)}
-                      disabled={detecting || (analysisScope?.mode === 'append_join' && (
-                        name === analysisScope.join.left_sheet ||
-                        (appendSheets.includes(name) && appendSheets.length <= 2)
-                      ))}
-                      title={detecting
-                        ? 'Espera a que termine la búsqueda de conexiones.'
-                        : analysisScope?.mode === 'append_join' && name === analysisScope.join.left_sheet
-                          ? 'Esta hoja contiene la llave validada de la relación.'
-                          : undefined}
+                      disabled={detecting}
+                      title={detecting ? 'Espera a que termine la validación de la selección.' : undefined}
                       onChange={(event) => chooseAppendJoin(
                         event.target.checked
                           ? [...appendSheets, name]
@@ -435,22 +430,83 @@ export default function ActiveSheetSelector() {
               </div>
             </div>
           )}
-          {!detecting && relationMessage && candidates.length > 0 && (
-            <p className="mb-3 rounded-lg bg-green/10 px-3 py-2 text-xs text-navy/70">
-              {relationMessage}
-            </p>
-          )}
           {detecting ? (
             <p className="flex items-center gap-2 text-xs text-navy/60">
               <Loader2 className="h-4 w-4 animate-spin text-teal" /> Buscando conexiones seguras...
             </p>
+          ) : activeAppendJoin ? (
+            <div className="rounded-lg border border-green/25 bg-green/[0.07] p-3">
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-navy">Ventas + costos activo</p>
+                  <p className="mt-1 text-sm font-semibold text-navy">
+                    {activeAppendJoin.append_sheets.length === 1
+                      ? activeAppendJoin.append_sheets[0]
+                      : `${activeAppendJoin.append_sheets.length} hojas de ventas combinadas`}
+                    {' ↔ '}{activeAppendJoin.join.right_sheet}
+                  </p>
+                  <p className="mt-0.5 text-xs text-navy/60">
+                    Clave: {activeAppendJoin.join.left_keys.join(' + ')} ↔{' '}
+                    {activeAppendJoin.join.right_keys.join(' + ')}
+                  </p>
+                  {(activeRows !== null || unmatchedRows !== null) && (
+                    <p className="mt-1 text-[11px] text-navy/55">
+                      {activeRows !== null ? `${activeRows.toLocaleString('es-CL')} filas` : null}
+                      {activeRows !== null && unmatchedRows !== null ? ' · ' : null}
+                      {unmatchedRows !== null
+                        ? `${unmatchedRows.toLocaleString('es-CL')} ventas sin correspondencia`
+                        : null}
+                    </p>
+                  )}
+                  <p className="mt-1 text-[11px] text-navy/55">
+                    Los ingresos y el número de filas no cambiarán por agregar los costos.
+                  </p>
+                  {activeRelationCandidate && (
+                    <p className="mt-1 text-[11px] text-navy/50">
+                      {relationshipPlainMessage(activeRelationCandidate)}
+                    </p>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (activeAppendJoin.append_sheets.length >= 2) {
+                          setMode('append')
+                          chooseAppend(activeAppendJoin.append_sheets)
+                        } else {
+                          setMode('single')
+                          chooseSingle(activeAppendJoin.append_sheets[0])
+                        }
+                      }}
+                      className="text-xs font-semibold text-teal hover:underline"
+                    >
+                      Desactivar costos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAdvanced(true)
+                        selectMode('join')
+                      }}
+                      className="text-xs font-semibold text-navy/60 hover:text-navy"
+                    >
+                      La conexión detectada no corresponde
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : candidates.length > 0 ? (
             <div className="space-y-3">
               {candidates.slice(0, advanced ? 5 : 1).map((candidate) => (
                 <div key={`${candidate.left_sheet}-${candidate.right_sheet}-${candidate.left_keys.join('|')}`} className="flex flex-wrap items-center gap-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-semibold text-navy">
-                      {candidate.recommended ? 'Conexión recomendada' : 'Conexión disponible'}: {candidate.left_sheet} + {candidate.right_sheet}
+                      {candidate.recommended ? 'Conexión recomendada' : 'Conexión disponible'}:{' '}
+                      {mode === 'append_join' && appendSheets.length > 1
+                        ? `${appendSheets.length} hojas de ventas combinadas ↔ ${candidate.right_sheet}`
+                        : `${candidate.left_sheet} ↔ ${candidate.right_sheet}`}
                     </p>
                     <p className="mt-0.5 text-xs text-navy/55">
                       {candidate.left_keys.join(' + ')} ↔ {candidate.right_keys.join(' + ')}
@@ -474,7 +530,7 @@ export default function ActiveSheetSelector() {
               {relationMessage ?? 'No encontramos una conexion segura entre estas hojas. Puedes analizarlas por separado.'}
             </p>
           )}
-          <details className="mt-3 border-t border-navy/10 pt-3">
+          {(mode === 'join' || showAdvanced) && <details className="mt-3 border-t border-navy/10 pt-3" open={showAdvanced}>
             <summary className="cursor-pointer text-xs font-semibold text-teal">
               Opciones avanzadas: elegir columnas manualmente
             </summary>
@@ -526,7 +582,7 @@ export default function ActiveSheetSelector() {
             <button type="button" onClick={() => void validateManualRelationship()} disabled={detecting} className="mt-3 rounded-lg border border-teal/40 px-3 py-2 text-xs font-semibold text-teal disabled:opacity-50">
               Validar relacion
             </button>
-          </details>
+          </details>}
         </div>
       )}
     </section>

@@ -240,7 +240,13 @@ def column_date_profile(series: pd.Series) -> dict:
     MM/DD la columna es MIXTA — cada valor inequívoco se interpreta por su
     propia evidencia y las ambiguas usan la convención dominante, con aviso."""
     dmy = mdy = ambiguous = 0
-    for value in _sample_values(series):
+    ambiguous_rows: list[int] = []
+    # Type inference may sample, but a user-facing warning must report the
+    # complete column. The old implementation presented a 300-row sample as
+    # though it were the exact total.
+    for position, value in enumerate(series):
+        if is_missing(value):
+            continue
         text = str(value).strip().split(" ")[0]
         if not _DATE_SHAPE.match(text):
             continue
@@ -252,8 +258,17 @@ def column_date_profile(series: pd.Series) -> dict:
         else:
             parts = re.split(r"[-/.]", text)
             # Ambigua: tres partes numéricas y la primera NO es un año ISO.
-            if len(parts) == 3 and parts[0].isdigit() and len(parts[0]) <= 2:
+            if (
+                len(parts) == 3
+                and parts[0].isdigit()
+                and parts[1].isdigit()
+                and len(parts[0]) <= 2
+                and 1 <= int(parts[0]) <= 12
+                and 1 <= int(parts[1]) <= 12
+            ):
                 ambiguous += 1
+                if len(ambiguous_rows) < 5:
+                    ambiguous_rows.append(position + 2)
     if dmy and not mdy:
         dayfirst = True
     elif mdy and not dmy:
@@ -265,6 +280,7 @@ def column_date_profile(series: pd.Series) -> dict:
         "dmy": dmy,
         "mdy": mdy,
         "ambiguas": ambiguous,
+        "muestras_ambiguas": ambiguous_rows,
         "mixta": bool(dmy and mdy),
     }
 
@@ -372,6 +388,18 @@ def column_dot3_convention(series: pd.Series) -> str:
     return "miles"
 
 
+def comma3_ambiguous_rows(series: pd.Series, limit: int | None = None) -> list[int]:
+    """Returns 1-based spreadsheet-like row samples for ambiguous ``1,234`` values."""
+    rows: list[int] = []
+    for position, value in enumerate(series):
+        text, _ = _strip_number_decorations(value)
+        if re.fullmatch(r"[+-]?\d{1,3},\d{3}", text):
+            rows.append(position + 2)
+            if limit is not None and len(rows) >= limit:
+                break
+    return rows
+
+
 def column_comma3_convention(series: pd.Series) -> tuple[str, int]:
     """Convención para el caso ambiguo "#,###" (Fase 12b §P0.4, Fase 18 §magnitud).
 
@@ -380,12 +408,12 @@ def column_comma3_convention(series: pd.Series) -> tuple[str, int]:
     - valores con coma y 1–2 decimales ("12,5") o formato "1.234,56" → decimal;
     - valores con comas múltiples ("1,234,567") o formato "1,234.56" → miles;
     - sin separadores en disputa, la MAGNITUD de los valores planos decide:
-      una columna dominada por enteros de miles (montos CLP típicos) convierte
-      "1,234" en 1.234 pesos — cinco órdenes de magnitud bajo sus pares — si
-      se lee como decimal. En ese caso la lectura consistente es miles.
+      una columna dominada por enteros de miles (montos CLP típicos) dejaría
+      "1,234" en 1.234 pesos — varios órdenes de magnitud bajo sus pares — si
+      se leyera como decimal. En ese caso la lectura consistente es miles.
     Devuelve (convención, cantidad_de_valores_ambiguos). Sin evidencia se
     mantiene 'decimal' (convención es-CL) y el llamador AVISA la ambigüedad."""
-    decimal_votes = miles_votes = ambiguous = 0
+    decimal_votes = miles_votes = 0
     plain_grandes = plain_chicos = 0
     for value in _sample_values(series):
         text, _ = _strip_number_decorations(value)
@@ -414,8 +442,7 @@ def column_comma3_convention(series: pd.Series) -> tuple[str, int]:
         right = text.split(",")[1]
         if len(right) in (1, 2):
             decimal_votes += 1  # 12,5
-        elif len(right) == 3:
-            ambiguous += 1  # 1,234 — el caso en disputa
+    ambiguous = len(comma3_ambiguous_rows(series))
     if miles_votes and not decimal_votes:
         return "miles", ambiguous
     if (
@@ -950,6 +977,7 @@ def standardize_dataframe(
     column_types: dict[str, str] = {}
     column_confidence: dict[str, float] = {}
     numeric_conventions: dict[str, str] = {}
+    numeric_ambiguities: dict[str, dict] = {}
     date_dayfirst: dict[str, bool] = {}
     fuzzy_total = 0
     fuzzy_examples: list[list[str]] = []
@@ -1019,11 +1047,13 @@ def standardize_dataframe(
                 # (parse_date); los ambiguos usan la convención dominante y el
                 # usuario queda AVISADO en vez de una conversión silenciosa.
                 dominante = "día/mes (es-CL)" if dayfirst else "mes/día (US)"
+                muestras = ", ".join(str(row) for row in profile["muestras_ambiguas"])
                 date_avisos.append(
                     f"La columna '{col}' mezcla formatos de fecha día/mes y mes/día "
                     f"({profile['dmy']} y {profile['mdy']} valores inequívocos). "
                     f"{profile['ambiguas']} fecha(s) ambiguas se interpretaron como "
                     f"{dominante} — revísalas antes de confiar en los meses."
+                    + (f" Filas de muestra: {muestras}." if muestras else "")
                 )
 
             def _standardize_date(value: str) -> str:
@@ -1048,6 +1078,15 @@ def standardize_dataframe(
             convention = column_dot3_convention(result[col])
             numeric_conventions[col] = convention
             comma_convention, ambiguous_commas = column_comma3_convention(result[col])
+            ambiguous_samples = comma3_ambiguous_rows(result[col], limit=5)
+            if ambiguous_commas:
+                numeric_ambiguities[col] = {
+                    "cantidad": ambiguous_commas,
+                    "convencion": comma_convention,
+                    "filas_muestra": ambiguous_samples,
+                }
+            sample_text = ", ".join(str(row) for row in ambiguous_samples)
+            sample_suffix = f" Filas de muestra: {sample_text}." if sample_text else ""
             if ambiguous_commas and comma_convention == "decimal":
                 # Fase 12b: sin evidencia en la columna, "1,234" se interpreta
                 # como decimal (es-CL) — pero el usuario DEBE saberlo, porque
@@ -1058,6 +1097,7 @@ def standardize_dataframe(
                     "interpretaron como DECIMAL por convención chilena; si tus "
                     "datos vienen en formato estadounidense, corrígelo en el "
                     "origen o revisa esos montos."
+                    + sample_suffix
                 )
             elif ambiguous_commas and comma_convention == "miles":
                 # Fase 18: la magnitud de la columna (o su formato US) decidió
@@ -1069,6 +1109,7 @@ def standardize_dataframe(
                     "interpretaron como MILES por consistencia con los demás "
                     "valores de la columna; si en tu origen son decimales, "
                     "revisa esos montos."
+                    + sample_suffix
                 )
 
             def _standardize_number(value: str) -> str:
@@ -1103,6 +1144,7 @@ def standardize_dataframe(
         "column_types": column_types,
         "column_confidence": column_confidence,
         "convenciones_numericas": numeric_conventions,
+        "ambiguedades_numericas": numeric_ambiguities,
         "fechas_dayfirst": date_dayfirst,
         "avisos": date_avisos,
         "fusiones_texto": {"total": fuzzy_total, "ejemplos": fuzzy_examples},

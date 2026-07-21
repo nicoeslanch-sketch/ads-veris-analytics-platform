@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from app.engine.metrics import _group_sum, compute_metrics
-from app.engine.standardize import column_comma3_convention
+from app.engine.standardize import column_comma3_convention, column_date_profile, standardize_dataframe
 from app.routes.pipeline import (
     _clean_download_book_uncached_sync,
     _metrics_sync,
@@ -66,6 +66,29 @@ def test_comma3_decimales_reales_mantienen_decimal():
 def test_comma3_enteros_chicos_mantienen_decimal():
     serie = pd.Series(["1,234", "2", "5"])
     assert column_comma3_convention(serie) == ("decimal", 1)
+
+
+def test_comma3_reporta_el_total_completo_mas_alla_de_la_muestra():
+    values = [str(10_000 + index) for index in range(360)] + ["1,234"] * 90
+    _, report = standardize_dataframe(pd.DataFrame({"Monto": values}))
+
+    detail = report["ambiguedades_numericas"]["Monto"]
+    assert detail["cantidad"] == 90
+    assert detail["convencion"] == "miles"
+    assert detail["filas_muestra"] == [362, 363, 364, 365, 366]
+    assert any("90 valor(es)" in warning for warning in report["avisos"])
+
+
+def test_perfil_de_fechas_reporta_toda_la_columna_y_muestras_reales():
+    values = ["13/01/2025"] * 25 + ["01/13/2025"] * 20 + ["01/02/2025"] * 355
+
+    profile = column_date_profile(pd.Series(values))
+
+    assert profile["dmy"] == 25
+    assert profile["mdy"] == 20
+    assert profile["ambiguas"] == 355
+    assert profile["muestras_ambiguas"] == [47, 48, 49, 50, 51]
+    assert profile["mixta"] is True
 
 
 def test_metrics_incluye_1234_como_miles_y_avisa(stress_book):
@@ -176,6 +199,27 @@ def test_ventas_exponen_agrupaciones_flexibles(stress_book):
         assert all(g["nombre"].casefold() != "nan" for g in item["grupos"])
 
 
+def test_descuentos_flexibles_separan_valores_fuera_de_rango():
+    frame = pd.DataFrame({
+        "Fecha": ["01/01/2025"] * 9,
+        "Monto": [100, 200, 300, 400, 500, 600, 700, 800, 900],
+        "Descuento_Pct": [0, 0.03, 0.08, 0.15, 0.40, 0.75, 1.10, -0.20, None],
+    })
+
+    result = compute_metrics(frame, {"fecha": "Fecha", "monto": "Monto"})
+    grouping = next(
+        item for item in result["agrupaciones_flexibles"]
+        if item["columna"] == "Descuento_Pct"
+    )
+    labels = {group["nombre"] for group in grouping["grupos"]}
+
+    assert labels == {
+        "Sin dato", "Sin descuento", "1–5%", "6–10%", "11–20%",
+        "21–50%", "51–100%", "Fuera de rango",
+    }
+    assert grouping["fuera_de_rango"] == {"filas": 2, "monto_asociado": 1500.0}
+
+
 # ── Observaciones con cobertura de negocio ───────────────────────────────────
 
 def test_observaciones_incluyen_duplicados_conservados_y_ambiguos(export_book):
@@ -186,6 +230,12 @@ def test_observaciones_incluyen_duplicados_conservados_y_ambiguos(export_book):
     tipos = set(obs["Tipo"])
     assert "duplicado_conservado" in tipos
     assert obs["Detalle"].str.contains("1,234", regex=False).any()
+    ambiguity_rows = obs[obs["Tipo"] == "ambiguedad_numerica_resumen"]
+    assert len(ambiguity_rows) == 2
+    assert ambiguity_rows["Detalle"].str.startswith("1 valores").all()
+    total_row = obs[obs["Tipo"] == "ambiguedad_numerica_total"]
+    assert len(total_row) == 1
+    assert total_row.iloc[0]["Detalle"].startswith("2 valores ambiguos")
     # ID_Sucursal es clave foránea en ventas: sus repeticiones NO son conflicto.
     conflictos = obs[obs["Tipo"] == "conflicto_id"]
     assert not (conflictos["Columna"] == "ID_Sucursal").any()

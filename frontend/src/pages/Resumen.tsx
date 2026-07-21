@@ -48,7 +48,7 @@ import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { summaryContentKind } from '../lib/metrics'
-import { serializedAnalysisScope } from '../lib/multiSheet'
+import { analysisScopesEqual, serializedAnalysisScope } from '../lib/multiSheet'
 import type { MetricsResult } from '../lib/types'
 
 type UsableMonetaryKpis = MetricsResult['kpis'] & {
@@ -280,7 +280,6 @@ export default function Resumen() {
       manifest: sheetManifest,
       retry: retryTick,
     })
-    if (lastFetchKey.current === key) return
     lastFetchKey.current = key
     const cached = getCachedMetrics(key)
     if (cached) {
@@ -293,7 +292,7 @@ export default function Resumen() {
     }
     const snapshotMatchesPeriod = Boolean(
       contextMetrics &&
-      JSON.stringify(contextMetrics.analysis_scope ?? null) === JSON.stringify(analysisScope ?? null) &&
+      analysisScopesEqual(contextMetrics.analysis_scope, analysisScope) &&
       !period.from &&
       !period.to &&
       !contextMetrics.periodo.desde &&
@@ -449,7 +448,10 @@ export default function Resumen() {
             color: CHART.gastos,
             value: kpis.gastos_totales ? formatCLP(kpis.gastos_totales.valor) : '—',
             variation: kpis.base_costos ? (
-              <p className="text-xs text-navy/40">
+              <p
+                className="text-xs text-navy/40"
+                title="La utilidad no usa ventas sin costo ni costos sin ingreso. No se consideran costo cero."
+              >
                 {formatNumber(kpis.base_costos.filas_con_costo)} registros con costo;{' '}
                 {formatNumber(kpis.base_costos.filas_pareadas)} pareados para utilidad
               </p>
@@ -664,14 +666,20 @@ export default function Resumen() {
           )}
 
           {(metrics.duplicados?.conservados ?? 0) > 0 && (
-            <div className="mt-4 flex items-start gap-2 rounded-lg border border-gold/40 bg-gold/[0.07] px-4 py-2.5 text-xs text-navy/75">
+            <div className="mt-4 flex flex-wrap items-start gap-2 rounded-lg border border-gold/40 bg-gold/[0.07] px-4 py-2.5 text-xs text-navy/75">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
-              <p>
+              <p className="min-w-0 flex-1">
                 Se detectaron <strong>{formatNumber(metrics.duplicados?.detectados ?? 0)}</strong>{' '}
                 duplicados exactos y se conservaron{' '}
                 <strong>{formatNumber(metrics.duplicados?.conservados ?? 0)}</strong> porque no
                 confirmaste su eliminación. Los totales actuales los incluyen.
               </p>
+              <Link
+                to="/limpieza?revision=1"
+                className="ml-5 inline-flex shrink-0 rounded-md border border-gold/45 bg-white px-2.5 py-1.5 font-semibold text-navy hover:bg-gold/[0.06] sm:ml-0"
+              >
+                Ver detalle y ajustar
+              </Link>
             </div>
           )}
 
@@ -1116,6 +1124,18 @@ function FlexibleGroupCard({
           : ''}
         .
       </p>
+      {agrupacion.fuera_de_rango && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-gold/35 bg-gold/[0.08] px-3 py-2 text-xs text-navy/70">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-gold" />
+          <span className="min-w-0 flex-1">
+            <strong>{formatNumber(agrupacion.fuera_de_rango.filas)}</strong> filas están fuera de 0–100%
+            {' · '}monto asociado: <strong>{formatCLP(agrupacion.fuera_de_rango.monto_asociado)}</strong>.
+          </span>
+          <Link to="/limpieza?revision=1" className="font-semibold text-teal hover:underline">
+            Revisar detalle
+          </Link>
+        </div>
+      )}
       <div className="mt-4" style={{ height: Math.max(rows.length * 30 + 40, 140) }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>

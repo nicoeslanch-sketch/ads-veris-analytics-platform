@@ -2,6 +2,26 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.21.1] - 2026-07-21 - Revisión de limpieza y controles auditables
+
+- Una limpieza terminada puede volver a abrir su diagnóstico desde Resumen o
+  Limpieza, ajustar reglas o duplicados y volver a procesarse sin subir el
+  archivo otra vez.
+- "Ventas + costos" se aplica una sola vez, admite entre una y todas las hojas
+  de ventas compatibles y no deja Resumen o Explorar vacíos al reutilizar un
+  alcance o una petición en caché.
+- Observaciones reconcilia los `184` literales ambiguos `"1,234"` del libro de
+  estrés con Auditoría y muestra muestras de filas; las fechas también usan el
+  conteo completo de la columna, no una muestra presentada como total.
+- Los descuentos canónicos fuera de `0–100%` se conservan, se separan en
+  "Fuera de rango" y muestran filas y monto asociado sin tratarlos como un
+  descuento comercial válido.
+- Regresiones reales fijan filas, ingresos, costos, utilidad, alcance exportado
+  y decisiones de duplicados del libro multihoja.
+
+Sube `ENGINE_VERSION` a `0.21.1`. No agrega migraciones: `0021` sigue siendo
+la última.
+
 ## [0.21.0] - 2026-07-19 - Fase 18: auditoría del estrés multihoja, resúmenes con gráficos y limpieza más clara
 
 Verificación independiente contra la Prueba de Estrés Multihoja: todos los

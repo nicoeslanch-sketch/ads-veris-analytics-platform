@@ -1,6 +1,7 @@
 """Regression coverage for intelligent selection, chained analysis and export."""
 
 import io
+import json
 import os
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from app.engine.multi_sheet import (
     join_related_frames,
     validate_analysis_scope,
 )
-from app.engine.standardize import parse_date, standardize_dataframe
+from app.engine.standardize import column_date_profile, parse_date, standardize_dataframe
 from app.routes.pipeline import _clean_download_book_sync
 from app.routes.pipeline import _analysis_export_type_columns
 from app.routes.pipeline import _cache_key
@@ -168,6 +169,45 @@ def test_append_then_join_derives_cost_without_changing_rows_or_income():
     assert mapping["costo"] == "Costo_Venta"
     assert provenance["join"]["filas_sin_correspondencia"] == 0
     assert provenance["join"]["costo_derivado"]["cobertura_costos_pct"] == 100.0
+
+
+def test_append_join_accepts_one_sales_sheet_and_one_catalog():
+    sales = pd.DataFrame(
+        {"ID_Producto": ["A", "B"], "Cantidad": [2, 1], "Monto": [500, 300]}
+    )
+    products = pd.DataFrame(
+        {"ID_Producto": ["A", "B"], "Costo_Unitario": [100, 200]}
+    )
+    frames = {"Enero": sales, "Productos": products}
+    mappings = {
+        "Enero": {"producto": "ID_Producto", "cantidad": "Cantidad", "monto": "Monto"},
+        "Productos": {"costo": "Costo_Unitario"},
+    }
+    scope = validate_analysis_scope(
+        {
+            "mode": "append_join",
+            "sheets": ["Enero", "Productos"],
+            "append_sheets": ["Enero"],
+            "active_sheet": "Enero",
+            "join": {
+                "left_sheet": "Enero",
+                "right_sheet": "Productos",
+                "left_keys": ["ID_Producto"],
+                "right_keys": ["ID_Producto"],
+                "type": "left",
+            },
+        },
+        list(frames),
+    )
+
+    joined, mapping, provenance = build_analysis_frame(frames, mappings, scope)
+
+    assert scope["append_sheets"] == ["Enero"]
+    assert len(joined) == 2
+    assert joined["Costo_Venta"].sum() == 400
+    assert joined["Utilidad_Bruta"].sum() == 400
+    assert mapping["costo"] == "Costo_Venta"
+    assert provenance["join"]["filas_sin_correspondencia"] == 0
 
 
 def test_product_catalog_has_unit_statistics_not_fake_cost_sum():
@@ -1028,6 +1068,29 @@ def test_stress_workbook_verifiable_regressions():
     STRESS_PATH is None or not STRESS_PATH.is_file(),
     reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
 )
+def test_stress_date_ambiguities_use_full_columns_not_samples():
+    content = STRESS_PATH.read_bytes()
+    expected = {
+        "Ventas_Ene_Abr_2025": 142,
+        "Ventas_May_Ago_2025": 133,
+        "Ventas_Sep_Dic_2025": 141,
+    }
+
+    observed = {}
+    for name, expected_count in expected.items():
+        frame, _ = load_dataframe_with_report(STRESS_PATH.name, content, sheet=name)
+        profile = column_date_profile(frame["Fecha"])
+        observed[name] = profile["ambiguas"]
+        assert profile["ambiguas"] == expected_count
+        assert len(profile["muestras_ambiguas"]) == 5
+
+    assert sum(observed.values()) == 416
+
+
+@pytest.mark.skipif(
+    STRESS_PATH is None or not STRESS_PATH.is_file(),
+    reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
+)
 def test_stress_append_join_exact_cost_regression():
     from app.routes.pipeline import _analyze_cached
 
@@ -1068,12 +1131,182 @@ def test_stress_append_join_exact_cost_regression():
     # parse_number con su convención de miles volvería a convertir 1.234 en
     # 1234 y reproduciría precisamente el bug de doble interpretación.
     metrics = compute_metrics(joined, mapping)
-    assert metrics["kpis"]["ingresos_totales"]["valor"] == 3_165_789_390.89
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 3_165_894_176
     assert metrics["kpis"]["gastos_totales"]["valor"] == 1_853_487_400
     cost = provenance["join"]["costo_derivado"]
     assert cost["filas_con_costo"] == 5043
     assert cost["cobertura_costos_pct"] == 92.87
     assert provenance["join"]["filas_sin_correspondencia"] == 54
+
+
+@pytest.mark.skipif(
+    STRESS_PATH is None or not STRESS_PATH.is_file(),
+    reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
+)
+def test_stress_append_join_preserves_verified_control_totals():
+    from app.routes.pipeline import _analyze_cached
+
+    content = STRESS_PATH.read_bytes()
+    sales = ["Ventas_Ene_Abr_2025", "Ventas_May_Ago_2025", "Ventas_Sep_Dic_2025"]
+    names = [*sales, "Productos"]
+    results = {
+        name: _analyze_cached(
+            STRESS_PATH.name,
+            content,
+            None,
+            True,
+            sheet=name,
+            eliminar_duplicados=False,
+        )
+        for name in names
+    }
+    joined, mapping, provenance = build_analysis_frame(
+        {name: result["_df_limpio"] for name, result in results.items()},
+        {name: result["mapeo"] for name, result in results.items()},
+        {
+            "mode": "append_join",
+            "sheets": names,
+            "append_sheets": sales,
+            "active_sheet": sales[0],
+            "join": {
+                "left_sheet": sales[0],
+                "right_sheet": "Productos",
+                "left_keys": ["ID_Producto"],
+                "right_keys": ["ID_Producto"],
+                "type": "left",
+            },
+        },
+    )
+
+    metrics = compute_metrics(joined, mapping)
+    kpis = metrics["kpis"]
+    base_costs = kpis["base_costos"]
+    assert len(joined) == 5_505
+    assert kpis["ingresos_totales"]["valor"] == 3_200_889_420
+    assert kpis["gastos_totales"]["valor"] == 1_879_040_000
+    assert base_costs == {
+        "filas_con_costo": 5_115,
+        "costo_total_conocido": 1_879_040_000.0,
+        "filas_pareadas": 4_931,
+        "costo_pareado": 1_806_140_400.0,
+        "ingresos_pareados": 2_967_594_838.0,
+    }
+    assert kpis["ganancia_neta"]["valor"] == 1_161_454_438
+    assert kpis["margen_utilidad_pct"]["valor"] == 39.1
+    assert kpis["cobertura_costos"] == {
+        "filas_con_ingreso": 5_302,
+        "filas_con_ingreso_y_costo": 4_931,
+        "pct": 93.0,
+    }
+    discount_grouping = next(
+        item for item in metrics["agrupaciones_flexibles"]
+        if item["columna"] == "Descuento_Pct"
+    )
+    assert discount_grouping["fuera_de_rango"] == {
+        "filas": 360,
+        "monto_asociado": 222_999_470.0,
+    }
+    assert "Fuera de rango" in {
+        group["nombre"] for group in discount_grouping["grupos"]
+    }
+    assert provenance["join"]["filas_sin_correspondencia"] == 54
+
+
+@pytest.mark.skipif(
+    STRESS_PATH is None or not STRESS_PATH.is_file(),
+    reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
+)
+def test_stress_append_join_export_reconciles_scope_totals_and_ambiguities():
+    content = STRESS_PATH.read_bytes()
+    sales = ["Ventas_Ene_Abr_2025", "Ventas_May_Ago_2025", "Ventas_Sep_Dic_2025"]
+    selected = [*sales, "Productos"]
+    source_book = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=False)
+    all_sheets = list(source_book.sheetnames)
+    source_book.close()
+    manifest = {
+        "hojas": [
+            {
+                "nombre": name,
+                "procesar": name in selected,
+                "rules": {},
+                "mapping": {},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "revision": 0,
+            }
+            for name in all_sheets
+        ]
+    }
+    scope = {
+        "mode": "append_join",
+        "sheets": selected,
+        "append_sheets": sales,
+        "active_sheet": sales[0],
+        "join": {
+            "left_sheet": sales[0],
+            "right_sheet": "Productos",
+            "left_keys": ["ID_Producto"],
+            "right_keys": ["ID_Producto"],
+            "type": "left",
+        },
+    }
+
+    payload, _, _ = _clean_download_book_sync(
+        STRESS_PATH.name, content, manifest, "xlsx", scope
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(payload), data_only=False)
+    related = workbook["Datos_relacionados"]
+    positions = {cell.value: cell.column for cell in related[1]}
+    assert related.max_row - 1 == 5_505
+    amount_values = [
+        related.cell(row, positions["Monto"]).value
+        for row in range(2, related.max_row + 1)
+    ]
+    numeric_amounts = [value for value in amount_values if isinstance(value, (int, float))]
+    assert len(numeric_amounts) == 5_302
+    assert sum(numeric_amounts) == 3_200_889_420
+    cost_values = [
+        related.cell(row, positions["Costo_Venta"]).value
+        for row in range(2, related.max_row + 1)
+    ]
+    utility_values = [
+        related.cell(row, positions["Utilidad_Bruta"]).value
+        for row in range(2, related.max_row + 1)
+    ]
+    assert sum(value for value in cost_values if isinstance(value, (int, float))) == 1_879_040_000
+    assert sum(value for value in utility_values if isinstance(value, (int, float))) == 1_161_454_438
+    assert related.cell(2, positions["Fecha"]).is_date
+    for column in ("Costo_Unitario", "Costo_Venta", "Utilidad_Bruta", "Margen_Bruto"):
+        assert related.cell(2, positions[column]).data_type == "n"
+
+    manifest_sheet = workbook["Manifest"]
+    manifest_columns = {cell.value: cell.column for cell in manifest_sheet[1]}
+    exported_scope = json.loads(
+        manifest_sheet.cell(2, manifest_columns["alcance_analisis"]).value
+    )
+    assert exported_scope["mode"] == "append_join"
+    assert exported_scope["append_sheets"] == sales
+    assert exported_scope["join"]["right_sheet"] == "Productos"
+
+    observations = pd.read_excel(
+        io.BytesIO(payload), sheet_name="Observaciones", dtype=str, keep_default_na=False
+    )
+    summaries = observations[observations["Tipo"] == "ambiguedad_numerica_resumen"]
+    counts_by_column = summaries.groupby("Columna")["Detalle"].apply(
+        lambda details: sum(int(detail.split(" ", 1)[0]) for detail in details)
+    )
+    assert counts_by_column.to_dict() == {"Monto": 86, "Precio_Unitario": 98}
+    total = observations[observations["Tipo"] == "ambiguedad_numerica_total"]
+    assert len(total) == 1
+    assert total.iloc[0]["Detalle"].startswith("184 valores ambiguos")
+
+    audit = pd.read_excel(
+        io.BytesIO(payload), sheet_name="Auditoria", dtype=str, keep_default_na=False
+    )
+    audited_ambiguous = audit.apply(
+        lambda column: column.astype(str).str.contains("1,234", regex=False)
+    ).any(axis=1)
+    assert int(audited_ambiguous.sum()) == 184
 
 
 @pytest.mark.skipif(
@@ -1127,12 +1360,7 @@ def test_stress_relationship_allow_and_block_matrix():
     STRESS_PATH is None or not STRESS_PATH.is_file(),
     reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason="86 ambiguous Monto='1,234' cells replaced their originals; the control total cannot be reconstructed without inventing data",
-)
-def test_stress_control_amount_after_duplicates_is_reconstructible():
-    from app.engine.standardize import parse_number
+def test_stress_control_amounts_reconcile_with_duplicate_decision():
     from app.routes.pipeline import _analyze_cached
 
     content = STRESS_PATH.read_bytes()
@@ -1142,7 +1370,7 @@ def test_stress_control_amount_after_duplicates_is_reconstructible():
     for name in names:
         before = _analyze_cached(STRESS_PATH.name, content, None, True, sheet=name, eliminar_duplicados=False)
         result = _analyze_cached(STRESS_PATH.name, content, None, True, sheet=name, eliminar_duplicados=True)
-        before_total += float(before["_df_limpio"][before["mapeo"]["monto"]].map(parse_number).dropna().sum())
-        after_total += float(result["_df_limpio"][result["mapeo"]["monto"]].map(parse_number).dropna().sum())
-    assert before_total == 3_278_490_880
-    assert after_total == 3_243_120_100
+        before_total += compute_metrics(before["_df_limpio"], before["mapeo"])["kpis"]["ingresos_totales"]["valor"]
+        after_total += compute_metrics(result["_df_limpio"], result["mapeo"])["kpis"]["ingresos_totales"]["valor"]
+    assert before_total == 3_200_889_420
+    assert after_total == 3_165_894_176

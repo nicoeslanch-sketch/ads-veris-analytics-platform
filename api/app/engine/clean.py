@@ -1196,6 +1196,7 @@ def analyze_and_clean(
         "duplicados_criterio": duplicados_criterio,
         "fusiones_texto": fusiones,
         "mojibake_auditoria": std_report.get("mojibake_auditoria", []),
+        "_ambiguedades_numericas": std_report.get("ambiguedades_numericas", {}),
         "_df_limpio": df if apply else None,
         "_source_rows_limpio": clean_source_rows if apply else source_rows,
         "_filas_duplicadas_eliminadas": removed_duplicate_rows,

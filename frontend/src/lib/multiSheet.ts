@@ -91,6 +91,11 @@ export function serializedAnalysisScope(value: unknown): string | null {
   return scope ? JSON.stringify(scope) : null
 }
 
+/** Compares the public, serializable contract instead of object identity. */
+export function analysisScopesEqual(left: unknown, right: unknown): boolean {
+  return serializedAnalysisScope(left) === serializedAnalysisScope(right)
+}
+
 export function withPublicAnalysisScope<T extends object>(value: T): T {
   const result = { ...value } as T & { analysis_scope?: unknown }
   if (!Object.prototype.hasOwnProperty.call(result, 'analysis_scope')) return result
@@ -352,7 +357,9 @@ export function compatibleAppendSheets(
     if (current === null) continue
     groups.set(current, [...(groups.get(current) ?? []), name])
   }
-  const candidates = [...groups.values()].filter((group) => group.length >= 2)
+  // Keep a one-sheet transaction group: it can still be related to a product
+  // catalog even though there is nothing to append.
+  const candidates = [...groups.values()]
   candidates.sort((left, right) => {
     const scoreDifference = transactionGroupScore(right, results) - transactionGroupScore(left, results)
     if (scoreDifference !== 0) return scoreDifference
@@ -366,12 +373,11 @@ type AppendJoinScope = Extract<AnalysisScope, { mode: 'append_join' }>
 export interface AppendJoinSelectionUpdate {
   appendSheets: string[]
   scope: AppendJoinScope
-  blocked: 'left_sheet_required' | 'minimum_two_sheets' | null
+  blocked: 'minimum_one_sheet' | null
 }
 
-/** Mantiene una sola fuente de verdad entre los checkboxes y el alcance que
- * llega al backend. La hoja izquierda contiene la llave ya validada; quitarla
- * invalidaría la relación completa, por lo que esa acción se rechaza. */
+/** Keeps the checkbox selection and scope aligned while a new relationship is
+ * validated. The left sheet only represents the stacked sales dataset. */
 export function synchronizeAppendJoinSelection(
   scope: AppendJoinScope,
   requestedSheets: string[],
@@ -380,29 +386,32 @@ export function synchronizeAppendJoinSelection(
   const normalized = compatibleSheets.filter(
     (name, index) => requestedSheets.includes(name) && compatibleSheets.indexOf(name) === index,
   )
-  if (!normalized.includes(scope.join.left_sheet)) {
+  if (normalized.length < 1) {
     return {
       appendSheets: scope.append_sheets,
       scope,
-      blocked: 'left_sheet_required',
+      blocked: 'minimum_one_sheet',
     }
   }
-  if (normalized.length < 2) {
-    return {
-      appendSheets: scope.append_sheets,
-      scope,
-      blocked: 'minimum_two_sheets',
-    }
-  }
+  const representative = normalized.includes(scope.join.left_sheet)
+    ? scope.join.left_sheet
+    : normalized[0]
   const sheets = [...new Set([...normalized, scope.join.right_sheet])]
   const unchanged = normalized.length === scope.append_sheets.length &&
     normalized.every((name, index) => name === scope.append_sheets[index]) &&
+    representative === scope.join.left_sheet &&
     sheets.length === scope.sheets.length &&
     sheets.every((name, index) => name === scope.sheets[index])
   if (unchanged) return { appendSheets: scope.append_sheets, scope, blocked: null }
   return {
     appendSheets: normalized,
-    scope: { ...scope, append_sheets: normalized, sheets },
+    scope: {
+      ...scope,
+      append_sheets: normalized,
+      sheets,
+      active_sheet: representative,
+      join: { ...scope.join, left_sheet: representative },
+    },
     blocked: null,
   }
 }

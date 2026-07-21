@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  analysisScopesEqual,
   appendScope,
   automaticCleaningSignature,
   basicMappingQuestions,
@@ -334,6 +335,25 @@ describe('estado multihoja', () => {
     )).toEqual(['Ventas Enero', 'Ventas Febrero'])
   })
 
+  it('conserva una sola hoja de ventas para relacionarla con costos', () => {
+    const sales = {
+      preview: { columnas: ['Fecha', 'Cantidad', 'Monto'] },
+      column_types: { Fecha: 'fecha', Cantidad: 'numero', Monto: 'numero' },
+      mapeo: { fecha: 'Fecha', cantidad: 'Cantidad', monto: 'Monto' },
+      moneda: 'CLP',
+    }
+    const catalog = {
+      preview: { columnas: ['ID_Producto', 'Producto', 'Costo_Unitario', 'Precio_Lista'] },
+      column_types: {},
+      mapeo: { producto: 'Producto', costo: 'Costo_Unitario' },
+      moneda: 'CLP',
+    }
+    expect(compatibleAppendSheets(
+      ['Ventas', 'Productos'],
+      { Ventas: sales, Productos: catalog },
+    )).toEqual(['Ventas'])
+  })
+
   it('sincroniza los checkboxes de append_join con el alcance real', () => {
     const scope: Extract<AnalysisScope, { mode: 'append_join' }> = {
       mode: 'append_join',
@@ -359,7 +379,7 @@ describe('estado multihoja', () => {
     expect(updated.scope.sheets).toEqual(['Enero', 'Febrero', 'Marzo', 'Productos'])
   })
 
-  it('no permite excluir la hoja izquierda ni dejar menos de dos ventas', () => {
+  it('permite cambiar la representante y conservar una sola hoja de ventas', () => {
     const scope: Extract<AnalysisScope, { mode: 'append_join' }> = {
       mode: 'append_join',
       sheets: ['Enero', 'Febrero', 'Productos'],
@@ -378,16 +398,22 @@ describe('estado multihoja', () => {
       ['Febrero'],
       ['Enero', 'Febrero'],
     )
-    expect(withoutLeft.blocked).toBe('left_sheet_required')
-    expect(withoutLeft.scope).toBe(scope)
+    expect(withoutLeft.blocked).toBeNull()
+    expect(withoutLeft.appendSheets).toEqual(['Febrero'])
+    expect(withoutLeft.scope.join.left_sheet).toBe('Febrero')
+    expect(withoutLeft.scope.active_sheet).toBe('Febrero')
 
     const onlyLeft = synchronizeAppendJoinSelection(
       scope,
       ['Enero'],
       ['Enero', 'Febrero'],
     )
-    expect(onlyLeft.blocked).toBe('minimum_two_sheets')
-    expect(onlyLeft.scope).toBe(scope)
+    expect(onlyLeft.blocked).toBeNull()
+    expect(onlyLeft.appendSheets).toEqual(['Enero'])
+
+    const empty = synchronizeAppendJoinSelection(scope, [], ['Enero', 'Febrero'])
+    expect(empty.blocked).toBe('minimum_one_sheet')
+    expect(empty.scope).toBe(scope)
 
     const unchanged = synchronizeAppendJoinSelection(
       scope,
@@ -395,6 +421,18 @@ describe('estado multihoja', () => {
       ['Enero', 'Febrero'],
     )
     expect(unchanged.scope).toBe(scope)
+  })
+
+  it('compara alcances por estructura y no por referencia de objeto', () => {
+    const first: AnalysisScope = {
+      mode: 'append',
+      sheets: ['Enero', 'Febrero'],
+      active_sheet: 'Enero',
+    }
+    const equivalent = JSON.parse(JSON.stringify(first)) as AnalysisScope
+    expect(equivalent).not.toBe(first)
+    expect(analysisScopesEqual(first, equivalent)).toBe(true)
+    expect(analysisScopesEqual(first, { ...equivalent, active_sheet: 'Febrero' })).toBe(false)
   })
 
   it('explica una relacion insegura sin jerga de cardinalidad', () => {

@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { clearAnalysisCaches } from '../lib/analysisCache'
+import { analysisScopesEqual } from '../lib/multiSheet'
 import type {
   AnalysisScope,
   CleanResult,
@@ -165,7 +166,10 @@ interface DatasetState {
   setMetrics: (result: MetricsResult) => void
   setPeriod: (period: Period) => void
   setMonthsAvailable: (months: string[]) => void
-  setMappingOverride: (mapping: Record<string, string> | null) => void
+  setMappingOverride: (
+    mapping: Record<string, string> | null,
+    options?: { preserveCleaning?: boolean },
+  ) => void
   setEliminarDuplicados: (value: boolean) => void
   setCombineSheets: (value: boolean) => void
   setSelectionMode: (value: 'all' | 'custom') => void
@@ -299,9 +303,12 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     }
   }, [mappingOverride, sheet, standardization])
 
-  const setMappingOverride = useCallback((mapping: Record<string, string> | null) => {
+  const setMappingOverride = useCallback((
+    mapping: Record<string, string> | null,
+    options: { preserveCleaning?: boolean } = {},
+  ) => {
     setMappingOverrideState(mapping)
-    setCleaningState(null)
+    if (!options.preserveCleaning) setCleaningState(null)
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
@@ -310,7 +317,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
         ...previous,
         [sheet]: {
           standardization: previous[sheet]?.standardization ?? standardization,
-          cleaning: null,
+          cleaning: options.preserveCleaning ? (previous[sheet]?.cleaning ?? cleaning) : null,
           mappingOverride: mapping,
           eliminarDuplicados: previous[sheet]?.eliminarDuplicados ?? eliminarDuplicados,
           status: previous[sheet]?.status ?? 'estandarizada',
@@ -318,7 +325,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
         },
       }))
     }
-  }, [eliminarDuplicados, sheet, standardization])
+  }, [cleaning, eliminarDuplicados, sheet, standardization])
 
   const updateEliminarDuplicados = useCallback((value: boolean) => {
     setEliminarDuplicados(value)
@@ -528,11 +535,12 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const setAnalysisScope = useCallback((scope: AnalysisScope | null) => {
+    if (analysisScopesEqual(analysisScope, scope)) return
     setAnalysisScopeState(scope)
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
-  }, [])
+  }, [analysisScope])
 
   const sheetManifest = useMemo<SheetManifest | null>(() => {
     if (availableSheets.length <= 1) return null
