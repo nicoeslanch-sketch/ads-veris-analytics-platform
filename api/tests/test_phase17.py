@@ -22,6 +22,7 @@ from app.routes.pipeline import (
     _metrics_multi_sync,
     _parse_analysis_scope,
     _validate_restore_state,
+    _workbook_for_clean_export,
 )
 
 
@@ -56,6 +57,20 @@ def _manifest(*processed: str) -> dict:
             for name in ("Enero", "Febrero", "Notas")
         ]
     }
+
+
+def test_all_processed_export_starts_from_empty_workbook(monkeypatch):
+    def fail_if_source_is_reopened(*_args, **_kwargs):
+        raise AssertionError(
+            "el libro original no debe reabrirse si todas las hojas se reemplazan"
+        )
+
+    monkeypatch.setattr(openpyxl, "load_workbook", fail_if_source_is_reopened)
+
+    workbook = _workbook_for_clean_export(b"not-read", all_sheets_processed=True)
+
+    assert workbook.write_only is True
+    assert workbook.sheetnames == []
 
 
 def test_tipo_cliente_is_not_product_category_or_customer_name():

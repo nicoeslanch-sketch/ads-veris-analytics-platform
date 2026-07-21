@@ -273,6 +273,7 @@ export default function Limpieza() {
     }
     let batchSheetErrors = { ...batchRestoreState.sheet_errors }
     let failedCount = 0
+    const historyWrites: Array<Promise<boolean>> = []
     try {
       for (const [index, name] of runnable.entries()) {
         const session = sheetSessions[name]
@@ -309,7 +310,9 @@ export default function Limpieza() {
           )
           batchSheetErrors = successSheetErrors
           setCleaning(response, { activate: name === target })
-          await saveCleaningJob(datasetId, response.reglas_activas, response)
+          // El historial es best-effort y no debe frenar el inicio de la hoja
+          // siguiente. Se verifica el lote completo antes de cerrar el flujo.
+          historyWrites.push(saveCleaningJob(datasetId, response.reglas_activas, response))
         } catch (err) {
           failedCount += 1
           const message = err instanceof ApiError ? err.message : 'No se pudo limpiar esta hoja.'
@@ -318,6 +321,15 @@ export default function Limpieza() {
         }
       }
     } finally {
+      const historyResults = await Promise.allSettled(historyWrites)
+      const historyFailed = historyResults.some(
+        (result) => result.status === 'rejected' || result.value === false,
+      )
+      if (historyFailed && supabaseConfigured && datasetId) {
+        setPersistWarning(
+          'La limpieza se aplicó correctamente, pero una o más hojas no se pudieron guardar en el historial.',
+        )
+      }
       if (datasetId) {
         const stateForm = new FormData()
         stateForm.append('dataset_id', datasetId)

@@ -1265,47 +1265,87 @@ def _write_clean_sheet(
     numeric_columns: set[str] | None = None,
     date_columns: set[str] | None = None,
 ) -> None:
+    from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
 
-    ws = wb.create_sheet(title, index)
     exported = safe_export_dataframe(
         df,
         numeric_columns=numeric_columns,
         date_columns=date_columns,
         canonical_numeric=True,
     )
-    ws.append(list(exported.columns))
-    # Fase 18: la hoja limpia debe seguir siendo LEGIBLE al abrirla — un
-    # encabezado plano y columnas colapsadas hacían parecer que la limpieza
-    # empeoró el archivo. Encabezado con color de marca, primera fila fija y
-    # anchos calculados desde el contenido real.
-    header_fill = PatternFill(start_color="1A3A52", end_color="1A3A52", fill_type="solid")
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = header_fill
-    for row in exported.itertuples(index=False, name=None):
-        ws.append(list(row))
+    ws = wb.create_sheet(title, index)
     ws.freeze_panes = "A2"
-    from openpyxl.utils import get_column_letter
-
     sample = exported.head(200)
     for position, column in enumerate(exported.columns, start=1):
         contenido = int(sample[column].astype(str).str.len().max()) if len(sample) else 0
         width = max(len(str(column)), contenido, 8) + 2
         ws.column_dimensions[get_column_letter(position)].width = min(width, 42)
 
+    # Fase 18: la hoja limpia debe seguir siendo LEGIBLE al abrirla — un
+    # encabezado plano y columnas colapsadas hacían parecer que la limpieza
+    # empeoró el archivo. Encabezado con color de marca, primera fila fija y
+    # anchos calculados desde el contenido real.
+    header_fill = PatternFill(start_color="1A3A52", end_color="1A3A52", fill_type="solid")
+    header_cells = []
+    for value in exported.columns:
+        cell = (
+            WriteOnlyCell(ws, value=value)
+            if wb.write_only
+            else ws.cell(row=1, column=len(header_cells) + 1, value=value)
+        )
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        header_cells.append(cell)
+    if wb.write_only:
+        ws.append(header_cells)
+
     yellow_fill = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
     red_fill = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
     columns = list(df.columns)
     positions = {column: index + 1 for index, column in enumerate(columns)}
+    percentage_markers = ("pct", "porcentaje", "percent")
+    percentage_columns = {
+        column
+        for column in columns
+        if any(
+            marker
+            in re.sub(r"[^a-z0-9]+", "_", str(column).casefold())
+            .strip("_")
+            .split("_")
+            for marker in percentage_markers
+        )
+        or re.sub(r"[^a-z0-9]+", "_", str(column).casefold())
+        .strip("_")
+        .startswith("margen_")
+    }
+
+    if wb.write_only:
+        for row_index, row in enumerate(exported.itertuples(index=False, name=None)):
+            cells = []
+            for column, value in zip(columns, row):
+                cell = WriteOnlyCell(ws, value=value)
+                if (row_index, column) in yellow:
+                    cell.fill = yellow_fill
+                elif (row_index, column) in red:
+                    cell.fill = red_fill
+                if column in percentage_columns:
+                    cell.number_format = "0.00%"
+                elif column in (date_columns or set()) and cell.data_type == "d":
+                    cell.number_format = "dd/mm/yyyy"
+                cells.append(cell)
+            ws.append(cells)
+        return
+
+    for row in exported.itertuples(index=False, name=None):
+        ws.append(list(row))
     for row, column in yellow:
         ws.cell(row=row + 2, column=positions[column]).fill = yellow_fill
     for row, column in red:
         ws.cell(row=row + 2, column=positions[column]).fill = red_fill
-    percentage_markers = ("pct", "porcentaje", "percent")
     for column, position in positions.items():
-        normalized = re.sub(r"[^a-z0-9]+", "_", str(column).casefold()).strip("_")
-        if any(marker in normalized.split("_") for marker in percentage_markers) or normalized.startswith("margen_"):
+        if column in percentage_columns:
             for cell in ws.iter_rows(
                 min_row=2, max_row=ws.max_row, min_col=position, max_col=position
             ):
@@ -1324,12 +1364,19 @@ def _write_clean_sheet(
 def _write_observations_sheet(
     wb, observations: list[tuple], title: str = "Observaciones"
 ) -> None:
+    from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font
 
     ws = wb.create_sheet(title)
-    ws.append(["Fila origen", "Hoja", "Columna", "Tipo", "Detalle"])
-    for cell in ws[1]:
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 24
+    ws.column_dimensions["E"].width = 64
+    headers = []
+    for value in ["Fila origen", "Hoja", "Columna", "Tipo", "Detalle"]:
+        cell = WriteOnlyCell(ws, value=value)
         cell.font = Font(bold=True)
+        headers.append(cell)
+    ws.append(headers)
     if observations:
         for source_row, source_sheet, column, kind, message in observations:
             ws.append([source_row, source_sheet or "CSV", column, kind, message])
@@ -1344,9 +1391,6 @@ def _write_observations_sheet(
                 "completitud ni ausencia de problemas fuera de ese alcance."
             ),
         ])
-    ws.column_dimensions["B"].width = 20
-    ws.column_dimensions["C"].width = 24
-    ws.column_dimensions["E"].width = 64
 
 
 def _build_export_audit(
@@ -1420,13 +1464,21 @@ def _build_export_audit(
 
 
 def _write_audit_sheet(wb, audit, title: str = "Auditoria") -> None:
+    from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font
 
     ws = wb.create_sheet(title)
+    ws.freeze_panes = "A2"
+    ws.column_dimensions["E"].width = 28
+    ws.column_dimensions["F"].width = 28
+    ws.column_dimensions["L"].width = 60
     exported = safe_export_dataframe(audit)
-    ws.append(list(exported.columns))
-    for cell in ws[1]:
+    headers = []
+    for value in exported.columns:
+        cell = WriteOnlyCell(ws, value=value)
         cell.font = Font(bold=True)
+        headers.append(cell)
+    ws.append(headers)
     for row in exported.itertuples(index=False, name=None):
         ws.append(list(row))
     if audit.empty:
@@ -1452,13 +1504,10 @@ def _write_audit_sheet(wb, audit, title: str = "Auditoria") -> None:
                 ensure_ascii=False,
             ),
         ])
-    ws.freeze_panes = "A2"
-    ws.column_dimensions["E"].width = 28
-    ws.column_dimensions["F"].width = 28
-    ws.column_dimensions["L"].width = 60
 
 
 def _write_manifest_sheet(wb, records: list[dict], title: str = "Manifest") -> None:
+    from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font
 
     columns = [
@@ -1467,9 +1516,16 @@ def _write_manifest_sheet(wb, records: list[dict], title: str = "Manifest") -> N
         "alcance_analisis", "procedencia_analisis",
     ]
     ws = wb.create_sheet(title)
-    ws.append(columns)
-    for cell in ws[1]:
+    ws.freeze_panes = "A2"
+    ws.column_dimensions["F"].width = 36
+    ws.column_dimensions["G"].width = 36
+    ws.column_dimensions["H"].width = 42
+    headers = []
+    for value in columns:
+        cell = WriteOnlyCell(ws, value=value)
         cell.font = Font(bold=True)
+        headers.append(cell)
+    ws.append(headers)
     for record in records:
         ws.append([
             record.get("hoja"),
@@ -1485,10 +1541,20 @@ def _write_manifest_sheet(wb, records: list[dict], title: str = "Manifest") -> N
             json.dumps(record.get("analysis_scope"), ensure_ascii=False, sort_keys=True),
             json.dumps(record.get("analysis_provenance"), ensure_ascii=False, sort_keys=True),
         ])
-    ws.freeze_panes = "A2"
-    ws.column_dimensions["F"].width = 36
-    ws.column_dimensions["G"].width = 36
-    ws.column_dimensions["H"].width = 42
+
+
+def _workbook_for_clean_export(content: bytes, all_sheets_processed: bool):
+    """Crea la base del XLSX sin reabrir el original cuando todo se reemplaza.
+
+    Si queda alguna hoja sin procesar, el libro original se abre para conservarla
+    exactamente. Cuando todas las hojas se reescriben, cargarlo y desmontarlo
+    solo duplica CPU y memoria, especialmente en Render.
+    """
+    import openpyxl
+
+    if not all_sheets_processed:
+        return openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+    return openpyxl.Workbook(write_only=True)
 
 
 def _clean_download_sync(
@@ -1805,11 +1871,16 @@ def _clean_download_book_uncached_sync(
             )
         return output.getvalue(), f"{stem}_multihoja_limpio.zip", "application/zip"
 
-    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+    all_sheets_processed = len(frames) == len(entries) and all(
+        entry["procesar"] for entry in entries
+    )
+    wb = _workbook_for_clean_export(content, all_sheets_processed)
     for name, frame in frames.items():
-        original_sheet = wb[name]
-        index = wb.worksheets.index(original_sheet)
-        wb.remove(original_sheet)
+        index = None
+        if name in wb.sheetnames:
+            original_sheet = wb[name]
+            index = wb.worksheets.index(original_sheet)
+            wb.remove(original_sheet)
         yellow, red = annotations[name]
         _write_clean_sheet(
             wb,
