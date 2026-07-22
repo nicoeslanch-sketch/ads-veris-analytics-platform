@@ -173,6 +173,13 @@ export default function Limpieza() {
     setSheetStatus,
   } = useDataset()
   const [detection, setDetection] = useState<CleanResult | null>(null)
+  const [sheetDiagnostics, setSheetDiagnostics] = useState<
+    Record<string, { signature: string; result: CleanResult }>
+  >({})
+  const sheetDiagnosticsRef = useRef<
+    Record<string, { signature: string; result: CleanResult }>
+  >({})
+  const diagnosticSourceRef = useRef<string | null>(null)
   const [rules, setRules] = useState<CleaningRules>(DEFAULT_RULES)
   const [detecting, setDetecting] = useState(false)
   const [applying, setApplying] = useState(false)
@@ -187,6 +194,7 @@ export default function Limpieza() {
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
   const [duplicateConfirmOpen, setDuplicateConfirmOpen] = useState(false)
   const [batchDuplicateConfirmOpen, setBatchDuplicateConfirmOpen] = useState(false)
+  const [duplicateTargetSheet, setDuplicateTargetSheet] = useState<string | null>(null)
   const [duplicateRemovalPending, setDuplicateRemovalPending] = useState(false)
   const [reviewMode, setReviewMode] = useState(
     () => new URLSearchParams(location.search).get('revision') === '1',
@@ -239,6 +247,19 @@ export default function Limpieza() {
     setReviewMode(false)
     if (location.search) navigate('/limpieza', { replace: true })
   }, [location.search, navigate])
+
+  const rememberSheetDiagnostic = useCallback((
+    name: string,
+    result: CleanResult,
+    signature = '',
+  ) => {
+    const next = {
+      ...sheetDiagnosticsRef.current,
+      [name]: { signature, result },
+    }
+    sheetDiagnosticsRef.current = next
+    setSheetDiagnostics(next)
+  }, [])
 
   const refreshUsage = () => {
     apiGet<PlansUsage>('/plans/usage')
@@ -320,6 +341,7 @@ export default function Limpieza() {
           )
           batchSheetErrors = successSheetErrors
           setCleaning(response, { activate: name === target })
+          rememberSheetDiagnostic(name, response)
           if (response.persistencia?.guardada === false) {
             setPersistWarning(
               response.persistencia.mensaje ??
@@ -382,6 +404,7 @@ export default function Limpieza() {
     file,
     restoreState,
     rules,
+    rememberSheetDiagnostic,
     selectedSheets,
     setCleaning,
     setSheet,
@@ -394,6 +417,18 @@ export default function Limpieza() {
   useEffect(() => {
     refreshUsage()
   }, [])
+
+  useEffect(() => {
+    const identity = file
+      ? datasetId ?? storagePath ?? `${file.name}:${file.lastModified}:${uploadedAt?.getTime() ?? 0}`
+      : null
+    if (diagnosticSourceRef.current === identity) return
+    diagnosticSourceRef.current = identity
+    sheetDiagnosticsRef.current = {}
+    setSheetDiagnostics({})
+    setDetection(null)
+    detectStartedFor.current = null
+  }, [datasetId, file, storagePath, uploadedAt])
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get('revision') === '1') {
@@ -434,6 +469,7 @@ export default function Limpieza() {
       if (event.key === 'Escape') {
         setDuplicateConfirmOpen(false)
         setBatchDuplicateConfirmOpen(false)
+        setDuplicateTargetSheet(null)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -448,6 +484,13 @@ export default function Limpieza() {
       JSON.stringify(mappingOverride ?? {}),
     ].join('|')
     if (detectStartedFor.current === key) return
+    const diagnosticName = sheet ?? standardization?.carga?.hoja_usada ?? 'hoja_actual'
+    const cached = sheetDiagnosticsRef.current[diagnosticName]
+    if (cached?.signature === key) {
+      setDetection(cached.result)
+      setDetecting(false)
+      return
+    }
     detectStartedFor.current = key
     const controller = new AbortController()
     const fields = {
@@ -463,7 +506,10 @@ export default function Limpieza() {
       signal: controller.signal,
     })
       .then((result) => {
-        if (detectStartedFor.current === key && !controller.signal.aborted) setDetection(result)
+        if (detectStartedFor.current === key && !controller.signal.aborted) {
+          setDetection(result)
+          rememberSheetDiagnostic(diagnosticName, result, key)
+        }
       })
       .catch((err) => {
         if (detectStartedFor.current === key && !controller.signal.aborted) {
@@ -490,6 +536,8 @@ export default function Limpieza() {
     mappingOverride,
     applying,
     reviewMode,
+    rememberSheetDiagnostic,
+    standardization?.carga?.hoja_usada,
   ])
 
   if (!file || !standardization) {
@@ -578,6 +626,13 @@ export default function Limpieza() {
     : null
   const duplicateDetails = result?.duplicados_detalle
   const exactDuplicates = duplicateDetails?.exactos ?? result?.problemas.duplicados ?? 0
+  const duplicateTargetResult = duplicateTargetSheet
+    ? sheetSessions[duplicateTargetSheet]?.cleaning ?? sheetDiagnostics[duplicateTargetSheet]?.result
+    : result
+  const duplicateTargetCount =
+    duplicateTargetResult?.duplicados_detalle?.exactos ??
+    duplicateTargetResult?.problemas.duplicados ??
+    exactDuplicates
   const selectedDuplicates = reviewMode && eliminarDuplicados
     ? exactDuplicates
     : duplicateRemovalPending
@@ -737,6 +792,10 @@ export default function Limpieza() {
 
   const finishApply = async (response: CleanResult) => {
     setCleaning(response)
+    rememberSheetDiagnostic(
+      sheet ?? standardization?.carga?.hoja_usada ?? 'hoja_actual',
+      response,
+    )
     if (response.persistencia?.guardada === false) {
       setPersistWarning(
         response.persistencia.mensaje ??
@@ -784,6 +843,17 @@ export default function Limpieza() {
 
   const handleConfirmedDuplicateRemoval = () => {
     setDuplicateConfirmOpen(false)
+    if (duplicateTargetSheet && selectedSheets.length > 1) {
+      const target = duplicateTargetSheet
+      setDuplicateTargetSheet(null)
+      void handleApplySheets([target], {
+        retryErrors: true,
+        reclean: true,
+        removeExactDuplicates: true,
+      })
+      return
+    }
+    setDuplicateTargetSheet(null)
     if (reviewMode) {
       setEliminarDuplicados(true)
       return
@@ -1056,22 +1126,9 @@ export default function Limpieza() {
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-teal/20 bg-teal/[0.04] p-3">
             <p className="mr-auto text-xs leading-relaxed text-navy/65">
               Limpiar formatos, tipos y nulos es independiente de borrar filas duplicadas.
-              Primero puedes completar todas las hojas conservando sus filas y decidir los
-              duplicados después.
+              Usa el botón principal “Limpiar datos” al final para completar todas las hojas;
+              después podrás decidir los duplicados globalmente o por hoja.
             </p>
-            {unfinishedPreparedSheets.length > 0 && (
-              <button
-                type="button"
-                onClick={() => void handleApplySheets(unfinishedPreparedSheets, {
-                  retryErrors: true,
-                })}
-                disabled={applying}
-                className="inline-flex items-center gap-2 rounded-lg bg-teal px-3.5 py-2 text-xs font-semibold text-white disabled:opacity-50"
-              >
-                {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Completar limpieza de todas ({unfinishedPreparedSheets.length})
-              </button>
-            )}
             {aggregateExactDuplicates > 0 && (
               <button
                 type="button"
@@ -1087,6 +1144,14 @@ export default function Limpieza() {
           <div className="mt-3 divide-y divide-navy/10 rounded-lg border border-navy/10">
             {selectedSheets.map((name) => {
               const session = sheetSessions[name]
+              const diagnostic = session?.cleaning ?? sheetDiagnostics[name]?.result
+              const categories = diagnostic
+                ? PROBLEM_LABELS.filter(
+                    ({ key }) => Number(diagnostic.problemas[key] ?? 0) > 0,
+                  ).length
+                : 0
+              const sheetExactDuplicates =
+                diagnostic?.duplicados_detalle?.exactos ?? diagnostic?.problemas.duplicados ?? 0
               const status = session?.status === 'error'
                 ? 'Error'
                 : session?.cleaning
@@ -1098,7 +1163,32 @@ export default function Limpieza() {
                 <div key={name} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
                   <button type="button" onClick={() => setSheet(name)} className="min-w-0 flex-1 truncate text-left font-semibold text-navy hover:text-teal" title={`Vista previa: ${name}`}>{name}</button>
                   {name === sheet && <span className="text-teal">Vista previa activa</span>}
+                  <span className="text-navy/45">
+                    {diagnostic
+                      ? `${categories} categoría(s) con observaciones`
+                      : 'Diagnóstico disponible al abrir'}
+                  </span>
                   <span className={session?.status === 'error' ? 'text-coral' : 'text-navy/55'}>{status}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSheet(name)}
+                    className="font-semibold text-teal hover:underline"
+                  >
+                    Ver detalle
+                  </button>
+                  {sheetExactDuplicates > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDuplicateTargetSheet(name)
+                        setDuplicateConfirmOpen(true)
+                      }}
+                      disabled={applying}
+                      className="font-semibold text-coral hover:underline disabled:opacity-50"
+                    >
+                      Eliminar {formatNumber(sheetExactDuplicates)} de esta hoja
+                    </button>
+                  )}
                   {session?.status === 'error' && session.error && (
                     <span className="basis-full text-coral" title={session.error}>{session.error}</span>
                   )}
@@ -1437,7 +1527,10 @@ export default function Limpieza() {
                     type="button"
                     onClick={() => {
                       if (reviewMode && eliminarDuplicados) setEliminarDuplicados(false)
-                      else setDuplicateConfirmOpen(true)
+                      else {
+                        setDuplicateTargetSheet(sheet ?? null)
+                        setDuplicateConfirmOpen(true)
+                      }
                     }}
                     aria-pressed={reviewMode ? eliminarDuplicados : undefined}
                     disabled={applying || assistedRunning || detecting}
@@ -1808,7 +1901,7 @@ export default function Limpieza() {
                   {selectedSheets.length > 1
                     ? reviewMode
                       ? `Volveremos a procesar una por una las ${cleaningRunSheets.length} hojas seleccionadas, sin que tengas que subir el archivo otra vez.`
-                      : `Al continuar, limpiaremos una por una las ${pendingPreparedSheets.length} hojas pendientes de las ${selectedSheets.length} seleccionadas.`
+                      : `Al continuar, limpiaremos una por una las ${unfinishedPreparedSheets.length} hojas pendientes o fallidas de las ${selectedSheets.length} seleccionadas.`
                     : 'Aplicaremos las reglas elegidas a esta hoja. Nada se modifica hasta que pulses el botón.'}
                 </p>
               </div>
@@ -1827,8 +1920,11 @@ export default function Limpieza() {
                   )}
                   <button
                     type="button"
-                    onClick={() => void handleApplySheets(cleaningRunSheets, { reclean: reviewMode })}
-                    disabled={applying || detecting || !result || cleaningRunSheets.length === 0}
+                    onClick={() => void handleApplySheets(
+                      reviewMode ? cleaningRunSheets : unfinishedPreparedSheets,
+                      reviewMode ? { reclean: true } : { retryErrors: true },
+                    )}
+                    disabled={applying || detecting || !result || (reviewMode ? cleaningRunSheets : unfinishedPreparedSheets).length === 0}
                     className="inline-flex items-center gap-2 rounded-xl bg-teal px-7 py-3.5 text-base font-bold text-white shadow-lg transition-colors hover:bg-teal/90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {applying && <Loader2 className="h-5 w-5 animate-spin" />}
@@ -1959,7 +2055,10 @@ export default function Limpieza() {
       {duplicateConfirmOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-navy-deep/55 p-4"
-          onMouseDown={() => setDuplicateConfirmOpen(false)}
+          onMouseDown={() => {
+            setDuplicateConfirmOpen(false)
+            setDuplicateTargetSheet(null)
+          }}
         >
           <div
             role="dialog"
@@ -1974,7 +2073,8 @@ export default function Limpieza() {
               </div>
               <div>
                 <h2 id="duplicate-confirm-title" className="text-base font-semibold text-navy">
-                  ¿Eliminar {formatNumber(exactDuplicates)} duplicados exactos?
+                  ¿Eliminar {formatNumber(duplicateTargetCount)} duplicados exactos
+                  {duplicateTargetSheet ? ` de ${duplicateTargetSheet}` : ''}?
                 </h2>
                 <p className="mt-2 text-sm leading-relaxed text-navy/70">
                   Se eliminarán solo las repeticiones que ya eran idénticas en el archivo
@@ -1995,7 +2095,10 @@ export default function Limpieza() {
               <button
                 ref={cancelDuplicateRef}
                 type="button"
-                onClick={() => setDuplicateConfirmOpen(false)}
+                onClick={() => {
+                  setDuplicateConfirmOpen(false)
+                  setDuplicateTargetSheet(null)
+                }}
                 className="rounded-lg border border-navy/20 bg-white px-4 py-2 text-sm font-semibold text-navy transition-colors hover:bg-navy/5"
               >
                 Cancelar

@@ -57,7 +57,7 @@ import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analys
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, truncateLabel } from '../lib/charts'
-import { formatCLP, setActiveCurrency } from '../lib/format'
+import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import type { DatasetDimensions, GroupRow, MetricsResult } from '../lib/types'
 
 // ── Configuración del análisis ────────────────────────────────────────────────
@@ -772,6 +772,8 @@ export default function Explorar() {
 
       <ActiveSheetSelector />
 
+      {hasCosts && metrics && <CostReliabilityAnalysis metrics={metrics} />}
+
       {/* ¿Qué quieres descubrir hoy? (adaptado a las columnas del archivo) */}
       <div>
         <h2 className="text-lg font-semibold text-navy">¿Qué quieres descubrir hoy?</h2>
@@ -1239,5 +1241,101 @@ export default function Explorar() {
         </div>
       )}
     </>
+  )
+}
+
+function CostReliabilityAnalysis({ metrics }: { metrics: MetricsResult }) {
+  const coverage = metrics.kpis.cobertura_costos
+  const base = metrics.kpis.base_costos
+  const margin = metrics.kpis.margen_utilidad_pct?.valor
+  const quality = metrics.calidad_costos
+  const excluded = metrics.exclusiones_indicadores?.filas_anuladas ?? 0
+  const provenance = metrics.analysis_provenance as
+    | { join?: { filas_sin_correspondencia?: unknown } }
+    | undefined
+  const unmatched = typeof provenance?.join?.filas_sin_correspondencia === 'number'
+    ? provenance.join.filas_sin_correspondencia
+    : null
+  const origin = metrics.calculo_costos?.origen === 'cantidad_por_costo_unitario'
+    ? `Cantidad × ${metrics.calculo_costos.columna_costo ?? 'costo unitario'}`
+    : metrics.calculo_costos?.columna_costo ?? 'columna de costo'
+
+  return (
+    <Card className="mb-7 border-navy/15 bg-gradient-to-br from-navy/[0.035] via-white to-gold/[0.05]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-navy/45">
+            Explorar · confiabilidad del margen
+          </p>
+          <h2 className="mt-1 text-base font-semibold text-navy">¿Qué tan explicable es la utilidad?</h2>
+          <p className="mt-1 max-w-3xl text-xs leading-relaxed text-navy/65">
+            Esta vista no repite el Resumen: comprueba cobertura, correspondencias y valores
+            atípicos antes de comparar costo, utilidad o margen por producto, categoría y canal.
+          </p>
+        </div>
+        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+          (coverage?.pct ?? 0) >= 95 ? 'bg-green/10 text-green' : 'bg-gold/15 text-navy'
+        }`}>
+          {coverage ? `${formatNumber(coverage.pct)}% con costo` : 'Cobertura desconocida'}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <CostContextItem
+          label="Base pareada"
+          value={coverage ? `${formatNumber(coverage.filas_con_ingreso_y_costo)} de ${formatNumber(coverage.filas_con_ingreso)}` : '—'}
+          detail="ventas con ingreso y costo legibles"
+        />
+        <CostContextItem
+          label="Cálculo usado"
+          value={origin}
+          detail="el costo unitario nunca se suma directamente"
+        />
+        <CostContextItem
+          label="Margen pareado"
+          value={margin == null ? '—' : `${formatNumber(margin)}%`}
+          detail={base ? `${formatCLP(base.ingresos_pareados)} de ingresos comparables` : 'requiere ingreso y costo en la misma fila'}
+        />
+        <CostContextItem
+          label="Correspondencias"
+          value={unmatched == null ? '—' : `${formatNumber(unmatched)} sin SKU`}
+          detail="filas conservadas sin costo de referencia"
+        />
+      </div>
+      {(quality?.registros_atipicos || excluded > 0) && (
+        <div className="mt-4 grid gap-2 lg:grid-cols-2">
+          {(quality?.registros_atipicos ?? 0) > 0 && (
+            <p className="rounded-lg border border-gold/35 bg-gold/[0.08] px-3 py-2 text-xs leading-relaxed text-navy/70">
+              {formatNumber(quality?.registros_atipicos ?? 0)} costo(s) no positivos o atípicos
+              concentran {formatNumber(quality?.participacion_costo_absoluto_pct ?? 0)}% del costo
+              absoluto. Se conservan, pero pueden dominar el margen.
+            </p>
+          )}
+          {excluded > 0 && (
+            <p className="rounded-lg border border-teal/25 bg-teal/[0.06] px-3 py-2 text-xs leading-relaxed text-navy/70">
+              {formatNumber(excluded)} venta(s) anulada(s) permanecen en la base y se excluyen de
+              los indicadores, tal como exige el estado del documento.
+            </p>
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function CostContextItem({
+  label,
+  value,
+  detail,
+}: {
+  label: string
+  value: string
+  detail: string
+}) {
+  return (
+    <div className="rounded-xl border border-navy/10 bg-white/85 p-3.5">
+      <p className="text-[11px] text-navy/45">{label}</p>
+      <p className="mt-1 text-sm font-bold text-navy">{value}</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-navy/50">{detail}</p>
+    </div>
   )
 }

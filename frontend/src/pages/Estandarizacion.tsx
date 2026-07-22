@@ -259,6 +259,27 @@ export default function Estandarizacion() {
     setChangingSheet(true)
     setSheetError(null)
     const pendingNames = names.filter((name) => !sheetSessions[name]?.standardization)
+    if (pendingNames.length > 1) {
+      setBatchProgress({ current: 0, total: pendingNames.length, sheet: '' })
+      try {
+        await apiPost<{ hojas_preparadas: string[] }>(
+          '/standardize/preload',
+          buildDatasetForm(file, storagePath, {
+            sheets: JSON.stringify(pendingNames),
+          }),
+          { signal: controller.signal },
+        )
+      } catch (err) {
+        // El precalentamiento es una optimización sin escrituras. Si no está
+        // disponible, cada /standardize conserva el flujo compatible anterior
+        // y mostrará el error concreto de la hoja si realmente existe.
+        if (controller.signal.aborted || currentFileRef.current !== sourceFile) {
+          setBatchProgress(null)
+          setChangingSheet(false)
+          return
+        }
+      }
+    }
     let position = 0
     for (const name of pendingNames) {
       if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
@@ -610,7 +631,9 @@ export default function Estandarizacion() {
                 <p className="ml-auto inline-flex items-center gap-2 text-xs font-semibold text-teal">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   {batchProgress
-                    ? `Estandarizando ${batchProgress.current} de ${batchProgress.total}: ${batchProgress.sheet}`
+                    ? batchProgress.current === 0
+                      ? `Abriendo el libro una sola vez para preparar ${batchProgress.total} hojas...`
+                      : `Estandarizando ${batchProgress.current} de ${batchProgress.total}: ${batchProgress.sheet}`
                     : 'Estandarizando hojas seleccionadas...'}
                 </p>
               )}

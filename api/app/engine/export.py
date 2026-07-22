@@ -38,6 +38,7 @@ def safe_export_dataframe(
     date_columns: set[str] | list[str] | tuple[str, ...] | None = None,
     *,
     canonical_numeric: bool = False,
+    formula_prefixes: tuple[str, ...] = ("=", "+", "-", "@"),
 ) -> pd.DataFrame:
     """Neutraliza fórmulas y conserva números como celdas numéricas.
 
@@ -97,7 +98,7 @@ def safe_export_dataframe(
         if pd.api.types.is_numeric_dtype(series):
             continue
         text = series.astype(str).str.lstrip()
-        suspects = series.notna() & text.str.startswith(("=", "+", "-", "@"))
+        suspects = series.notna() & text.str.startswith(formula_prefixes)
         if bool(suspects.any()):
             exported.loc[suspects, column] = series.loc[suspects].map(
                 neutralize_excel_formula

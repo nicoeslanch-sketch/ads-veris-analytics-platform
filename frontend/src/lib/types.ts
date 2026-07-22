@@ -555,6 +555,10 @@ export interface MetricsResult {
     costo_absoluto_atipico: number
     participacion_costo_absoluto_pct: number
   } | null
+  exclusiones_indicadores?: {
+    filas_anuladas: number
+    columna_estado: string | null
+  }
   analysis_scope?: AnalysisScope
   analysis_provenance?: Record<string, unknown>
   tipo_analisis?: 'catalogo_productos' | 'campanas_marketing' | 'inventario' | 'generico'

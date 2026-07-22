@@ -844,14 +844,40 @@ def compute_metrics(
         and not inventory_profile
     )
 
+    status_column = next(
+        (
+            column
+            for normalized, column in normalized_columns.items()
+            if normalized == "estado"
+            or normalized.startswith("estado ")
+            or normalized.endswith(" estado")
+        ),
+        None,
+    )
+    cancelled_mask = pd.Series(False, index=df.index)
+    if transactional_profile and status_column:
+        status_missing = physical_missing_mask(df[status_column])
+        normalized_status = df[status_column].astype(str).map(strip_accents_lower).str.strip()
+        normalized_status = normalized_status.mask(status_missing, "")
+        cancelled_mask = normalized_status.str.contains(
+            r"\b(?:anulad|cancelad|void)\w*", regex=True, na=False
+        )
+    indicator_row_mask = ~cancelled_mask
+    cancelled_rows = int(cancelled_mask.sum())
+    if cancelled_rows:
+        warnings.append(
+            f"Se conservaron {cancelled_rows} fila(s) anulada(s) en la base, "
+            "pero se excluyeron de ventas, costos, utilidad y tendencias."
+        )
+
     currency = _coerce_currency_detection(
         currency_hint,
         df[roles["monto"]] if roles.get("monto") else None,
         df[roles["costo"]] if roles.get("costo") else None,
     )
 
-    amounts_all = _numeric_series(df, roles.get("monto"))
-    costs_all = _numeric_series(df, roles.get("costo"))
+    amounts_all = _numeric_series(df, roles.get("monto")).where(indicator_row_mask)
+    costs_all = _numeric_series(df, roles.get("costo")).where(indicator_row_mask)
     cost_column_normalized = (
         strip_accents_lower(str(roles["costo"])).replace("_", " ")
         if roles.get("costo")
@@ -893,6 +919,7 @@ def compute_metrics(
         if roles.get("fecha")
         else pd.Series([None] * len(df))
     )
+    dates_all = dates_all.where(indicator_row_mask)
     has_dates = roles.get("fecha") is not None and dates_all.notna().any()
     sin_fecha = 0
     monto_sin_fecha = 0.0
@@ -1040,6 +1067,7 @@ def compute_metrics(
         )
     else:
         mask = pd.Series([True] * len(df), index=df.index)
+    mask &= indicator_row_mask
 
     selection = df[mask]
     amounts = amounts_all[mask]
@@ -1254,6 +1282,12 @@ def compute_metrics(
             "columna_cantidad": roles.get("cantidad") if derived_unit_cost else None,
         } if has_costs else None,
         "calidad_costos": cost_quality,
+        **({
+            "exclusiones_indicadores": {
+                "filas_anuladas": cancelled_rows,
+                "columna_estado": status_column,
+            },
+        } if status_column or cancelled_rows else {}),
         # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
         # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
         "dimensiones": {

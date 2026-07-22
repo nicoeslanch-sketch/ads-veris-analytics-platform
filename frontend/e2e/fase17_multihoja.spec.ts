@@ -260,7 +260,9 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await expect(page.getByText('Costo Conocido')).toBeVisible()
     await expect(page.getByText('$17.400', { exact: true })).toBeVisible()
     await page.getByRole('link', { name: /Explorar datos/ }).first().click()
-  await expect(page.getByText('Datos que estas analizando')).toBeVisible()
+    await expect(page.getByText('Datos que estas analizando')).toBeVisible()
+    await expect(page.getByText('Explorar · confiabilidad del margen')).toBeVisible()
+    await expect(page.getByText('¿Qué tan explicable es la utilidad?')).toBeVisible()
 })
 
 test('permite revisar una limpieza terminada y volver a limpiar sin subir el archivo', async ({ page }, testInfo) => {
@@ -316,11 +318,19 @@ test('limpia todas las hojas y elimina duplicados en lote sin bloquear catalogos
   await page.getByLabel('Hoja mostrada').selectOption('Costos_Productos')
   await expect(page.getByText('Hoja mostrada: Costos_Productos').first()).toBeVisible({ timeout: 90_000 })
   await expect(page.getByText('¿En qué columna está el total vendido?')).toHaveCount(0)
-  await page.getByRole('button', { name: /Completar limpieza de todas \(3\)/ }).click()
+  await expect(page.getByRole('button', { name: /Completar limpieza de todas/ })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Limpiar datos', exact: true }).click()
   await expect(page.getByText('3 limpias', { exact: true })).toBeVisible({ timeout: 90_000 })
 
-  await page.getByRole('button', { name: /Eliminar duplicados de todas \(2\)/ }).click()
-  await expect(page.getByRole('heading', { name: /¿Eliminar 2 duplicados en 2 hoja/ })).toBeVisible()
+  const selectiveButtons = page.getByRole('button', { name: /Eliminar 1 de esta hoja/ })
+  await expect(selectiveButtons).toHaveCount(2)
+  await selectiveButtons.first().click()
+  await expect(page.getByRole('heading', { name: /¿Eliminar 1 duplicados exactos de/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Eliminar duplicados exactos' }).click()
+  await expect(page.getByRole('button', { name: /Eliminar duplicados de todas \(1\)/ })).toBeVisible({ timeout: 90_000 })
+
+  await page.getByRole('button', { name: /Eliminar duplicados de todas \(1\)/ }).click()
+  await expect(page.getByRole('heading', { name: /¿Eliminar 1 duplicados en 1 hoja/ })).toBeVisible()
   await page.getByRole('button', { name: 'Eliminar en todas' }).click()
   await expect(page.getByText('3 limpias', { exact: true })).toBeVisible({ timeout: 90_000 })
   await expect(page.getByRole('button', { name: /Eliminar duplicados de todas/ })).toHaveCount(0)

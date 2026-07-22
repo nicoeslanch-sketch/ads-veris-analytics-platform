@@ -743,6 +743,32 @@ def test_metrics_honors_canonical_decimal_chosen_by_standardization():
     assert metrics["kpis"]["ingresos_totales"]["valor"] == 3.73
 
 
+def test_ventas_anuladas_se_conservan_pero_no_entran_en_indicadores():
+    frame = pd.DataFrame(
+        {
+            "Fecha": ["01/01/2026", "02/01/2026", "03/01/2026"],
+            "Monto": [1000, 5000, -200],
+            "Costo_Venta": [600, 3000, -120],
+            "Estado": ["Pagada", "Anulada", "Devuelta"],
+        }
+    )
+
+    metrics = compute_metrics(
+        frame,
+        {"fecha": "Fecha", "monto": "Monto", "costo": "Costo_Venta"},
+    )
+
+    assert len(frame) == 3
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 800
+    assert metrics["kpis"]["gastos_totales"]["valor"] == 480
+    assert metrics["kpis"]["ganancia_neta"]["valor"] == 320
+    assert metrics["kpis"]["transacciones"] == 2
+    assert metrics["exclusiones_indicadores"] == {
+        "filas_anuladas": 1,
+        "columna_estado": "Estado",
+    }
+
+
 def test_canonical_export_keeps_decimal_dates_and_negative_text_roles():
     exported = safe_export_dataframe(
         pd.DataFrame(
@@ -760,6 +786,16 @@ def test_canonical_export_keeps_decimal_dates_and_negative_text_roles():
     assert exported.loc[0, "Monto"] == 1.234
     assert exported.loc[0, "Fecha"].strftime("%Y-%m-%d") == "2025-01-12"
     assert exported.loc[0, "SKU"] == "'-12.990"
+
+
+def test_percentage_standardization_is_idempotent_for_three_decimal_fraction():
+    source = pd.DataFrame({"Comisión %": ["1,8%", "0.015", "2.21"]})
+
+    first, _ = standardize_dataframe(source)
+    second, _ = standardize_dataframe(first)
+
+    assert first["Comisión %"].tolist() == ["0.018", "0.015", "0.0221"]
+    assert second["Comisión %"].tolist() == first["Comisión %"].tolist()
 
 
 def test_xlsx_writer_preserves_numeric_percent_and_date_types():
@@ -788,6 +824,29 @@ def test_xlsx_writer_preserves_numeric_percent_and_date_types():
     assert sheet["B2"].data_type == "n"
     assert sheet["C2"].value == 0.2
     assert sheet["C2"].number_format == "0.00%"
+
+
+def test_xlsx_writer_does_not_add_visible_apostrophes_to_safe_strings():
+    workbook = openpyxl.Workbook()
+    workbook.remove(workbook.active)
+    _write_clean_sheet(
+        workbook,
+        "Contactos",
+        pd.DataFrame(
+            {
+                "Teléfono": ["+56 9 1234 5678"],
+                "Ajuste": ["-49867"],
+                "Fórmula": ["=2+2"],
+            }
+        ),
+        {},
+        {},
+    )
+
+    sheet = workbook["Contactos"]
+    assert sheet["A2"].value == "+56 9 1234 5678"
+    assert sheet["B2"].value == "-49867"
+    assert sheet["C2"].value == "'=2+2"
 
 
 def test_numeric_export_types_only_values_that_parse():

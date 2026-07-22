@@ -5,6 +5,8 @@ import io
 import zipfile
 from types import SimpleNamespace
 
+import pandas as pd
+
 
 def _upload(sample_csv, extra: dict | None = None) -> dict:
     name, content = sample_csv
@@ -25,6 +27,30 @@ def test_endpoints_protegidos_rechazan_sin_token(client, sample_csv):
     for path in ("/standardize", "/clean", "/clean/download", "/metrics"):
         response = client.post(path, files={"file": (name, content, "text/csv")})
         assert response.status_code == 401, path
+
+
+def test_preload_estandarizacion_prepara_varias_hojas_sin_snapshots(
+    client, auth_headers
+):
+    source = io.BytesIO()
+    with pd.ExcelWriter(source, engine="openpyxl") as writer:
+        pd.DataFrame({"Monto": ["1.000"], "Fecha": ["01/01/2026"]}).to_excel(
+            writer, sheet_name="Enero", index=False
+        )
+        pd.DataFrame({"Monto": ["2.000"], "Fecha": ["01/02/2026"]}).to_excel(
+            writer, sheet_name="Febrero", index=False
+        )
+
+    response = client.post(
+        "/standardize/preload",
+        files={"file": ("ventas.xlsx", source.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"sheets": '["Enero", "Febrero"]'},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["hojas_preparadas"] == ["Enero", "Febrero"]
+    assert "revision" not in response.json()
 
 
 def test_token_invalido_rechazado(client, sample_csv):

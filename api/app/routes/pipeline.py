@@ -962,6 +962,38 @@ def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -
     }
 
 
+def _preload_standardization_sync(
+    filename: str, content: bytes, sheets: list[str]
+) -> dict:
+    """Abre un XLSX una sola vez y deja sus etapas inmutables en caché.
+
+    Los endpoints /standardize posteriores siguen reservando y guardando una
+    revisión independiente por hoja. Este precalentamiento solo elimina las
+    reaperturas redundantes del mismo libro; no escribe snapshots ni cambia
+    el orden transaccional de las acciones del usuario.
+    """
+
+    started = time.perf_counter()
+    try:
+        loaded, available = load_dataframes_with_reports(filename, content, sheets)
+    except UnsupportedFileError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    for name, (frame, report) in loaded.items():
+        _frame_cache_store(_frame_key("raw", filename, content, name), frame, report)
+        _standardize_frame_cached(
+            filename,
+            content,
+            name,
+            mapping=None,
+            original=frame,
+        )
+    return {
+        "hojas_preparadas": list(loaded),
+        "hojas_disponibles": available,
+        "segundos": round(time.perf_counter() - started, 3),
+    }
+
+
 def _clean_sync(
     filename: str,
     content: bytes,
@@ -1324,6 +1356,11 @@ def _write_clean_sheet(
         numeric_columns=numeric_columns,
         date_columns=date_columns,
         canonical_numeric=True,
+        # openpyxl escribe +, - y @ como shared strings, no como fórmulas.
+        # Prefijarlos con apóstrofe corrompía teléfonos y negativos al
+        # volver a cargar el XLSX. Solo '=' activa una fórmula en este formato;
+        # los CSV conservan la neutralización estricta de los cuatro prefijos.
+        formula_prefixes=("=",),
     )
     ws = wb.create_sheet(title, index)
     ws.freeze_panes = "A2"
@@ -2892,6 +2929,43 @@ async def persist_restore_state(
     )
     _restore_response_cache_invalidate(user.id)
     return response
+
+
+@router.post("/standardize/preload")
+async def preload_standardization(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    sheets: str = Form(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Precalienta varias hojas sin crear ni modificar snapshots."""
+
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.STANDARDIZE, settings
+    )
+    try:
+        parsed = json.loads(sheets)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="El campo 'sheets' debe ser JSON válido.") from exc
+    if not isinstance(parsed, list) or not parsed or len(parsed) > 50:
+        raise HTTPException(
+            status_code=422,
+            detail="'sheets' debe ser una lista de 1 a 50 nombres de hoja.",
+        )
+    cleaned: list[str] = []
+    for value in parsed:
+        if not isinstance(value, str):
+            raise HTTPException(status_code=422, detail="Cada hoja debe ser texto.")
+        name = _clean_sheet_param(value)
+        if name and name not in cleaned:
+            cleaned.append(name)
+    if not cleaned:
+        raise HTTPException(status_code=422, detail="No se recibieron hojas válidas.")
+    filename, content = await _read_input(file, storage_path, user)
+    return await run_in_threadpool(
+        _preload_standardization_sync, filename, content, cleaned
+    )
 
 
 @router.post("/standardize")

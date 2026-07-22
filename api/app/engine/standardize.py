@@ -46,7 +46,7 @@ def is_percentage_column(column: str) -> bool:
     """True when the header declares a rate or percentage."""
 
     normalized = strip_accents_lower(str(column)).replace("_", " ")
-    return normalized.strip() == "pct" or any(
+    return "%" in str(column) or normalized.strip() == "pct" or any(
         token in normalized
         for token in ("descuento", "porcentaje", "percent", " pct", "tasa")
     )
@@ -1085,9 +1085,16 @@ def standardize_dataframe(
             date_changes += int((new != result[col].map(str)).sum())
             result[col] = new
         else:
-            convention = column_dot3_convention(result[col])
-            numeric_conventions[col] = convention
             percentage_column = is_percentage_column(col)
+            # Las salidas canónicas de porcentajes usan fracciones decimales
+            # (por ejemplo, 1,8 % -> "0.018"). Si ese XLSX limpio vuelve a
+            # cargarse, la regla chilena general para "0.018" no puede
+            # reinterpretarlo como 18. La semántica explícita del encabezado
+            # tiene prioridad y hace la estandarización idempotente.
+            convention = (
+                "decimal" if percentage_column else column_dot3_convention(result[col])
+            )
+            numeric_conventions[col] = convention
             comma_convention, ambiguous_commas = column_comma3_convention(result[col])
             ambiguous_samples = comma3_ambiguous_rows(result[col], limit=5)
             if ambiguous_commas:
@@ -1137,7 +1144,7 @@ def standardize_dataframe(
                     "%" in str(value)
                     or (percentage_column and abs(number) > 1)
                 ):
-                    number /= 100
+                    number = round(number / 100, 12)
                 return str(value).strip() if number is None else format_number(number)
 
             new = map_unique(result[col], _standardize_number)
