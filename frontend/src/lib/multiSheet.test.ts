@@ -21,6 +21,7 @@ import {
   standardizationScopeComplete,
   synchronizeAppendJoinSelection,
   updateBatchSheetErrors,
+  withSheetSelection,
   withPublicAnalysisScope,
 } from './multiSheet'
 import type { AnalysisScope, DictionaryMatch, RelationshipCandidate } from './types'
@@ -117,6 +118,32 @@ describe('estado multihoja', () => {
     expect(sheetsForAutomaticPreparation('all', sheets, sessions)).toEqual(['Febrero'])
     expect(sheetsForAutomaticPreparation('all', sheets, sessions, ['Enero'])).toEqual([])
     expect(sheetsForAutomaticPreparation('custom', sheets, sessions)).toEqual([])
+  })
+
+  it('persiste una seleccion reducida y descarta el alcance anterior', () => {
+    expect(withSheetSelection({
+      active_sheet: 'Control',
+      available_sheets: ['Ventas', 'Costos', 'Control'],
+      excluded_sheets: [],
+      selected_sheets: ['Ventas', 'Costos', 'Control'],
+      analysis_scope: {
+        mode: 'append',
+        sheets: ['Ventas', 'Control'],
+        active_sheet: 'Control',
+      },
+      selection_mode: 'all',
+    }, ['Ventas', 'Costos'], 'custom')).toEqual({
+      active_sheet: 'Ventas',
+      available_sheets: ['Ventas', 'Costos', 'Control'],
+      excluded_sheets: ['Control'],
+      selected_sheets: ['Ventas', 'Costos'],
+      analysis_scope: {
+        mode: 'single',
+        sheets: ['Ventas'],
+        active_sheet: 'Ventas',
+      },
+      selection_mode: 'custom',
+    })
   })
 
   it('bloquea el avance hasta terminar exactamente el alcance seleccionado', () => {

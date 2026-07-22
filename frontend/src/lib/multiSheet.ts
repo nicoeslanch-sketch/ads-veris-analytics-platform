@@ -12,6 +12,45 @@ const MEDIUM_CONFIDENCE = 0.75
 
 type SheetSelectionMode = 'all' | 'custom'
 
+export interface SheetSelectionRestoreState {
+  active_sheet: string | null
+  available_sheets: string[]
+  excluded_sheets: string[]
+  selected_sheets: string[]
+  analysis_scope: AnalysisScope | null
+  selection_mode: SheetSelectionMode
+}
+
+/** Applies a sheet selection to the persisted restore contract. Any analysis
+ * scope that references an excluded sheet is reduced to the first selected
+ * sheet so a reload cannot revive the previous, broader scope. */
+export function withSheetSelection(
+  state: SheetSelectionRestoreState,
+  names: string[],
+  mode: SheetSelectionMode,
+): SheetSelectionRestoreState {
+  const selected = names.filter(
+    (name, index) => state.available_sheets.includes(name) && names.indexOf(name) === index,
+  )
+  const active = state.active_sheet && selected.includes(state.active_sheet)
+    ? state.active_sheet
+    : (selected[0] ?? null)
+  const currentScope = publicAnalysisScope(state.analysis_scope)
+  const scope = currentScope && currentScope.sheets.every((name) => selected.includes(name))
+    ? currentScope
+    : active
+      ? { mode: 'single' as const, sheets: [active], active_sheet: active }
+      : null
+  return {
+    ...state,
+    active_sheet: active,
+    selected_sheets: selected,
+    excluded_sheets: state.available_sheets.filter((name) => !selected.includes(name)),
+    analysis_scope: scope,
+    selection_mode: mode,
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }

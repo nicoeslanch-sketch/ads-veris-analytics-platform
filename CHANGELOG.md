@@ -17,6 +17,9 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
 - La interfaz ya no promete una columna fija `ID_Producto`: explica que puede
   usar una clave común como SKU o ID y adapta las etiquetas del resumen cuando
   la referencia es costo total unitario.
+- La selección recomendada de hojas se guarda de inmediato y sobrevive a una
+  recarga; un lote en curso deja de iniciar auxiliares que el usuario acaba de
+  excluir, por lo que Limpieza recibe exactamente el alcance visible.
 
 Sube `ENGINE_VERSION` a `0.21.2`. No agrega migraciones: `0021` sigue siendo
 la última.

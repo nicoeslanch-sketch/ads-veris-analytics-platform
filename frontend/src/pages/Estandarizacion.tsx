@@ -26,6 +26,7 @@ import {
   sheetStatusLabel,
   sheetsForAutomaticPreparation,
   standardizationScopeComplete,
+  withSheetSelection,
 } from '../lib/multiSheet'
 import type { StandardizeResult } from '../lib/types'
 
@@ -60,6 +61,8 @@ const STEPS = [
   },
 ]
 
+const RESTORE_STATE_TIMEOUT_MS = 15_000
+
 export default function Estandarizacion() {
   const {
     file,
@@ -85,6 +88,9 @@ export default function Estandarizacion() {
   const inputRef = useRef<HTMLInputElement>(null)
   const currentFileRef = useRef<File | null>(file)
   const sheetAbortRef = useRef<AbortController | null>(null)
+  const selectedSheetsRef = useRef<string[]>(selectedSheets)
+  const selectionModeRef = useRef<'all' | 'custom'>(selectionMode)
+  const selectionPersistChainRef = useRef<Promise<void>>(Promise.resolve())
   const [dragOver, setDragOver] = useState(false)
   const [changingSheet, setChangingSheet] = useState(false)
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; sheet: string } | null>(null)
@@ -109,6 +115,10 @@ export default function Estandarizacion() {
     setChangingSheet(false)
     setBatchProgress(null)
   }, [file])
+  useEffect(() => {
+    selectedSheetsRef.current = selectedSheets
+    selectionModeRef.current = selectionMode
+  }, [selectedSheets, selectionMode])
   const sheetProfiles = standardization?.carga?.clasificacion_hojas ?? []
   const profilesByName = useMemo(
     () => Object.fromEntries(sheetProfiles.map((profile) => [profile.nombre, profile])),
@@ -139,6 +149,29 @@ export default function Estandarizacion() {
 
   // Fase 10 §8.3: el usuario elige la hoja del Excel y se re-estandariza.
   const activeSheet = sheet ?? standardization?.carga?.hoja_usada ?? null
+
+  const applySheetSelection = (mode: 'all' | 'custom', names: string[]) => {
+    selectedSheetsRef.current = names
+    selectionModeRef.current = mode
+    setSelectionMode(mode)
+    setSelectedSheets(names)
+    const state = withSheetSelection(restoreState, names, mode)
+    if (state.active_sheet !== activeSheet) setSheet(state.active_sheet)
+    if (!datasetId) return
+
+    const form = new FormData()
+    form.append('dataset_id', datasetId)
+    form.append('restore_state', JSON.stringify(state))
+    // Serialize writes so an older response cannot restore a broader scope.
+    selectionPersistChainRef.current = selectionPersistChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        await apiPost<Record<string, unknown>>('/restore/state', form, {
+          timeoutMs: RESTORE_STATE_TIMEOUT_MS,
+        })
+      })
+      .catch(() => undefined)
+  }
   const processedSheets = availableSheets.filter(
     (name) => Boolean(sheetSessions[name]?.standardization),
   )
@@ -218,8 +251,10 @@ export default function Estandarizacion() {
     sheetAbortRef.current = controller
     const previousSheet = sheet
     const target = previousSheet && names.includes(previousSheet) ? previousSheet : names[0]
-    const effectiveSelection = replaceSelection ? names : selectedSheets
-    if (replaceSelection) setSelectedSheets(names)
+    if (replaceSelection) {
+      selectedSheetsRef.current = names
+      setSelectedSheets(names)
+    }
     if (target && sheetSessions[target]?.standardization) setSheet(target)
     setChangingSheet(true)
     setSheetError(null)
@@ -227,8 +262,11 @@ export default function Estandarizacion() {
     let position = 0
     for (const name of pendingNames) {
       if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
+      const effectiveSelection = replaceSelection ? names : selectedSheetsRef.current
+      if (!effectiveSelection.includes(name)) continue
       position += 1
-      setBatchProgress({ current: position, total: pendingNames.length, sheet: name })
+      const effectivePending = pendingNames.filter((item) => effectiveSelection.includes(item))
+      setBatchProgress({ current: position, total: effectivePending.length, sheet: name })
       setSheetStatus(name, 'estandarizando')
       try {
         const result = await apiPost<StandardizeResult>(
@@ -241,6 +279,7 @@ export default function Estandarizacion() {
               active_sheet: target,
               selected_sheets: effectiveSelection,
               excluded_sheets: availableSheets.filter((sheetName) => !effectiveSelection.includes(sheetName)),
+              selection_mode: selectionModeRef.current,
             }),
           }),
           { signal: controller.signal },
@@ -512,8 +551,7 @@ export default function Estandarizacion() {
                   name="sheet-selection"
                   checked={selectionMode === 'all'}
                   onChange={() => {
-                    setSelectionMode('all')
-                    setSelectedSheets(availableSheets)
+                    applySheetSelection('all', availableSheets)
                   }}
                   className="mt-0.5 accent-teal"
                 />
@@ -527,7 +565,7 @@ export default function Estandarizacion() {
                   type="radio"
                   name="sheet-selection"
                   checked={selectionMode === 'custom'}
-                  onChange={() => setSelectionMode('custom')}
+                  onChange={() => applySheetSelection('custom', selectedSheets)}
                   className="mt-0.5 accent-teal"
                 />
                 <span>
@@ -538,8 +576,8 @@ export default function Estandarizacion() {
             </fieldset>
             {selectionMode === 'custom' && (
               <div className="mt-3 flex flex-wrap gap-3 text-xs font-semibold">
-                  <button type="button" onClick={() => setSelectedSheets(availableSheets)} className="text-teal hover:underline">Seleccionar todas</button>
-                  <button type="button" onClick={() => setSelectedSheets([])} className="text-navy/55 hover:text-navy">Quitar todas</button>
+                  <button type="button" onClick={() => applySheetSelection('custom', availableSheets)} className="text-teal hover:underline">Seleccionar todas</button>
+                  <button type="button" onClick={() => applySheetSelection('custom', [])} className="text-navy/55 hover:text-navy">Quitar todas</button>
               </div>
             )}
             {selectionMode === 'all' && recommendedSheets.length < availableSheets.length && (
@@ -550,8 +588,7 @@ export default function Estandarizacion() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSelectionMode('custom')
-                    setSelectedSheets(recommendedSheets)
+                    applySheetSelection('custom', recommendedSheets)
                   }}
                   className="font-semibold text-teal hover:underline"
                 >
@@ -613,8 +650,8 @@ export default function Estandarizacion() {
                       aria-label={`Procesar hoja ${name}`}
                       checked={isSelected}
                       onChange={(event) => {
-                        setSelectionMode('custom')
-                        setSelectedSheets(
+                        applySheetSelection(
+                          'custom',
                           event.target.checked
                             ? [...selectedSheets, name]
                             : selectedSheets.filter((item) => item !== name),
