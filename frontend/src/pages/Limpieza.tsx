@@ -1152,6 +1152,12 @@ export default function Limpieza() {
                 : 0
               const sheetExactDuplicates =
                 diagnostic?.duplicados_detalle?.exactos ?? diagnostic?.problemas.duplicados ?? 0
+              const sheetRemovedDuplicates =
+                diagnostic?.duplicados_detalle?.filas_eliminadas ?? 0
+              const sheetPendingDuplicates = Math.max(
+                sheetExactDuplicates - sheetRemovedDuplicates,
+                0,
+              )
               const status = session?.status === 'error'
                 ? 'Error'
                 : session?.cleaning
@@ -1176,7 +1182,7 @@ export default function Limpieza() {
                   >
                     Ver detalle
                   </button>
-                  {sheetExactDuplicates > 0 && (
+                  {sheetPendingDuplicates > 0 && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1186,7 +1192,7 @@ export default function Limpieza() {
                       disabled={applying}
                       className="font-semibold text-coral hover:underline disabled:opacity-50"
                     >
-                      Eliminar {formatNumber(sheetExactDuplicates)} de esta hoja
+                      Eliminar {formatNumber(sheetPendingDuplicates)} de esta hoja
                     </button>
                   )}
                   {session?.status === 'error' && session.error && (
