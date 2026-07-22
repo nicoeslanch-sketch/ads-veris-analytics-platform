@@ -20,8 +20,9 @@ escala de porcentajes, elimina falsos conflictos de ID y reconoce maestras de
 costos con fecha de vigencia para relacionarlas por SKU. También persiste la
 selección recomendada para que una recarga no reactive hojas auxiliares. El
 parche `0.21.3` evita que `ID_Inventario` se confunda con una venta por una
-coincidencia parcial. Motor `0.21.3`; la última migración sigue siendo
-**0021**.
+coincidencia parcial. El parche `0.21.4` conserva la selección multihoja cuando
+una versión nueva obliga a recalcular snapshots. Motor `0.21.4`; la última
+migración sigue siendo **0021**.
 
 **Historial de Fase 17.**
 La Fase 17 (`CHANGELOG` [0.20.0]) simplifica el mapeo Básico y completa el

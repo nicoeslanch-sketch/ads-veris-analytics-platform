@@ -584,6 +584,86 @@ def test_restore_latest_recalcula_v2_y_lo_deja_intacto(monkeypatch):
     }
 
 
+def test_restore_recalculado_conserva_seleccion_multihoja(monkeypatch):
+    from app.routes import pipeline as pl
+
+    user_id = "user-test-123"
+    dataset_id = "00000000-0000-0000-0000-000000000012"
+    content = (
+        "Fecha;Ventas;Producto\n"
+        "01/05/2026;1000;Servicio A\n"
+        "02/05/2026;2000;Servicio B\n"
+    ).encode()
+    stale = {**_snapshot(sheet=None), "engine_version": "0.0.0"}
+    state = {
+        "active_sheet": None,
+        "available_sheets": ["Ventas", "Costos", "LEEME"],
+        "excluded_sheets": ["LEEME"],
+        "selected_sheets": ["Ventas", "Costos"],
+        "sheet_errors": {},
+        "analysis_scope": {"_selection_mode": "custom"},
+        "combine_sheets": False,
+        "source_sha256": stale["source_sha256"],
+        "engine_version": "0.0.0",
+    }
+    stored_states: list[dict | None] = []
+
+    monkeypatch.setattr(
+        pl,
+        "fetch_latest_restore_record",
+        lambda _user_id: {
+            "id": dataset_id,
+            "name": "restaurar.csv",
+            "source": "excel_csv",
+            "storage_path": f"{user_id}/restaurar.csv",
+            "status": "limpio",
+        },
+    )
+    monkeypatch.setattr(
+        pl,
+        "fetch_restore_state_bundle",
+        lambda *_args, **_kwargs: {
+            "state": state,
+            "sheets": [
+                {
+                    "sheet_key": "__single__",
+                    "revision": stale["revision"],
+                    "source_sha256": stale["source_sha256"],
+                    "rules_hash": stale["rules_hash"],
+                    "mapping_hash": stale["mapping_hash"],
+                    "sheet": stale["sheet"],
+                    "engine_version": stale["engine_version"],
+                    "snapshot": stale,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(pl, "download_from_storage", lambda _path: content)
+    monkeypatch.setattr(pl, "reserve_restore_snapshot_revision", lambda *_args: 78)
+    monkeypatch.setattr(pl, "fetch_dataset_mapping", lambda _dataset_id: None)
+    monkeypatch.setattr(
+        pl,
+        "fetch_latest_cleaning_config",
+        lambda _dataset_id, _user_id: (dict(DEFAULT_RULES), False),
+    )
+    monkeypatch.setattr(
+        pl,
+        "store_restore_snapshot",
+        lambda _dataset_id, _user_id, _snapshot, restore_state=None: (
+            stored_states.append(restore_state) or True
+        ),
+    )
+
+    body = pl._restore_latest_sync(user_id)
+
+    assert body["source"] == "computed"
+    assert body["selected_sheets"] == ["Ventas", "Costos"]
+    assert body["excluded_sheets"] == ["LEEME"]
+    assert body["selection_mode"] == "custom"
+    assert body["available_sheets"] == ["Ventas", "Costos", "LEEME"]
+    assert stored_states == [state]
+
+
 def test_restore_multihoja_recupera_sesiones_activa_excluidas_y_combinacion(monkeypatch):
     from app.routes import pipeline as pl
 

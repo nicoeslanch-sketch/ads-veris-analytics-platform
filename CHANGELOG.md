@@ -2,6 +2,17 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.21.4] - 2026-07-21 - Restauración multihoja tras actualizar el motor
+
+- Cuando una nueva versión invalida snapshots antiguos, el recálculo conserva
+  las hojas elegidas, las auxiliares excluidas y el modo de selección. Ya no
+  vuelve temporalmente a `Todas las hojas` ni procesa auxiliares por accidente.
+- El recálculo usa la hoja activa persistida cuando sigue siendo válida y
+  devuelve el alcance global en la misma respuesta de restauración.
+
+Sube `ENGINE_VERSION` a `0.21.4`. No agrega migraciones: `0021` sigue siendo
+la última.
+
 ## [0.21.3] - 2026-07-21 - Mapeo seguro de inventario
 
 - `ID_Inventario` ya no se interpreta como monto por contener accidentalmente

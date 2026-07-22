@@ -2492,6 +2492,7 @@ def _restore_latest_sync(user_id: str) -> dict:
         if production_cache
         else None
     )
+    rebuild_state = authoritative_state
     cache_key = _restore_response_cache_key(user_id, record, authoritative_state)
     if cache_key is not None:
         cached_response = _restore_response_cache_get(cache_key)
@@ -2508,6 +2509,7 @@ def _restore_latest_sync(user_id: str) -> dict:
         bundle = fetch_restore_state_bundle(record["id"], user_id)
     if bundle is not None:
         state = bundle["state"]
+        rebuild_state = state
         valid_by_key: dict[str, dict] = {}
         for row in bundle["sheets"]:
             if (
@@ -2588,6 +2590,11 @@ def _restore_latest_sync(user_id: str) -> dict:
             None,
             eliminar_duplicados,
         )
+    rebuild_sheet = None
+    if isinstance(rebuild_state, dict):
+        requested_sheet = rebuild_state.get("active_sheet")
+        if requested_sheet in rebuild_state.get("available_sheets", []):
+            rebuild_sheet = requested_sheet
     # Si falta la migración de revisiones, la restauración calculada sigue
     # funcionando pero NO se escribe con una revisión local insegura.
     safe_revision = revision or 1
@@ -2598,12 +2605,18 @@ def _restore_latest_sync(user_id: str) -> dict:
         content,
         cleaning,
         mapping,
-        None,
+        rebuild_sheet,
         eliminar_duplicados,
         safe_revision,
+        restore_state=rebuild_state,
         persist=revision is not None,
     )
-    response = _restore_response(record, snapshot, "computed")
+    response = _restore_response(
+        record,
+        snapshot,
+        "computed",
+        restore_state=rebuild_state,
+    )
     if production_cache and revision is not None:
         refreshed_state = fetch_restore_state_metadata(record["id"], user_id)
         refreshed_key = _restore_response_cache_key(user_id, record, refreshed_state)
