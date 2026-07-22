@@ -9,7 +9,9 @@ metas sin joins que multipliquen filas. También acelera lote, restauración y
 exportación auditada mediante una sola lectura del libro, snapshots por
 revisión, caché aislada por contenido/usuario y precalentamiento. Los costos
 actuales usados para cubrir vacíos históricos se muestran como estimaciones y
-no se certifican. **No agrega migraciones: 0021 sigue siendo la última.**
+no se certifican. Resumen y Explorar también reconstruyen el alcance multihoja
+con una sola apertura del XLSX, incluso tras un arranque frío del backend.
+**No agrega migraciones: 0021 sigue siendo la última.**
 
 La Fase 18 (`CHANGELOG` [0.21.0]) audita la plataforma contra la Prueba de
 Estrés Multihoja (todos los KPI reproducidos de forma independiente) y corrige

@@ -68,7 +68,11 @@ from ..engine.loader import (
     xlsx_sheet_names,
 )
 from ..engine.ai_classifier import classify_columns_with_ai
-from ..engine.mapping import detect_column_roles, detect_columns_extended
+from ..engine.mapping import (
+    detect_column_roles,
+    detect_columns_extended,
+    strip_accents_lower,
+)
 from ..engine.metrics import (
     CurrencyDetection,
     compute_metrics,
@@ -670,14 +674,30 @@ def _processed_manifest_frames(
     necesitara una sola; la exportacion y el detector de relaciones conservan
     el comportamiento completo al omitir ``selected_sheets``.
     """
+    entries = [
+        entry
+        for entry in manifest["hojas"]
+        if entry["procesar"]
+        and (selected_sheets is None or entry["nombre"] in selected_sheets)
+    ]
+    names = [entry["nombre"] for entry in entries]
+    # Metrics and relationship discovery previously reopened the complete XLSX
+    # once per sheet. A 16-sheet workbook therefore paid the ZIP/XML parsing
+    # cost 16 times after every cold start. Load the requested scope once and
+    # feed each immutable frame into the existing per-sheet pipeline; rules,
+    # mappings, revision keys and user isolation remain unchanged.
+    loaded, _available = _load_batch_frames_cached(filename, content, names)
+
     frames: dict[str, object] = {}
     mappings: dict[str, dict[str, str]] = {}
     results: dict[str, dict] = {}
-    for entry in manifest["hojas"]:
-        if not entry["procesar"] or (
-            selected_sheets is not None and entry["nombre"] not in selected_sheets
-        ):
-            continue
+    for entry in entries:
+        preloaded = loaded.get(entry["nombre"])
+        if preloaded is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"La hoja '{entry['nombre']}' no existe o no contiene una tabla procesable.",
+            )
         result = _analyze_cached(
             filename,
             content,
@@ -689,6 +709,7 @@ def _processed_manifest_frames(
             eliminar_duplicados=entry["eliminar_duplicados"],
             cache_dataset_id=cache_dataset_id,
             cache_revision=entry.get("revision") or None,
+            preloaded=preloaded,
         )
         frames[entry["nombre"]] = result["_df_limpio"].copy()
         mappings[entry["nombre"]] = result.get("mapeo", entry["mapping"])
@@ -2615,6 +2636,35 @@ def _relationships_sync(
                 # ya contiene las muestras de encabezados de todo el libro y
                 # permite descubrir maestras de costo sin procesarlas dos veces.
                 selected_sheets = set(focused_transaction_sheets)
+                # Incluye desde la misma apertura las maestras de costo que el
+                # manifiesto o su nombre permiten reconocer con seguridad. La
+                # ruta anterior abría el libro para ventas y luego una segunda
+                # vez para Productos/Costos, duplicando la espera inicial.
+                for entry in manifest["hojas"]:
+                    name = entry["nombre"]
+                    if not entry["procesar"] or name in selected_sheets:
+                        continue
+                    normalized_name = re.sub(
+                        r"[^a-z0-9]+", " ", strip_accents_lower(name)
+                    )
+                    if "historial" in normalized_name and "costo" in normalized_name:
+                        continue
+                    entry_mapping = entry.get("mapping") or {}
+                    mapped_columns = [
+                        str(column)
+                        for column in entry_mapping.values()
+                        if str(column).strip()
+                    ]
+                    mapped_cost_reference = bool(
+                        is_unit_cost_column(entry_mapping.get("costo"))
+                        and not is_transaction_profile(mapped_columns, entry_mapping)
+                    )
+                    named_cost_reference = any(
+                        token in normalized_name.split()
+                        for token in ("catalogo", "producto", "productos", "costo", "costos")
+                    )
+                    if mapped_cost_reference or named_cost_reference:
+                        selected_sheets.add(name)
     frames, mappings, results = _processed_manifest_frames(
         filename, content, manifest, cache_dataset_id, selected_sheets
     )
@@ -2631,6 +2681,14 @@ def _relationships_sync(
         for entry in manifest["hojas"]:
             name = entry["nombre"]
             if not entry["procesar"] or name in frames:
+                continue
+            normalized_name = re.sub(
+                r"[^a-z0-9]+", " ", strip_accents_lower(name)
+            )
+            # Un historial necesita una union temporal as-of; ofrecerlo como
+            # relacion simple por SKU multiplicaria ventas y ademas obliga a
+            # procesar miles de filas que nunca pueden ser una maestra vigente.
+            if "historial" in normalized_name and "costo" in normalized_name:
                 continue
             profile = profiles_by_name.get(name, {})
             structure = profile.get("estructura", {}) if isinstance(profile, dict) else {}

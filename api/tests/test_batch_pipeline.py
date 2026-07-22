@@ -179,6 +179,49 @@ def test_clean_batch_reuses_frames_prepared_by_standardization(
     assert set(cleaned.json()["resultados"]) == {"Enero", "Febrero"}
 
 
+def test_multi_sheet_metrics_open_workbook_once(monkeypatch):
+    from app.routes import pipeline
+
+    content = _book()
+    manifest = {
+        "hojas": [
+            {
+                "nombre": name,
+                "procesar": True,
+                "rules": {},
+                "mapping": {},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "revision": 41,
+            }
+            for name in ("Enero", "Febrero")
+        ]
+    }
+    with pipeline._FRAME_CACHE_LOCK:
+        pipeline._FRAME_CACHE.clear()
+    with pipeline._CACHE_LOCK:
+        pipeline._CLEAN_CACHE.clear()
+
+    original_loader = pipeline.load_dataframes_with_reports
+    calls = 0
+
+    def counted_loader(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_loader(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "load_dataframes_with_reports", counted_loader)
+    frames, _mappings, _results = pipeline._processed_manifest_frames(
+        "ventas.xlsx",
+        content,
+        manifest,
+        cache_dataset_id="00000000-0000-0000-0000-000000000099",
+    )
+
+    assert set(frames) == {"Enero", "Febrero"}
+    assert calls == 1
+
+
 def test_batch_snapshot_persistence_is_bounded_and_concurrent(monkeypatch):
     from app.routes import pipeline
 

@@ -484,7 +484,9 @@ def test_relationships_sync_blocks_clp_sales_with_usd_stock_catalog():
     assert "CLP" in relation["reason"] and "USD" in relation["reason"]
 
 
-def test_relationship_focus_discovers_neutral_cost_catalog_from_headers():
+def test_relationship_focus_discovers_neutral_cost_catalog_from_headers(monkeypatch):
+    from app.routes import pipeline as pipeline_module
+
     source = io.BytesIO()
     with pd.ExcelWriter(source, engine="openpyxl") as writer:
         for sheet, prefix in (("Enero", "E"), ("Febrero", "F")):
@@ -521,6 +523,21 @@ def test_relationship_focus_discovers_neutral_cost_catalog_from_headers():
         ]
     }
 
+    with pipeline_module._FRAME_CACHE_LOCK:
+        pipeline_module._FRAME_CACHE.clear()
+    with pipeline_module._CACHE_LOCK:
+        pipeline_module._CLEAN_CACHE.clear()
+    original_loader = pipeline_module.load_dataframes_with_reports
+    workbook_opens = 0
+
+    def counted_loader(*args, **kwargs):
+        nonlocal workbook_opens
+        workbook_opens += 1
+        return original_loader(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pipeline_module, "load_dataframes_with_reports", counted_loader
+    )
     response = _relationships_sync(
         "catalogo-neutro.xlsx",
         source.getvalue(),
@@ -536,6 +553,7 @@ def test_relationship_focus_discovers_neutral_cost_catalog_from_headers():
     assert catalog_relations
     assert all(item["purpose"] == "enriquecer_costos" for item in catalog_relations)
     assert any(item["safe"] and item["recommended"] for item in catalog_relations)
+    assert workbook_opens == 1
 
 
 def test_total_cost_reference_is_not_multiplied_or_recommended_as_unit_cost():
