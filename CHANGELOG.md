@@ -14,6 +14,26 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
   los totales declarados en `CONTROL_ESPERADO`; el motor no imputa los valores
   que fueron reemplazados por vacíos o `N/D`.
 
+## [0.22.0] - 2026-07-21 - Paneles diferenciados y perfiles operacionales
+
+- `Resumen` pasa a priorizar señales ejecutivas y operacionales; `Explorar`
+  incorpora rangos, medianas, evolución, más desgloses y un diccionario de
+  campos para investigar el origen de los resultados.
+- Compras, gastos, cobranzas, metas, inventario, proveedores, vendedores e
+  historial de costos reciben perfiles propios. Ya no se presentan como
+  ventas ni se les inventan ingresos o utilidad.
+- Corrige el mapeo de unidad de venta, costos e identificadores, normaliza
+  porcentajes mixtos por celda y permite apilar periodos con columnas
+  auxiliares opcionales sin perder filas ni importes.
+- Los gráficos financieros separan escalas incompatibles, las composiciones
+  pequeñas usan visual circular y los valores negativos se distinguen en
+  barras divergentes. Los costos atípicos se conservan y quedan advertidos.
+- Audita los dos libros 2026 suministrados y agrega regresiones backend,
+  frontend y E2E para las clasificaciones, cálculos y diferencias entre vistas.
+
+Sube `ENGINE_VERSION` a `0.22.0`. No agrega migraciones: `0021` sigue siendo
+la última.
+
 ## [0.21.4] - 2026-07-21 - Restauración multihoja tras actualizar el motor
 
 - Cuando una nueva versión invalida snapshots antiguos, el recálculo conserva

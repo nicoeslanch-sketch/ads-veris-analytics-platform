@@ -544,6 +544,13 @@ export interface MetricsResult {
     columna_costo: string | null
     columna_cantidad: string | null
   } | null
+  calidad_costos?: {
+    registros_atipicos: number
+    no_positivos: number
+    limite_superior_iqr: number
+    costo_absoluto_atipico: number
+    participacion_costo_absoluto_pct: number
+  } | null
   analysis_scope?: AnalysisScope
   analysis_provenance?: Record<string, unknown>
   tipo_analisis?: 'catalogo_productos' | 'campanas_marketing' | 'inventario' | 'generico'
@@ -560,7 +567,14 @@ export interface MetricsResult {
       productos_con_comparacion: number
     } | null
     cobertura_costo_pct: number
-    ranking_costos: Array<{ producto: string; costo: number; precio_lista: number | null; margen_potencial_pct: number | null }>
+    costos_tipicos?: { promedio: number | null; mediana: number | null; minimo: number | null; maximo: number | null }
+    costos_a_revisar?: {
+      registros: number
+      no_positivos: number
+      sobre_limite_iqr: number
+      limite_superior_iqr: number | null
+    }
+    ranking_costos: Array<{ producto: string; costo: number; precio_lista: number | null; margen_potencial_pct: number | null; requiere_revision?: boolean }>
     categorias: Array<{ nombre: string; productos: number }>
     marcas: Array<{ nombre: string; productos: number }>
     activos: number | null
@@ -592,6 +606,10 @@ export interface MetricsResult {
     productos: number
     stock_total: number
     stock_minimo_total: number
+    valor_inventario?: number | null
+    costo_referencia_promedio?: number | null
+    unidades_comprometidas?: number | null
+    diferencia_conteo?: number | null
     bajo_minimo: number
     stocks_negativos?: number
     cobertura_stock_pct: number
@@ -613,7 +631,18 @@ export interface MetricsResult {
     columnas_disponibles: string[]
     /** Fase 18: perfil con contenido para hojas de clientes, sucursales,
      * trabajadores, metas u otras no transaccionales. */
-    subtipo?: 'clientes' | 'sucursales' | 'trabajadores' | 'metas' | null
+    subtipo?:
+      | 'clientes'
+      | 'sucursales'
+      | 'trabajadores'
+      | 'metas'
+      | 'productos'
+      | 'proveedores'
+      | 'compras'
+      | 'gastos'
+      | 'cobranzas'
+      | 'historial_costos'
+      | null
     distribuciones?: Array<{
       columna: string
       valores: Array<{ nombre: string; registros: number }>
@@ -621,11 +650,22 @@ export interface MetricsResult {
     }>
     numericas?: Array<{
       columna: string
-      total: number
+      total: number | null
       promedio: number
+      mediana: number
       minimo: number
       maximo: number
+      formato?: 'moneda' | 'porcentaje' | 'numero'
+      destacado?: 'total' | 'promedio'
+      valores_validos?: number
+      fuera_rango?: number
     }>
+    evolucion?: {
+      columna: string
+      operacion: 'total' | 'promedio'
+      formato: 'moneda' | 'porcentaje' | 'numero'
+      valores: Array<{ mes: string; valor: number }>
+    } | null
   }
   /** Fase 18: agrupaciones de ventas por columnas categóricas adicionales
    * (sucursal, región, zona…), incluidas las enriquecidas por una relación. */

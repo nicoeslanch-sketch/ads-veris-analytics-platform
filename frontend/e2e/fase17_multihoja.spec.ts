@@ -45,6 +45,22 @@ rows.to_excel(path, sheet_name="Ventas", index=False)
   execFileSync('python', ['-c', script, path])
 }
 
+function createProviderWorkbook(path: string) {
+  const script = String.raw`
+import pandas as pd
+import sys
+pd.DataFrame({
+    "ID_Proveedor": ["P-1", "P-2", "P-3"],
+    "Razón Social": ["Uno SpA", "Dos Ltda", "Tres SpA"],
+    "Categoría Principal": ["Aseo", "Oficina", "Aseo"],
+    "Región": ["Maule", "Biobío", "Maule"],
+    "Condición Pago Días": [15, 30, 60],
+    "Activo": ["Sí", "Sí", "No"],
+}).to_excel(sys.argv[1], sheet_name="Proveedores", index=False)
+`
+  execFileSync('python', ['-c', script, path])
+}
+
 function standardizationResponse(filename: string, value: string) {
   return {
     archivo: filename,
@@ -251,6 +267,32 @@ test('permite revisar una limpieza terminada y volver a limpiar sin subir el arc
   await expect(page.getByText('Revisando el diagnóstico original')).toBeVisible()
   await page.getByRole('button', { name: 'Volver al resultado limpio' }).click()
   await expect(page.getByText(/1 eliminados/)).toBeVisible()
+})
+
+test('Resumen prioriza y Explorar profundiza en una hoja operacional', async ({ page }, testInfo) => {
+  const workbook = testInfo.outputPath('proveedores.xlsx')
+  createProviderWorkbook(workbook)
+
+  await page.goto('/estandarizacion')
+  const chooserPromise = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: /Subir archivo/ }).click()
+  const chooser = await chooserPromise
+  await chooser.setFiles(workbook)
+  await expect(page.getByText(/Dataset activo:/)).toBeVisible({ timeout: 60_000 })
+
+  await page.getByRole('link', { name: /Limpieza de datos/ }).first().click()
+  await expect(page.getByText('Problemas detectados')).toBeVisible({ timeout: 90_000 })
+  await page.getByRole('button', { name: 'Limpiar datos', exact: true }).click()
+  await expect(page.getByText(/Todas las hojas están limpias/)).toBeVisible({ timeout: 90_000 })
+
+  await page.getByRole('link', { name: /Resumen/ }).first().click()
+  await expect(page.getByText('Red de proveedores')).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText('Resumen · decidir y priorizar')).toBeVisible()
+  await expect(page.getByText('Diccionario rápido de la hoja')).toHaveCount(0)
+
+  await page.getByRole('link', { name: /Explorar datos/ }).first().click()
+  await expect(page.getByText('Explorar · entender causas')).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText('Diccionario rápido de la hoja')).toBeVisible()
 })
 
 test('Fase 17 bloquea una relacion many-to-many', async ({ page }, testInfo) => {

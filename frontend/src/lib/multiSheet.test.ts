@@ -333,6 +333,23 @@ describe('estado multihoja', () => {
     )).toEqual(['Enero', 'Febrero', 'Marzo'])
   })
 
+  it('incluye meses con una columna auxiliar opcional', () => {
+    const result = (columns: string[]) => ({
+      preview: { columnas: columns },
+      column_types: Object.fromEntries(columns.map((column) => [column, column === 'Fecha' ? 'fecha' : column === 'Monto' ? 'numero' : 'texto'])),
+      mapeo: { fecha: 'Fecha', monto: 'Monto' },
+      moneda: 'CLP',
+    })
+    expect(compatibleAppendSheets(
+      ['2024', '2025', '2026'],
+      {
+        '2024': result(['Fecha', 'Monto', 'Observacion']),
+        '2025': result(['Fecha', 'Monto', 'Observacion', 'Observacion.1']),
+        '2026': result(['Fecha', 'Monto', 'Observacion']),
+      },
+    )).toEqual(['2024', '2025', '2026'])
+  })
+
   it('prefiere ventas y no confunde Stock + Precio_Lista + costo con transacciones', () => {
     const catalog = {
       preview: { columnas: ['ID_Producto', 'Producto', 'Stock', 'Costo_Unitario', 'Precio_Lista'] },

@@ -500,23 +500,47 @@ def append_compatible_frames(
     first_name = names[0]
     first = frames[first_name]
     columns = [str(column) for column in first.columns]
+    union_columns = list(columns)
+    for frame in frames.values():
+        for column in map(str, frame.columns):
+            if column not in union_columns:
+                union_columns.append(column)
+    column_sets = [set(map(str, frame.columns)) for frame in frames.values()]
+    common_columns = set.intersection(*column_sets)
+    # Una columna auxiliar opcional (p. ej. Observación.1 en un solo mes) no
+    # vuelve incompatibles tablas con el mismo grano. La base común debe cubrir
+    # al menos 80% del esquema más pequeño; tipos y roles se validan abajo.
+    smallest_schema = min((len(columns) for columns in column_sets), default=0)
+    if not smallest_schema or len(common_columns) / smallest_schema < 0.8:
+        raise ValueError("Las hojas seleccionadas no tienen columnas compatibles.")
     if "hoja_origen" in columns:
         raise ValueError("Ya existe una columna hoja_origen.")
-    first_types = {column: _column_type(first, column) for column in columns}
+    first_types = {
+        column: _column_type(first, column)
+        for column in columns
+        if column in common_columns
+    }
     first_mapping = resolve_mapping(columns, mappings.get(first_name))
     parts: list[pd.DataFrame] = []
+    missing_by_sheet: dict[str, list[str]] = {}
     for name in names:
         frame = frames[name]
-        if set(map(str, frame.columns)) != set(columns):
-            raise ValueError("Las hojas seleccionadas no tienen columnas compatibles.")
-        current = frame.reindex(columns=columns)
-        current_types = {column: _column_type(current, column) for column in columns}
+        current_columns = set(map(str, frame.columns))
+        current = frame.reindex(columns=union_columns)
+        current_types = {
+            column: _column_type(current, column) for column in first_types
+        }
         if current_types != first_types:
             raise ValueError("Las hojas seleccionadas tienen tipos incompatibles.")
-        current_mapping = resolve_mapping(columns, mappings.get(name))
+        current_mapping = resolve_mapping(
+            [str(column) for column in frame.columns], mappings.get(name)
+        )
         for role, column in first_mapping.items():
             if current_mapping.get(role) != column:
                 raise ValueError("Las hojas seleccionadas tienen interpretaciones incompatibles.")
+        missing_by_sheet[name] = [
+            column for column in union_columns if column not in current_columns
+        ]
         part = current.copy()
         part.insert(0, "hoja_origen", name)
         parts.append(part)
@@ -533,6 +557,9 @@ def append_compatible_frames(
         "sheets": names,
         "rows": len(combined),
         "origin_column": "hoja_origen",
+        "optional_columns": {
+            name: missing for name, missing in missing_by_sheet.items() if missing
+        },
     }
 
 

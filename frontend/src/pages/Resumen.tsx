@@ -43,7 +43,7 @@ import { fullRangePeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
-import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, truncateLabel } from '../lib/charts'
+import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, chartColorForKey, formatCLPCompact, formatMonthShort, shouldSplitFinancialScale, truncateLabel } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
@@ -405,6 +405,7 @@ export default function Resumen() {
   // Fase 14: el gráfico identifica el mes parcial (asterisco + nota al pie)
   const mesParcial = evolution.find((m) => m.parcial) ?? null
   const hasCosts = Boolean(kpis?.ganancia_neta)
+  const splitFinancialScale = hasCosts && shouldSplitFinancialScale(evolution)
   const margin = kpis?.margen_utilidad_pct?.valor ?? null
   const health =
     margin === null
@@ -612,9 +613,9 @@ export default function Resumen() {
           ctaTo="/limpieza"
         />
       ) : contentKind === 'product_catalog' && metrics?.analisis_productos ? (
-        <ProductCatalogSummary analysis={metrics.analisis_productos} />
+        <ProductCatalogSummary analysis={metrics.analisis_productos} variant="summary" />
       ) : contentKind === 'adaptive_profile' && metrics ? (
-        <AdaptiveProfileSummary metrics={metrics} />
+        <AdaptiveProfileSummary metrics={metrics} variant="summary" />
       ) : contentKind === 'missing_amount' ? (
         /* Fase 11: sin columna de monto el dashboard sería puro $0 — mejor
            decirlo claro y llevar al usuario al mapeo de columnas. */
@@ -717,75 +718,33 @@ export default function Resumen() {
                   seleccionado).
                 </p>
               )}
-              <div className="mt-4 h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={evolution} margin={{ top: 8, right: 12, bottom: 0, left: 8 }}>
-                    <CartesianGrid stroke={GRID_STROKE} vertical={false} />
-                    <XAxis
-                      dataKey="mes"
-                      tickFormatter={(v: string) =>
-                        `${formatMonthShort(v)}${v === mesParcial?.mes ? '*' : ''}`
-                      }
-                      tick={{ fill: AXIS_INK, fontSize: 12 }}
-                      axisLine={{ stroke: GRID_STROKE }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tickFormatter={formatCLPCompact}
-                      tick={{ fill: AXIS_INK, fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={60}
-                    />
-                    <Tooltip content={<ChartTooltip />} />
-                    {evolution.length >= 2 && (
-                      <ReferenceLine
-                        y={evolution.reduce((s, m) => s + m.ingresos, 0) / evolution.length}
-                        stroke={AXIS_INK}
-                        strokeDasharray="6 4"
-                        strokeOpacity={0.55}
-                        label={{
-                          value: 'promedio',
-                          position: 'insideTopRight',
-                          fill: AXIS_INK,
-                          fontSize: 10,
-                        }}
-                      />
-                    )}
-                    <Line
-                      type="monotone"
-                      dataKey="ingresos"
-                      name="Ingresos"
-                      stroke={CHART.ingresos}
-                      strokeWidth={2}
-                      dot={{ r: 3, strokeWidth: 0, fill: CHART.ingresos }}
-                      activeDot={{ r: 5 }}
-                    />
-                    {hasCosts && (
-                      <Line
-                        type="monotone"
-                        dataKey="gastos"
-                        name="Gastos"
-                        stroke={CHART.gastos}
-                        strokeWidth={2}
-                        dot={{ r: 3, strokeWidth: 0, fill: CHART.gastos }}
-                        activeDot={{ r: 5 }}
-                      />
-                    )}
-                    {hasCosts && (
-                      <Line
-                        type="monotone"
-                        dataKey="utilidad"
-                        name="Utilidad"
-                        stroke={CHART.utilidad}
-                        strokeWidth={2}
-                        dot={{ r: 3, strokeWidth: 0, fill: CHART.utilidad }}
-                        activeDot={{ r: 5 }}
-                      />
-                    )}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+              {splitFinancialScale ? (
+                <div className="mt-4 space-y-4">
+                  <div className="flex items-start gap-2 rounded-lg border border-gold/35 bg-gold/[0.07] px-3 py-2 text-xs text-navy/70">
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+                    <p>Separamos las escalas porque costos o utilidad tienen una magnitud muy distinta. Así los ingresos no quedan visualmente planos; los valores originales no se modifican.</p>
+                  </div>
+                  <div className="grid gap-4 2xl:grid-cols-2">
+                    <div>
+                      <p className="mb-2 text-xs font-semibold text-navy/65">Ingresos</p>
+                      <div className="h-56"><FinancialLineChart evolution={evolution} mesParcial={mesParcial?.mes} series={['ingresos']} showAverage /></div>
+                    </div>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold text-navy/65">Costos y utilidad</p>
+                      <div className="h-56"><FinancialLineChart evolution={evolution} mesParcial={mesParcial?.mes} series={['gastos', 'utilidad']} /></div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 h-72">
+                  <FinancialLineChart
+                    evolution={evolution}
+                    mesParcial={mesParcial?.mes}
+                    series={hasCosts ? ['ingresos', 'gastos', 'utilidad'] : ['ingresos']}
+                    showAverage
+                  />
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap gap-4 text-xs text-navy/70">
                 {[
                   { name: 'Ingresos', color: CHART.ingresos, show: true },
@@ -1104,6 +1063,62 @@ export default function Resumen() {
   )
 }
 
+function FinancialLineChart({
+  evolution,
+  mesParcial,
+  series,
+  showAverage = false,
+}: {
+  evolution: MetricsResult['evolucion_mensual']
+  mesParcial?: string
+  series: Array<'ingresos' | 'gastos' | 'utilidad'>
+  showAverage?: boolean
+}) {
+  const config = {
+    ingresos: { name: 'Ingresos', color: CHART.ingresos },
+    gastos: { name: 'Gastos', color: CHART.gastos },
+    utilidad: { name: 'Utilidad', color: CHART.utilidad },
+  } as const
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={evolution} margin={{ top: 8, right: 12, bottom: 0, left: 8 }}>
+        <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+        <XAxis
+          dataKey="mes"
+          tickFormatter={(value: string) => `${formatMonthShort(value)}${value === mesParcial ? '*' : ''}`}
+          tick={{ fill: AXIS_INK, fontSize: 11 }}
+          axisLine={{ stroke: GRID_STROKE }}
+          tickLine={false}
+        />
+        <YAxis tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} width={62} />
+        <Tooltip content={<ChartTooltip />} />
+        {showAverage && evolution.length >= 2 && (
+          <ReferenceLine
+            y={evolution.reduce((sum, row) => sum + row.ingresos, 0) / evolution.length}
+            stroke={AXIS_INK}
+            strokeDasharray="6 4"
+            strokeOpacity={0.55}
+            label={{ value: 'promedio', position: 'insideTopRight', fill: AXIS_INK, fontSize: 10 }}
+          />
+        )}
+        {series.map((key) => (
+          <Line
+            key={key}
+            type="monotone"
+            dataKey={key}
+            name={config[key].name}
+            stroke={config[key].color}
+            strokeWidth={2.5}
+            connectNulls={false}
+            dot={{ r: 3, strokeWidth: 0, fill: config[key].color }}
+            activeDot={{ r: 5 }}
+          />
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
 /** Fase 18: gráfico de una agrupación flexible (ventas por sucursal/región…). */
 function FlexibleGroupCard({
   agrupacion,
@@ -1114,9 +1129,14 @@ function FlexibleGroupCard({
     ...grupo,
     etiqueta: truncateLabel(grupo.nombre, 18),
   }))
+  const chartColor = chartColorForKey(agrupacion.columna)
+  const useDonut = rows.length >= 2 && rows.length <= 5 && rows.every((row) => row.ingresos >= 0)
   return (
-    <Card className="min-w-0">
-      <h2 className="text-base font-semibold text-navy">Ventas por {agrupacion.columna}</h2>
+    <Card className="min-w-0" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
+      <div className="flex items-center gap-2">
+        <span className="h-3 w-3 rounded-full" style={{ background: chartColor }} />
+        <h2 className="text-base font-semibold text-navy">Ventas por {agrupacion.columna}</h2>
+      </div>
       <p className="mt-1 text-xs text-navy/55">
         Ingresos netos según la columna «{agrupacion.columna}» de tu archivo
         {agrupacion.grupos_totales > rows.length
@@ -1138,26 +1158,25 @@ function FlexibleGroupCard({
       )}
       <div className="mt-4" style={{ height: Math.max(rows.length * 30 + 40, 140) }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
-            <XAxis
-              type="number"
-              tickFormatter={formatCLPCompact}
-              tick={{ fill: AXIS_INK, fontSize: 11 }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <YAxis
-              type="category"
-              dataKey="etiqueta"
-              width={120}
-              tick={{ fill: AXIS_INK, fontSize: 11 }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Tooltip formatter={(value) => formatCLP(Number(value))} />
-            <Bar dataKey="ingresos" name="Ingresos" fill={CHART.ingresos} radius={[0, 3, 3, 0]} />
-          </BarChart>
+          {useDonut ? (
+            <PieChart>
+              <Pie data={rows} dataKey="ingresos" nameKey="etiqueta" innerRadius={52} outerRadius={82} paddingAngle={2}>
+                {rows.map((row, index) => <Cell key={row.nombre} fill={CATEGORICAL[index % CATEGORICAL.length]} />)}
+              </Pie>
+              <Tooltip formatter={(value) => formatCLP(Number(value))} />
+            </PieChart>
+          ) : (
+            <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
+              <XAxis type="number" tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="etiqueta" width={120} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
+              <ReferenceLine x={0} stroke={AXIS_INK} strokeOpacity={0.45} />
+              <Tooltip formatter={(value) => formatCLP(Number(value))} />
+              <Bar dataKey="ingresos" name="Ingresos" fill={chartColor} radius={[0, 4, 4, 0]}>
+                {rows.map((row) => <Cell key={row.nombre} fill={row.ingresos < 0 ? CHART.alerta : chartColor} />)}
+              </Bar>
+            </BarChart>
+          )}
         </ResponsiveContainer>
       </div>
     </Card>

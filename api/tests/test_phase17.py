@@ -137,6 +137,27 @@ def test_append_compatible_sheets_adds_origin_without_changing_rows():
     assert provenance["rows"] == 2
 
 
+def test_append_accepts_auxiliary_column_present_in_only_one_period():
+    frames = {
+        "2024": pd.DataFrame({"Fecha": ["01/01/2024"], "Venta": [1000], "Observacion": ["ok"]}),
+        "2025": pd.DataFrame({"Fecha": ["01/01/2025"], "Venta": [2000], "Observacion": ["ok"], "Observacion.1": ["extra"]}),
+        "2026": pd.DataFrame({"Fecha": ["01/01/2026"], "Venta": [3000], "Observacion": ["ok"]}),
+    }
+    mappings = {
+        name: {"fecha": "Fecha", "monto": "Venta"} for name in frames
+    }
+
+    combined, mapping, provenance = append_compatible_frames(frames, mappings)
+
+    assert len(combined) == 3
+    assert combined["Venta"].sum() == 6000
+    assert combined.loc[combined["hoja_origen"] == "2025", "Observacion.1"].iloc[0] == "extra"
+    assert provenance["optional_columns"] == {
+        "2024": ["Observacion.1"],
+        "2026": ["Observacion.1"],
+    }
+
+
 def test_append_rejects_incompatible_schemas():
     with pytest.raises(ValueError, match="columnas compatibles"):
         append_compatible_frames(

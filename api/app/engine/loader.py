@@ -88,7 +88,8 @@ _FORMULA_XML_TAG_RE = re.compile(rb"<(?:[A-Za-z_][\w.-]*:)?f(?:\s|/?>)")
 
 _AUXILIARY_SHEET_NAME_RE = re.compile(
     r"(?i)(?:^|[_\s-])(guia|gu[ií]a|control|leeme|readme|instrucciones?|"
-    r"notas?|diccionario|portada|caratula|car[aá]tula)(?:$|[_\s-])"
+    r"notas?|diccionario|par[aá]metros?|parametros?|configuraci[oó]n|"
+    r"portada|caratula|car[aá]tula)(?:$|[_\s-])"
 )
 _SHEET_STRUCTURE_CACHE_LOCK = threading.Lock()
 _SHEET_STRUCTURE_CACHE: "OrderedDict[str, dict[str, dict]]" = OrderedDict()

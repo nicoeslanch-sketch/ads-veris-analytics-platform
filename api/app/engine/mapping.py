@@ -95,8 +95,24 @@ def _legacy_semantically_compatible(role: str, normalized_column: str) -> bool:
     if role == "categoria" and "cliente" in compact:
         return False
     if role == "monto" and any(
-        marker in compact for marker in ("preciounitario", "unitprice", "priceperunit")
+        marker in compact
+        for marker in (
+            "preciounitario",
+            "unitprice",
+            "priceperunit",
+            # "Unidad Venta" describe la unidad de medida (caja, pack,
+            # unidad), no el importe. La coincidencia legacy por la palabra
+            # "venta" la estaba eligiendo antes que "Precio Lista Neto".
+            "unidadventa",
+            "unidadcompra",
+        )
     ):
+        return False
+    if role == "costo" and compact.startswith(
+        ("idcosto", "idgasto", "idcompra", "codigocosto", "codigogasto")
+    ):
+        # Los identificadores pueden contener las palabras costo/gasto, pero
+        # nunca deben convertirse en una serie monetaria.
         return False
     if role == "cliente" and any(
         marker in compact for marker in ("clic", "click", "impresion", "campana", "inversion")

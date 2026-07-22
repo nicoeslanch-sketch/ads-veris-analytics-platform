@@ -1,5 +1,6 @@
 {
  "advertencias": [
+  "19 costo(s) son no positivos o atípicos según IQR y concentran 29.2% del costo absoluto. Los indicadores los conservan, pero deben revisarse antes de interpretar utilidad y margen.",
   "El último registro disponible de 2026-06 corresponde al día 15 de 30. Para no comparar periodos con distinta cantidad de días registrados, este mes no se usa como mes completo: la proyección lo excluye y las alertas comparan meses completos.",
   "Los ingresos mostrados son NETOS: incluyen 2 monto(s) negativo(s) que restan 29.970 (devoluciones. reversas o ajustes).",
   "24 de 279 ventas no tienen costo asociado (cobertura 91.4%): la utilidad y el margen se calculan solo sobre las ventas con costo — son resultados PARCIALES, no el total del negocio.",
@@ -11,6 +12,13 @@
   "columna_cantidad": null,
   "columna_costo": "Costo",
   "origen": "columna_costo"
+ },
+ "calidad_costos": {
+  "costo_absoluto_atipico": 2201314.0,
+  "limite_superior_iqr": 89518.0,
+  "no_positivos": 1,
+  "participacion_costo_absoluto_pct": 29.2,
+  "registros_atipicos": 19
  },
  "calidad_datos": 96.5,
  "clientes": {

@@ -122,12 +122,13 @@ def _currency_counts(raw: pd.Series | None) -> dict[str, int]:
     # 1.000 filas sin multiplicar el costo por datos muy repetidos.
     values = raw.loc[~physical_missing_mask(raw)].astype(str).str.strip()
     for value, occurrences in values.value_counts(dropna=False).items():
+        text = str(value)
         found = {
-            code for code, pattern in _CURRENCY_SIGNALS.items() if pattern.search(value)
+            code for code, pattern in _CURRENCY_SIGNALS.items() if pattern.search(text)
         }
         # '$' aislado es CLP por convención es-CL, pero no cuando el mismo
         # valor ya declara otra moneda (US$, ARS $, etc.).
-        if not found and "$" in value:
+        if not found and "$" in text:
             found.add("CLP")
         for code in found:
             counts[code] += int(occurrences)
@@ -274,6 +275,20 @@ def _block_monetary_outputs(result: dict, detection: CurrencyDetection) -> None:
         for key in ("inversion", "cpc"):
             if key in campaign_analysis:
                 campaign_analysis[key] = None
+    generic_analysis = result.get("analisis_generico")
+    if isinstance(generic_analysis, dict):
+        for numeric in generic_analysis.get("numericas", []):
+            if numeric.get("formato") == "moneda":
+                for key in ("total", "promedio", "mediana", "minimo", "maximo"):
+                    numeric[key] = None
+        evolution = generic_analysis.get("evolucion")
+        if isinstance(evolution, dict) and evolution.get("formato") == "moneda":
+            generic_analysis["evolucion"] = None
+    inventory_analysis = result.get("analisis_inventario")
+    if isinstance(inventory_analysis, dict):
+        for key in ("valor_inventario", "costo_referencia_promedio"):
+            if key in inventory_analysis:
+                inventory_analysis[key] = None
     result["proyeccion"] = None
     result["datos_monetarios_disponibles"] = False
     result["bloqueo_monetario"] = {
@@ -314,7 +329,15 @@ def is_product_catalog_profile(
         and "total" in normalized
         and any(token in normalized for token in ("unitario", "por unidad", "unit"))
     }
-    catalog_reference_columns = price_list_columns | total_unit_cost_columns
+    unit_cost_columns = {
+        column
+        for column, normalized in normalized_columns.items()
+        if "costo" in normalized
+        and any(token in normalized for token in ("unitario", "por unidad", "unit"))
+    }
+    catalog_reference_columns = (
+        price_list_columns | total_unit_cost_columns | unit_cost_columns
+    )
     if not catalog_reference_columns:
         return False
 
@@ -368,6 +391,8 @@ def is_product_catalog_profile(
         "creation",
         "modified",
         "effective",
+        "alta",
+        "registro",
     )
     mapped_date = roles.get("fecha")
     mapped_date_normalized = normalized_columns.get(str(mapped_date), "")
@@ -412,6 +437,9 @@ def is_product_catalog_profile(
     distinct_transaction_amount = any(
         column not in catalog_reference_columns
         and column != roles.get("costo")
+        and not any(
+            marker in normalized for marker in ("unidad venta", "unidad compra")
+        )
         and bool(
             set(re.split(r"[^a-z0-9]+", normalized.strip()))
             & transaction_amount_tokens
@@ -420,7 +448,6 @@ def is_product_catalog_profile(
     )
     return bool(
         roles.get("producto")
-        and roles.get("costo")
         and not has_transaction_date
         and not has_transaction_id
         and amount_is_catalog_reference
@@ -485,6 +512,82 @@ def is_transaction_profile(
         or has_transaction_id
         or clear_transaction_amount
     )
+
+
+def detect_non_sales_profile(
+    columns: list[str] | pd.Index,
+    roles: dict[str, str],
+) -> str | None:
+    """Reconoce tablas operacionales que tienen fecha y monto, pero no ventas.
+
+    Fecha + monto no basta para afirmar que una fila es una venta. Compras,
+    gastos, cobranzas, metas e inventario cumplen esa estructura y antes se
+    presentaban como ingresos, ticket y utilidad. La clasificación usa varias
+    señales explícitas del encabezado y es conservadora: si no hay evidencia
+    suficiente, el perfil comercial existente conserva la prioridad.
+    """
+
+    normalized = [
+        strip_accents_lower(str(column)).replace("_", " ") for column in columns
+    ]
+    compact = {re.sub(r"[^a-z0-9]", "", value) for value in normalized}
+    words = " ".join(normalized)
+
+    def has_compact(*markers: str) -> bool:
+        return any(any(marker in name for marker in markers) for name in compact)
+
+    # Orden deliberado: una compra y un gasto también traen proveedor; una
+    # cobranza también trae cliente. Primero se detecta el hecho operacional.
+    if (
+        has_compact("idcompra", "fechacompra", "totalcompra", "montonetocompra")
+        and has_compact("proveedor", "costounitariocompra", "estadorecepcion")
+    ):
+        return "compras"
+    if (
+        has_compact("idgasto", "fechagasto", "totalgasto", "categoriagasto")
+        and has_compact("tipogasto", "estadogasto", "proveedor")
+    ):
+        return "gastos"
+    if (
+        has_compact("idpago", "fechapago", "montopago")
+        and has_compact("estadopago", "mediopago", "documento")
+    ):
+        return "cobranzas"
+    if has_compact("metaventa", "metamargen", "metanuevosclientes") or (
+        "meta" in words and bool(roles.get("sucursal"))
+    ):
+        return "metas"
+    if (
+        has_compact("valorinventario")
+        or (
+            has_compact("stockminimo")
+            and has_compact("stocksistema", "stockfisico", "stockdisponible")
+        )
+    ):
+        return "inventario"
+    if has_compact("mesvigencia") and roles.get("costo") and roles.get("producto"):
+        return "historial_costos"
+    if (
+        has_compact("idproveedor")
+        and not roles.get("producto")
+        and not has_compact("idcompra", "idgasto")
+    ):
+        return "proveedores"
+    if has_compact("idvendedor") and has_compact("cargo", "comision"):
+        return "trabajadores"
+    if has_compact("idcliente") and not has_compact(
+        "idventa", "idpago", "fechaventa", "montoventa", "tipomovimiento"
+    ):
+        return "clientes"
+    if has_compact("idsucursal") and not has_compact(
+        "idventa", "idcompra", "idgasto", "idpago", "sku"
+    ):
+        return "sucursales"
+    if roles.get("producto") and not roles.get("monto") and not has_compact(
+        "idventa", "idcompra", "cantidadvendida", "montoventa"
+    ):
+        return "productos"
+    return None
 
 
 def _pct_change(current: float, previous: float | None) -> float | None:
@@ -579,7 +682,7 @@ def _group_sum(
 
 def _is_percentage_column(column: str) -> bool:
     normalized = strip_accents_lower(column).replace("_", " ")
-    return normalized.strip() == "pct" or any(
+    return "%" in normalized or normalized.strip() == "pct" or any(
         token in normalized for token in ("descuento", "porcentaje", "percent", " pct")
     )
 
@@ -702,11 +805,25 @@ def compute_metrics(
         for token in ("inversion", "impresiones", "clic")
     )
     inventory_profile = (
-        any("stock" == name or name.endswith(" stock") for name in normalized_keys)
+        any(
+            "stock" in name
+            and "minimo" not in name
+            and "ubicacion" not in name
+            for name in normalized_keys
+        )
         and any("stock minimo" in name for name in normalized_keys)
         and bool(roles.get("producto"))
     )
-    transactional_profile = is_transaction_profile(df.columns, roles)
+    non_sales_profile = detect_non_sales_profile(df.columns, roles)
+    # Un historial de costos tiene muchas observaciones por SKU. Resumirlo
+    # como un catálogo estático mezclaría vigencias y falsearía el ranking.
+    if non_sales_profile == "historial_costos":
+        product_catalog = False
+    transactional_profile = bool(
+        is_transaction_profile(df.columns, roles)
+        and non_sales_profile is None
+        and not inventory_profile
+    )
 
     currency = _coerce_currency_detection(
         currency_hint,
@@ -910,6 +1027,34 @@ def compute_metrics(
     costs = costs_all[mask]
     profits = profits_all[mask] if profits_all is not None else None
 
+    cost_quality: dict[str, Any] | None = None
+    valid_costs_selection = costs.dropna().astype(float) if has_costs else pd.Series(dtype=float)
+    if len(valid_costs_selection) >= 4:
+        positive_costs = valid_costs_selection[valid_costs_selection > 0]
+        if len(positive_costs) >= 4:
+            q1 = float(positive_costs.quantile(0.25))
+            q3 = float(positive_costs.quantile(0.75))
+            upper = q3 + 1.5 * (q3 - q1)
+            cost_outlier_mask = costs.notna() & ((costs <= 0) | (costs > upper))
+            atypical_total = float(costs.loc[cost_outlier_mask].abs().sum())
+            known_total = float(costs.dropna().abs().sum())
+            cost_quality = {
+                "registros_atipicos": int(cost_outlier_mask.sum()),
+                "no_positivos": int((costs.notna() & (costs <= 0)).sum()),
+                "limite_superior_iqr": round(upper, 2),
+                "costo_absoluto_atipico": round(atypical_total, 2),
+                "participacion_costo_absoluto_pct": (
+                    round(atypical_total / known_total * 100, 1)
+                    if known_total
+                    else 0.0
+                ),
+            }
+            if cost_quality["registros_atipicos"]:
+                warnings.insert(
+                    0,
+                    f"{cost_quality['registros_atipicos']} costo(s) son no positivos o atípicos según IQR y concentran {cost_quality['participacion_costo_absoluto_pct']}% del costo absoluto. Los indicadores los conservan, pero deben revisarse antes de interpretar utilidad y margen.",
+                )
+
     # ── Periodo anterior para las variaciones (Fase 10 §4.5) ──
     # Si la selección es un mes calendario completo, el periodo anterior es el
     # MES CALENDARIO anterior (mayo se compara con abril, no con una ventana de
@@ -1089,6 +1234,7 @@ def compute_metrics(
             "columna_costo": roles.get("costo"),
             "columna_cantidad": roles.get("cantidad") if derived_unit_cost else None,
         } if has_costs else None,
+        "calidad_costos": cost_quality,
         # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
         # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
         "dimensiones": {
@@ -1371,7 +1517,11 @@ def compute_metrics(
             None,
         )
         status_column = next(
-            (column for normalized, column in normalized_columns.items() if normalized == "estado"),
+            (
+                column
+                for normalized, column in normalized_columns.items()
+                if normalized in {"estado", "activo", "activa"}
+            ),
             None,
         )
 
@@ -1386,8 +1536,26 @@ def compute_metrics(
                 "maximo": round(float(valid.max()), 2),
             }
 
+        valid_costs = cost_values.dropna().astype(float)
+        positive_costs = valid_costs[valid_costs > 0]
+        if len(positive_costs) >= 4:
+            q1 = float(positive_costs.quantile(0.25))
+            q3 = float(positive_costs.quantile(0.75))
+            upper_cost = q3 + 1.5 * (q3 - q1)
+        else:
+            upper_cost = None
+        atypical_cost = cost_values.notna() & (cost_values <= 0)
+        if upper_cost is not None:
+            atypical_cost = atypical_cost | (cost_values > upper_cost)
+
         ranking = pd.DataFrame(
-            {"producto": df[product_column].astype(str), "costo": cost_values, "precio_lista": price_values, "margen_potencial_pct": margins}
+            {
+                "producto": df[product_column].astype(str),
+                "costo": cost_values,
+                "precio_lista": price_values,
+                "margen_potencial_pct": margins,
+                "requiere_revision": atypical_cost,
+            }
         ).dropna(subset=["costo"]).sort_values("costo", ascending=False).head(12)
 
         def counts(column: str | None) -> list[dict[str, Any]]:
@@ -1414,20 +1582,33 @@ def compute_metrics(
             # No es valor de inventario: representa una unidad de cada fila
             # del catalogo. Se expone con ese nombre explicito para que la UI
             # no lo presente como un gasto real del negocio.
-            "totales_catalogo_unitario": {
+            "totales_catalogo_unitario": ({
                 "costo": round(float(cost_values.dropna().sum()), 2),
                 "precio_lista": round(float(price_values.dropna().sum()), 2),
                 "utilidad_potencial": round(
                     float((price_values[paired] - cost_values[paired]).sum()), 2
                 ),
                 "productos_con_comparacion": int(paired.sum()),
-            },
+            } if cost_values.notna().any() else None),
             "cobertura_costo_pct": round(float(cost_values.notna().mean() * 100), 1) if len(df) else 0.0,
             "ranking_costos": ranking.to_dict(orient="records"),
+            "costos_tipicos": stats(cost_values.where(~atypical_cost)),
+            "costos_a_revisar": {
+                "registros": int(atypical_cost.sum()),
+                "no_positivos": int((cost_values.notna() & (cost_values <= 0)).sum()),
+                "sobre_limite_iqr": int(
+                    (cost_values > upper_cost).sum()
+                    if upper_cost is not None
+                    else 0
+                ),
+                "limite_superior_iqr": (
+                    round(upper_cost, 2) if upper_cost is not None else None
+                ),
+            },
             "categorias": counts(roles.get("categoria")),
             "marcas": counts(brand_column),
-            "activos": int(statuses.isin({"activo", "activa", "vigente"}).sum()) if len(statuses) else None,
-            "inactivos": int(statuses.isin({"inactivo", "inactiva", "descontinuado"}).sum()) if len(statuses) else None,
+            "activos": int(statuses.isin({"si", "sí", "activo", "activa", "vigente"}).sum()) if len(statuses) else None,
+            "inactivos": int(statuses.isin({"no", "inactivo", "inactiva", "descontinuado"}).sum()) if len(statuses) else None,
         }
         # Un costo/precio unitario es una propiedad del catálogo, no un hecho
         # transaccional. Se retiran las sumas comerciales genéricas para que
@@ -1452,10 +1633,19 @@ def compute_metrics(
             if reference_type == "costo_total_unitario"
             else "Precio_Lista"
         )
-        warnings.append(
-            "Esta hoja se interpreta como catálogo de productos: "
-            f"Costo_Unitario y {reference_label} se resumen por producto y no se suman como ventas."
-        )
+        if cost_values.notna().any():
+            warnings.append(
+                "Esta hoja se interpreta como catálogo de productos: "
+                f"Costo_Unitario y {reference_label} se resumen por producto y no se suman como ventas."
+            )
+        else:
+            warnings.append(
+                "Esta hoja se interpreta como catálogo de productos: el precio de lista se resume por producto y no se suma como ventas reales."
+            )
+        if bool(atypical_cost.any()):
+            warnings.append(
+                f"{int(atypical_cost.sum())} costo(s) unitario(s) requieren revisión por ser no positivos o atípicos según IQR; no se corrigen ni excluyen de los totales."
+            )
         result["advertencias"] = warnings
     elif campaign_profile:
         investment_column = _column_containing("inversion")
@@ -1518,11 +1708,24 @@ def compute_metrics(
                 "(CTR sobre 100%): revisa esos registros en el origen."
             )
     elif inventory_profile:
-        stock_column = _column_containing("stock")
+        stock_column = (
+            _column_containing("stock", "disponible")
+            or _column_containing("stock", "fisico")
+            or _column_containing("stock", "sistema")
+            or _column_containing("stock")
+        )
         minimum_column = _column_containing("stock", "minimo")
         updated_column = _column_containing("ultima", "actualizacion")
+        inventory_value_column = _column_containing("valor", "inventario")
+        reference_cost_column = _column_containing("costo", "unitario")
+        committed_column = _column_containing("unidades", "comprometidas")
+        difference_column = _column_containing("diferencia", "conteo")
         stock = _numeric_series(df, stock_column)
         minimum = _numeric_series(df, minimum_column)
+        inventory_value = _numeric_series(df, inventory_value_column)
+        reference_cost = _numeric_series(df, reference_cost_column)
+        committed = _numeric_series(df, committed_column)
+        differences = _numeric_series(df, difference_column)
         paired_stock = stock.notna() & minimum.notna()
         _non_sales_contract("inventario", "registros_inventario")
         # Fase 18: stock POR SUCURSAL para graficar dónde está la existencia y
@@ -1552,6 +1755,26 @@ def compute_metrics(
             "productos": int(df[roles["producto"]].loc[~physical_missing_mask(df[roles["producto"]])].nunique()),
             "stock_total": round(float(stock.dropna().sum()), 2),
             "stock_minimo_total": round(float(minimum.dropna().sum()), 2),
+            "valor_inventario": (
+                round(float(inventory_value.dropna().sum()), 2)
+                if inventory_value.notna().any()
+                else None
+            ),
+            "costo_referencia_promedio": (
+                round(float(reference_cost.dropna().mean()), 2)
+                if reference_cost.notna().any()
+                else None
+            ),
+            "unidades_comprometidas": (
+                round(float(committed.dropna().sum()), 2)
+                if committed.notna().any()
+                else None
+            ),
+            "diferencia_conteo": (
+                round(float(differences.dropna().sum()), 2)
+                if differences.notna().any()
+                else None
+            ),
             "bajo_minimo": int((paired_stock & (stock < minimum)).sum()),
             "stocks_negativos": stocks_negativos,
             "cobertura_stock_pct": round(float(stock.notna().mean() * 100), 1) if len(df) else 0.0,
@@ -1577,6 +1800,8 @@ def compute_metrics(
         # clientes, sucursales, trabajadores, metas u otras tengan un resumen
         # útil y graficable sin inventar ventas.
         def _subtipo_generico() -> str | None:
+            if non_sales_profile and non_sales_profile != "inventario":
+                return non_sales_profile
             tokens = " ".join(
                 strip_accents_lower(str(column)).replace("_", " ")
                 for column in df.columns
@@ -1591,10 +1816,41 @@ def compute_metrics(
                 return "sucursales"
             return None
 
-        distribuciones: list[dict[str, Any]] = []
-        numericas: list[dict[str, Any]] = []
+        subtype = _subtipo_generico()
+        distribuciones_candidatas: list[tuple[int, dict[str, Any]]] = []
+        numericas_candidatas: list[tuple[int, dict[str, Any], pd.Series]] = []
         id_prefixes = ("id", "codigo", "sku", "folio", "uuid", "rut", "numero", "nro")
         skip_tokens = ("email", "telefono", "direccion", "comentario", "observa", "nota", "descripcion", "nombre")
+
+        numeric_priority: dict[str, tuple[str, ...]] = {
+            "compras": ("total compra", "monto neto compra", "iva", "cantidad comprada", "costo unitario", "flete", "descuento"),
+            "gastos": ("total gasto", "monto neto", "iva", "categoria", "tipo gasto"),
+            "cobranzas": ("monto pago",),
+            "metas": ("meta venta", "meta margen", "meta nuevos clientes"),
+            "historial_costos": ("costo unitario",),
+            "productos": ("precio lista", "stock minimo", "costo unitario"),
+            "clientes": ("limite credito", "condicion pago"),
+            "trabajadores": ("comision", "sueldo", "salario"),
+        }
+
+        def _priority(name: str) -> int:
+            preferred = numeric_priority.get(subtype or "", ())
+            for index, token in enumerate(preferred):
+                if token in name:
+                    return index
+            return len(preferred) + 20
+
+        def _numeric_format(name: str) -> tuple[str, str]:
+            if _is_percentage_column(name):
+                return "porcentaje", "promedio"
+            if any(token in name for token in ("costo unitario", "costo ultima compra", "precio lista", "comision")):
+                return "moneda" if "comision" not in name else "porcentaje", "promedio"
+            if "dias" in name:
+                return "numero", "promedio"
+            if any(token in name for token in ("monto", "total", "valor", "limite credito", "flete", "iva", "costo", "precio", "meta venta")):
+                return "moneda", "total"
+            return "numero", "total"
+
         for column in df.columns:
             name = str(column)
             normalized = strip_accents_lower(name).replace("_", " ")
@@ -1608,34 +1864,119 @@ def compute_metrics(
             numeric_values = _numeric_series(df, name)
             numeric_ratio = float(numeric_values.notna().sum()) / max(int(filled.sum()), 1)
             unique = values[filled].astype(str).str.strip().nunique()
-            if numeric_ratio >= 0.8 and unique > 12 and len(numericas) < 4:
+            if numeric_ratio >= 0.8 and unique > 1:
                 valid = numeric_values.dropna().astype(float)
-                numericas.append({
+                formato, destacado = _numeric_format(normalized)
+                if formato == "porcentaje" and not valid.empty:
+                    # Los porcentajes pueden venir como 0,18 o 18. Se expresan
+                    # siempre en puntos porcentuales, incluso si la misma
+                    # columna mezcla ambas convenciones, sin alterar el dataset.
+                    valid = valid.where(valid.abs() > 1.5, valid * 100.0)
+                    numeric_values = numeric_values.where(
+                        numeric_values.abs() > 1.5, numeric_values * 100.0
+                    )
+                item = {
                     "columna": name,
-                    "total": round(float(valid.sum()), 2),
+                    "total": (
+                        round(float(valid.sum()), 2)
+                        if destacado == "total"
+                        else None
+                    ),
                     "promedio": round(float(valid.mean()), 2),
+                    "mediana": round(float(valid.median()), 2),
                     "minimo": round(float(valid.min()), 2),
                     "maximo": round(float(valid.max()), 2),
-                })
-            elif 2 <= unique <= 30 and len(distribuciones) < 4:
-                distribuciones.append({
+                    "formato": formato,
+                    "destacado": destacado,
+                    "valores_validos": int(len(valid)),
+                    "fuera_rango": (
+                        int(((valid < 0) | (valid > 100)).sum())
+                        if formato == "porcentaje"
+                        else 0
+                    ),
+                }
+                numericas_candidatas.append((_priority(normalized), item, numeric_values))
+            elif 2 <= unique <= 30:
+                distribution_priority = (
+                    0 if any(token in normalized for token in ("estado", "categoria", "segmento", "region", "tipo", "medio", "forma", "activo", "fuente"))
+                    else 10
+                )
+                distribuciones_candidatas.append((distribution_priority, {
                     "columna": name,
                     "valores": _value_counts(name, limit=12),
                     "valores_totales": int(unique),
-                })
+                }))
+
+        numericas_candidatas.sort(key=lambda item: (item[0], str(item[1]["columna"])))
+        distribuciones_candidatas.sort(key=lambda item: (item[0], str(item[1]["columna"])))
+        numericas = [item for _, item, _ in numericas_candidatas[:8]]
+        distribuciones = [item for _, item in distribuciones_candidatas[:6]]
+
+        evolution = None
+        date_column = roles.get("fecha") or next(
+            (
+                column
+                for normalized, column in normalized_columns.items()
+                if "fecha" in normalized or normalized.startswith("mes")
+            ),
+            None,
+        )
+        if date_column and numericas_candidatas:
+            _, primary_numeric, primary_values = numericas_candidatas[0]
+            parsed_dates = map_unique(df[date_column], parse_date)
+            temporal = pd.DataFrame({
+                "mes": parsed_dates.map(
+                    lambda value: value.strftime("%Y-%m") if pd.notna(value) else None
+                ),
+                "valor": primary_values,
+            }).dropna(subset=["mes", "valor"])
+            if not temporal.empty:
+                operation = primary_numeric["destacado"]
+                grouped = temporal.groupby("mes")["valor"]
+                series = grouped.mean() if operation == "promedio" else grouped.sum()
+                evolution = {
+                    "columna": primary_numeric["columna"],
+                    "operacion": operation,
+                    "formato": primary_numeric["formato"],
+                    "valores": [
+                        {"mes": str(month), "valor": round(float(value), 2)}
+                        for month, value in series.sort_index().items()
+                    ],
+                }
 
         result["analisis_generico"] = {
             "registros": int(len(df)),
             "columnas": int(len(df.columns)),
             "celdas_informadas_pct": round(valid_cells / total_cells * 100, 1),
             "columnas_disponibles": [str(column) for column in df.columns],
-            "subtipo": _subtipo_generico(),
+            "subtipo": subtype,
             "distribuciones": distribuciones,
             "numericas": numericas,
+            "evolucion": evolution,
         }
+        profile_labels = {
+            "compras": "compras y abastecimiento",
+            "gastos": "gastos operacionales",
+            "cobranzas": "cobranzas y pagos",
+            "metas": "metas planificadas",
+            "historial_costos": "historial de costos",
+            "productos": "maestra de productos",
+            "proveedores": "maestra de proveedores",
+            "clientes": "maestra de clientes",
+            "sucursales": "maestra de sucursales",
+            "trabajadores": "equipo de trabajo",
+        }
+        label = profile_labels.get(subtype or "", "perfil estructural")
         warnings = [
-            "No se identificó una tabla transaccional de ventas. Se muestra un perfil estructural sin inventar ingresos ni transacciones."
+            f"Esta hoja se interpreta como {label}. Sus valores se resumen con semántica operacional y no se presentan como ventas, ticket ni utilidad."
         ]
+        percentage_issues = sum(
+            int(item.get("fuera_rango", 0)) for item in numericas
+        )
+        if percentage_issues:
+            warnings.append(
+                f"{percentage_issues} porcentaje(s) están fuera del rango 0–100%; se conservan y se señalan para revisión."
+            )
     result["advertencias"] = warnings
     if currency.mixta:
         _block_monetary_outputs(result, currency)

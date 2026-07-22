@@ -383,9 +383,14 @@ export function compatibleAppendSheets(
   const signature = (name: string) => {
     const result = results[name]
     if (!result || result.moneda_mixta) return null
+    const mappedTypes = Object.entries(result.mapeo)
+      .map(([role, column]) => [role, result.column_types[column] ?? null] as const)
+      .sort(([left], [right]) => left.localeCompare(right))
     return JSON.stringify({
-      columns: [...result.preview.columnas].sort(),
-      types: Object.entries(result.column_types).sort(([left], [right]) => left.localeCompare(right)),
+      // Las columnas auxiliares no determinan compatibilidad. Un comentario
+      // duplicado en solo un mes debe viajar como columna opcional, no dejar
+      // esa hoja fuera del apilado. Se comparan roles y tipos analíticos.
+      types: mappedTypes,
       mapping: Object.entries(result.mapeo).sort(([left], [right]) => left.localeCompare(right)),
       currency: result.moneda_detalle?.dominante ?? result.moneda ?? 'CLP',
     })

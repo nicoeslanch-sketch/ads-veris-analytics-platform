@@ -579,7 +579,7 @@ export default function Explorar() {
           subtitle="Costos, precios de lista, margen potencial y composicion del catalogo."
         />
         <ActiveSheetSelector />
-        <ProductCatalogSummary analysis={metrics.analisis_productos} />
+        <ProductCatalogSummary analysis={metrics.analisis_productos} variant="explore" />
       </>
     )
   }
@@ -592,7 +592,7 @@ export default function Explorar() {
           subtitle="Perfil adaptado al contenido real de esta hoja, sin inventar ventas."
         />
         <ActiveSheetSelector />
-        <AdaptiveProfileSummary metrics={metrics} />
+        <AdaptiveProfileSummary metrics={metrics} variant="explore" />
       </>
     )
   }
