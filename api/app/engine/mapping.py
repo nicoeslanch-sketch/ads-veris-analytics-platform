@@ -105,6 +105,13 @@ def _legacy_semantically_compatible(role: str, normalized_column: str) -> bool:
     return True
 
 
+def _legacy_keyword_matches(normalized_column: str, keyword: str) -> bool:
+    """Aplica coincidencias legacy sin confundir ``inventario`` con ``venta``."""
+    if keyword == "venta" and "inventario" in norm_key(normalized_column):
+        return False
+    return keyword in normalized_column
+
+
 def detect_columns_extended(columns: list[str]) -> dict[str, DictMatch]:
     """Rol extendido (64 roles) por columna, según el diccionario Fase 9."""
     return dictionary.match_columns([str(c) for c in columns])
@@ -146,7 +153,10 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
                 continue
             if (
                 _legacy_semantically_compatible(role, normalized[col])
-                and any(keyword in normalized[col] for keyword in keywords)
+                and any(
+                    _legacy_keyword_matches(normalized[col], keyword)
+                    for keyword in keywords
+                )
             ):
                 mapping[role] = col
                 taken.add(col)

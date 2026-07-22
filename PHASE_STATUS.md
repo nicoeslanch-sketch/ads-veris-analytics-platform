@@ -18,8 +18,10 @@ automática de ventas con costos y corrige conteos auditables de columnas
 completas. El parche `0.21.2` valida el libro avanzado multihoja: unifica la
 escala de porcentajes, elimina falsos conflictos de ID y reconoce maestras de
 costos con fecha de vigencia para relacionarlas por SKU. También persiste la
-selección recomendada para que una recarga no reactive hojas auxiliares. Motor
-`0.21.2`; la última migración sigue siendo **0021**.
+selección recomendada para que una recarga no reactive hojas auxiliares. El
+parche `0.21.3` evita que `ID_Inventario` se confunda con una venta por una
+coincidencia parcial. Motor `0.21.3`; la última migración sigue siendo
+**0021**.
 
 **Historial de Fase 17.**
 La Fase 17 (`CHANGELOG` [0.20.0]) simplifica el mapeo Básico y completa el

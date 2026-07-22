@@ -2,6 +2,17 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.21.3] - 2026-07-21 - Mapeo seguro de inventario
+
+- `ID_Inventario` ya no se interpreta como monto por contener accidentalmente
+  la secuencia `venta`; campos monetarios reales como `Valor Inventario`
+  conservan su detección.
+- La corrección incluye una regresión del mapeo y fuerza la renovación de
+  snapshots para no reutilizar interpretaciones anteriores.
+
+Sube `ENGINE_VERSION` a `0.21.3`. No agrega migraciones: `0021` sigue siendo
+la última.
+
 ## [0.21.2] - 2026-07-21 - Auditoría del libro avanzado multihoja
 
 - `Descuento_Pct` interpreta de forma consistente `20%`, `20` y `0.2` como

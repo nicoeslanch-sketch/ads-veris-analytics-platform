@@ -95,6 +95,17 @@ def test_compatibilidad_legacy_cuando_no_hay_mejor_columna():
     assert roles2.get("sucursal") == "Región"
 
 
+def test_inventario_no_se_confunde_con_venta_por_subcadena():
+    from app.engine.mapping import detect_column_roles
+
+    roles = detect_column_roles(["ID_Inventario", "SKU_Producto", "Stock Actual"])
+    assert "monto" not in roles
+
+    # Las coincidencias monetarias reales que incluyen inventario se conservan.
+    with_value = detect_column_roles(["ID_Inventario", "Valor Inventario"])
+    assert with_value.get("monto") == "Valor Inventario"
+
+
 def test_columnas_sample_historicas_siguen_mapeando_igual():
     from app.engine.mapping import detect_column_roles
 
