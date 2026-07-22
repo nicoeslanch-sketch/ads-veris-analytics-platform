@@ -17,6 +17,9 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
 - Las operaciones multihoja reutilizan durante 15 minutos los bytes del XLSX
   ya descargado desde Storage, con clave validada por propietario y una LRU de
   30 MB. Esto evita descargar el libro completo otra vez por cada hoja.
+- Los catálogos que traen costos pero no precio de lista expresan esos valores
+  ausentes como `null`, no `NaN`. Así `Costos_Productos` puede terminar su
+  limpieza y guardar el snapshot sin un falso error de conexión.
 - Las bases sintéticas pequeña y de estrés pasan a ser fixtures versionadas:
   GitHub Actions ya no omite las ocho regresiones que dependían de rutas
   locales.

@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 
 from app.engine.clean import analyze_and_clean
@@ -216,3 +218,22 @@ def test_catalogo_señala_costos_extremos_sin_borrarlos():
     assert analysis["costos_a_revisar"]["registros"] == 2
     assert analysis["costos_a_revisar"]["no_positivos"] == 1
     assert analysis["costos_tipicos"]["maximo"] == 130
+
+
+def test_catalogo_solo_costos_es_json_estricto_y_no_inventa_precio():
+    metrics = _metrics(
+        pd.DataFrame(
+            {
+                "SKU_Producto": ["A", "B", "C"],
+                "Costo Unitario": [11_300, 32_370, 57_950],
+                "Moneda": ["CLP", "CLP", "CLP"],
+            }
+        )
+    )
+
+    ranking = metrics["analisis_productos"]["ranking_costos"]
+    assert ranking
+    assert all(item["precio_lista"] is None for item in ranking)
+    assert all(item["margen_potencial_pct"] is None for item in ranking)
+    assert metrics["analisis_productos"]["precios_lista"]["promedio"] is None
+    json.dumps(metrics, allow_nan=False)

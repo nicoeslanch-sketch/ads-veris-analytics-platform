@@ -10,6 +10,7 @@ rotación de inventario, días de cobro/pago) quedan declarados pero sin valor:
 se habilitan cuando el usuario conecte sus datos financieros.
 """
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterator
@@ -40,6 +41,24 @@ FINANCIAL_RATIOS = [
     "dias_cobro",
     "dias_pago",
 ]
+
+
+def _json_safe_metrics(value: Any) -> Any:
+    """Convierte ausentes numéricos en null antes de responder o persistir.
+
+    Pandas conserva ``NaN`` en columnas float aunque se intente reemplazar por
+    ``None``. Python puede imprimirlo, pero JSON estricto, PostgreSQL y httpx
+    lo rechazan. Un dato no disponible debe representarse como ``null``.
+    """
+    if isinstance(value, dict):
+        return {key: _json_safe_metrics(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_metrics(item) for item in value]
+    if value is pd.NA or value is pd.NaT:
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 def _numeric_series(df: pd.DataFrame, column: str | None) -> pd.Series:
@@ -1980,4 +1999,4 @@ def compute_metrics(
     result["advertencias"] = warnings
     if currency.mixta:
         _block_monetary_outputs(result, currency)
-    return result
+    return _json_safe_metrics(result)
