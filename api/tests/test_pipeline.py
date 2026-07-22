@@ -1,7 +1,9 @@
 """Pruebas del pipeline Fase 1: salud, protección JWT y motor de datos."""
 
+import asyncio
 import io
 import zipfile
+from types import SimpleNamespace
 
 
 def _upload(sample_csv, extra: dict | None = None) -> dict:
@@ -279,6 +281,33 @@ def test_storage_path_propio_pasa_validacion_de_propiedad(client, auth_headers):
         headers=auth_headers,
     )
     assert response.status_code == 503
+
+
+def test_storage_reutiliza_bytes_del_mismo_archivo_multihoja(monkeypatch):
+    """Cada hoja reutiliza el XLSX ya descargado sin saltarse la validación."""
+    from app.routes import pipeline as pipeline_module
+
+    calls: list[str] = []
+    content = b"archivo-xlsx-simulado"
+
+    def fake_download(storage_path: str) -> bytes:
+        calls.append(storage_path)
+        return content
+
+    pipeline_module._storage_content_cache_clear()
+    monkeypatch.setattr(pipeline_module, "download_from_storage", fake_download)
+    user = SimpleNamespace(id="user-test-123")
+    storage_path = "user-test-123/prueba-multihoja.xlsx"
+
+    try:
+        first = asyncio.run(pipeline_module._read_input(None, storage_path, user))
+        second = asyncio.run(pipeline_module._read_input(None, storage_path, user))
+    finally:
+        pipeline_module._storage_content_cache_clear()
+
+    assert first == ("prueba-multihoja.xlsx", content)
+    assert second == first
+    assert calls == [storage_path]
 
 
 # ── CORS: preflight del navegador ──

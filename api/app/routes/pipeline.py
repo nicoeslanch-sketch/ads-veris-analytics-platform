@@ -116,6 +116,52 @@ _RESTORE_RESPONSE_CACHE: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
 _RESTORE_RESPONSE_CACHE_TTL_SECONDS = 10 * 60
 _RESTORE_RESPONSE_CACHE_MAX_USERS = 8
 
+# Un flujo multihoja hace muchas peticiones sobre el mismo objeto de Storage.
+# Volver a descargar el XLSX completo para cada hoja multiplica la latencia y
+# puede superar el limite del proxy aunque pandas termine correctamente. Los
+# bytes son inmutables, la ruta ya fue validada contra el propietario y los
+# nombres de subida son unicos; por eso una LRU breve y acotada es segura.
+_STORAGE_CONTENT_CACHE_LOCK = threading.Lock()
+_STORAGE_CONTENT_CACHE: "OrderedDict[str, tuple[float, bytes]]" = OrderedDict()
+_STORAGE_CONTENT_CACHE_TTL_SECONDS = 15 * 60
+_STORAGE_CONTENT_CACHE_MAX_ENTRY_BYTES = MAX_UPLOAD_BYTES
+_STORAGE_CONTENT_CACHE_TOTAL_BYTES = 2 * MAX_UPLOAD_BYTES
+
+
+def _storage_content_cache_get(path: str) -> bytes | None:
+    now = time.monotonic()
+    with _STORAGE_CONTENT_CACHE_LOCK:
+        cached = _STORAGE_CONTENT_CACHE.get(path)
+        if cached is None:
+            return None
+        stored_at, content = cached
+        if now - stored_at > _STORAGE_CONTENT_CACHE_TTL_SECONDS:
+            _STORAGE_CONTENT_CACHE.pop(path, None)
+            return None
+        _STORAGE_CONTENT_CACHE.move_to_end(path)
+        return content
+
+
+def _storage_content_cache_store(path: str, content: bytes) -> None:
+    if len(content) > _STORAGE_CONTENT_CACHE_MAX_ENTRY_BYTES:
+        return
+    now = time.monotonic()
+    with _STORAGE_CONTENT_CACHE_LOCK:
+        for key, (stored_at, _value) in list(_STORAGE_CONTENT_CACHE.items()):
+            if now - stored_at > _STORAGE_CONTENT_CACHE_TTL_SECONDS:
+                _STORAGE_CONTENT_CACHE.pop(key, None)
+        _STORAGE_CONTENT_CACHE[path] = (now, content)
+        _STORAGE_CONTENT_CACHE.move_to_end(path)
+        total = sum(len(value) for _stored_at, value in _STORAGE_CONTENT_CACHE.values())
+        while len(_STORAGE_CONTENT_CACHE) > 1 and total > _STORAGE_CONTENT_CACHE_TOTAL_BYTES:
+            _key, (_stored_at, removed) = _STORAGE_CONTENT_CACHE.popitem(last=False)
+            total -= len(removed)
+
+
+def _storage_content_cache_clear() -> None:
+    with _STORAGE_CONTENT_CACHE_LOCK:
+        _STORAGE_CONTENT_CACHE.clear()
+
 
 def _restore_response_cache_get(cache_key: str) -> dict | None:
     if get_settings().app_env != "production":
@@ -250,7 +296,10 @@ async def _read_input(
         return file.filename or "archivo.csv", content
     if storage_path:
         safe_storage_path = _normalize_user_storage_path(storage_path, user)
-        content = await run_in_threadpool(download_from_storage, safe_storage_path)
+        content = _storage_content_cache_get(safe_storage_path)
+        if content is None:
+            content = await run_in_threadpool(download_from_storage, safe_storage_path)
+            _storage_content_cache_store(safe_storage_path, content)
         return _display_filename(os.path.basename(safe_storage_path)), content
     raise HTTPException(
         status_code=422,

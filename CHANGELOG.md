@@ -14,6 +14,9 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
   protegido no pudo guardarse: el resultado queda disponible en la sesión y
   se muestra una advertencia explícita. No se agrega ninguna escritura sin
   guardia ni migración.
+- Las operaciones multihoja reutilizan durante 15 minutos los bytes del XLSX
+  ya descargado desde Storage, con clave validada por propietario y una LRU de
+  30 MB. Esto evita descargar el libro completo otra vez por cada hoja.
 - Las bases sintéticas pequeña y de estrés pasan a ser fixtures versionadas:
   GitHub Actions ya no omite las ocho regresiones que dependían de rutas
   locales.
