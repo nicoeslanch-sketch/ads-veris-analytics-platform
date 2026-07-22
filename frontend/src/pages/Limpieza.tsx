@@ -1512,13 +1512,6 @@ export default function Limpieza() {
                         <p className="text-xs text-navy/55">
                           Detectar no elimina filas. Solo se borran después de tu confirmación.
                         </p>
-                        {/* Fase 19: dejar claro el ALCANCE del botón — esta
-                            hoja ahora, o todas juntas después de limpiar. */}
-                        <p className="mt-1 text-xs font-medium text-navy/70">
-                          Este botón elimina solo los de la hoja «{sheet ?? 'actual'}». Si prefieres,
-                          limpia primero y luego usa “Eliminar duplicados de todas” para hacerlo en
-                          todas las hojas de una vez.
-                        </p>
                       </div>
                     </div>
                     <dl className="mt-4 grid max-w-xl grid-cols-3 gap-3">

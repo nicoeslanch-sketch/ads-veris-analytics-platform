@@ -655,48 +655,6 @@ _ID_COLUMN_TOKENS = {
     "serie", "guia", "dte", "cuenta", "tarjeta",
 }
 
-# Fase 19: tokens de documento que CEDEN ante un marcador monetario explícito.
-# "Total Documento" es el MONTO del documento, no su identificador; tratarlo
-# como ID lo exportaba como texto y rompía sumas y gráficos. "ID Pago" o
-# "Codigo Documento" siguen siendo identificadores: "id"/"codigo" nunca ceden.
-_WEAK_ID_TOKENS = {
-    "folio", "boleta", "factura", "documento", "doc", "ticket", "orden",
-    "guia", "dte", "pedido",
-}
-_MONETARY_HEADER_TOKENS = {
-    "total", "subtotal", "monto", "importe", "neto", "bruto", "iva",
-    "valor", "precio", "costo", "venta", "ventas", "saldo",
-}
-
-
-def structural_total_mask(
-    df: pd.DataFrame, fecha_column: str | None = None
-) -> pd.Series:
-    """Filas de totales estructurales ("TOTAL 2025", "Subtotal…") al pie de una
-    tabla exportada.
-
-    Firma: texto (sub)total al inicio de alguna de las primeras columnas,
-    mayoría de celdas vacías en la fila y sin fecha de transacción. Sumarlas
-    junto a las transacciones DUPLICA el periodo completo, así que el motor las
-    detecta para excluirlas de indicadores — nunca las borra del archivo.
-    """
-    mask = pd.Series(False, index=df.index)
-    if df.empty or len(df.columns) < 3:
-        return mask
-    for column in list(df.columns)[:3]:
-        normalized = df[column].astype(str).map(strip_accents_lower).str.strip()
-        mask |= normalized.str.match(r"^(sub)?\s*total\b", na=False)
-    candidates = mask[mask].index
-    if len(candidates) == 0:
-        return mask
-    subset = df.loc[candidates].astype(str).apply(lambda c: c.str.strip())
-    empty_share = subset.eq("").mean(axis=1)
-    confirmed = empty_share >= 0.4
-    if fecha_column is not None and fecha_column in df.columns:
-        confirmed &= subset[fecha_column].eq("")
-    mask.loc[candidates] = confirmed
-    return mask
-
 
 def is_identifier_column(name: str, series: pd.Series | None = None) -> bool:
     """¿La columna parece un identificador (por nombre o por contenido)?
@@ -704,15 +662,8 @@ def is_identifier_column(name: str, series: pd.Series | None = None) -> bool:
     Contenido: si >30% de la muestra trae dígitos o '@', son códigos/contactos
     — las categorías, ciudades y canales casi nunca contienen dígitos."""
     tokens = set(re.sub(r"[^a-z0-9]+", " ", strip_accents_lower(name)).split())
-    id_hit = tokens & _ID_COLUMN_TOKENS
-    if id_hit:
-        strong_id = id_hit - _WEAK_ID_TOKENS
-        if strong_id or not (tokens & _MONETARY_HEADER_TOKENS):
-            return True
-        # Encabezado monetario sobre un token débil de documento: es un monto.
-        # Tampoco aplica la heurística de contenido — un total en pesos SIEMPRE
-        # trae dígitos y eso no lo convierte en identificador.
-        return False
+    if tokens & _ID_COLUMN_TOKENS:
+        return True
     if series is not None:
         sample = _sample_values(series)[:200]
         if sample:

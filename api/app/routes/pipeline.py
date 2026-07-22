@@ -1041,7 +1041,6 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         parse_number,
         physical_missing_mask,
         semantic_missing_mask,
-        structural_total_mask,
     )
 
     role_labels: dict[str, str] = {
@@ -1064,18 +1063,6 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     yellow: dict[tuple[int, str], str] = {}
     red: dict[tuple[int, str], str] = {}
 
-    # Fase 19: cada columna numérica se parsea UNA vez y las validaciones
-    # posteriores (porcentajes, costos, IVA/total) reutilizan el resultado —
-    # antes se re-parseaba hasta tres veces por columna en libros grandes.
-    parsed_numbers: dict[str, object] = {}
-
-    def _parsed_number(column: str):
-        if column not in parsed_numbers:
-            parsed_numbers[column] = map_unique(
-                df[column].astype(str).reset_index(drop=True), parse_number
-            )
-        return parsed_numbers[column]
-
     for col in df.columns:
         ctype = column_types.get(col, "texto")
         role = col_role.get(col)
@@ -1088,10 +1075,8 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         # Parsear por valor único y trabajar con máscaras evita repetir una
         # llamada Python por cada celda del libro grande.
         if ctype in {"fecha", "numero"}:
-            if ctype == "fecha":
-                parsed = map_unique(series.astype(str).reset_index(drop=True), parse_date)
-            else:
-                parsed = _parsed_number(str(col))
+            parser = parse_date if ctype == "fecha" else parse_number
+            parsed = map_unique(series.astype(str).reset_index(drop=True), parser)
             invalid = (~missing) & parsed.isna()
             invalid_message = (
                 "Fecha no interpretable: se conservó el valor original — revisar."
@@ -1101,52 +1086,13 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
             for row_idx in invalid[invalid].index:
                 yellow[(int(row_idx), col)] = invalid_message
 
-        # Fase 19: columnas de texto libre (Observación, Comentario, Nota…)
-        # son OPCIONALES por naturaleza — miles de alertas "faltante" sobre
-        # ellas ahogaban los problemas reales (costos negativos, descuadres).
-        header_norm = re.sub(r"[^a-z0-9]+", " ", str(col).casefold())
-        free_text_column = any(
-            token in header_norm
-            for token in ("observa", "comentario", "nota", "glosa", "descripcion", "referencia")
-        )
         if ctype == "fecha":
             for row_idx in missing[missing].index:
                 yellow[(row_idx, col)] = "Fecha faltante: revisar."
-        elif fill_rate >= 0.7 and not free_text_column:
+        elif fill_rate >= 0.7:
             label = role_labels.get(role, col) if role else col
             for row_idx in missing[missing].index:
                 red[(row_idx, col)] = f"Dato faltante en una columna casi completa ({label})."
-
-        # ── Fase 19: costos peligrosos (negativos, cero, extremos) ──
-        # Un costo de -$4.500, $0 o $19.935.000 en un catálogo domina la
-        # utilidad y el margen. Se señalan SIEMPRE; jamás se corrigen solos.
-        if ctype == "numero" and (role == "costo" or (
-            "costo" in header_norm and "venta" not in header_norm
-        )):
-            parsed_cost = _parsed_number(str(col))
-            valid_cost = parsed_cost.dropna()
-            extreme_limit = None
-            if len(valid_cost) >= 20:
-                q1, q3 = valid_cost.quantile(0.25), valid_cost.quantile(0.75)
-                iqr = float(q3 - q1)
-                if iqr > 0:
-                    extreme_limit = float(q3 + 5 * iqr)
-            for row_idx in parsed_cost[parsed_cost < 0].index[:200]:
-                yellow.setdefault(
-                    (int(row_idx), col),
-                    "Costo negativo: revisar antes de calcular utilidad o margen.",
-                )
-            for row_idx in parsed_cost[parsed_cost == 0].index[:200]:
-                yellow.setdefault(
-                    (int(row_idx), col),
-                    "Costo en cero: confirmar si es real o un dato faltante.",
-                )
-            if extreme_limit is not None:
-                for row_idx in parsed_cost[parsed_cost > extreme_limit].index[:200]:
-                    yellow.setdefault(
-                        (int(row_idx), col),
-                        "Costo atípico, muy por sobre el rango de la columna: puede dominar el margen — revisar.",
-                    )
 
         # ── Fase 18: porcentajes fuera de rango o con escala mixta ──
         # Un descuento de 1.1 (110%) o de -0.2 casi siempre es un error de
@@ -1155,7 +1101,7 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         if ctype == "numero" and any(
             token in header for token in ("pct", "porcentaje", "percent", "descuento")
         ):
-            parsed_pct = _parsed_number(str(col))
+            parsed_pct = map_unique(series.astype(str).reset_index(drop=True), parse_number)
             frac_scale = int(((parsed_pct >= 0) & (parsed_pct <= 1)).sum())
             over_one = (parsed_pct > 1) & (parsed_pct <= 100)
             out_mask = (parsed_pct < 0) | (parsed_pct > 100)
@@ -1190,11 +1136,11 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     )
     if monto_col in df.columns and cantidad_col in df.columns and precio_col:
         base = df.reset_index(drop=True)
-        monto_vals = _parsed_number(monto_col)
-        cantidad_vals = _parsed_number(cantidad_col)
-        precio_vals = _parsed_number(precio_col)
+        monto_vals = map_unique(base[monto_col].astype(str), parse_number)
+        cantidad_vals = map_unique(base[cantidad_col].astype(str), parse_number)
+        precio_vals = map_unique(base[precio_col].astype(str), parse_number)
         if descuento_col in (base.columns if descuento_col else []):
-            descuento_vals = _parsed_number(descuento_col)
+            descuento_vals = map_unique(base[descuento_col].astype(str), parse_number)
             # Solo descuentos en escala de fracción [0, 1]; el resto de filas
             # no se evalúa (su escala es dudosa y no queremos falsos positivos).
             descuento_ok = (descuento_vals >= 0) & (descuento_vals <= 1)
@@ -1220,63 +1166,6 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
                     f"× (1 − descuento) ≈ {esperado.iat[row_idx]:,.0f}".replace(",", ".")
                     + " — revisar."
                 )
-
-    # ── Fase 19: coherencia tributaria IVA ≈ tasa × neto y total ≈ neto+IVA ──
-    # La tasa se INFIERE de la propia columna (mediana IVA/neto): no se impone
-    # 19% a un archivo con otra tasa. Solo se señala; nada se corrige solo.
-    base = df.reset_index(drop=True)
-    iva_col = next(
-        (
-            str(column) for column in base.columns
-            if re.sub(r"[^a-z0-9]+", " ", str(column).casefold()).strip() in {"iva", "iva venta", "iva compra"}
-        ),
-        None,
-    )
-    total_col = next(
-        (
-            str(column) for column in base.columns
-            if "total" in str(column).casefold()
-            and column_types.get(str(column)) == "numero"
-        ),
-        None,
-    )
-    if monto_col in base.columns and iva_col:
-        neto_vals = _parsed_number(monto_col)
-        iva_vals = _parsed_number(iva_col)
-        pareado_iva = neto_vals.notna() & iva_vals.notna() & (neto_vals > 0)
-        if int(pareado_iva.sum()) >= 20:
-            tasa = float((iva_vals[pareado_iva] / neto_vals[pareado_iva]).median())
-            if 0.03 <= tasa <= 0.35:
-                esperado_iva = neto_vals * tasa
-                tolerancia_iva = esperado_iva.abs().clip(lower=2.0) * 0.02
-                descuadre = pareado_iva & ((iva_vals - esperado_iva).abs() > tolerancia_iva)
-                etiqueta_tasa = f"{round(tasa * 100, 1):g}%"
-                for row_idx in descuadre[descuadre].index[:300]:
-                    yellow.setdefault(
-                        (int(row_idx), iva_col),
-                        f"IVA no cuadra con el {etiqueta_tasa} del neto de la fila — revisar.",
-                    )
-        if total_col and total_col in base.columns and total_col != monto_col:
-            total_vals = _parsed_number(total_col)
-            pareado_total = neto_vals.notna() & iva_vals.notna() & total_vals.notna()
-            esperado_total = neto_vals + iva_vals
-            tolerancia_total = esperado_total.abs().clip(lower=2.0) * 0.005
-            descuadre_total = pareado_total & (
-                (total_vals - esperado_total).abs() > tolerancia_total
-            )
-            for row_idx in descuadre_total[descuadre_total].index[:300]:
-                yellow.setdefault(
-                    (int(row_idx), total_col),
-                    "Total no cuadra con neto + IVA de la fila — revisar.",
-                )
-
-    # ── Fase 19: filas de totales estructurales ("TOTAL 2025") ──
-    totales_mask = structural_total_mask(base, roles_map.get("fecha"))
-    for row_idx in totales_mask[totales_mask].index:
-        yellow[(int(row_idx), str(base.columns[0]))] = (
-            "Fila de totales estructurales: se conserva, pero los indicadores "
-            "la excluyen — sumarla junto a las transacciones duplica el periodo."
-        )
 
     observations = [
         (source_rows[row], source_sheet, col, "revisar", message)
@@ -1322,21 +1211,6 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         observations.append(
             ("-", source_sheet, match.group(1) if match else "*", "revisar", text[:400])
         )
-
-    # 2b. Duplicados POSNORMALIZACIÓN: filas que solo se vuelven idénticas
-    #     tras estandarizar formatos. Podrían ser movimientos legítimos, así
-    #     que no se eliminan — pero el archivo debe listarlas para revisión.
-    for source_row in (result.get("_filas_duplicadas_normalizadas") or [])[:300]:
-        observations.append((
-            int(source_row),
-            source_sheet,
-            "*",
-            "duplicado_posnormalizacion",
-            (
-                "Fila que queda idéntica a otra después de estandarizar formatos: "
-                "posible duplicado — revisar antes de usarla en indicadores."
-            ),
-        ))
 
     # 2. Duplicados exactos DETECTADOS pero conservados (la eliminación
     #    requiere confirmación del usuario y el archivo debe decirlo).
@@ -1914,11 +1788,6 @@ def _clean_download_book_uncached_sync(
     records: list[dict] = []
     processing_errors: list[str] = []
 
-    # Fase 19: el alcance analítico es una propiedad del LIBRO, no de cada
-    # hoja. Repetirlo en todas las filas afirmaba que 15 hojas procesadas eran
-    # "mode: single de Ventas_2025" — trazabilidad incorrecta. Cada hoja solo
-    # declara el alcance si participa en él; el libro lleva su propia fila.
-    scope_sheets = set((analysis_scope or {}).get("sheets", []))
     for entry in entries:
         name = entry["nombre"]
         base_record = {
@@ -1926,7 +1795,7 @@ def _clean_download_book_uncached_sync(
             "reglas": entry["rules"],
             "mapeo": entry["mapping"],
             "source_sha256": source_hash,
-            "analysis_scope": analysis_scope if name in scope_sheets else None,
+            "analysis_scope": analysis_scope,
             "revision": entry.get("revision", 0),
         }
         if not entry["procesar"]:
@@ -2022,26 +1891,7 @@ def _clean_download_book_uncached_sync(
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc))
     for record in records:
-        record["analysis_provenance"] = (
-            provenance if record["hoja"] in scope_sheets else None
-        )
-    # Fila-resumen del LIBRO: única fuente del alcance analítico global y de su
-    # procedencia; las hojas ya no lo repiten como si fuera propio. Solo se
-    # escribe en la hoja Manifest del XLSX — el manifest.json del ZIP ya
-    # declara el alcance a nivel superior y su lista "hojas" queda intacta.
-    book_record = {
-        "hoja": "(libro completo)",
-        "estado": "resumen_libro",
-        "procesada": True,
-        "filas_antes": sum(int(record.get("filas_antes") or 0) for record in records),
-        "filas_despues": sum(int(record.get("filas_despues") or 0) for record in records),
-        "reglas": {},
-        "mapeo": {},
-        "error": "",
-        "source_sha256": source_hash,
-        "analysis_scope": analysis_scope,
-        "analysis_provenance": provenance,
-    }
+        record["analysis_provenance"] = provenance
 
     analysis_numeric_columns: set[str] = set()
     analysis_date_columns: set[str] = set()
@@ -2152,7 +2002,7 @@ def _clean_download_book_uncached_sync(
         )
     _write_observations_sheet(wb, observations, _safe_excel_sheet_name("Observaciones", used_names))
     _write_audit_sheet(wb, audit, _safe_excel_sheet_name("Auditoria", used_names))
-    _write_manifest_sheet(wb, [*records, book_record], _safe_excel_sheet_name("Manifest", used_names))
+    _write_manifest_sheet(wb, records, _safe_excel_sheet_name("Manifest", used_names))
     output = io.BytesIO()
     _request_excel_recalculation(wb)
     wb.save(output)

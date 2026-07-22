@@ -47,7 +47,6 @@ import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
-import ProfitabilityInsights from '../components/ProfitabilityInsights'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
@@ -662,17 +661,7 @@ export default function Explorar() {
   // backend se corrigió específicamente para no inventar $0 y aquí un
   // `?? 0` la volvía a convertir en cero (gráfico, variaciones y
   // participaciones falsas incluidas).
-  // Fase 19: el detalle mensual lleva SIEMPRE las cuatro columnas del negocio
-  // cuando hay costos (ingresos, costo, utilidad y margen) — mirar solo la
-  // métrica elegida escondía la historia completa de ventas + costos.
-  const trendRows: Array<{
-    mes: string
-    valor: number | null
-    ingresos: number | null
-    costo: number | null
-    utilidad: number | null
-    margen: number | null
-  }> = evolucionEnRango.map((m) => ({
+  const trendRows: Array<{ mes: string; valor: number | null }> = evolucionEnRango.map((m) => ({
     mes: formatMonthShort(m.mes),
     valor:
       metric === 'utilidad'
@@ -680,13 +669,9 @@ export default function Explorar() {
         : metric === 'costo'
           ? m.gastos ?? null
           : m.ingresos,
-    ingresos: m.ingresos ?? null,
-    costo: m.gastos ?? null,
-    utilidad: m.utilidad ?? null,
-    margen: m.margen_pareado_pct ?? null,
   }))
-  const trendConDato = trendRows.filter((row) => row.valor != null)
-  const trendTotal = trendConDato.reduce((sum, row) => sum + (row.valor ?? 0), 0)
+  const trendConDato = trendRows.filter((row): row is { mes: string; valor: number } => row.valor != null)
+  const trendTotal = trendConDato.reduce((sum, row) => sum + row.valor, 0)
   const monthlyDetailRows = trendRows
     .map((row, index) => {
       const previous = trendRows[index - 1]?.valor
@@ -788,10 +773,6 @@ export default function Explorar() {
       <ActiveSheetSelector />
 
       {hasCosts && metrics && <CostReliabilityAnalysis metrics={metrics} />}
-      {/* Fase 19: Resumen muestra los números; Explorar los interpreta —
-          portafolio por participación × margen, margen negativo, ventas bajo
-          costo y evolución del margen, cada uno con su decisión. */}
-      {hasCosts && metrics && <ProfitabilityInsights metrics={metrics} />}
 
       {/* ¿Qué quieres descubrir hoy? (adaptado a las columnas del archivo) */}
       <div>
@@ -1055,10 +1036,7 @@ export default function Explorar() {
                         <th className="pb-2 pr-4">Mes</th>
                         <th className="pb-2 pr-4 text-right">{METRIC_LABEL[metric]}</th>
                         <th className="pb-2 pr-4 text-right">Variación</th>
-                        <th className="pb-2 pr-4 text-right">% del período</th>
-                        {hasCosts && metric !== 'costo' && <th className="pb-2 pr-4 text-right">Costo</th>}
-                        {hasCosts && metric !== 'utilidad' && <th className="pb-2 pr-4 text-right">Utilidad</th>}
-                        {hasCosts && <th className="pb-2 text-right">Margen</th>}
+                        <th className="pb-2 text-right">% del período</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1077,37 +1055,14 @@ export default function Explorar() {
                                 ? 'Base'
                                 : formatVariation(row.variacion)}
                           </td>
-                          <td className="py-2.5 pr-4 text-right text-navy/60">
+                          <td className="py-2.5 text-right text-navy/60">
                             {row.participacion == null ? '—' : formatPct(row.participacion)}
                           </td>
-                          {hasCosts && metric !== 'costo' && (
-                            <td className="py-2.5 pr-4 text-right text-navy/80">
-                              {row.costo == null ? '—' : formatCLP(row.costo)}
-                            </td>
-                          )}
-                          {hasCosts && metric !== 'utilidad' && (
-                            <td className="py-2.5 pr-4 text-right text-navy/80">
-                              {row.utilidad == null ? '—' : formatCLP(row.utilidad)}
-                            </td>
-                          )}
-                          {hasCosts && (
-                            <td className={`py-2.5 text-right font-medium ${
-                              row.margen == null ? 'text-navy/40' : row.margen < 0 ? 'text-coral' : 'text-navy/80'
-                            }`}>
-                              {row.margen == null ? '—' : `${formatNumber(row.margen)}%`}
-                            </td>
-                          )}
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                {hasCosts && (
-                  <p className="mt-3 text-xs text-navy/45">
-                    Utilidad y margen usan solo filas con ingreso Y costo pareados; un mes sin
-                    cobertura muestra “—” (desconocido, no $0).
-                  </p>
-                )}
                 {trendRows.length > monthlyDetailRows.length && (
                   <p className="mt-3 text-xs text-navy/45">
                     Se muestran los 8 meses más recientes del período.

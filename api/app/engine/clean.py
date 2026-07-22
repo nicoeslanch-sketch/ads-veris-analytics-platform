@@ -1201,14 +1201,4 @@ def analyze_and_clean(
         "_source_rows_limpio": clean_source_rows if apply else source_rows,
         "_filas_duplicadas_eliminadas": removed_duplicate_rows,
         "_filas_duplicadas_detectadas": detected_duplicate_rows,
-        # Fase 19: filas que SOLO se vuelven idénticas tras estandarizar
-        # formatos ("duplicados posnormalización"). No se eliminan solas, pero
-        # la descarga debe señalarlas una a una para su revisión.
-        "_filas_duplicadas_normalizadas": [
-            (clean_source_rows if apply else list(source_rows))[position]
-            for position, flagged in enumerate(
-                (remaining_normalized_mask if apply else normalized_only_mask.reset_index(drop=True)).tolist()
-            )
-            if flagged
-        ],
     }
