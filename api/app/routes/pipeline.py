@@ -2191,9 +2191,11 @@ def _relationships_sync(
                 has_unit_cost
                 and not is_transaction_profile(headers, effective_mapping)
             )
-            # Compatibilidad con libros previos cuyo manifiesto no conserva
-            # encabezados de muestra, pero sí una hoja llamada Productos.
-            if reference_profile or "producto" in name.casefold():
+            # Compatibilidad con manifiestos antiguos sin encabezados. Cuando
+            # sí hay muestra estructural, el nombre "Productos" no basta para
+            # cargar también el catálogo: el flujo rápido necesita solo la
+            # maestra que realmente contiene costo unitario.
+            if reference_profile or (not headers and "producto" in name.casefold()):
                 reference_sheets.add(name)
         if reference_sheets:
             extra_frames, extra_mappings, extra_results = _processed_manifest_frames(
