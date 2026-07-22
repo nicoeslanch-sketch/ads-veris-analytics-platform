@@ -420,6 +420,7 @@ def valid_restore_snapshot(
     expected_rules_hash: str,
     expected_mapping_hash: str,
     expected_sheet: str | None,
+    allow_engine_mismatch: bool = False,
 ) -> dict[str, Any] | None:
     if not isinstance(raw, dict) or raw.get("version") != RESTORE_SNAPSHOT_VERSION:
         return None
@@ -427,7 +428,7 @@ def valid_restore_snapshot(
     # recalcula con el motor actual y lo reemplaza (resultados nunca mezclan
     # versiones). Cambios de archivo/mapeo/reglas producen dataset o snapshot
     # nuevos por diseño; esta es la última línea de defensa.
-    if raw.get("engine_version") != ENGINE_VERSION:
+    if not allow_engine_mismatch and raw.get("engine_version") != ENGINE_VERSION:
         return None
     if not isinstance(expected_revision, int) or expected_revision <= 0:
         return None

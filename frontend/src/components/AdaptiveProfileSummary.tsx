@@ -1,4 +1,5 @@
 import Card from './ui/Card'
+import DecisionInsightGrid, { type DecisionInsight } from './DecisionInsightGrid'
 import { formatCLP, formatNumber } from '../lib/format'
 import {
   AXIS_INK,
@@ -31,6 +32,69 @@ import {
 type GenericAnalysis = NonNullable<MetricsResult['analisis_generico']>
 type GenericNumeric = NonNullable<GenericAnalysis['numericas']>[number]
 type GenericDistribution = NonNullable<GenericAnalysis['distribuciones']>[number]
+
+function genericDecisionInsights(
+  generic: GenericAnalysis,
+  numericas: GenericNumeric[],
+  distribuciones: GenericDistribution[],
+): DecisionInsight[] {
+  const insights: DecisionInsight[] = []
+  if (generic.celdas_informadas_pct < 95) {
+    insights.push({
+      title: 'Completitud que limita el análisis',
+      evidence: `${formatNumber(100 - generic.celdas_informadas_pct)}% de las celdas están vacías.`,
+      action: 'Prioriza los campos con uso operativo antes de comparar segmentos o periodos.',
+      tone: generic.celdas_informadas_pct < 80 ? 'coral' : 'gold',
+    })
+  } else {
+    insights.push({
+      title: 'Buena base para segmentar',
+      evidence: `${formatNumber(generic.celdas_informadas_pct)}% de las celdas contiene información.`,
+      action: 'Usa los desgloses siguientes para localizar concentraciones y excepciones.',
+      tone: 'green',
+    })
+  }
+  const outOfRange = numericas.reduce((total, item) => total + (item.fuera_rango ?? 0), 0)
+  if (outOfRange > 0) {
+    insights.push({
+      title: 'Porcentajes fuera de rango',
+      evidence: `${formatNumber(outOfRange)} valor(es) quedan fuera de 0–100%.`,
+      action: 'Confirma si la fuente mezcla fracciones y porcentajes antes de usar promedios.',
+      tone: 'coral',
+    })
+  }
+  const concentrated = distribuciones
+    .map((distribution) => ({ distribution, top: distribution.valores[0] }))
+    .filter((item) => item.top && generic.registros > 0)
+    .map((item) => ({
+      ...item,
+      share: item.top.registros / generic.registros * 100,
+    }))
+    .sort((left, right) => right.share - left.share)[0]
+  if (concentrated?.share >= 45) {
+    insights.push({
+      title: `Concentración en ${concentrated.distribution.columna}`,
+      evidence: `${concentrated.top.nombre} reúne ${formatNumber(concentrated.share)}% de los registros.`,
+      action: 'Compara su resultado con el resto para saber si es dependencia, foco estratégico o sesgo de captura.',
+      tone: concentrated.share >= 70 ? 'coral' : 'gold',
+    })
+  }
+  const evolution = generic.evolucion
+  if (evolution && evolution.valores.length > 1) {
+    const first = evolution.valores[0]
+    const last = evolution.valores[evolution.valores.length - 1]
+    const change = first.valor ? (last.valor - first.valor) / Math.abs(first.valor) * 100 : null
+    if (change != null) {
+      insights.push({
+        title: `${evolution.columna} cambió ${change >= 0 ? 'al alza' : 'a la baja'}`,
+        evidence: `Entre ${formatMonthShort(first.mes)} y ${formatMonthShort(last.mes)} varió ${formatNumber(Math.abs(change))}%.`,
+        action: 'Contrasta el cambio con estado, categoría o responsable para identificar su causa.',
+        tone: Math.abs(change) >= 20 ? 'gold' : 'teal',
+      })
+    }
+  }
+  return insights.slice(0, 4)
+}
 
 /** Fase 18: los resúmenes adaptativos dejan de ser solo tarjetas — cada perfil
  * (campañas, inventario, clientes, sucursales, trabajadores, metas…) muestra
@@ -103,6 +167,32 @@ export default function AdaptiveProfileSummary({
       ...item,
       etiqueta: truncateLabel(item.nombre, 18),
     }))
+    const campaignInsights: DecisionInsight[] = []
+    const leadingPlatform = platforms[0]
+    if (leadingPlatform && (campaign.inversion ?? 0) > 0) {
+      const share = leadingPlatform.inversion / Number(campaign.inversion) * 100
+      campaignInsights.push({
+        title: `La inversión se concentra en ${leadingPlatform.nombre}`,
+        evidence: `${formatNumber(share)}% del presupuesto registrado está en esa plataforma.`,
+        action: 'Compara su CTR y CPC con el resto antes de reasignar presupuesto.',
+        tone: share >= 70 ? 'gold' : 'teal',
+      })
+    }
+    if ((campaign.clics_sobre_impresiones ?? 0) > 0) {
+      campaignInsights.push({
+        title: 'Hay resultados imposibles de interpretar',
+        evidence: `${formatNumber(campaign.clics_sobre_impresiones ?? 0)} campaña(s) tienen más clics que impresiones.`,
+        action: 'Corrige esas filas antes de comparar eficiencia o decidir inversión.',
+        tone: 'coral',
+      })
+    } else if (campaign.ctr_pct != null) {
+      campaignInsights.push({
+        title: 'Eficiencia global observable',
+        evidence: `El CTR agregado es ${formatNumber(campaign.ctr_pct)}% y el CPC es ${campaign.cpc == null ? 'no disponible' : formatCLP(campaign.cpc)}.`,
+        action: 'Usa el desglose por plataforma para distinguir escala de eficiencia.',
+        tone: 'green',
+      })
+    }
     return (
       <div className="space-y-5">
         <h2 className="text-base font-semibold text-navy">Rendimiento de campañas</h2>
@@ -115,6 +205,7 @@ export default function AdaptiveProfileSummary({
             captura o columnas intercambiadas.
           </p>
         )}
+        {isExplore && <DecisionInsightGrid items={campaignInsights} />}
         {platforms.length > 1 && (
           <div className="grid gap-5 xl:grid-cols-2">
             <Card>
@@ -182,6 +273,38 @@ export default function AdaptiveProfileSummary({
       ...item,
       etiqueta: truncateLabel(item.nombre, 16),
     }))
+    const inventoryInsights: DecisionInsight[] = []
+    const shortageShare = inventory.registros > 0
+      ? inventory.bajo_minimo / inventory.registros * 100
+      : 0
+    inventoryInsights.push({
+      title: shortageShare > 0 ? 'Hay riesgo de quiebre' : 'El stock cubre los mínimos registrados',
+      evidence: shortageShare > 0
+        ? `${formatNumber(inventory.bajo_minimo)} registros (${formatNumber(shortageShare)}%) están bajo mínimo.`
+        : 'No se detectaron registros por debajo del stock mínimo.',
+      action: shortageShare > 0
+        ? 'Prioriza reposición por sucursal y luego por producto, sin sumar stocks de ubicaciones distintas a ciegas.'
+        : 'Vigila productos de alta rotación para anticipar el siguiente quiebre.',
+      tone: shortageShare >= 15 ? 'coral' : shortageShare > 0 ? 'gold' : 'green',
+    })
+    if ((inventory.stocks_negativos ?? 0) > 0) {
+      inventoryInsights.push({
+        title: 'Stock negativo pendiente de conciliar',
+        evidence: `${formatNumber(inventory.stocks_negativos ?? 0)} registro(s) presentan existencia negativa.`,
+        action: 'Revisa movimientos, devoluciones y ajustes antes de valorar el inventario.',
+        tone: 'coral',
+      })
+    }
+    const topBranch = branches[0]
+    if (topBranch && inventory.stock_total > 0) {
+      const share = topBranch.stock / inventory.stock_total * 100
+      inventoryInsights.push({
+        title: `Mayor concentración en ${topBranch.nombre}`,
+        evidence: `${formatNumber(share)}% del stock informado está en esa sucursal.`,
+        action: 'Contrasta esa concentración con demanda y quiebres antes de trasladar unidades.',
+        tone: share >= 60 ? 'gold' : 'teal',
+      })
+    }
     return (
       <div className="space-y-5">
         <h2 className="text-base font-semibold text-navy">Estado del inventario</h2>
@@ -194,6 +317,7 @@ export default function AdaptiveProfileSummary({
             existencias.
           </p>
         )}
+        {isExplore && <DecisionInsightGrid items={inventoryInsights} />}
         {branches.length > 1 && (
           <div className="grid gap-5 xl:grid-cols-2">
             <Card>
@@ -240,6 +364,7 @@ export default function AdaptiveProfileSummary({
   const distribuciones = (generic.distribuciones ?? []).slice(0, isExplore ? 6 : 2)
   const numericas = (generic.numericas ?? []).slice(0, isExplore ? 8 : 4)
   const evolution = generic.evolucion
+  const decisionInsights = genericDecisionInsights(generic, numericas, distribuciones)
 
   const formatMetric = (
     item: GenericNumeric,
@@ -295,6 +420,7 @@ export default function AdaptiveProfileSummary({
           })}
         </div>
       )}
+      {isExplore && <DecisionInsightGrid items={decisionInsights} />}
       {evolution && evolution.valores.length > 1 && (
         <Card>
           <h3 className="text-sm font-semibold text-navy">

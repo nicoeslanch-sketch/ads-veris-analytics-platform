@@ -1,4 +1,5 @@
 import Card from './ui/Card'
+import DecisionInsightGrid, { type DecisionInsight } from './DecisionInsightGrid'
 import { formatCLP, formatNumber } from '../lib/format'
 import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, truncateLabel } from '../lib/charts'
 import type { MetricsResult } from '../lib/types'
@@ -68,6 +69,48 @@ export default function ProductCatalogSummary({
     ...item,
     etiqueta: truncateLabel(item.producto, 22),
   }))
+  const insights: DecisionInsight[] = []
+  if (hasCosts && analysis.cobertura_costo_pct < 95) {
+    insights.push({
+      title: 'Cobertura de costos incompleta',
+      evidence: `${formatNumber(analysis.cobertura_costo_pct)}% del catálogo tiene una referencia de costo utilizable.`,
+      action: 'Completa los costos faltantes antes de fijar precios o comparar margen potencial.',
+      tone: analysis.cobertura_costo_pct < 80 ? 'coral' : 'gold',
+    })
+  } else if (hasCosts) {
+    insights.push({
+      title: 'Catálogo comparable por costo',
+      evidence: `${formatNumber(analysis.cobertura_costo_pct)}% de cobertura permite comparar precios y costos.`,
+      action: 'Prioriza los productos con bajo margen potencial y alta relevancia comercial.',
+      tone: 'green',
+    })
+  }
+  if ((analysis.costos_a_revisar?.registros ?? 0) > 0) {
+    insights.push({
+      title: 'Costos que pueden distorsionar decisiones',
+      evidence: `${formatNumber(analysis.costos_a_revisar?.registros ?? 0)} registro(s) son no positivos o extremadamente altos.`,
+      action: 'Valídalos en la fuente; se conservan y no se corrigen automáticamente.',
+      tone: 'coral',
+    })
+  }
+  const knownState = (analysis.activos ?? 0) + (analysis.inactivos ?? 0)
+  if (knownState > 0 && (analysis.inactivos ?? 0) > 0) {
+    const share = Number(analysis.inactivos) / knownState * 100
+    insights.push({
+      title: 'Productos inactivos en la maestra',
+      evidence: `${formatNumber(analysis.inactivos ?? 0)} productos (${formatNumber(share)}%) figuran inactivos.`,
+      action: 'Evita considerarlos en surtido disponible y revisa si mantienen stock o movimientos.',
+      tone: share >= 20 ? 'gold' : 'teal',
+    })
+  }
+  if (analysis.margen_potencial.promedio != null) {
+    insights.push({
+      title: 'Referencia de margen potencial',
+      evidence: `La diferencia promedio entre precio y costo es ${pct(analysis.margen_potencial.promedio)}.`,
+      action: 'No la confundas con margen realizado: para eso deben relacionarse cantidades vendidas y costo vigente.',
+      tone: analysis.margen_potencial.promedio <= 0 ? 'coral' : 'teal',
+    })
+  }
   return (
     <div className="space-y-6">
       <div className={`rounded-xl border px-4 py-3 ${isExplore ? 'border-navy/15 bg-navy/[0.035]' : 'border-teal/20 bg-teal/[0.05]'}`}>
@@ -103,6 +146,7 @@ export default function ProductCatalogSummary({
           Se conservan en las métricas; el gráfico comparativo usa la vista típica y los omite de forma explícita para no aplastar la escala.
         </p>
       )}
+      {isExplore && <DecisionInsightGrid title="Lectura del catálogo" items={insights.slice(0, 4)} />}
       {comparison.length > 0 && (
         <Card>
           <h2 className="text-sm font-semibold text-navy">Costo unitario vs. {referenceLabel.toLowerCase()}</h2>

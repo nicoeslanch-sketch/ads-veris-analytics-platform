@@ -43,7 +43,6 @@ import {
   cleaningScopeState,
   requiresSalesAmountMapping,
   serializedAnalysisScope,
-  updateBatchSheetErrors,
 } from '../lib/multiSheet'
 import {
   DEFAULT_RULES,
@@ -97,7 +96,12 @@ const MAPPING_ROLES: Array<{ role: string; label: string; description: string }>
 
 const IMPORTANT_MAPPING_ROLES = new Set(['monto', 'fecha', 'costo', 'producto', 'categoria'])
 const MEDIUM_ROLE_CONFIDENCE = 0.75
-const RESTORE_STATE_TIMEOUT_MS = 15_000
+interface CleanBatchResponse {
+  resultados: Record<string, CleanResult>
+  errores: Record<string, string>
+  persistencia_errores: Record<string, string>
+  segundos: number
+}
 
 function applyMappingOverrides(
   automatic: Record<string, string>,
@@ -300,46 +304,54 @@ export default function Limpieza() {
         (sheetName) => !selectedSheets.includes(sheetName),
       ),
     }
-    let batchSheetErrors = { ...batchRestoreState.sheet_errors }
     let failedCount = 0
     const historyWrites: Array<Promise<boolean>> = []
     try {
+      const batchManifest = {
+        hojas: runnable.map((name) => {
+          const session = sheetSessions[name]
+          const directedScope = session?.cleaning?.dirigida
+          return {
+            nombre: name,
+            procesar: true,
+            rules: basicMapping || applySameRules
+              ? rules
+              : (session?.cleaning?.reglas_activas ?? rules),
+            mapping: session?.mappingOverride ?? {},
+            scope: directedScope
+              ? {
+                  incluir: directedScope.columnas_incluir,
+                  excluir: directedScope.columnas_excluir,
+                }
+              : {},
+            eliminar_duplicados:
+              options.removeExactDuplicates ?? session?.eliminarDuplicados ?? false,
+            status: 'limpiando',
+            error: '',
+            revision: session?.cleaning?.revision ?? session?.standardization?.revision ?? 0,
+          }
+        }),
+      }
+      runnable.forEach((name) => setSheetStatus(name, 'limpiando'))
+      setCleaningProgress({ current: 0, total: runnable.length, sheet: 'Procesando el libro' })
+      const extra: Record<string, string> = {
+        manifest: JSON.stringify(batchManifest),
+        restore_state: JSON.stringify(batchRestoreState),
+        ...(datasetId ? { dataset_id: datasetId } : {}),
+      }
+      const scope = serializedAnalysisScope(analysisScope)
+      if (scope) extra.analysis_scope = scope
+      const batch = await apiPost<CleanBatchResponse>(
+        '/clean/batch',
+        buildDatasetForm(file, storagePath, extra),
+      )
+
       for (const [index, name] of runnable.entries()) {
         const session = sheetSessions[name]
         if (!session?.standardization) continue
         setCleaningProgress({ current: index + 1, total: runnable.length, sheet: name })
-        setSheetStatus(name, 'limpiando')
-        // /clean solo persiste su snapshot si termina bien. Por eso el estado
-        // enviado puede quitar preventivamente el error de esta hoja: si
-        // falla, no se escribe y el catch lo reincorpora al mapa del lote.
-        const successSheetErrors = updateBatchSheetErrors(batchSheetErrors, name, null)
-        try {
-          const response = await apiPost<CleanResult>(
-            '/clean',
-            buildDatasetForm(file, storagePath, {
-              apply: 'true',
-              rules: JSON.stringify(
-                basicMapping || applySameRules
-                  ? rules
-                  : (session.cleaning?.reglas_activas ?? rules),
-              ),
-              // El lote conserva la decision explicita de cada hoja. Detectar
-              // duplicados nunca autoriza por si solo a eliminar filas.
-              eliminar_duplicados: String(
-                options.removeExactDuplicates ?? session.eliminarDuplicados,
-              ),
-              ...(datasetId ? { dataset_id: datasetId } : {}),
-              sheet: name,
-              ...(session.mappingOverride
-                ? { mapping: JSON.stringify(session.mappingOverride) }
-                : {}),
-              restore_state: JSON.stringify({
-                ...batchRestoreState,
-                sheet_errors: successSheetErrors,
-              }),
-            }),
-          )
-          batchSheetErrors = successSheetErrors
+        const response = batch.resultados[name]
+        if (response) {
           setCleaning(response, { activate: name === target })
           rememberSheetDiagnostic(name, response)
           if (response.persistencia?.guardada === false) {
@@ -348,16 +360,25 @@ export default function Limpieza() {
               'La hoja se limpió, pero el punto de restauración no pudo guardarse.',
             )
           }
-          // El historial es best-effort y no debe frenar el inicio de la hoja
-          // siguiente. Se verifica el lote completo antes de cerrar el flujo.
           historyWrites.push(saveCleaningJob(datasetId, response.reglas_activas, response))
-        } catch (err) {
+        } else {
           failedCount += 1
-          const message = err instanceof ApiError ? err.message : 'No se pudo limpiar esta hoja.'
-          batchSheetErrors = updateBatchSheetErrors(batchSheetErrors, name, message)
+          const message = batch.errores[name] ?? 'No se pudo limpiar esta hoja.'
           setSheetStatus(name, 'error', message)
         }
       }
+      if (Object.keys(batch.persistencia_errores).length > 0) {
+        setPersistWarning(
+          'La limpieza terminó, pero una parte del avance no pudo guardarse para la próxima sesión.',
+        )
+      }
+    } catch (err) {
+      failedCount = runnable.length
+      const message = err instanceof ApiError
+        ? err.message
+        : 'No se pudieron limpiar las hojas seleccionadas.'
+      runnable.forEach((name) => setSheetStatus(name, 'error', message))
+      setError(message)
     } finally {
       const historyResults = await Promise.allSettled(historyWrites)
       const historyFailed = historyResults.some(
@@ -368,28 +389,6 @@ export default function Limpieza() {
           'La limpieza se aplicó correctamente, pero una o más hojas no se pudieron guardar en el historial.',
         )
       }
-      if (datasetId) {
-        const stateForm = new FormData()
-        stateForm.append('dataset_id', datasetId)
-        stateForm.append('restore_state', JSON.stringify({
-          ...batchRestoreState,
-          sheet_errors: batchSheetErrors,
-        }))
-        try {
-          await apiPost<Record<string, unknown>>(
-            '/restore/state',
-            stateForm,
-            { timeoutMs: RESTORE_STATE_TIMEOUT_MS },
-          )
-        } catch {
-          // El procesamiento ya ocurrio: un fallo al guardar la restauracion
-          // no debe convertir hojas limpias en fallidas ni repetir el lote.
-          setPersistWarning(
-            'La limpieza termino, pero no pudimos guardar el estado final del lote. ' +
-            'Si recargas ahora, puede que no aparezcan algunos errores o reintentos.',
-          )
-        }
-      }
       cleaningRunRef.current = false
       setCleaningProgress(null)
       setApplying(false)
@@ -397,6 +396,7 @@ export default function Limpieza() {
     }
   }, [
     applySameRules,
+    analysisScope,
     availableSheets,
     basicMapping,
     closeReview,
@@ -1510,7 +1510,8 @@ export default function Limpieza() {
                       <div>
                         <h2 className="text-sm font-semibold text-navy">Duplicados exactos</h2>
                         <p className="text-xs text-navy/55">
-                          Detectar no elimina filas. Solo se borran después de tu confirmación.
+                          Este control afecta solo la hoja mostrada. Para eliminarlos en todas,
+                          usa la acción global del estado por hoja. Nada se borra sin tu confirmación.
                         </p>
                       </div>
                     </div>

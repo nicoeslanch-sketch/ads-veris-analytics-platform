@@ -47,6 +47,10 @@ def safe_export_dataframe(
     interpretar; un valor ambiguo o inválido permanece literal y auditable.
     """
     exported = df.copy()
+    # SOURCE_ROWS_ATTR can contain hundreds of thousands of integers. pandas
+    # propagates attrs through Series operations, so keeping it here caused a
+    # deep copy for almost every exported column operation.
+    exported.attrs = {}
     requested = set(numeric_columns or ())
     requested.update(
         str(column)

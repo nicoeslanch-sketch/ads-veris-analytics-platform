@@ -38,6 +38,7 @@ import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
+import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
 import { useAuth } from '../auth/AuthContext'
 import { fullRangePeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
@@ -612,6 +613,8 @@ export default function Resumen() {
           ctaLabel="Revisar en Limpieza"
           ctaTo="/limpieza"
         />
+      ) : metrics?.analisis_negocio ? (
+        <BusinessAnalysisPanel analysis={metrics.analisis_negocio} variant="summary" />
       ) : contentKind === 'product_catalog' && metrics?.analisis_productos ? (
         <ProductCatalogSummary analysis={metrics.analisis_productos} variant="summary" />
       ) : contentKind === 'adaptive_profile' && metrics ? (

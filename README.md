@@ -21,6 +21,23 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
 - Todos los endpoints sensibles de la API validan el **JWT de Supabase** del usuario.
 - Los archivos se suben directo del navegador a **Supabase Storage**; la API los lee vía signed URL.
 
+## Análisis empresarial multihoja
+
+El motor `0.23.0` separa dos experiencias: **Resumen** presenta la imagen
+numérica ejecutiva del negocio y **Explorar** explica causas, riesgos y
+decisiones. Las relaciones se validan antes de unir tablas; los costos
+históricos usan vigencia temporal y cualquier respaldo con costo actual queda
+marcado como estimación. Totales estructurales, anulaciones, duplicados
+conflictivos y referencias huérfanas no se ocultan ni se convierten en cifras
+certificadas. Ratios como ROE, ROA, liquidez o EBITDA solo aparecen cuando sus
+insumos contables existen.
+
+La estandarización y limpieza de varias hojas se ejecutan por lote. La
+restauración muestra primero el último estado válido y actualiza en segundo
+plano cuando cambia el motor; la exportación auditada se precalienta y reutiliza
+el resultado para evitar reconstrucciones idénticas. Esta versión no requiere
+una migración nueva: la última sigue siendo `0021`.
+
 ## Requisitos
 
 - Node 18+ (probado con Node 22)

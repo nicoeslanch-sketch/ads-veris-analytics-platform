@@ -450,6 +450,150 @@ export interface DatasetDimensions {
   vendedor: boolean
 }
 
+export interface BusinessGroupRow {
+  nombre: string
+  ingresos: number
+  participacion_pct: number | null
+  costo: number | null
+  utilidad: number | null
+  margen_pct: number | null
+  filas: number
+  filas_pareadas: number
+  cobertura_costos_pct: number
+}
+
+export interface BusinessRatio {
+  id: string
+  nombre: string
+  valor: number | null
+  estado: 'available' | 'partial' | 'unavailable' | 'blocked'
+  formula: string
+  nota: string
+  requiere: string[]
+}
+
+export interface BusinessAnalysis {
+  version: number
+  estado_certificacion: 'certified' | 'partial' | 'blocked'
+  confianza_pct: number
+  alcance: {
+    hojas_ventas: string[]
+    hoja_costos: string | null
+    hoja_historial_costos: string | null
+    hojas_utilizadas: string[]
+    filas_ventas_fisicas: number
+    filas_totales_estructurales: number
+    filas_anuladas: number
+    filas_indicadores: number
+    documentos_repetidos: number
+    filas_adicionales_documento: number
+    documentos_conflictivos: number
+  }
+  estado_resultados: {
+    ventas_observadas: number
+    ventas_certificables: number
+    ventas_pareadas: number
+    costo_venta_conocido: number
+    costo_venta_estimado_catalogo: number
+    utilidad_bruta: number | null
+    margen_bruto_pct: number | null
+    gastos_operacionales: number | null
+    gastos_operacionales_periodo: number | null
+    filas_gastos: number
+    resultado_operacional: number | null
+    margen_operacional_pct: number | null
+    cobertura_costos_pct: number
+    cobertura_costos_historica_pct: number
+    cobertura_costos_certificable_pct: number
+    ventas_certificables_pareadas: number
+    costo_certificable: number
+    utilidad_certificable: number | null
+    margen_certificable_pct: number | null
+    resultado_operacional_certificable: number | null
+    margen_operacional_certificable_pct: number | null
+  }
+  operacion: {
+    cobrado_aplicado: number | null
+    cobranza_sobre_documentos_pct: number | null
+    documentos_sobrepagados: number
+    pagos_duplicados_excluidos: number
+    valor_inventario: number | null
+    compras_efectivas: number | null
+    gastos_fijos: number | null
+    gastos_variables: number | null
+    gasto_fijo_mensual_promedio: number | null
+    punto_equilibrio_ventas: number | null
+    rotacion_inventario_aprox: number | null
+  }
+  evolucion: Array<{
+    mes: string
+    ventas: number
+    costo: number
+    utilidad_bruta: number | null
+    gastos_operacionales: number | null
+    resultado_operacional: number | null
+    meta_venta?: number
+    cumplimiento_meta_pct?: number | null
+  }>
+  agrupaciones: Record<string, BusinessGroupRow[]>
+  portafolio: {
+    umbrales: { margen_mediano_pct: number; participacion_mediana_pct: number } | null
+    productos: Array<BusinessGroupRow & {
+      cuadrante: 'estrella' | 'vaca_lechera' | 'oportunidad' | 'problema'
+    }>
+  }
+  metas: {
+    disponible: boolean
+    meta_venta: number | null
+    venta_comparable: number | null
+    cumplimiento_pct: number | null
+    meta_margen_pct: number | null
+    meta_nuevos_clientes: number | null
+    por_mes: Array<{
+      mes: string
+      meta_venta: number
+      venta: number
+      cumplimiento_pct: number | null
+    }>
+    nota: string
+  }
+  sensibilidad: {
+    base_utilidad_bruta: number | null
+    costo_mas_5: number | null
+    costo_mas_10: number | null
+    nota: string
+  }
+  calidad: {
+    costos: Record<string, number | string | null>
+    integridad_referencial: Array<{
+      relacion: string
+      filas: number
+      validas: number
+      huerfanas: number
+      sin_clave: number
+      cobertura_pct: number
+      ejemplos: string[]
+    }>
+    controles_formula: Array<{
+      hoja: string
+      control: string
+      filas_evaluadas: number
+      filas_inconsistentes: number
+      filas_ejemplo: number[]
+    }>
+    filas_inconsistentes_formula: number
+    referencias_problematicas: number
+  }
+  ratios: BusinessRatio[]
+  decisiones: Array<{
+    severidad: 'alta' | 'media' | 'baja'
+    titulo: string
+    evidencia: string
+    accion: string
+    confianza: number
+  }>
+}
+
 export interface MetricsResult {
   archivo: string
   calidad_datos: number
@@ -683,6 +827,9 @@ export interface MetricsResult {
     grupos_totales: number
     fuera_de_rango?: { filas: number; monto_asociado: number }
   }>
+  /** Vista integral multihoja: relaciones seguras, estado ejecutivo y
+   * diagnósticos. Solo existe cuando el alcance es ventas + costos. */
+  analisis_negocio?: BusinessAnalysis
 }
 
 /** Compact response from POST /restore/latest. */
@@ -714,5 +861,7 @@ export interface RestoreLatestResult {
     mapping: Record<string, string> | null
     eliminar_duplicados: boolean
   }>
-  source: 'snapshot' | 'computed' | 'empty'
+  source: 'snapshot' | 'snapshot_stale' | 'refreshed' | 'computed' | 'empty'
+  refresh_required?: boolean
+  refresh_sheets?: string[]
 }

@@ -766,6 +766,7 @@ def test_ventas_anuladas_se_conservan_pero_no_entran_en_indicadores():
     assert metrics["exclusiones_indicadores"] == {
         "filas_anuladas": 1,
         "columna_estado": "Estado",
+        "filas_totales_estructurales": 0,
     }
 
 
@@ -822,6 +823,39 @@ def test_xlsx_writer_preserves_numeric_percent_and_date_types():
     assert sheet["A2"].number_format == "dd/mm/yyyy"
     assert sheet["B2"].value == 1.234
     assert sheet["B2"].data_type == "n"
+    assert sheet["C2"].value == 0.2
+    assert sheet["C2"].number_format == "0.00%"
+
+
+def test_write_only_xlsx_writer_preserves_types_formats_and_highlights():
+    output = io.BytesIO()
+    workbook = openpyxl.Workbook(write_only=True)
+    _write_clean_sheet(
+        workbook,
+        "Ventas",
+        pd.DataFrame(
+            {
+                "Fecha": ["12-Jan-2025", "13-Jan-2025"],
+                "Monto": ["1.234", "2500"],
+                "Descuento_Pct": ["0.2", "0.15"],
+            }
+        ),
+        {(0, "Monto"): "normalizado"},
+        {(1, "Fecha"): "revisar"},
+        numeric_columns={"Monto", "Descuento_Pct"},
+        date_columns={"Fecha"},
+    )
+    workbook.save(output)
+
+    reopened = openpyxl.load_workbook(io.BytesIO(output.getvalue()), data_only=False)
+    sheet = reopened["Ventas"]
+
+    assert sheet["A2"].is_date
+    assert sheet["A2"].number_format == "dd/mm/yyyy"
+    assert sheet["B2"].value == 1.234
+    assert sheet["B2"].data_type == "n"
+    assert sheet["B2"].fill.fgColor.rgb == "00FFEB3B"
+    assert sheet["A3"].fill.fgColor.rgb == "00FFCDD2"
     assert sheet["C2"].value == 0.2
     assert sheet["C2"].number_format == "0.00%"
 
@@ -1405,8 +1439,13 @@ def test_stress_append_join_export_reconciles_scope_totals_and_ambiguities():
 
     manifest_sheet = workbook["Manifest"]
     manifest_columns = {cell.value: cell.column for cell in manifest_sheet[1]}
+    book_row = next(
+        row
+        for row in range(2, manifest_sheet.max_row + 1)
+        if manifest_sheet.cell(row, manifest_columns["hoja"]).value == "(libro completo)"
+    )
     exported_scope = json.loads(
-        manifest_sheet.cell(2, manifest_columns["alcance_analisis"]).value
+        manifest_sheet.cell(book_row, manifest_columns["alcance_analisis"]).value
     )
     assert exported_scope["mode"] == "append_join"
     assert exported_scope["append_sheets"] == sales

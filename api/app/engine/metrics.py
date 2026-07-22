@@ -31,6 +31,7 @@ from .standardize import (
     physical_missing_mask,
     semantic_missing_mask,
 )
+from .quality import structural_total_mask
 
 FINANCIAL_RATIOS = [
     "roa",
@@ -862,7 +863,18 @@ def compute_metrics(
         cancelled_mask = normalized_status.str.contains(
             r"\b(?:anulad|cancelad|void)\w*", regex=True, na=False
         )
-    indicator_row_mask = ~cancelled_mask
+    total_rows_mask = (
+        structural_total_mask(df, roles.get("fecha"))
+        if transactional_profile
+        else pd.Series(False, index=df.index)
+    )
+    indicator_row_mask = ~cancelled_mask & ~total_rows_mask
+    total_rows = int(total_rows_mask.sum())
+    if total_rows:
+        warnings.append(
+            f"Se detectaron {total_rows} fila(s) de totales estructurales. "
+            "Se conservan como referencia, pero no entran en indicadores."
+        )
     cancelled_rows = int(cancelled_mask.sum())
     if cancelled_rows:
         warnings.append(
@@ -1286,8 +1298,9 @@ def compute_metrics(
             "exclusiones_indicadores": {
                 "filas_anuladas": cancelled_rows,
                 "columna_estado": status_column,
+                "filas_totales_estructurales": total_rows,
             },
-        } if status_column or cancelled_rows else {}),
+        } if status_column or cancelled_rows or total_rows else {}),
         # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
         # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
         "dimensiones": {

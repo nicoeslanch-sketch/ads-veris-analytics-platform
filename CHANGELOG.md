@@ -2,7 +2,45 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
-## [Sin publicar] - Regresiones XLSX reproducibles
+## [0.23.0] - 2026-07-22 - Motor empresarial multihoja y restauracion rapida
+
+- `Resumen` obtiene una vista ejecutiva realmente multihoja: estado de
+  resultados, cobertura de costos, cobranza, inventario, metas, punto de
+  equilibrio, evolucion y ratios disponibles. `Explorar` deja de duplicar el
+  tablero y prioriza causas, decisiones, sensibilidad, rentabilidad por
+  producto, cliente, sucursal, canal y vendedor e integridad de relaciones.
+- Las ventas se relacionan de forma segura con productos, costos vigentes,
+  historial temporal de costos, clientes, sucursales y vendedores. Compras,
+  proveedores, inventario, cobranzas, gastos y metas aportan diagnosticos sin
+  multiplicar filas. Los ratios sin base contable suficiente se declaran como
+  no disponibles y explican que datos faltan.
+- Los totales estructurales y documentos anulados se conservan en el archivo
+  pero quedan fuera de indicadores. Se detectan conflictos de documento,
+  formulas que no cuadran, claves huerfanas, sobrepagos y costos faltantes,
+  negativos, cero o extremos.
+- El costo historico se asigna por SKU y vigencia. Cuando falta una vigencia,
+  el catalogo actual puede completar la vista gerencial como estimacion
+  identificada, sin elevar la cobertura historica ni certificar ese margen.
+- Estandarizacion y limpieza multihoja usan endpoints por lote, comparten la
+  lectura inmutable del libro y guardan una sola revision coherente. Restaurar
+  un snapshot de otra version deja la sesion visible de inmediato y refresca
+  todas las hojas con una unica descarga y apertura en segundo plano.
+- La descarga auditada evita releer el XLSX cuando las hojas ya estan en cache,
+  escanea estructura y formulas directamente desde OOXML, comparte trabajos
+  concurrentes y precalienta el archivo al terminar la limpieza. Conserva
+  formatos, resaltados, tipos numericos y trazabilidad.
+- Perfiles individuales de productos, inventario, compras, gastos, cobranzas,
+  clientes y otras maestras incorporan senales deterministas de decision, no
+  solo cifras sin contexto.
+- En el libro desafiante suministrado, el procesamiento frio de 15 hojas baja
+  aproximadamente de 31,8 s a 21,9 s. La primera exportacion auditada baja de
+  29,0 s a 20,7 s y una descarga identica repetida reutiliza bytes en
+  milisegundos.
+
+Sube `ENGINE_VERSION` a `0.23.0`. No agrega migraciones: `0021` sigue siendo
+la ultima.
+
+### Regresiones XLSX reproducibles
 
 - Limpieza permite completar todas las hojas pendientes o fallidas desde el
   resumen superior y eliminar, con una sola confirmación, los duplicados

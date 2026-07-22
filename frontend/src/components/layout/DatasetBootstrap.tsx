@@ -58,6 +58,59 @@ export default function DatasetBootstrap() {
     const controller = new AbortController()
     restoreAbortRef.current = controller
     const restoreRevision = datasetRevision
+    let restoredAvailable = false
+
+    const applyRestored = (restored: RestoreLatestResult) => {
+      if (!restored.dataset || !restored.standardization) return false
+      const placeholder = new File([], restored.dataset.name, {
+        type: 'application/octet-stream',
+      })
+      const restoredSessions = Object.fromEntries(
+        Object.entries(restored.sheet_sessions ?? {}).map(([name, session]) => {
+          const restoredError = restored.sheet_errors?.[name] ?? null
+          return [
+            name,
+            {
+              standardization: session.standardization,
+              cleaning: session.cleaning,
+              mappingOverride: session.mapping,
+              eliminarDuplicados: session.eliminar_duplicados,
+              status: restoredSheetStatus(restoredError, Boolean(session.cleaning)),
+              error: restoredError,
+            },
+          ]
+        }),
+      )
+      const restoredSelection = restoredAnalysisSelection(
+        restored.analysis_scope,
+        restored.selection_mode,
+      )
+      const restoredMetrics = restored.metrics
+        ? withPublicAnalysisScope(restored.metrics)
+        : null
+      return restoreDataset(
+        placeholder,
+        restored.dataset.id,
+        restored.dataset.storage_path,
+        restored.standardization,
+        restored.cleaning ?? null,
+        restoredMetrics,
+        restored.mapping ?? null,
+        Boolean(restored.eliminar_duplicados),
+        {
+          activeSheet: restored.active_sheet ?? null,
+          availableSheets:
+            restored.available_sheets ?? restored.standardization.carga?.hojas_disponibles ?? [],
+          combineSheets: Boolean(restored.combine_sheets),
+          sheetSessions: restoredSessions,
+          selectedSheets: restored.selected_sheets,
+          sheetErrors: restored.sheet_errors,
+          analysisScope: restoredSelection.analysisScope,
+          selectionMode: restoredSelection.selectionMode,
+          expectedRevision: restoreRevision,
+        },
+      )
+    }
 
     const run = async () => {
       setRestoring('documento reciente')
@@ -70,65 +123,33 @@ export default function DatasetBootstrap() {
           { timeoutMs: AUTO_RESTORE_TIMEOUT_MS, signal: controller.signal },
         )
         if (!active || cancelledRef.current) return
-        if (!restored.dataset || !restored.standardization) return
+        restoredAvailable = applyRestored(restored)
+        if (!restoredAvailable) return
 
-        const placeholder = new File([], restored.dataset.name, {
-          type: 'application/octet-stream',
-        })
-        const restoredSessions = Object.fromEntries(
-          Object.entries(restored.sheet_sessions ?? {}).map(([name, session]) => {
-            const restoredError = restored.sheet_errors?.[name] ?? null
-            return [
-              name,
-              {
-                standardization: session.standardization,
-                cleaning: session.cleaning,
-                mappingOverride: session.mapping,
-                eliminarDuplicados: session.eliminar_duplicados,
-                status: restoredSheetStatus(restoredError, Boolean(session.cleaning)),
-                error: restoredError,
-              },
-            ]
-          }),
-        )
-        const restoredSelection = restoredAnalysisSelection(
-          restored.analysis_scope,
-          restored.selection_mode,
-        )
-        const restoredMetrics = restored.metrics
-          ? withPublicAnalysisScope(restored.metrics)
-          : null
-        restoreDataset(
-          placeholder,
-          restored.dataset.id,
-          restored.dataset.storage_path,
-          restored.standardization,
-          restored.cleaning ?? null,
-          restoredMetrics,
-          restored.mapping ?? null,
-          Boolean(restored.eliminar_duplicados),
-          {
-            activeSheet: restored.active_sheet ?? null,
-            availableSheets:
-              restored.available_sheets ?? restored.standardization.carga?.hojas_disponibles ?? [],
-            combineSheets: Boolean(restored.combine_sheets),
-            sheetSessions: restoredSessions,
-            selectedSheets: restored.selected_sheets,
-            sheetErrors: restored.sheet_errors,
-            analysisScope: restoredSelection.analysisScope,
-            selectionMode: restoredSelection.selectionMode,
-            expectedRevision: restoreRevision,
-          },
-        )
+        if (restored.refresh_required) {
+          // El trabajo ya está disponible. La actualización del motor no
+          // mantiene la pantalla bloqueada ni obliga a repetir la limpieza.
+          setRestoring(null)
+          setContextRestoring(false)
+          const refreshed = await apiPostJson<RestoreLatestResult>(
+            '/restore/refresh',
+            {},
+            { timeoutMs: AUTO_RESTORE_TIMEOUT_MS, signal: controller.signal },
+          )
+          if (!active || cancelledRef.current) return
+          applyRestored(refreshed)
+        }
       } catch (err) {
         if (active && !cancelledRef.current) {
           // Un 403 significa "sin acceso de procesamiento" (cuenta sin plan o
           // prueba expirada): no hay nada que restaurar y no es un error.
           if (!(err instanceof ApiError && err.status === 403)) {
             setRestoreError(
-              err instanceof ApiError
-                ? err.message
-                : 'No pudimos restaurar automaticamente tu ultimo trabajo.',
+              restoredAvailable
+                ? 'Restauramos tus datos, pero el análisis actualizado no pudo terminar en segundo plano.'
+                : err instanceof ApiError
+                  ? `No pudimos restaurar automáticamente tu último trabajo. ${err.message}`
+                  : 'No pudimos restaurar automáticamente tu último trabajo.',
             )
           }
         }
@@ -158,7 +179,7 @@ export default function DatasetBootstrap() {
       <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-gold/35 bg-gold/[0.08] px-4 py-3 text-sm text-navy/80">
         <AlertTriangle className="h-4 w-4 shrink-0 text-gold" />
         <p className="min-w-0 flex-1">
-          No se pudo restaurar automaticamente el ultimo trabajo. {restoreError}
+          {restoreError}
         </p>
         <Link
           to="/historial"

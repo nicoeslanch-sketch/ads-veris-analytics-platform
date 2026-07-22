@@ -31,6 +31,7 @@ import threading
 import time
 import zipfile
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from uuid import UUID
 
 from fastapi import (
@@ -52,6 +53,7 @@ from ..capabilities import Capability, require_capability_for_user
 from ..config import Settings, get_settings
 from ..engine.ai_refine import refine_with_ai
 from ..engine.audit import AUDIT_COLUMNS, build_audit_dataframe
+from ..engine.business import analyze_business_workbook
 from ..engine.clean import DEFAULT_RULES, analyze_and_clean
 from ..engine.directed import (
     MAX_INSTRUCTIONS_CHARS,
@@ -63,6 +65,7 @@ from ..engine.loader import (
     UnsupportedFileError,
     load_dataframes_with_reports,
     load_dataframe_with_report,
+    xlsx_sheet_names,
 )
 from ..engine.ai_classifier import classify_columns_with_ai
 from ..engine.mapping import detect_column_roles, detect_columns_extended
@@ -612,6 +615,34 @@ def _parse_sheet_manifest(raw: str | None) -> dict | None:
     return {"hojas": normalized}
 
 
+def _parse_sheet_names(raw: str, field: str = "sheets") -> list[str]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"El campo '{field}' debe ser JSON válido.",
+        ) from exc
+    if not isinstance(value, list) or not value or len(value) > 50:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{field}' debe ser una lista de 1 a 50 hojas.",
+        )
+    names: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cada valor de '{field}' debe ser texto.",
+            )
+        name = _clean_sheet_param(item)
+        if name and name not in names:
+            names.append(name)
+    if not names:
+        raise HTTPException(status_code=422, detail="Selecciona al menos una hoja.")
+    return names
+
+
 def _parse_analysis_scope(raw: str | None, available_sheets: list[str]) -> dict:
     value = _parse_json_field(raw, "analysis_scope") if raw else None
     try:
@@ -911,8 +942,16 @@ def _validated_detected_mapping(frame, report: dict) -> dict[str, str]:
     return detected
 
 
-def _standardize_sync(filename: str, content: bytes, sheet: str | None = None) -> dict:
-    df_original, load_report = _load_or_400(filename, content, sheet=sheet)
+def _standardize_sync(
+    filename: str,
+    content: bytes,
+    sheet: str | None = None,
+    preloaded: tuple[object, dict] | None = None,
+) -> dict:
+    if preloaded is None:
+        df_original, load_report = _load_or_400(filename, content, sheet=sheet)
+    else:
+        df_original, load_report = preloaded
     df_std, report = _standardize_frame_cached(
         filename,
         content,
@@ -994,6 +1033,271 @@ def _preload_standardization_sync(
     }
 
 
+def _load_batch_frames_cached(
+    filename: str,
+    content: bytes,
+    sheets: list[str],
+) -> tuple[dict[str, tuple[object, dict]], list[str]]:
+    """Load only sheets missing from the immutable raw-frame cache.
+
+    Standardization and cleaning are consecutive user actions over identical
+    workbook bytes. Reopening the entire XLSX for cleaning wastes most of the
+    latency. The content digest and sheet name are part of the key, so changed
+    files can never reuse an older frame.
+    """
+
+    loaded: dict[str, tuple[object, dict]] = {}
+    missing: list[str] = []
+    available: list[str] = []
+    for name in sheets:
+        cached = _frame_cache_get(_frame_key("raw", filename, content, name))
+        if cached is None:
+            missing.append(name)
+            continue
+        loaded[name] = cached
+        if not available:
+            available = list(cached[1].get("hojas_disponibles") or [])
+
+    if missing:
+        try:
+            fresh, fresh_available = load_dataframes_with_reports(
+                filename, content, missing
+            )
+        except UnsupportedFileError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        available = fresh_available
+        for name, value in fresh.items():
+            frame, report = value
+            _frame_cache_store(_frame_key("raw", filename, content, name), frame, report)
+            loaded[name] = value
+
+    return ({name: loaded[name] for name in sheets if name in loaded}, available or sheets)
+
+
+def _store_restore_snapshots_parallel(
+    dataset_id: str,
+    user_id: str,
+    snapshots: dict[str, dict],
+    restore_state: dict,
+) -> dict[str, str]:
+    """Persist independent sheet snapshots with bounded Supabase concurrency."""
+
+    if not snapshots:
+        return {}
+
+    def store_one(name: str, snapshot: dict) -> tuple[str, str | None]:
+        try:
+            stored = store_restore_snapshot(
+                dataset_id,
+                user_id,
+                snapshot,
+                restore_state=restore_state,
+                raise_on_unavailable=True,
+            )
+        except (RestoreSnapshotUnavailable, HTTPException) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            return name, str(detail)
+        if not stored:
+            return name, (
+                "No se pudo confirmar esta hoja porque ya existe una accion mas reciente."
+            )
+        return name, None
+
+    errors: dict[str, str] = {}
+    workers = min(4, len(snapshots))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(store_one, name, snapshot): name
+            for name, snapshot in snapshots.items()
+        }
+        for future in as_completed(futures):
+            name, error = future.result()
+            if error:
+                errors[name] = error
+    return errors
+
+
+def _standardize_batch_sync(
+    filename: str,
+    content: bytes,
+    sheets: list[str],
+    dataset_id: str | None,
+    user_id: str,
+    revision: int | None,
+    restore_state: dict,
+) -> dict:
+    """Standardize selected sheets after opening the workbook exactly once."""
+
+    started = time.perf_counter()
+    loaded, available = _load_batch_frames_cached(filename, content, sheets)
+    results: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    for name in sheets:
+        preloaded = loaded.get(name)
+        if preloaded is None:
+            errors[name] = "La hoja no existe o no contiene una tabla procesable."
+            continue
+        try:
+            result = _standardize_sync(
+                filename, content, name, preloaded=preloaded
+            )
+            if revision is not None:
+                result["revision"] = revision
+            results[name] = result
+        except HTTPException as exc:
+            errors[name] = str(exc.detail)
+        except (KeyError, ValueError) as exc:
+            errors[name] = str(exc)
+
+    final_state = {
+        **restore_state,
+        "available_sheets": restore_state.get("available_sheets") or available,
+        "selected_sheets": restore_state.get("selected_sheets") or sheets,
+        "active_sheet": restore_state.get("active_sheet") or next(iter(results), None),
+        "sheet_errors": {
+            **restore_state.get("sheet_errors", {}),
+            **errors,
+        },
+    }
+    for name in results:
+        final_state["sheet_errors"].pop(name, None)
+
+    persistence_errors: dict[str, str] = {}
+    if dataset_id and revision is not None:
+        snapshots: dict[str, dict] = {}
+        for name, result in results.items():
+            try:
+                snapshots[name] = _store_standardization_restore_snapshot(
+                    dataset_id,
+                    user_id,
+                    content,
+                    result,
+                    name,
+                    revision,
+                    final_state,
+                    persist=False,
+                )
+            except HTTPException as exc:
+                persistence_errors[name] = str(exc.detail)
+        persistence_errors.update(
+            _store_restore_snapshots_parallel(
+                dataset_id, user_id, snapshots, final_state
+            )
+        )
+    return {
+        "resultados": results,
+        "errores": errors,
+        "persistencia_errores": persistence_errors,
+        "revision": revision,
+        "hojas_disponibles": available,
+        "segundos": round(time.perf_counter() - started, 3),
+    }
+
+
+def _clean_batch_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    dataset_id: str | None,
+    user_id: str,
+    revision: int | None,
+    restore_state: dict,
+) -> dict:
+    """Clean a multi-sheet selection with one workbook read and one revision."""
+
+    started = time.perf_counter()
+    entries = [entry for entry in manifest["hojas"] if entry["procesar"]]
+    names = [entry["nombre"] for entry in entries]
+    loaded, available = _load_batch_frames_cached(filename, content, names)
+
+    responses: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    for entry in entries:
+        name = entry["nombre"]
+        preloaded = loaded.get(name)
+        if preloaded is None:
+            errors[name] = "La hoja no existe o no contiene una tabla procesable."
+            continue
+        try:
+            result = _analyze_cached(
+                filename,
+                content,
+                entry["rules"],
+                True,
+                mapping=entry["mapping"] or None,
+                scope=entry["scope"] or None,
+                sheet=name,
+                eliminar_duplicados=entry["eliminar_duplicados"],
+                cache_dataset_id=dataset_id,
+                cache_revision=revision,
+                preloaded=preloaded,
+            )
+            response = _public_clean_response(result, filename)
+            if revision is not None:
+                response["revision"] = revision
+            responses[name] = response
+        except HTTPException as exc:
+            errors[name] = str(exc.detail)
+        except (KeyError, ValueError) as exc:
+            errors[name] = str(exc)
+
+    final_state = {
+        **restore_state,
+        "available_sheets": restore_state.get("available_sheets") or available,
+        "selected_sheets": restore_state.get("selected_sheets") or names,
+        "active_sheet": restore_state.get("active_sheet") or next(iter(responses), None),
+        "sheet_errors": {
+            **restore_state.get("sheet_errors", {}),
+            **errors,
+        },
+    }
+    for name in responses:
+        final_state["sheet_errors"].pop(name, None)
+
+    persistence_errors: dict[str, str] = {}
+    if dataset_id and revision is not None:
+        entries_by_name = {entry["nombre"]: entry for entry in entries}
+        snapshots: dict[str, dict] = {}
+        for name, response in responses.items():
+            entry = entries_by_name[name]
+            try:
+                snapshots[name] = _build_and_store_restore_snapshot(
+                    dataset_id,
+                    user_id,
+                    filename,
+                    content,
+                    response,
+                    entry["mapping"] or None,
+                    name,
+                    entry["eliminar_duplicados"],
+                    revision,
+                    final_state,
+                    persist=False,
+                )
+            except HTTPException as exc:
+                persistence_errors[name] = str(exc.detail)
+        persistence_errors.update(
+            _store_restore_snapshots_parallel(
+                dataset_id, user_id, snapshots, final_state
+            )
+        )
+        for name, response in responses.items():
+            message = persistence_errors.get(name)
+            response["persistencia"] = (
+                {"guardada": False, "mensaje": message}
+                if message
+                else {"guardada": True}
+            )
+    return {
+        "resultados": responses,
+        "errores": errors,
+        "persistencia_errores": persistence_errors,
+        "revision": revision,
+        "hojas_disponibles": available,
+        "segundos": round(time.perf_counter() - started, 3),
+    }
+
+
 def _clean_sync(
     filename: str,
     content: bytes,
@@ -1035,6 +1339,11 @@ def _extract_columns_sync(
 
 def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     """Marcas visuales y observaciones auditables para una hoja limpia."""
+    from ..engine.quality import (
+        is_optional_free_text_column,
+        normalized_header,
+        structural_total_mask,
+    )
     from ..engine.standardize import (
         map_unique,
         parse_date,
@@ -1043,6 +1352,8 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         semantic_missing_mask,
     )
 
+    df = df.copy(deep=False)
+    df.attrs = {}
     role_labels: dict[str, str] = {
         "fecha": "fecha",
         "monto": "monto",
@@ -1062,6 +1373,14 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     source_sheet = (result.get("carga") or {}).get("hoja_usada")
     yellow: dict[tuple[int, str], str] = {}
     red: dict[tuple[int, str], str] = {}
+    parsed_numbers: dict[str, object] = {}
+
+    def parsed_number(column: str):
+        if column not in parsed_numbers:
+            parsed_numbers[column] = map_unique(
+                df[column].astype(str).reset_index(drop=True), parse_number
+            )
+        return parsed_numbers[column]
 
     for col in df.columns:
         ctype = column_types.get(col, "texto")
@@ -1075,8 +1394,11 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         # Parsear por valor único y trabajar con máscaras evita repetir una
         # llamada Python por cada celda del libro grande.
         if ctype in {"fecha", "numero"}:
-            parser = parse_date if ctype == "fecha" else parse_number
-            parsed = map_unique(series.astype(str).reset_index(drop=True), parser)
+            parsed = (
+                map_unique(series.astype(str).reset_index(drop=True), parse_date)
+                if ctype == "fecha"
+                else parsed_number(str(col))
+            )
             invalid = (~missing) & parsed.isna()
             invalid_message = (
                 "Fecha no interpretable: se conservó el valor original — revisar."
@@ -1089,7 +1411,7 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         if ctype == "fecha":
             for row_idx in missing[missing].index:
                 yellow[(row_idx, col)] = "Fecha faltante: revisar."
-        elif fill_rate >= 0.7:
+        elif fill_rate >= 0.7 and not is_optional_free_text_column(col):
             label = role_labels.get(role, col) if role else col
             for row_idx in missing[missing].index:
                 red[(row_idx, col)] = f"Dato faltante en una columna casi completa ({label})."
@@ -1101,7 +1423,7 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         if ctype == "numero" and any(
             token in header for token in ("pct", "porcentaje", "percent", "descuento")
         ):
-            parsed_pct = map_unique(series.astype(str).reset_index(drop=True), parse_number)
+            parsed_pct = parsed_number(str(col))
             frac_scale = int(((parsed_pct >= 0) & (parsed_pct <= 1)).sum())
             over_one = (parsed_pct > 1) & (parsed_pct <= 100)
             out_mask = (parsed_pct < 0) | (parsed_pct > 100)
@@ -1136,11 +1458,11 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
     )
     if monto_col in df.columns and cantidad_col in df.columns and precio_col:
         base = df.reset_index(drop=True)
-        monto_vals = map_unique(base[monto_col].astype(str), parse_number)
-        cantidad_vals = map_unique(base[cantidad_col].astype(str), parse_number)
-        precio_vals = map_unique(base[precio_col].astype(str), parse_number)
+        monto_vals = parsed_number(monto_col)
+        cantidad_vals = parsed_number(cantidad_col)
+        precio_vals = parsed_number(precio_col)
         if descuento_col in (base.columns if descuento_col else []):
-            descuento_vals = map_unique(base[descuento_col].astype(str), parse_number)
+            descuento_vals = parsed_number(descuento_col)
             # Solo descuentos en escala de fracción [0, 1]; el resto de filas
             # no se evalúa (su escala es dudosa y no queremos falsos positivos).
             descuento_ok = (descuento_vals >= 0) & (descuento_vals <= 1)
@@ -1166,6 +1488,89 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
                     f"× (1 − descuento) ≈ {esperado.iat[row_idx]:,.0f}".replace(",", ".")
                     + " — revisar."
                 )
+
+    # Cost values are preserved, but dangerous values must be visible before
+    # they distort profitability. The IQR guard is intentionally conservative.
+    for column in df.columns:
+        header = normalized_header(column)
+        role = col_role.get(column)
+        if column_types.get(column) != "numero" or not (
+            role == "costo" or ("costo" in header and "venta" not in header)
+        ):
+            continue
+        parsed = parsed_number(str(column))
+        positive = parsed[parsed > 0].dropna()
+        upper = None
+        if len(positive) >= 20:
+            q1, q3 = positive.quantile(0.25), positive.quantile(0.75)
+            spread = float(q3 - q1)
+            if spread > 0:
+                upper = float(q3 + 5 * spread)
+        messages = [
+            (parsed < 0, "Costo negativo: revisar antes de calcular utilidad o margen."),
+            (parsed == 0, "Costo en cero: confirma si es real o un dato faltante."),
+        ]
+        if upper is not None:
+            messages.append(
+                (parsed > upper, "Costo atípico: puede dominar la utilidad y debe revisarse.")
+            )
+        for mask, message in messages:
+            for row_idx in mask[mask].index[:300]:
+                yellow.setdefault((int(row_idx), str(column)), message)
+
+    # Accounting consistency. The VAT rate is inferred from the workbook so
+    # the check does not impose a country-specific rate on foreign datasets.
+    base = df.reset_index(drop=True)
+    iva_col = next(
+        (
+            str(column)
+            for column in base.columns
+            if normalized_header(column) in {"iva", "iva venta", "iva compra"}
+        ),
+        None,
+    )
+    total_col = next(
+        (
+            str(column)
+            for column in base.columns
+            if "total" in normalized_header(column)
+            and column_types.get(str(column)) == "numero"
+            and str(column) != monto_col
+        ),
+        None,
+    )
+    if monto_col in base.columns and iva_col:
+        net = parsed_number(monto_col)
+        tax = parsed_number(iva_col)
+        paired = net.notna() & tax.notna() & (net.abs() > 0)
+        if int(paired.sum()) >= 20:
+            rate = float((tax[paired] / net[paired]).abs().median())
+            if 0.03 <= rate <= 0.35:
+                expected_tax = net * rate
+                tolerance = expected_tax.abs().mul(0.02).clip(lower=2.0)
+                mismatch = paired & tax.sub(expected_tax).abs().gt(tolerance)
+                for row_idx in mismatch[mismatch].index[:300]:
+                    yellow.setdefault(
+                        (int(row_idx), iva_col),
+                        f"IVA no cuadra con la tasa predominante ({rate * 100:.1f}%) del archivo.",
+                    )
+        if total_col:
+            total_values = parsed_number(total_col)
+            expected_total = net + tax
+            paired_total = net.notna() & tax.notna() & total_values.notna()
+            tolerance = expected_total.abs().mul(0.005).clip(lower=2.0)
+            mismatch = paired_total & total_values.sub(expected_total).abs().gt(tolerance)
+            for row_idx in mismatch[mismatch].index[:300]:
+                yellow.setdefault(
+                    (int(row_idx), total_col),
+                    "El total no cuadra con neto + IVA de la fila.",
+                )
+
+    total_rows = structural_total_mask(base, roles_map.get("fecha"))
+    for row_idx in total_rows[total_rows].index:
+        yellow[(int(row_idx), str(base.columns[0]))] = (
+            "Fila de total estructural: se conserva como referencia y no entra en indicadores."
+        )
 
     observations = [
         (source_rows[row], source_sheet, col, "revisar", message)
@@ -1211,6 +1616,15 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         observations.append(
             ("-", source_sheet, match.group(1) if match else "*", "revisar", text[:400])
         )
+
+    for source_row in (result.get("_filas_duplicadas_normalizadas") or [])[:300]:
+        observations.append((
+            int(source_row),
+            source_sheet,
+            "*",
+            "duplicado_posnormalizacion",
+            "La fila queda idéntica a otra después de estandarizar formatos; requiere revisión.",
+        ))
 
     # 2. Duplicados exactos DETECTADOS pero conservados (la eliminación
     #    requiere confirmación del usuario y el archivo debe decirlo).
@@ -1392,6 +1806,7 @@ def _write_clean_sheet(
     red_fill = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
     columns = list(df.columns)
     positions = {column: index + 1 for index, column in enumerate(columns)}
+    date_column_set = date_columns or set()
     percentage_markers = ("pct", "porcentaje", "percent")
     percentage_columns = {
         column
@@ -1412,14 +1827,22 @@ def _write_clean_sheet(
         for row_index, row in enumerate(exported.itertuples(index=False, name=None)):
             cells = []
             for column, value in zip(columns, row):
+                highlight = yellow_fill if (row_index, column) in yellow else (
+                    red_fill if (row_index, column) in red else None
+                )
+                needs_format = column in percentage_columns or column in date_column_set
+                if highlight is None and not needs_format:
+                    # Primitive values take openpyxl's fast write-only path.
+                    # Creating a styled cell object for every ordinary value
+                    # nearly doubled large audited export times.
+                    cells.append(value)
+                    continue
                 cell = WriteOnlyCell(ws, value=value)
-                if (row_index, column) in yellow:
-                    cell.fill = yellow_fill
-                elif (row_index, column) in red:
-                    cell.fill = red_fill
+                if highlight is not None:
+                    cell.fill = highlight
                 if column in percentage_columns:
                     cell.number_format = "0.00%"
-                elif column in (date_columns or set()) and cell.data_type == "d":
+                elif column in date_column_set and cell.data_type == "d":
                     cell.number_format = "dd/mm/yyyy"
                 cells.append(cell)
             ws.append(cells)
@@ -1437,7 +1860,7 @@ def _write_clean_sheet(
                 min_row=2, max_row=ws.max_row, min_col=position, max_col=position
             ):
                 cell[0].number_format = "0.00%"
-    for column in date_columns or set():
+    for column in date_column_set:
         position = positions.get(column)
         if position is None:
             continue
@@ -1507,7 +1930,7 @@ def _build_export_audit(
             _AUDIT_CACHE.move_to_end(audit_key)
             return cached_audit.copy(deep=True)
     original = (
-        _clone_frame(original_frame)
+        original_frame.copy(deep=False)
         if original_frame is not None
         else _load_or_400(filename, content, sheet=sheet)[0]
     )
@@ -1515,6 +1938,7 @@ def _build_export_audit(
     original_source_rows = list(
         original.attrs.get(SOURCE_ROWS_ATTR, range(2, len(original) + 2))
     )
+    original.attrs = {}
     normalize_headers(original)
     confidence = {
         column: details.get("confianza_tipo")
@@ -1765,12 +2189,15 @@ def _clean_download_book_uncached_sync(
         for name in processed_names
         if not _frame_cache_has(_frame_key("raw", filename, content, name))
     ]
-    try:
-        preloaded, available = load_dataframes_with_reports(
-            filename, content, missing_names
-        )
-    except UnsupportedFileError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if missing_names:
+        try:
+            preloaded, available = load_dataframes_with_reports(
+                filename, content, missing_names
+            )
+        except UnsupportedFileError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    else:
+        preloaded, available = {}, xlsx_sheet_names(content)
     declared = [entry["nombre"] for entry in entries]
     if set(declared) != set(available) or len(declared) != len(available):
         raise HTTPException(
@@ -1787,6 +2214,7 @@ def _clean_download_book_uncached_sync(
     audit_frames: list[object] = []
     records: list[dict] = []
     processing_errors: list[str] = []
+    scope_sheets = set((analysis_scope or {}).get("sheets", []))
 
     for entry in entries:
         name = entry["nombre"]
@@ -1795,7 +2223,7 @@ def _clean_download_book_uncached_sync(
             "reglas": entry["rules"],
             "mapeo": entry["mapping"],
             "source_sha256": source_hash,
-            "analysis_scope": analysis_scope,
+            "analysis_scope": analysis_scope if name in scope_sheets else None,
             "revision": entry.get("revision", 0),
         }
         if not entry["procesar"]:
@@ -1891,7 +2319,23 @@ def _clean_download_book_uncached_sync(
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc))
     for record in records:
-        record["analysis_provenance"] = provenance
+        record["analysis_provenance"] = (
+            provenance if record["hoja"] in scope_sheets else None
+        )
+    book_record = {
+        "hoja": "(libro completo)",
+        "estado": "resumen_libro",
+        "procesada": True,
+        "filas_antes": sum(int(record.get("filas_antes") or 0) for record in records),
+        "filas_despues": sum(int(record.get("filas_despues") or 0) for record in records),
+        "reglas": {},
+        "mapeo": {},
+        "error": "",
+        "source_sha256": source_hash,
+        "analysis_scope": analysis_scope,
+        "analysis_provenance": provenance,
+        "revision": max((int(record.get("revision") or 0) for record in records), default=0),
+    }
 
     analysis_numeric_columns: set[str] = set()
     analysis_date_columns: set[str] = set()
@@ -2002,7 +2446,7 @@ def _clean_download_book_uncached_sync(
         )
     _write_observations_sheet(wb, observations, _safe_excel_sheet_name("Observaciones", used_names))
     _write_audit_sheet(wb, audit, _safe_excel_sheet_name("Auditoria", used_names))
-    _write_manifest_sheet(wb, records, _safe_excel_sheet_name("Manifest", used_names))
+    _write_manifest_sheet(wb, [*records, book_record], _safe_excel_sheet_name("Manifest", used_names))
     output = io.BytesIO()
     _request_excel_recalculation(wb)
     wb.save(output)
@@ -2073,12 +2517,13 @@ def _metrics_multi_sync(
     date_to: str | None,
     cache_dataset_id: str | None = None,
 ) -> dict:
+    business_view = analysis_scope["mode"] == "append_join"
     frames, mappings, results = _processed_manifest_frames(
         filename,
         content,
         manifest,
         cache_dataset_id,
-        set(analysis_scope["sheets"]),
+        None if business_view else set(analysis_scope["sheets"]),
     )
     _validate_scope_currencies(analysis_scope, mappings, results)
     try:
@@ -2128,6 +2573,16 @@ def _metrics_multi_sync(
         "eliminados": removed_duplicates,
         "conservados": max(detected_duplicates - removed_duplicates, 0),
     }
+    if business_view:
+        business = analyze_business_workbook(
+            frames,
+            mappings,
+            results,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        if business is not None:
+            computed["analisis_negocio"] = business
     return computed
 
 
@@ -2328,36 +2783,20 @@ def _relationships_sync(
     }
 
 
-def _metrics_sync(
+def _metrics_from_clean_result(
     filename: str,
-    content: bytes,
-    mapping: dict | None,
-    date_from: str | None,
-    date_to: str | None,
-    sheet: str | None = None,
-    eliminar_duplicados: bool = False,
-    rules: dict | None = None,
-    scope: dict | None = None,
-    cache_dataset_id: str | None = None,
-    cache_revision: int | None = None,
+    result: dict,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> dict:
-    # Las métricas siempre se calculan sobre datos estandarizados y limpios.
-    # Con el caché (§5.7), cambiar el periodo NO re-corre el pipeline completo.
-    result = _analyze_cached(
-        filename,
-        content,
-        rules=rules,
-        apply=True,
-        mapping=mapping,
-        scope=scope,
-        sheet=sheet,
-        eliminar_duplicados=eliminar_duplicados,
-        cache_dataset_id=cache_dataset_id,
-        cache_revision=cache_revision,
-    )
+    """Calcula KPI desde el resultado limpio ya disponible en memoria."""
+
     df_clean = result["_df_limpio"]
     computed = compute_metrics(
-        df_clean, result.get("mapeo", mapping), date_from=date_from, date_to=date_to,
+        df_clean,
+        result.get("mapeo"),
+        date_from=date_from,
+        date_to=date_to,
         currency_hint=result.get("_moneda"),
     )
     computed["archivo"] = filename
@@ -2387,6 +2826,36 @@ def _metrics_sync(
         "conservados": max(detected_duplicates - removed_duplicates, 0),
     }
     return computed
+
+
+def _metrics_sync(
+    filename: str,
+    content: bytes,
+    mapping: dict | None,
+    date_from: str | None,
+    date_to: str | None,
+    sheet: str | None = None,
+    eliminar_duplicados: bool = False,
+    rules: dict | None = None,
+    scope: dict | None = None,
+    cache_dataset_id: str | None = None,
+    cache_revision: int | None = None,
+) -> dict:
+    # Las métricas siempre se calculan sobre datos estandarizados y limpios.
+    # Con el caché (§5.7), cambiar el periodo NO re-corre todo el motor.
+    result = _analyze_cached(
+        filename,
+        content,
+        rules=rules,
+        apply=True,
+        mapping=mapping,
+        scope=scope,
+        sheet=sheet,
+        eliminar_duplicados=eliminar_duplicados,
+        cache_dataset_id=cache_dataset_id,
+        cache_revision=cache_revision,
+    )
+    return _metrics_from_clean_result(filename, result, date_from, date_to)
 
 
 def _restore_response(
@@ -2554,6 +3023,7 @@ def _store_standardization_restore_snapshot(
     sheet: str | None,
     revision: int,
     restore_state: dict | None = None,
+    persist: bool = True,
 ) -> dict:
     """Persiste una sesión de hoja aunque aún no haya limpieza/métricas."""
 
@@ -2575,6 +3045,8 @@ def _store_standardization_restore_snapshot(
         effective_state["available_sheets"] = standardization.get("carga", {}).get(
             "hojas_disponibles", []
         )
+    if not persist:
+        return snapshot
     stored = store_restore_snapshot(
         dataset_id, user_id, snapshot, restore_state=effective_state
     )
@@ -2584,6 +3056,97 @@ def _store_standardization_restore_snapshot(
             detail="La hoja se estandarizó, pero no pudo confirmarse su persistencia. Vuelve a intentar.",
         )
     return snapshot
+
+
+def _valid_bundle_snapshots(
+    state: dict,
+    rows: list,
+    *,
+    allow_engine_mismatch: bool = False,
+) -> dict[str, dict]:
+    """Validate every identity field before a persisted sheet is reused."""
+
+    valid_by_key: dict[str, dict] = {}
+    state_engine = state.get("engine_version")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if (
+            row.get("source_sha256") != state.get("source_sha256")
+            or (
+                not allow_engine_mismatch
+                and row.get("engine_version") != state_engine
+            )
+        ):
+            continue
+        raw = row.get("snapshot")
+        snapshot_status = (
+            "limpio"
+            if isinstance(raw, dict) and isinstance(raw.get("cleaning"), dict)
+            else "estandarizado"
+        )
+        valid = valid_restore_snapshot(
+            raw,
+            snapshot_status,
+            expected_revision=row.get("revision"),
+            expected_source_sha256=row.get("source_sha256"),
+            expected_rules_hash=row.get("rules_hash"),
+            expected_mapping_hash=row.get("mapping_hash"),
+            expected_sheet=row.get("sheet"),
+            allow_engine_mismatch=allow_engine_mismatch,
+        )
+        if (
+            valid is not None
+            and row.get("engine_version") == valid.get("engine_version")
+        ):
+            valid_by_key[str(row.get("sheet_key"))] = valid
+    return valid_by_key
+
+
+def _response_from_snapshot_bundle(
+    record: dict,
+    state: dict,
+    valid_by_key: dict[str, dict],
+    source: str,
+    *,
+    include_metrics: bool = True,
+) -> dict | None:
+    if not valid_by_key:
+        return None
+    active_sheet = state.get("active_sheet")
+    active_key = active_sheet or "__single__"
+    active = valid_by_key.get(active_key)
+    if active is None:
+        active = max(valid_by_key.values(), key=lambda item: item["revision"])
+        active_sheet = active.get("sheet")
+
+    sessions = {
+        snapshot["sheet"]: {
+            "standardization": snapshot["standardization"],
+            "cleaning": snapshot.get("cleaning"),
+            "metrics": snapshot.get("metrics") if include_metrics else None,
+            "mapping": snapshot.get("mapping"),
+            "eliminar_duplicados": bool(snapshot.get("eliminar_duplicados", False)),
+        }
+        for snapshot in valid_by_key.values()
+        if snapshot.get("sheet") is not None
+    }
+    response_snapshot = active if include_metrics else {**active, "metrics": None}
+    response = _restore_response(
+        record,
+        response_snapshot,
+        source,
+        sheet_sessions=sessions,
+        restore_state={**state, "active_sheet": active_sheet},
+    )
+    if not include_metrics:
+        response["refresh_required"] = True
+        response["refresh_sheets"] = [
+            snapshot.get("sheet")
+            for snapshot in valid_by_key.values()
+            if snapshot.get("sheet") is not None
+        ]
+    return response
 
 
 def _restore_latest_sync(user_id: str) -> dict:
@@ -2615,63 +3178,32 @@ def _restore_latest_sync(user_id: str) -> dict:
     if bundle is not None:
         state = bundle["state"]
         rebuild_state = state
-        valid_by_key: dict[str, dict] = {}
-        for row in bundle["sheets"]:
-            if (
-                row.get("source_sha256") != state.get("source_sha256")
-                or row.get("engine_version") != state.get("engine_version")
-                or state.get("engine_version") != ENGINE_VERSION
-            ):
-                continue
-            raw = row.get("snapshot")
-            snapshot_status = (
-                "limpio" if isinstance(raw, dict) and isinstance(raw.get("cleaning"), dict)
-                else "estandarizado"
-            )
-            valid = valid_restore_snapshot(
-                raw,
-                snapshot_status,
-                expected_revision=row.get("revision"),
-                expected_source_sha256=row.get("source_sha256"),
-                expected_rules_hash=row.get("rules_hash"),
-                expected_mapping_hash=row.get("mapping_hash"),
-                expected_sheet=row.get("sheet"),
-            )
-            if valid is not None and row.get("engine_version") == valid.get("engine_version"):
-                valid_by_key[str(row.get("sheet_key"))] = valid
-
-        active_sheet = state.get("active_sheet")
-        active_key = active_sheet or "__single__"
-        active = valid_by_key.get(active_key)
-        if active is None and valid_by_key:
-            # Recuperación conservadora ante metadata global incompleta: usa
-            # la hoja de mayor revisión validada, nunca un JSON sin validar.
-            active = max(valid_by_key.values(), key=lambda item: item["revision"])
-            active_sheet = active.get("sheet")
-        if active is not None:
-            sessions = {
-                snapshot["sheet"]: {
-                    "standardization": snapshot["standardization"],
-                    "cleaning": snapshot.get("cleaning"),
-                    "metrics": snapshot.get("metrics"),
-                    "mapping": snapshot.get("mapping"),
-                    "eliminar_duplicados": bool(
-                        snapshot.get("eliminar_duplicados", False)
-                    ),
-                }
-                for snapshot in valid_by_key.values()
-                if snapshot.get("sheet") is not None
-            }
-            state = {**state, "active_sheet": active_sheet}
-            response = _restore_response(
-                record,
-                active,
-                "snapshot",
-                sheet_sessions=sessions,
-                restore_state=state,
-            )
+        current = _valid_bundle_snapshots(state, bundle["sheets"])
+        response = _response_from_snapshot_bundle(
+            record, state, current, "snapshot"
+        )
+        if response is not None:
             if cache_key is not None:
                 _restore_response_cache_store(cache_key, response)
+            return response
+
+        # Un cambio de motor no obliga al usuario a esperar todo el pipeline.
+        # El snapshot anterior solo se muestra si archivo, revisión, reglas,
+        # mapeo y hoja siguen íntegros. Las métricas se ocultan hasta que el
+        # cliente complete /restore/refresh con el motor actual.
+        stale = _valid_bundle_snapshots(
+            state,
+            bundle["sheets"],
+            allow_engine_mismatch=True,
+        )
+        response = _response_from_snapshot_bundle(
+            record,
+            state,
+            stale,
+            "snapshot_stale",
+            include_metrics=False,
+        )
+        if response is not None:
             return response
 
     # La revisión se reserva ANTES de descargar y recalcular el archivo.
@@ -2727,6 +3259,190 @@ def _restore_latest_sync(user_id: str) -> dict:
         refreshed_key = _restore_response_cache_key(user_id, record, refreshed_state)
         if refreshed_state and refreshed_state.get("revision") == revision and refreshed_key:
             _restore_response_cache_store(refreshed_key, response)
+    return response
+
+
+def _refresh_restore_sync(user_id: str) -> dict:
+    """Rebuild every persisted sheet with one source download and workbook read."""
+
+    record = fetch_latest_restore_record(user_id)
+    if record is None:
+        return {"dataset": None, "source": "empty"}
+    state = fetch_restore_state_metadata(record["id"], user_id)
+    bundle = (
+        fetch_restore_state_bundle(record["id"], user_id, state=state)
+        if state is not None
+        else None
+    )
+    if bundle is None:
+        return _restore_latest_sync(user_id)
+
+    current = _valid_bundle_snapshots(bundle["state"], bundle["sheets"])
+    current_response = _response_from_snapshot_bundle(
+        record, bundle["state"], current, "snapshot"
+    )
+    if current_response is not None:
+        return current_response
+
+    persisted = _valid_bundle_snapshots(
+        bundle["state"],
+        bundle["sheets"],
+        allow_engine_mismatch=True,
+    )
+    if not persisted:
+        return _restore_latest_sync(user_id)
+
+    revision = reserve_restore_snapshot_revision(record["id"], user_id)
+    if revision is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo reservar una revisión segura para actualizar el trabajo.",
+        )
+
+    storage_path = normalize_user_storage_path(record["storage_path"], user_id)
+    content = download_from_storage(storage_path)
+    source_sha256 = hashlib.sha256(content).hexdigest()
+    if source_sha256 != bundle["state"].get("source_sha256"):
+        raise HTTPException(
+            status_code=409,
+            detail="El archivo guardado cambió y no se reutilizó una sesión anterior.",
+        )
+    filename = _display_filename(os.path.basename(storage_path))
+
+    sheets = [
+        snapshot.get("sheet")
+        for snapshot in persisted.values()
+        if isinstance(snapshot.get("sheet"), str)
+    ]
+    loaded: dict[object, tuple[object, dict]] = {}
+    available: list[str] = []
+    if filename.lower().endswith(".xlsx") and sheets:
+        try:
+            loaded, available = load_dataframes_with_reports(filename, content, sheets)
+        except UnsupportedFileError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        frame, report = _load_or_400(filename, content, sheet=None)
+        loaded[None] = (frame, report)
+        available = report.get("hojas_disponibles", [])
+
+    final_state = dict(bundle["state"])
+    stored_scope = final_state.get("analysis_scope")
+    if isinstance(stored_scope, dict):
+        selection_mode = stored_scope.get("_selection_mode")
+        final_state["analysis_scope"] = {
+            key: value
+            for key, value in stored_scope.items()
+            if key != "_selection_mode"
+        }
+        if selection_mode in {"all", "custom"}:
+            final_state["selection_mode"] = selection_mode
+    final_state["available_sheets"] = (
+        final_state.get("available_sheets") or available
+    )
+
+    rebuilt: dict[str, dict] = {}
+    for sheet_key, old_snapshot in persisted.items():
+        sheet = old_snapshot.get("sheet")
+        preloaded = loaded.get(sheet)
+        if preloaded is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"No se pudo volver a abrir la hoja '{sheet or 'principal'}'.",
+            )
+        frame, load_report = preloaded
+        _frame_cache_store(
+            _frame_key("raw", filename, content, sheet), frame, load_report
+        )
+        standardization = _standardize_sync(filename, content, sheet)
+        old_cleaning = old_snapshot.get("cleaning")
+        mapping = (
+            old_snapshot.get("mapping")
+            if isinstance(old_snapshot.get("mapping"), dict)
+            else None
+        )
+        remove_duplicates = bool(old_snapshot.get("eliminar_duplicados", False))
+        cleaning = None
+        metrics = None
+        rules = None
+        if isinstance(old_cleaning, dict):
+            rules = old_cleaning.get("reglas_activas")
+            directed = old_cleaning.get("dirigida") or {}
+            scope = (
+                {
+                    "incluir": directed.get("columnas_incluir", []),
+                    "excluir": directed.get("columnas_excluir", []),
+                }
+                if directed
+                else None
+            )
+            internal = _analyze_cached(
+                filename,
+                content,
+                rules,
+                True,
+                mapping=mapping,
+                scope=scope,
+                sheet=sheet,
+                eliminar_duplicados=remove_duplicates,
+                cache_dataset_id=record["id"],
+                cache_revision=revision,
+                preloaded=preloaded,
+            )
+            cleaning = _public_clean_response(internal, filename)
+            cleaning["revision"] = revision
+            metrics = _metrics_from_clean_result(filename, internal)
+        standardization["revision"] = revision
+        rebuilt[sheet_key] = build_restore_snapshot(
+            standardization,
+            cleaning,
+            metrics,
+            mapping,
+            remove_duplicates,
+            revision=revision,
+            source_sha256=source_sha256,
+            rules=rules,
+            sheet=sheet,
+        )
+
+    # Se calcula todo antes de escribir. Así un error de datos no deja una
+    # restauración parcialmente actualizada; la RPC conserva además el orden
+    # monotónico frente a acciones concurrentes del mismo usuario.
+    for snapshot in rebuilt.values():
+        try:
+            stored = store_restore_snapshot(
+                record["id"],
+                user_id,
+                snapshot,
+                restore_state=final_state,
+                raise_on_unavailable=True,
+            )
+        except RestoreSnapshotUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo confirmar la actualización del trabajo guardado.",
+            ) from exc
+        if not stored:
+            raise HTTPException(
+                status_code=409,
+                detail="Existe una acción más reciente y no fue reemplazada.",
+            )
+
+    _restore_response_cache_invalidate(user_id)
+    refreshed_state = {
+        **final_state,
+        "revision": revision,
+        "engine_version": ENGINE_VERSION,
+        "source_sha256": source_sha256,
+    }
+    response = _response_from_snapshot_bundle(
+        record,
+        refreshed_state,
+        rebuilt,
+        "refreshed",
+    )
+    if response is None:
+        raise HTTPException(status_code=500, detail="La actualización quedó incompleta.")
     return response
 
 
@@ -2888,6 +3604,19 @@ async def restore_latest(
     return await run_in_threadpool(_restore_latest_sync, user.id)
 
 
+@router.post("/restore/refresh")
+async def refresh_latest_restore(
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Actualiza snapshots antiguos sin bloquear la restauración inicial."""
+
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    )
+    return await run_in_threadpool(_refresh_restore_sync, user.id)
+
+
 @router.post("/restore/state")
 async def persist_restore_state(
     dataset_id: UUID = Form(...),
@@ -2946,27 +3675,53 @@ async def preload_standardization(
     await run_in_threadpool(
         require_capability_for_user, user.id, Capability.STANDARDIZE, settings
     )
-    try:
-        parsed = json.loads(sheets)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=422, detail="El campo 'sheets' debe ser JSON válido.") from exc
-    if not isinstance(parsed, list) or not parsed or len(parsed) > 50:
-        raise HTTPException(
-            status_code=422,
-            detail="'sheets' debe ser una lista de 1 a 50 nombres de hoja.",
-        )
-    cleaned: list[str] = []
-    for value in parsed:
-        if not isinstance(value, str):
-            raise HTTPException(status_code=422, detail="Cada hoja debe ser texto.")
-        name = _clean_sheet_param(value)
-        if name and name not in cleaned:
-            cleaned.append(name)
-    if not cleaned:
-        raise HTTPException(status_code=422, detail="No se recibieron hojas válidas.")
+    cleaned = _parse_sheet_names(sheets)
     filename, content = await _read_input(file, storage_path, user)
     return await run_in_threadpool(
         _preload_standardization_sync, filename, content, cleaned
+    )
+
+
+@router.post("/standardize/batch")
+async def standardize_batch(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
+    sheets: str = Form(...),
+    restore_state: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Estandariza varias hojas abriendo el libro una sola vez."""
+
+    _restore_response_cache_invalidate(user.id)
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.STANDARDIZE, settings
+    )
+    names = _parse_sheet_names(sheets)
+    state = _validate_restore_state(restore_state)
+    revision = (
+        await run_in_threadpool(
+            reserve_restore_snapshot_revision, dataset_id, user.id, settings
+        )
+        if dataset_id
+        else None
+    )
+    if dataset_id and revision is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo reservar una revisión segura para guardar las hojas.",
+        )
+    filename, content = await _read_input(file, storage_path, user)
+    return await run_in_threadpool(
+        _standardize_batch_sync,
+        filename,
+        content,
+        names,
+        dataset_id,
+        user.id,
+        revision,
+        state,
     )
 
 
@@ -3083,6 +3838,83 @@ async def clean(
             result["persistencia"] = {"guardada": False, "mensaje": message}
             result.setdefault("avisos", []).append(message)
     return result
+
+
+@router.post("/clean/batch")
+async def clean_batch(
+    background_tasks: BackgroundTasks,
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
+    manifest: str = Form(...),
+    restore_state: str | None = Form(None),
+    analysis_scope: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Limpia una selección en una pasada y una sola revisión persistente."""
+
+    _restore_response_cache_invalidate(user.id)
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.CLEAN, settings
+    )
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if sheet_manifest is None:
+        raise HTTPException(status_code=422, detail="Envía un manifiesto de hojas.")
+    state = _validate_restore_state(restore_state)
+    revision = (
+        await run_in_threadpool(
+            reserve_restore_snapshot_revision, dataset_id, user.id, settings
+        )
+        if dataset_id
+        else None
+    )
+    if dataset_id and revision is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo reservar una revisión segura para guardar la limpieza.",
+        )
+    filename, content = await _read_input(file, storage_path, user)
+    response = await run_in_threadpool(
+        _clean_batch_sync,
+        filename,
+        content,
+        sheet_manifest,
+        dataset_id,
+        user.id,
+        revision,
+        state,
+    )
+
+    # La descarga auditada se prepara después de responder. El botón conserva
+    # exactamente el mismo exportador y controles; normalmente encuentra la
+    # caché lista cuando el usuario termina de revisar la limpieza.
+    manifest_names = {
+        entry["nombre"] for entry in sheet_manifest["hojas"] if entry["procesar"]
+    }
+    selected_names = set(state.get("selected_sheets") or manifest_names)
+    if not response["errores"] and selected_names <= manifest_names:
+        warm_manifest = copy.deepcopy(sheet_manifest)
+        for entry in warm_manifest["hojas"]:
+            if entry["nombre"] in response["resultados"]:
+                entry["revision"] = int(revision or 0)
+                entry["status"] = "limpio"
+        available = [entry["nombre"] for entry in warm_manifest["hojas"]]
+        parsed_scope = (
+            _parse_analysis_scope(analysis_scope, available)
+            if analysis_scope
+            else None
+        )
+        background_tasks.add_task(
+            _clean_download_book_sync,
+            filename,
+            content,
+            warm_manifest,
+            "xlsx",
+            parsed_scope,
+            dataset_id,
+        )
+    return response
 
 
 @router.post("/clean/assisted")

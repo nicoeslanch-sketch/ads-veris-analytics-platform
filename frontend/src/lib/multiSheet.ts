@@ -260,6 +260,28 @@ export function cleaningScopeState(
   return 'pending'
 }
 
+/** Enables the automatic business view only after the complete selected scope
+ * is clean. A single transactional sheet can still be enriched by a separate
+ * cost master, so the compatible set intentionally requires one sales sheet,
+ * not two. Relationship safety is validated by the backend afterwards. */
+export function shouldAutoBuildBusinessScope(
+  analysisScope: AnalysisScope | null,
+  selectedSheets: string[],
+  cleanedSheets: string[],
+  compatibleSheets: string[],
+  pendingSelectedCount: number,
+): boolean {
+  const defaultSingle = !analysisScope || (
+    analysisScope.mode === 'single' &&
+    analysisScope.active_sheet === selectedSheets[0]
+  )
+  return selectedSheets.length > 1 &&
+    pendingSelectedCount === 0 &&
+    cleanedSheets.length === selectedSheets.length &&
+    compatibleSheets.length >= 1 &&
+    defaultSingle
+}
+
 /** Hojas preparadas que pueden limpiarse en lote sin reintentar errores ni
  * repetir trabajo ya completado. La eliminacion de duplicados sigue siendo
  * una confirmacion separada; esta seleccion solo aplica las reglas estandar. */

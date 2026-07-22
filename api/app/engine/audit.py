@@ -93,6 +93,10 @@ def build_audit_dataframe(
         "revision": revision,
     }
     records: list[dict[str, Any]] = []
+    original_values = original.copy(deep=False)
+    original_values.attrs = {}
+    cleaned_values = cleaned.copy(deep=False)
+    cleaned_values.attrs = {}
 
     def add(
         row: int | str,
@@ -147,13 +151,15 @@ def build_audit_dataframe(
     ]
     if valid_pairs:
         clean_positions, source_positions, aligned_rows = zip(*valid_pairs, strict=True)
-        common_columns = [column for column in cleaned.columns if column in original.columns]
+        common_columns = [
+            column for column in cleaned_values.columns if column in original_values.columns
+        ]
 
         # La versión anterior ejecutaba dos `.iloc` y varias Series de una celda
         # dentro de un bucle fila × columna. Alinear una sola vez y calcular
         # máscaras vectoriales conserva el mismo contrato con costo lineal.
-        before_frame = original.iloc[list(source_positions)][common_columns].reset_index(drop=True)
-        after_frame = cleaned.iloc[list(clean_positions)][common_columns].reset_index(drop=True)
+        before_frame = original_values.iloc[list(source_positions)][common_columns].reset_index(drop=True)
+        after_frame = cleaned_values.iloc[list(clean_positions)][common_columns].reset_index(drop=True)
 
         def display_series(series: pd.Series) -> pd.Series:
             missing = series.isna()
@@ -231,7 +237,7 @@ def build_audit_dataframe(
         source_row = int(removed["fila_origen"])
         original_position = original_positions.get(source_row)
         original_record = (
-            original.iloc[original_position].to_dict()
+            original_values.iloc[original_position].to_dict()
             if original_position is not None
             else {"detalle": "fila no disponible"}
         )

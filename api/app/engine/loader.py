@@ -22,10 +22,12 @@ Fase 8:
 import csv
 import hashlib
 import io
+import posixpath
 import re
 import threading
 import unicodedata
 import zipfile
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 
 import pandas as pd
@@ -97,6 +99,51 @@ _SHEET_STRUCTURE_CACHE_SIZE = 8
 _SHEET_CLASSIFICATION_CACHE: "OrderedDict[str, list[dict]]" = OrderedDict()
 
 
+def _worksheet_xml_by_name(content: bytes, sheet_names: list[str]) -> dict[str, bytes]:
+    """Return worksheet XML by visible sheet name without loading cell objects."""
+
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
+        relationships_root = ET.fromstring(
+            archive.read("xl/_rels/workbook.xml.rels")
+        )
+        relationship_targets = {
+            item.attrib.get("Id", ""): item.attrib.get("Target", "")
+            for item in relationships_root
+        }
+        relationship_id = (
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        )
+        wanted = set(sheet_names)
+        result: dict[str, bytes] = {}
+        for item in workbook_root.iter():
+            if item.tag.rsplit("}", 1)[-1] != "sheet":
+                continue
+            name = item.attrib.get("name", "")
+            if name not in wanted:
+                continue
+            target = relationship_targets.get(item.attrib.get(relationship_id, ""), "")
+            if not target:
+                continue
+            path = target.lstrip("/") if target.startswith("/") else posixpath.normpath(
+                posixpath.join("xl", target)
+            )
+            result[name] = archive.read(path)
+        return result
+
+
+def xlsx_sheet_names(content: bytes) -> list[str]:
+    """Read the ordered visible sheet names from the lightweight workbook XML."""
+
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
+    return [
+        item.attrib.get("name", "")
+        for item in workbook_root.iter()
+        if item.tag.rsplit("}", 1)[-1] == "sheet" and item.attrib.get("name")
+    ]
+
+
 def _sheet_structure_metadata(content: bytes, sheet_names: list[str]) -> dict[str, dict]:
     """Lee solo metadatos estructurales que pandas no conserva.
 
@@ -113,28 +160,41 @@ def _sheet_structure_metadata(content: bytes, sheet_names: list[str]) -> dict[st
             _SHEET_STRUCTURE_CACHE.move_to_end(cache_key)
             return {name: dict(value) for name, value in cached.items()}
     try:
-        import openpyxl
+        # Loading a workbook with openpyxl here materialized every cell only to
+        # obtain dimensions, merged ranges and a formula signal. On realistic
+        # multi-sheet books that duplicated most of the import time. These
+        # values already live in the XLSX XML and can be read without building
+        # cell objects.
+        sheet_xml = _worksheet_xml_by_name(content, sheet_names)
+        dimension_re = re.compile(rb"<dimension\b[^>]*\bref=\"([^\"]+)\"")
+        merge_re = re.compile(rb"<mergeCell\b")
 
-        workbook = openpyxl.load_workbook(
-            io.BytesIO(content), data_only=False, read_only=False
-        )
+        def dimensions(xml: bytes) -> tuple[int, int]:
+            matched = dimension_re.search(xml)
+            if not matched:
+                return 0, 0
+            end = matched.group(1).decode("ascii", errors="ignore").split(":")[-1]
+            cell = re.sub(r"\$", "", end)
+            parsed = re.fullmatch(r"([A-Za-z]+)(\d+)", cell)
+            if not parsed:
+                return 0, 0
+            column = 0
+            for char in parsed.group(1).upper():
+                column = column * 26 + ord(char) - ord("A") + 1
+            return int(parsed.group(2)), column
+
         metadata: dict[str, dict] = {}
         for name in sheet_names:
-            worksheet = workbook[name]
-            formulas = 0
-            scan_rows = min(int(worksheet.max_row or 0), 80)
-            scan_cols = min(int(worksheet.max_column or 0), 80)
-            for row in worksheet.iter_rows(
-                min_row=1, max_row=max(scan_rows, 1), min_col=1, max_col=max(scan_cols, 1)
-            ):
-                formulas += sum(cell.data_type == "f" for cell in row)
+            xml = sheet_xml.get(name)
+            if xml is None:
+                continue
+            rows, columns = dimensions(xml)
             metadata[name] = {
-                "formulas_muestra": formulas,
-                "celdas_combinadas": len(worksheet.merged_cells.ranges),
-                "filas_estimadas": int(worksheet.max_row or 0),
-                "columnas_estimadas": int(worksheet.max_column or 0),
+                "formulas_muestra": len(_FORMULA_XML_TAG_RE.findall(xml)),
+                "celdas_combinadas": len(merge_re.findall(xml)),
+                "filas_estimadas": rows,
+                "columnas_estimadas": columns,
             }
-        workbook.close()
         with _SHEET_STRUCTURE_CACHE_LOCK:
             _SHEET_STRUCTURE_CACHE[cache_key] = metadata
             _SHEET_STRUCTURE_CACHE.move_to_end(cache_key)
@@ -499,7 +559,7 @@ def _scan_xlsx_formulas(
     source_rows: list[int],
     report: dict,
     *,
-    workbook=None,
+    worksheet_xml: bytes | None = None,
     contains_formulas: bool | None = None,
 ) -> None:
     """Audita fórmulas en una pasada por el área real de datos seleccionada."""
@@ -522,49 +582,64 @@ def _scan_xlsx_formulas(
     if not contains_formulas:
         return
 
-    owns_workbook = workbook is None
     try:
-        import openpyxl
         from .mapping import detect_columns_extended
 
-        if workbook is None:
-            workbook = openpyxl.load_workbook(
-                io.BytesIO(content), data_only=False, read_only=True
-            )
-        worksheet = workbook[sheet]
+        if worksheet_xml is None:
+            worksheet_xml = _worksheet_xml_by_name(content, [sheet]).get(sheet)
+        if worksheet_xml is None:
+            raise ValueError("No se encontró el XML de la hoja seleccionada.")
         allowed_rows = set(source_rows)
         fixed_by_column = {header: 0 for header in headers}
         formula_by_column: dict[str, dict] = {}
 
-        for row in worksheet.iter_rows(
-            min_row=min(source_rows),
-            max_row=max(source_rows),
-            min_col=1,
-            max_col=len(headers),
-        ):
-            row_number = row[0].row
-            if row_number not in allowed_rows:
+        for _event, cell in ET.iterparse(io.BytesIO(worksheet_xml), events=("end",)):
+            if cell.tag.rsplit("}", 1)[-1] != "c":
                 continue
-            for index, cell in enumerate(row):
-                header = headers[index]
-                if cell.data_type == "f":
-                    formula = str(cell.value or "")
-                    volatile = bool(_VOLATILE_FORMULA_RE.search(formula))
-                    detail = formula_by_column.setdefault(
-                        header, {"total": 0, "volatiles": 0, "ejemplos": []}
+            reference = cell.attrib.get("r", "")
+            matched = re.fullmatch(r"([A-Za-z]+)(\d+)", reference)
+            if not matched:
+                cell.clear()
+                continue
+            row_number = int(matched.group(2))
+            column_number = 0
+            for char in matched.group(1).upper():
+                column_number = column_number * 26 + ord(char) - ord("A") + 1
+            if row_number not in allowed_rows or not (1 <= column_number <= len(headers)):
+                cell.clear()
+                continue
+            header = headers[column_number - 1]
+            formula_node = next(
+                (
+                    child
+                    for child in cell
+                    if child.tag.rsplit("}", 1)[-1] == "f"
+                ),
+                None,
+            )
+            if formula_node is not None:
+                formula = f"={formula_node.text or ''}"
+                volatile = bool(_VOLATILE_FORMULA_RE.search(formula))
+                detail = formula_by_column.setdefault(
+                    header, {"total": 0, "volatiles": 0, "ejemplos": []}
+                )
+                detail["total"] += 1
+                detail["volatiles"] += int(volatile)
+                if len(detail["ejemplos"]) < 5:
+                    detail["ejemplos"].append(
+                        {
+                            "fila_origen": row_number,
+                            "formula": formula[:300],
+                            "volatil": volatile,
+                        }
                     )
-                    detail["total"] += 1
-                    detail["volatiles"] += int(volatile)
-                    if len(detail["ejemplos"]) < 5:
-                        detail["ejemplos"].append(
-                            {
-                                "fila_origen": row_number,
-                                "formula": formula[:300],
-                                "volatil": volatile,
-                            }
-                        )
-                elif cell.value not in (None, ""):
-                    fixed_by_column[header] += 1
+            elif any(
+                node.text not in (None, "")
+                for node in cell.iter()
+                if node.tag.rsplit("}", 1)[-1] in {"v", "t"}
+            ):
+                fixed_by_column[header] += 1
+            cell.clear()
 
         extended = detect_columns_extended(headers)
         for header, detail in formula_by_column.items():
@@ -594,8 +669,6 @@ def _scan_xlsx_formulas(
                     "usará como respaldo para decidir duplicados."
                 )
         formula_report["por_columna"] = formula_by_column
-        if owns_workbook:
-            workbook.close()
     except Exception as exc:  # análisis auxiliar: jamás debe romper la carga
         formula_report.update(
             {
@@ -616,7 +689,7 @@ def load_dataframe_with_report(
     sheet: str | None = None,
     *,
     _excel_book: pd.ExcelFile | None = None,
-    _formula_workbook=None,
+    _formula_xml: bytes | None = None,
     _contains_formulas: bool | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """Carga el archivo y devuelve (df, reporte_de_carga con avisos)."""
@@ -711,7 +784,7 @@ def load_dataframe_with_report(
             [str(column) for column in df.columns],
             source_rows,
             report,
-            workbook=_formula_workbook,
+            worksheet_xml=_formula_xml,
             contains_formulas=_contains_formulas,
         )
     return df, report
@@ -742,29 +815,25 @@ def load_dataframes_with_reports(
         )
 
     contains_formulas = _xlsx_contains_formulas(content)
-    formula_workbook = None
     try:
-        if requested and contains_formulas:
-            import openpyxl
-
-            formula_workbook = openpyxl.load_workbook(
-                io.BytesIO(content), data_only=False, read_only=True
-            )
+        formula_xml = (
+            _worksheet_xml_by_name(content, requested)
+            if requested and contains_formulas
+            else {}
+        )
         loaded = {
             name: load_dataframe_with_report(
                 filename,
                 content,
                 sheet=name,
                 _excel_book=book,
-                _formula_workbook=formula_workbook,
+                _formula_xml=formula_xml.get(name),
                 _contains_formulas=contains_formulas,
             )
             for name in requested
         }
         return loaded, available
     finally:
-        if formula_workbook is not None:
-            formula_workbook.close()
         book.close()
 
 

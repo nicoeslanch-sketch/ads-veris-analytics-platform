@@ -47,6 +47,7 @@ import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
+import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
@@ -567,6 +568,19 @@ export default function Explorar() {
           ctaLabel="Revisar en Limpieza"
           ctaTo="/limpieza"
         />
+      </>
+    )
+  }
+
+  if (metrics?.analisis_negocio) {
+    return (
+      <>
+        <PageHeader
+          title="Explorar el negocio"
+          subtitle="Entiende qué explica los resultados, qué tan confiables son y dónde conviene actuar primero."
+        />
+        <ActiveSheetSelector />
+        <BusinessAnalysisPanel analysis={metrics.analisis_negocio} variant="explore" />
       </>
     )
   }

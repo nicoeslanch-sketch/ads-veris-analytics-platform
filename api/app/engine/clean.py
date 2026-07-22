@@ -1201,4 +1201,15 @@ def analyze_and_clean(
         "_source_rows_limpio": clean_source_rows if apply else source_rows,
         "_filas_duplicadas_eliminadas": removed_duplicate_rows,
         "_filas_duplicadas_detectadas": detected_duplicate_rows,
+        "_filas_duplicadas_normalizadas": [
+            (clean_source_rows if apply else source_rows)[position]
+            for position, duplicated in enumerate(
+                (
+                    remaining_normalized_mask
+                    if apply
+                    else normalized_only_mask.reset_index(drop=True)
+                ).tolist()
+            )
+            if bool(duplicated)
+        ],
     }

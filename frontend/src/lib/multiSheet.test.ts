@@ -18,6 +18,7 @@ import {
   restoredSheetStatus,
   serializedAnalysisScope,
   selectAppendJoinCostCandidates,
+  shouldAutoBuildBusinessScope,
   singleScope,
   standardizationScopeComplete,
   synchronizeAppendJoinSelection,
@@ -87,6 +88,28 @@ describe('mapeo simple del plan Basico', () => {
 })
 
 describe('estado multihoja', () => {
+  it('construye la vista de negocio con una sola hoja de ventas y una maestra de costos', () => {
+    const scope: AnalysisScope = {
+      mode: 'single',
+      sheets: ['Ventas'],
+      active_sheet: 'Ventas',
+    }
+    expect(shouldAutoBuildBusinessScope(
+      scope,
+      ['Ventas', 'Costos'],
+      ['Ventas', 'Costos'],
+      ['Ventas'],
+      0,
+    )).toBe(true)
+    expect(shouldAutoBuildBusinessScope(
+      scope,
+      ['Ventas', 'Costos'],
+      ['Ventas'],
+      ['Ventas'],
+      1,
+    )).toBe(false)
+  })
+
   it('distingue seleccion, progreso, error y limpieza', () => {
     expect(sheetStatusLabel(undefined, false, false)).toBe('No seleccionada')
     expect(sheetStatusLabel('estandarizando', true, false)).toBe('Procesando...')

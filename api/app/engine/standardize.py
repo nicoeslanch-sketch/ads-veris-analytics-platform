@@ -655,6 +655,19 @@ _ID_COLUMN_TOKENS = {
     "serie", "guia", "dte", "cuenta", "tarjeta",
 }
 
+# Document words are identifiers only when the header does not also declare a
+# monetary measure. ``Total Documento`` is a CLP amount, while
+# ``ID_Documento`` and ``Folio Factura`` remain identifiers. The previous
+# blanket rule exported the former as text and broke sums and charts.
+_WEAK_ID_TOKENS = {
+    "folio", "boleta", "factura", "documento", "doc", "ticket", "orden",
+    "guia", "dte", "pedido",
+}
+_MONETARY_HEADER_TOKENS = {
+    "total", "subtotal", "monto", "importe", "neto", "bruto", "iva",
+    "valor", "precio", "costo", "venta", "ventas", "saldo",
+}
+
 
 def is_identifier_column(name: str, series: pd.Series | None = None) -> bool:
     """¿La columna parece un identificador (por nombre o por contenido)?
@@ -662,8 +675,12 @@ def is_identifier_column(name: str, series: pd.Series | None = None) -> bool:
     Contenido: si >30% de la muestra trae dígitos o '@', son códigos/contactos
     — las categorías, ciudades y canales casi nunca contienen dígitos."""
     tokens = set(re.sub(r"[^a-z0-9]+", " ", strip_accents_lower(name)).split())
-    if tokens & _ID_COLUMN_TOKENS:
-        return True
+    id_tokens = tokens & _ID_COLUMN_TOKENS
+    if id_tokens:
+        strong_tokens = id_tokens - _WEAK_ID_TOKENS
+        if strong_tokens or not (tokens & _MONETARY_HEADER_TOKENS):
+            return True
+        return False
     if series is not None:
         sample = _sample_values(series)[:200]
         if sample:

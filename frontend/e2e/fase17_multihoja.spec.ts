@@ -91,6 +91,55 @@ pd.DataFrame({
   execFileSync('python', ['-c', script, path])
 }
 
+function createBusinessWorkbook(path: string) {
+  const script = String.raw`
+import pandas as pd
+import sys
+path = sys.argv[1]
+
+def ventas(year, month, prefix):
+    return pd.DataFrame({
+        "Fecha Venta": [f"01/{month:02d}/{year}", f"05/{month:02d}/{year}", f"10/{month:02d}/{year}", f"15/{month:02d}/{year}"],
+        "ID Documento": [f"{prefix}-1", f"{prefix}-2", f"{prefix}-3", f"{prefix}-4"],
+        "SKU Producto": ["SKU-1", "SKU-2", "SKU-1", "SKU-3"],
+        "ID Cliente": ["C-1", "C-2", "C-1", "C-3"],
+        "ID Sucursal": ["S-1", "S-1", "S-2", "S-2"],
+        "ID Vendedor": ["V-1", "V-1", "V-2", "V-2"],
+        "Cantidad": [2, 1, 3, 1],
+        "Monto Venta": [2400, 1800, 3600, 2500],
+        "IVA": [456, 342, 684, 475],
+        "Total Documento": [2856, 2142, 4284, 2975],
+        "Estado": ["Completada"] * 4,
+        "Canal": ["Tienda", "Online", "Tienda", "Mayorista"],
+    })
+
+with pd.ExcelWriter(path, engine="openpyxl") as writer:
+    ventas(2025, 12, "DIC").to_excel(writer, sheet_name="Ventas_2025", index=False)
+    ventas(2026, 1, "ENE").to_excel(writer, sheet_name="Ventas_2026", index=False)
+    pd.DataFrame({
+        "SKU Producto": ["SKU-1", "SKU-2", "SKU-3"],
+        "Producto": ["Servicio A", "Servicio B", "Servicio C"],
+        "Categoria": ["Servicios", "Productos", "Servicios"],
+        "ID Proveedor": ["P-1", "P-2", "P-1"],
+    }).to_excel(writer, sheet_name="Productos", index=False)
+    pd.DataFrame({
+        "SKU Producto": ["SKU-1", "SKU-2", "SKU-3"],
+        "Costo Unitario": [500, 900, 1200],
+    }).to_excel(writer, sheet_name="Costos_Productos", index=False)
+    pd.DataFrame({
+        "SKU Producto": ["SKU-1", "SKU-2", "SKU-3"],
+        "Fecha Vigencia": ["01/01/2025"] * 3,
+        "Costo Unitario": [450, 850, 1100],
+    }).to_excel(writer, sheet_name="Historial_Costos", index=False)
+    pd.DataFrame({"ID Cliente": ["C-1", "C-2", "C-3"], "Razon Social": ["Cliente Norte", "Cliente Sur", "Cliente Centro"], "Segmento": ["Empresa", "PyME", "Empresa"]}).to_excel(writer, sheet_name="Clientes", index=False)
+    pd.DataFrame({"ID Sucursal": ["S-1", "S-2"], "Nombre Sucursal": ["Centro", "Norte"], "Comuna": ["Santiago", "Renca"]}).to_excel(writer, sheet_name="Sucursales", index=False)
+    pd.DataFrame({"ID Vendedor": ["V-1", "V-2"], "Nombre Vendedor": ["Ana", "Luis"], "ID Sucursal": ["S-1", "S-2"]}).to_excel(writer, sheet_name="Vendedores", index=False)
+    pd.DataFrame({"Fecha Gasto": ["10/12/2025", "10/01/2026"], "ID Gasto": ["G-1", "G-2"], "Monto Neto": [800, 900], "IVA": [152, 171], "Total Gasto": [952, 1071], "Tipo Gasto": ["Fijo", "Fijo"], "Estado": ["Pagado", "Pagado"]}).to_excel(writer, sheet_name="Gastos_Operacionales", index=False)
+    pd.DataFrame({"Mes": ["01/12/2025", "01/01/2026"], "ID Sucursal": ["S-1", "S-1"], "Meta Venta": [9000, 10000], "Meta Margen": [0.30, 0.32]}).to_excel(writer, sheet_name="Metas_Mensuales", index=False)
+`
+  execFileSync('python', ['-c', script, path])
+}
+
 function standardizationResponse(filename: string, value: string) {
   return {
     archivo: filename,
@@ -221,7 +270,7 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await page.setViewportSize({ width: 1600, height: 1000 })
     await page.getByRole('link', { name: /Resumen/ }).first().click()
     await expect(page.getByText('Datos que estas analizando')).toBeVisible({ timeout: 60_000 })
-    await page.getByRole('button', { name: /Solo apilar ventas/ }).click()
+    await page.getByRole('button', { name: /Unir periodos de venta/ }).click()
     await expect(page.getByText(/hoja_origen/)).toBeVisible()
     await expect(page.getByText('Evolución de Ingresos')).toBeVisible({ timeout: 90_000 })
     const compactFlow = page.getByTestId('summary-compact-flow')
@@ -246,7 +295,7 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     expect(compactLayout.avoidsSplits).toBe(true)
     expect(compactLayout.flowHeight).toBeLessThan(compactLayout.totalCardHeight - 20)
 
-    await page.getByRole('button', { name: /Ventas \+ costos/ }).click()
+    await page.getByRole('button', { name: /Visión del negocio/ }).click()
     await expect(page.getByText('Ventas + costos activo')).toBeVisible({ timeout: 90_000 })
     await expect(page.getByText(/2 hojas de ventas combinadas/)).toBeVisible()
     await expect(page.getByRole('button', { name: /Apilar y relacionar/ })).toHaveCount(0)
@@ -362,6 +411,51 @@ test('Resumen prioriza y Explorar profundiza en una hoja operacional', async ({ 
   await expect(page.getByText('Diccionario rápido de la hoja')).toBeVisible()
 })
 
+test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', async ({ page }, testInfo) => {
+  const workbook = testInfo.outputPath('negocio_multihoja.xlsx')
+  createBusinessWorkbook(workbook)
+
+  await page.goto('/estandarizacion')
+  const chooserPromise = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: /Subir archivo/ }).click()
+  const chooser = await chooserPromise
+  await chooser.setFiles(workbook)
+  await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(10, { timeout: 90_000 })
+
+  await page.getByRole('link', { name: /Limpieza de datos/ }).first().click()
+  await expect(page.getByText('Problemas detectados')).toBeVisible({ timeout: 90_000 })
+  await page.getByRole('button', { name: 'Limpiar datos', exact: true }).click()
+  await expect(page.getByText('10 limpias', { exact: true })).toBeVisible({ timeout: 90_000 })
+
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  await page.getByRole('link', { name: /Resumen/ }).first().click()
+  await expect(page.getByText('Estado de la información')).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText('Evolución del negocio')).toBeVisible()
+  await expect(page.getByText('Indicadores disponibles')).toBeVisible()
+  const flow = page.getByTestId('business-summary-flow')
+  await expect(flow).toBeVisible()
+  const layout = await flow.evaluate((element) => ({
+    columns: getComputedStyle(element).columnCount,
+    width: element.scrollWidth,
+    clientWidth: element.clientWidth,
+  }))
+  expect(layout.columns).toBe('2')
+  expect(layout.width).toBeLessThanOrEqual(layout.clientWidth + 1)
+  await page.screenshot({ path: testInfo.outputPath('resumen-empresarial-desktop.png'), fullPage: true })
+
+  await page.getByRole('link', { name: /Explorar datos/ }).first().click()
+  await expect(page.getByText('Explorar · entender causas')).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText('Qué requiere tu atención')).toBeVisible()
+  await expect(page.getByText('Calidad de las relaciones')).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobileOverflow = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    content: document.documentElement.scrollWidth,
+  }))
+  expect(mobileOverflow.content).toBeLessThanOrEqual(mobileOverflow.viewport + 1)
+  await page.screenshot({ path: testInfo.outputPath('explorar-diagnostico-mobile.png'), fullPage: true })
+})
+
 test('Fase 17 bloquea una relacion many-to-many', async ({ page }, testInfo) => {
   const workbook = testInfo.outputPath('ventas_many_to_many.xlsx')
   createWorkbook(workbook, true)
@@ -378,7 +472,7 @@ test('Fase 17 bloquea una relacion many-to-many', async ({ page }, testInfo) => 
     await page.getByRole('button', { name: 'Limpiar datos', exact: true }).click()
     await expect(page.getByText(/Todas las hojas están limpias/)).toBeVisible({ timeout: 90_000 })
     await page.getByRole('link', { name: /Resumen/ }).first().click()
-    await page.getByRole('button', { name: /Ventas \+ costos/ }).click()
+    await page.getByRole('button', { name: /Visión del negocio/ }).click()
     await expect(page.getByText(/repite identificadores y podría multiplicar ventas/i)).toBeVisible({ timeout: 90_000 })
     await expect(page.getByRole('button', { name: /Apilar y relacionar/ })).toHaveCount(0)
 })

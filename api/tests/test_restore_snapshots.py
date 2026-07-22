@@ -1,6 +1,7 @@
 """Fast restoration: persistent snapshot first, full pipeline as fallback."""
 
 import json
+import hashlib
 import time
 from statistics import median
 
@@ -129,6 +130,148 @@ def test_snapshot_versionado_exige_todas_las_etapas_para_dataset_limpio():
     assert valid_restore_snapshot(
         {**snapshot, "metrics": None}, "limpio", **_expected(snapshot)
     ) is None
+
+
+def test_snapshot_de_otro_motor_solo_se_admite_para_restauracion_transitoria():
+    snapshot = _snapshot()
+    stale = {**snapshot, "engine_version": "0.21.0"}
+
+    assert valid_restore_snapshot(stale, "limpio", **_expected(snapshot)) is None
+    assert valid_restore_snapshot(
+        stale,
+        "limpio",
+        **_expected(snapshot),
+        allow_engine_mismatch=True,
+    ) is stale
+    changed_mapping = {**stale, "mapping": {"monto": "Otra"}}
+    assert valid_restore_snapshot(
+        changed_mapping,
+        "limpio",
+        **_expected(snapshot),
+        allow_engine_mismatch=True,
+    ) is None
+
+
+def test_restore_stale_devuelve_limpieza_sin_metricas_y_sin_descargar(monkeypatch):
+    from app.routes import pipeline as pl
+
+    user_id = "user-test-123"
+    snapshot = {**_snapshot(), "engine_version": "0.21.0"}
+    state = {
+        "active_sheet": None,
+        "available_sheets": [],
+        "excluded_sheets": [],
+        "selected_sheets": [],
+        "sheet_errors": {},
+        "analysis_scope": {},
+        "combine_sheets": False,
+        "source_sha256": snapshot["source_sha256"],
+        "engine_version": snapshot["engine_version"],
+    }
+    row = {
+        "sheet_key": "__single__",
+        "revision": snapshot["revision"],
+        "source_sha256": snapshot["source_sha256"],
+        "rules_hash": snapshot["rules_hash"],
+        "mapping_hash": snapshot["mapping_hash"],
+        "sheet": None,
+        "engine_version": snapshot["engine_version"],
+        "snapshot": snapshot,
+    }
+    monkeypatch.setattr(
+        pl,
+        "fetch_latest_restore_record",
+        lambda _user_id: {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "ventas.csv",
+            "source": "excel_csv",
+            "storage_path": f"{user_id}/ventas.csv",
+            "status": "limpio",
+        },
+    )
+    monkeypatch.setattr(
+        pl, "fetch_restore_state_bundle", lambda *_args, **_kwargs: {"state": state, "sheets": [row]}
+    )
+    monkeypatch.setattr(
+        pl,
+        "download_from_storage",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("La restauración transitoria no descarga el archivo")
+        ),
+    )
+
+    body = pl._restore_latest_sync(user_id)
+
+    assert body["source"] == "snapshot_stale"
+    assert body["refresh_required"] is True
+    assert body["cleaning"] is not None
+    assert body["metrics"] is None
+
+
+def test_refresh_recalcula_el_snapshot_guardado_con_una_revision_nueva(monkeypatch):
+    from app.routes import pipeline as pl
+
+    user_id = "user-test-123"
+    dataset_id = "00000000-0000-0000-0000-000000000001"
+    content = b"Fecha;Ventas;Producto\n01/05/2026;1000;Servicio A\n"
+    source_sha = hashlib.sha256(content).hexdigest()
+    old = {
+        **_snapshot(),
+        "engine_version": "0.21.0",
+        "source_sha256": source_sha,
+    }
+    state = {
+        "active_sheet": None,
+        "available_sheets": [],
+        "excluded_sheets": [],
+        "selected_sheets": [],
+        "sheet_errors": {},
+        "analysis_scope": {},
+        "combine_sheets": False,
+        "source_sha256": source_sha,
+        "engine_version": old["engine_version"],
+    }
+    row = {
+        "sheet_key": "__single__",
+        "revision": old["revision"],
+        "source_sha256": source_sha,
+        "rules_hash": old["rules_hash"],
+        "mapping_hash": old["mapping_hash"],
+        "sheet": None,
+        "engine_version": old["engine_version"],
+        "snapshot": old,
+    }
+    stored: list[dict] = []
+    monkeypatch.setattr(
+        pl,
+        "fetch_latest_restore_record",
+        lambda _user_id: {
+            "id": dataset_id,
+            "name": "ventas.csv",
+            "source": "excel_csv",
+            "storage_path": f"{user_id}/ventas.csv",
+            "status": "limpio",
+        },
+    )
+    monkeypatch.setattr(pl, "fetch_restore_state_metadata", lambda *_args: state)
+    monkeypatch.setattr(
+        pl, "fetch_restore_state_bundle", lambda *_args, **_kwargs: {"state": state, "sheets": [row]}
+    )
+    monkeypatch.setattr(pl, "reserve_restore_snapshot_revision", lambda *_args: 44)
+    monkeypatch.setattr(pl, "download_from_storage", lambda _path: content)
+    monkeypatch.setattr(
+        pl,
+        "store_restore_snapshot",
+        lambda _dataset_id, _user_id, snapshot, **_kwargs: stored.append(snapshot) or True,
+    )
+
+    body = pl._refresh_restore_sync(user_id)
+
+    assert body["source"] == "refreshed"
+    assert body["cleaning"]["revision"] == 44
+    assert body["metrics"]["kpis"]["ingresos_totales"]["valor"] == 1000
+    assert len(stored) == 1
+    assert stored[0]["revision"] == 44
 
 
 def test_snapshot_recalcula_hashes_y_exige_sha256_real():
@@ -759,12 +902,14 @@ def test_restore_recalculado_conserva_seleccion_multihoja(monkeypatch):
 
     body = pl._restore_latest_sync(user_id)
 
-    assert body["source"] == "computed"
+    assert body["source"] == "snapshot_stale"
+    assert body["refresh_required"] is True
+    assert body["metrics"] is None
     assert body["selected_sheets"] == ["Ventas", "Costos"]
     assert body["excluded_sheets"] == ["LEEME"]
     assert body["selection_mode"] == "custom"
     assert body["available_sheets"] == ["Ventas", "Costos", "LEEME"]
-    assert stored_states == [state]
+    assert stored_states == []
 
 
 def test_restore_multihoja_recupera_sesiones_activa_excluidas_y_combinacion(monkeypatch):

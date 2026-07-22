@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, Layers3, Link2, Loader2, Rows3 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDataset } from '../data/DatasetContext'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
@@ -8,6 +8,7 @@ import {
   compatibleAppendSheets,
   relationshipPlainMessage,
   selectAppendJoinCostCandidates,
+  shouldAutoBuildBusinessScope,
 } from '../lib/multiSheet'
 import type { AnalysisScope, RelationshipCandidate, RelationshipResult } from '../lib/types'
 import { usePlan } from '../lib/usePlan'
@@ -62,6 +63,8 @@ export default function ActiveSheetSelector() {
   const [manualLeftKeys, setManualLeftKeys] = useState<string[]>(['', ''])
   const [manualRightKeys, setManualRightKeys] = useState<string[]>(['', ''])
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const autoBusinessAttempt = useRef<string | null>(null)
+  const manualModeSelected = useRef(false)
 
   useEffect(() => {
     if (analysisScope) setMode(analysisScope.mode)
@@ -114,6 +117,30 @@ export default function ActiveSheetSelector() {
     ? analysisProvenance.join.filas_sin_correspondencia
     : null
 
+  useEffect(() => {
+    if (
+      !file ||
+      !sheetManifest ||
+      manualModeSelected.current ||
+      detecting ||
+      !shouldAutoBuildBusinessScope(
+        analysisScope,
+        selectedSheets,
+        cleanedSheets,
+        compatibleSheets,
+        pendingSelectedCount,
+      )
+    ) return
+    const datasetKey = datasetId ?? storagePath ?? `${file.name}:${file.size}:${file.lastModified}`
+    const attemptKey = `${datasetKey}|${compatibleSheets.join('|')}`
+    if (autoBusinessAttempt.current === attemptKey) return
+    autoBusinessAttempt.current = attemptKey
+    void findRelationships('append_join', compatibleSheets)
+    // `findRelationships` intentionally reads the current manifest. The
+    // stable dataset/sheet signature above prevents request loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisScope, cleanedSheets, compatibleSheets, datasetId, detecting, file, pendingSelectedCount, selectedSheets, sheetManifest, storagePath])
+
   if (!file || cleanedSheets.length <= 1) return null
 
   const chooseSingle = (name: string) => {
@@ -149,11 +176,11 @@ export default function ActiveSheetSelector() {
     void findRelationships('append_join', unique)
   }
 
-  const findRelationships = async (
+  async function findRelationships(
     nextMode: 'join' | 'append_join' = 'join',
     requestedAppendSheets?: string[],
-  ) => {
-    if (!sheetManifest || detecting) return
+  ) {
+    if (!file || !sheetManifest || detecting) return
     setMode(nextMode)
     setDetecting(true)
     setRelationMessage(null)
@@ -208,7 +235,7 @@ export default function ActiveSheetSelector() {
           },
         })
         setRelationMessage(
-          `Listo: apilamos ${appendSelection.length} hojas de ventas y agregamos los costos de ${recommended.right_sheet} por ${recommended.left_keys.join(' + ')}.`,
+          `Listo: analizamos ${appendSelection.length} hojas de ventas como un solo periodo y vinculamos los costos de ${recommended.right_sheet} usando ${recommended.left_keys.join(' + ')}.`,
         )
       } else {
         if (nextMode === 'append_join') {
@@ -237,6 +264,7 @@ export default function ActiveSheetSelector() {
 
   const selectMode = (next: Mode) => {
     if (detecting || (next !== 'single' && pendingSelectedCount > 0)) return
+    manualModeSelected.current = true
     setMode(next)
     if (next === 'single') chooseSingle(sheet && cleanedSheets.includes(sheet) ? sheet : cleanedSheets[0])
     if (next === 'append') chooseAppend(compatibleSheets)
@@ -334,9 +362,9 @@ export default function ActiveSheetSelector() {
         <div className="flex max-w-full overflow-x-auto rounded-lg border border-navy/15 bg-white p-1">
           {([
             ['single', 'Analizar una hoja', Layers3],
-            ['append_join', 'Ventas + costos (recomendado)', Link2],
-            ['append', 'Solo apilar ventas', Rows3],
-            ['join', 'Relacionar otras hojas', Link2],
+            ['append_join', 'Visión del negocio', Link2],
+            ['append', 'Unir periodos de venta', Rows3],
+            ['join', 'Relación manual', Link2],
           ] as const).map(([value, label, Icon]) => (
             <button
               key={value}

@@ -1,6 +1,16 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 18 completas en código.**
+**Estado actual: Fases 0 a 18 completas y motor empresarial 0.23.0.**
+La versión `0.23.0` conserva todo el flujo multihoja y agrega una vista
+ejecutiva segura en Resumen y una vista diagnóstica orientada a decisiones en
+Explorar. Relaciona ventas con costos temporales, productos, clientes,
+sucursales y vendedores; incorpora inventario, compras, cobranzas, gastos y
+metas sin joins que multipliquen filas. También acelera lote, restauración y
+exportación auditada mediante una sola lectura del libro, snapshots por
+revisión, caché aislada por contenido/usuario y precalentamiento. Los costos
+actuales usados para cubrir vacíos históricos se muestran como estimaciones y
+no se certifican. **No agrega migraciones: 0021 sigue siendo la última.**
+
 La Fase 18 (`CHANGELOG` [0.21.0]) audita la plataforma contra la Prueba de
 Estrés Multihoja (todos los KPI reproducidos de forma independiente) y corrige
 lo encontrado: convención de `"1,234"` por magnitud de la columna, canónicos
@@ -21,8 +31,7 @@ costos con fecha de vigencia para relacionarlas por SKU. También persiste la
 selección recomendada para que una recarga no reactive hojas auxiliares. El
 parche `0.21.3` evita que `ID_Inventario` se confunda con una venta por una
 coincidencia parcial. El parche `0.21.4` conserva la selección multihoja cuando
-una versión nueva obliga a recalcular snapshots. Motor `0.21.4`; la última
-migración sigue siendo **0021**.
+una versión nueva obliga a recalcular snapshots.
 
 **Historial de Fase 17.**
 La Fase 17 (`CHANGELOG` [0.20.0]) simplifica el mapeo Básico y completa el

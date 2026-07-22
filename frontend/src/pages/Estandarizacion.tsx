@@ -63,6 +63,12 @@ const STEPS = [
 
 const RESTORE_STATE_TIMEOUT_MS = 15_000
 
+interface StandardizeBatchResponse {
+  resultados: Record<string, StandardizeResult>
+  errores: Record<string, string>
+  persistencia_errores: Record<string, string>
+}
+
 export default function Estandarizacion() {
   const {
     file,
@@ -260,25 +266,58 @@ export default function Estandarizacion() {
     setSheetError(null)
     const pendingNames = names.filter((name) => !sheetSessions[name]?.standardization)
     if (pendingNames.length > 1) {
-      setBatchProgress({ current: 0, total: pendingNames.length, sheet: '' })
+      const effectiveSelection = replaceSelection ? names : selectedSheetsRef.current
+      const effectivePending = pendingNames.filter((name) => effectiveSelection.includes(name))
+      setBatchProgress({ current: 0, total: effectivePending.length, sheet: 'Preparando el libro' })
+      effectivePending.forEach((name) => setSheetStatus(name, 'estandarizando'))
       try {
-        await apiPost<{ hojas_preparadas: string[] }>(
-          '/standardize/preload',
+        const batch = await apiPost<StandardizeBatchResponse>(
+          '/standardize/batch',
           buildDatasetForm(file, storagePath, {
-            sheets: JSON.stringify(pendingNames),
+            sheets: JSON.stringify(effectivePending),
+            ...(datasetId ? { dataset_id: datasetId } : {}),
+            restore_state: JSON.stringify({
+              ...restoreState,
+              active_sheet: target,
+              selected_sheets: effectiveSelection,
+              excluded_sheets: availableSheets.filter(
+                (sheetName) => !effectiveSelection.includes(sheetName),
+              ),
+              selection_mode: selectionModeRef.current,
+            }),
           }),
           { signal: controller.signal },
         )
+        if (currentFileRef.current !== sourceFile || controller.signal.aborted) return
+        Object.entries(batch.resultados).forEach(([name, result]) => {
+          setStandardization(result, { activate: name === target, expectedFile: sourceFile })
+        })
+        Object.entries(batch.errores).forEach(([name, message]) => {
+          setSheetStatus(name, 'error', message)
+        })
+        if (Object.keys(batch.persistencia_errores).length > 0) {
+          setSheetError(
+            'Las hojas se prepararon, pero una parte del avance no pudo guardarse para la próxima sesión.',
+          )
+        }
+        // setStandardization(... activate: true) already activates `target`.
+        // Calling setSheet here reads the pre-request sheetSessions closure and
+        // can immediately replace the fresh result with null.
       } catch (err) {
-        // El precalentamiento es una optimización sin escrituras. Si no está
-        // disponible, cada /standardize conserva el flujo compatible anterior
-        // y mostrará el error concreto de la hoja si realmente existe.
-        if (controller.signal.aborted || currentFileRef.current !== sourceFile) {
+        if (controller.signal.aborted || currentFileRef.current !== sourceFile) return
+        const message = err instanceof ApiError
+          ? err.message
+          : 'No se pudieron preparar las hojas seleccionadas.'
+        effectivePending.forEach((name) => setSheetStatus(name, 'error', message))
+        setSheetError(message)
+      } finally {
+        if (currentFileRef.current === sourceFile) {
           setBatchProgress(null)
           setChangingSheet(false)
-          return
         }
+        if (sheetAbortRef.current === controller) sheetAbortRef.current = null
       }
+      return
     }
     let position = 0
     for (const name of pendingNames) {
@@ -314,7 +353,6 @@ export default function Estandarizacion() {
       }
     }
     if (currentFileRef.current === sourceFile) {
-      if (target && sheetSessions[target]?.standardization) setSheet(target)
       setBatchProgress(null)
       setChangingSheet(false)
     }
