@@ -81,6 +81,7 @@ from ..engine.multi_sheet import (
 )
 from ..engine.standardize import normalize_headers, standardize_dataframe
 from ..restore_cache import (
+    RestoreSnapshotUnavailable,
     build_restore_snapshot,
     fetch_dataset_mapping,
     fetch_latest_cleaning_config,
@@ -2430,13 +2431,29 @@ def _build_and_store_restore_snapshot(
             "hojas_disponibles", []
         )
     if persist:
-        stored = store_restore_snapshot(
-            dataset_id, user_id, snapshot, restore_state=effective_state
-        )
-        if not stored:
+        try:
+            stored = store_restore_snapshot(
+                dataset_id,
+                user_id,
+                snapshot,
+                restore_state=effective_state,
+                raise_on_unavailable=True,
+            )
+        except RestoreSnapshotUnavailable as exc:
             raise HTTPException(
                 status_code=503,
-                detail="El resultado se calculó, pero no pudo confirmarse su persistencia. Vuelve a intentar.",
+                detail=(
+                    "El resultado se calculó, pero el servicio de persistencia "
+                    "no respondió a tiempo. Puedes continuar en esta sesión."
+                ),
+            ) from exc
+        if not stored:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Esta limpieza quedó obsoleta porque ya existe una acción "
+                    "más reciente. Se conservó el resultado nuevo."
+                ),
             )
     return snapshot
 
@@ -2937,17 +2954,6 @@ async def clean(
             # antigua reemplace otra nueva. Nunca se escribe sin guardia.
             if exc.status_code != 503:
                 raise
-            authoritative = await run_in_threadpool(
-                fetch_restore_state_metadata, dataset_id, user.id, settings
-            )
-            if int((authoritative or {}).get("revision") or 0) > revision:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Esta limpieza quedó obsoleta porque ya existe una acción "
-                        "más reciente. Se conservó el resultado nuevo."
-                    ),
-                ) from exc
             message = str(exc.detail)
             result["persistencia"] = {"guardada": False, "mensaje": message}
             result.setdefault("avisos", []).append(message)
@@ -3073,17 +3079,6 @@ async def clean_assisted(
         except HTTPException as exc:
             if exc.status_code != 503:
                 raise
-            authoritative = await run_in_threadpool(
-                fetch_restore_state_metadata, dataset_id, user.id, settings
-            )
-            if int((authoritative or {}).get("revision") or 0) > revision:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Esta limpieza quedó obsoleta porque ya existe una acción "
-                        "más reciente. Se conservó el resultado nuevo."
-                    ),
-                ) from exc
             message = str(exc.detail)
             result["persistencia"] = {"guardada": False, "mensaje": message}
             result.setdefault("avisos", []).append(message)

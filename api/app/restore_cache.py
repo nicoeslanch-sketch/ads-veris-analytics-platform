@@ -33,6 +33,10 @@ MAX_RESTORE_SNAPSHOT_BYTES: int | None = None
 logger = logging.getLogger(__name__)
 
 
+class RestoreSnapshotUnavailable(RuntimeError):
+    """The guarded store could not be reached or returned an invalid response."""
+
+
 def _configured(settings: Settings) -> bool:
     return bool(settings.supabase_url and settings.supabase_service_role_key)
 
@@ -474,6 +478,8 @@ def store_restore_snapshot(
     snapshot: dict[str, Any],
     settings: Settings | None = None,
     restore_state: dict[str, Any] | None = None,
+    *,
+    raise_on_unavailable: bool = False,
 ) -> bool:
     """Guarda una hoja mediante una única función PostgreSQL atómica."""
     settings = settings or get_settings()
@@ -545,12 +551,22 @@ def store_restore_snapshot(
         )
     except HTTPException as exc:
         logger.warning("Could not persist restore snapshot: %s", exc.detail)
+        if raise_on_unavailable:
+            raise RestoreSnapshotUnavailable(str(exc.detail)) from exc
         return False
     if response.status_code != 200:
         logger.warning("Supabase rejected restore snapshot with status %s", response.status_code)
+        if raise_on_unavailable:
+            raise RestoreSnapshotUnavailable(
+                f"Supabase respondió {response.status_code} al guardar el snapshot."
+            )
         return False
     try:
         stored = response.json()
     except ValueError:
+        if raise_on_unavailable:
+            raise RestoreSnapshotUnavailable(
+                "Supabase devolvió una respuesta inválida al guardar el snapshot."
+            )
         return False
     return stored is True

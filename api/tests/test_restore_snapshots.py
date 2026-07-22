@@ -12,6 +12,7 @@ from app.config import Settings
 from app.engine.clean import DEFAULT_RULES
 from app.restore_cache import (
     RESTORE_SNAPSHOT_VERSION,
+    RestoreSnapshotUnavailable,
     build_restore_snapshot,
     store_restore_snapshot,
     valid_restore_snapshot,
@@ -66,14 +67,14 @@ def test_cleaning_stale_revision_is_still_rejected(
 
     dataset_id = "00000000-0000-0000-0000-000000000098"
     monkeypatch.setattr(pl, "reserve_restore_snapshot_revision", lambda *_args: 98)
-    monkeypatch.setattr(
-        pl,
-        "fetch_restore_state_metadata",
-        lambda *_args: {"revision": 99},
-    )
-
     def reject_snapshot(*_args, **_kwargs):
-        raise HTTPException(status_code=503, detail="Snapshot rechazado.")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Esta limpieza quedó obsoleta porque ya existe una acción "
+                "más reciente. Se conservó el resultado nuevo."
+            ),
+        )
 
     monkeypatch.setattr(pl, "_build_and_store_restore_snapshot", reject_snapshot)
     response = client.post(
@@ -178,6 +179,41 @@ def test_store_snapshot_confirma_fila_y_filtra_por_propietario(monkeypatch):
     assert captured["url"].endswith("/rpc/store_restore_snapshot_guarded")
     assert captured["json"]["p_user_id"] == "owner-123"
     assert captured["json"]["p_snapshot"]["version"] == RESTORE_SNAPSHOT_VERSION
+
+
+def test_store_snapshot_distingue_indisponibilidad_de_revision_obsoleta(monkeypatch):
+    from app import restore_cache
+
+    settings = Settings(
+        supabase_url="https://example.supabase.co",
+        supabase_service_role_key="service-role-test",
+    )
+
+    def unavailable(*_args, **_kwargs):
+        raise HTTPException(status_code=502, detail="Supabase no disponible")
+
+    monkeypatch.setattr(restore_cache, "_post_rpc", unavailable)
+    with pytest.raises(RestoreSnapshotUnavailable):
+        store_restore_snapshot(
+            "00000000-0000-0000-0000-000000000001",
+            "owner-123",
+            _snapshot(),
+            settings,
+            raise_on_unavailable=True,
+        )
+
+    monkeypatch.setattr(
+        restore_cache,
+        "_post_rpc",
+        lambda *_args, **_kwargs: httpx.Response(200, json=False),
+    )
+    assert store_restore_snapshot(
+        "00000000-0000-0000-0000-000000000001",
+        "owner-123",
+        _snapshot(),
+        settings,
+        raise_on_unavailable=True,
+    ) is False
 
 
 @pytest.mark.parametrize("selection_mode", ["all", "custom"])
@@ -634,7 +670,7 @@ def test_restore_latest_recalcula_v2_y_lo_deja_intacto(monkeypatch):
     monkeypatch.setattr(
         pl,
         "store_restore_snapshot",
-        lambda _dataset_id, _user_id, snapshot, restore_state=None: stored.append(snapshot) or True,
+        lambda _dataset_id, _user_id, snapshot, restore_state=None, **_kwargs: stored.append(snapshot) or True,
     )
 
     body = pl._restore_latest_sync(user_id)
@@ -716,7 +752,7 @@ def test_restore_recalculado_conserva_seleccion_multihoja(monkeypatch):
     monkeypatch.setattr(
         pl,
         "store_restore_snapshot",
-        lambda _dataset_id, _user_id, _snapshot, restore_state=None: (
+        lambda _dataset_id, _user_id, _snapshot, restore_state=None, **_kwargs: (
             stored_states.append(restore_state) or True
         ),
     )
