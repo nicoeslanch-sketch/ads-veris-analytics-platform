@@ -30,6 +30,7 @@ from .standardize import (
     parse_number,
     physical_missing_mask,
     semantic_missing_mask,
+    structural_total_mask,
 )
 
 FINANCIAL_RATIOS = [
@@ -259,6 +260,9 @@ def _block_monetary_outputs(result: dict, detection: CurrencyDetection) -> None:
             result[key] = []
     if "lideres_productos" in result:
         result["lideres_productos"] = None
+    # Fase 19: la clasificación de rentabilidad también es una suma monetaria.
+    if "analisis_rentabilidad" in result:
+        result["analisis_rentabilidad"] = None
     if isinstance(result.get("clientes"), dict):
         result["clientes"] = {
             **result["clientes"],
@@ -862,7 +866,23 @@ def compute_metrics(
         cancelled_mask = normalized_status.str.contains(
             r"\b(?:anulad|cancelad|void)\w*", regex=True, na=False
         )
-    indicator_row_mask = ~cancelled_mask
+    # Fase 19: filas "TOTAL 2025"/"Subtotal…" exportadas al pie de la tabla.
+    # Traen el monto del periodo completo sin fecha ni estado: sumarlas junto a
+    # las transacciones DUPLICA los ingresos. Se conservan en la base pero
+    # jamás entran a los indicadores.
+    total_rows_mask = (
+        structural_total_mask(df, roles.get("fecha"))
+        if transactional_profile
+        else pd.Series(False, index=df.index)
+    )
+    indicator_row_mask = ~cancelled_mask & ~total_rows_mask
+    total_rows = int(total_rows_mask.sum())
+    if total_rows:
+        warnings.append(
+            f"Se detectaron {total_rows} fila(s) de totales estructurales "
+            "(por ejemplo 'TOTAL 2025'): se conservan en la base pero se "
+            "excluyen de todos los indicadores — sumarlas duplicaría el periodo."
+        )
     cancelled_rows = int(cancelled_mask.sum())
     if cancelled_rows:
         warnings.append(
@@ -1286,8 +1306,9 @@ def compute_metrics(
             "exclusiones_indicadores": {
                 "filas_anuladas": cancelled_rows,
                 "columna_estado": status_column,
+                "filas_totales_estructurales": total_rows,
             },
-        } if status_column or cancelled_rows else {}),
+        } if status_column or cancelled_rows or total_rows else {}),
         # Fase 8: qué dimensiones REALES trae este dataset. El frontend adapta
         # Explorar y Resumen a esto (sin tarjetas vacías ni análisis imposibles).
         "dimensiones": {
@@ -1367,6 +1388,98 @@ def compute_metrics(
                 "por_utilidad": _lider("utilidad"),
                 "mayor_devolucion": _lider("devoluciones", minimo=True),
                 "total_productos": len(productos_completos),
+            }
+
+        # ── Fase 19: rentabilidad para DECIDIR (Explorar) ──
+        # Resumen muestra los números; Explorar los interpreta. Clasificación
+        # de portafolio por participación × margen (umbrales = las MEDIANAS
+        # del propio archivo — la guía del analista compara contra tu propio
+        # negocio, no contra rangos abstractos), productos con margen negativo,
+        # ventas bajo costo y filas con margen atípico.
+        if has_costs and productos_completos:
+            con_margen = [
+                item for item in productos_completos
+                if item.get("margen_pct") is not None
+                and item.get("participacion_bruta_pct") is not None
+                and (item.get("filas_pareadas") or 0) > 0
+            ]
+            clasificacion: list[dict] = []
+            umbrales = None
+            if len(con_margen) >= 4:
+                margenes = sorted(item["margen_pct"] for item in con_margen)
+                participaciones = sorted(
+                    item["participacion_bruta_pct"] for item in con_margen
+                )
+
+                def _mediana(valores: list[float]) -> float:
+                    mitad = len(valores) // 2
+                    if len(valores) % 2:
+                        return float(valores[mitad])
+                    return float((valores[mitad - 1] + valores[mitad]) / 2)
+
+                margen_mediano = _mediana(margenes)
+                participacion_mediana = _mediana(participaciones)
+                umbrales = {
+                    "margen_mediano_pct": round(margen_mediano, 1),
+                    "participacion_mediana_pct": round(participacion_mediana, 2),
+                }
+                for item in con_margen:
+                    alto_volumen = item["participacion_bruta_pct"] >= participacion_mediana
+                    alto_margen = item["margen_pct"] >= margen_mediano
+                    cuadrante = (
+                        "estrella" if alto_volumen and alto_margen
+                        else "vaca_lechera" if alto_volumen
+                        else "oportunidad" if alto_margen
+                        else "problema"
+                    )
+                    clasificacion.append({
+                        "nombre": item["nombre"],
+                        "participacion_bruta_pct": item["participacion_bruta_pct"],
+                        "margen_pct": item["margen_pct"],
+                        "utilidad": item.get("utilidad"),
+                        "ingresos": item["ingresos"],
+                        "filas_pareadas": item.get("filas_pareadas"),
+                        "cuadrante": cuadrante,
+                    })
+            margen_negativo = sorted(
+                (item for item in con_margen if item["margen_pct"] < 0),
+                key=lambda item: item.get("utilidad") or 0,
+            )[:10]
+            paired_rows = amounts.notna() & costs.notna()
+            bajo_costo_mask = paired_rows & (amounts < costs) & (amounts > 0)
+            perdida_bajo_costo = float(
+                (costs[bajo_costo_mask] - amounts[bajo_costo_mask]).sum()
+            )
+            margen_filas = (
+                (amounts - costs) / amounts.where(amounts > 0)
+            ).where(paired_rows)
+            margen_valido = margen_filas.dropna()
+            outliers_margen = 0
+            if len(margen_valido) >= 20:
+                q1_m, q3_m = margen_valido.quantile(0.25), margen_valido.quantile(0.75)
+                iqr_m = float(q3_m - q1_m)
+                if iqr_m > 0:
+                    outliers_margen = int((
+                        (margen_valido < q1_m - 3 * iqr_m)
+                        | (margen_valido > q3_m + 3 * iqr_m)
+                    ).sum())
+            result["analisis_rentabilidad"] = {
+                "clasificacion_productos": clasificacion,
+                "umbrales": umbrales,
+                "productos_margen_negativo": [
+                    {
+                        "nombre": item["nombre"],
+                        "margen_pct": item["margen_pct"],
+                        "utilidad": item.get("utilidad"),
+                        "ingresos": item["ingresos"],
+                    }
+                    for item in margen_negativo
+                ],
+                "ventas_bajo_costo": {
+                    "filas": int(bajo_costo_mask.sum()),
+                    "perdida": round(perdida_bajo_costo, 2),
+                },
+                "filas_margen_atipico": outliers_margen,
             }
 
     # ── Fase 12: clientes (unicidad y concentración) ──

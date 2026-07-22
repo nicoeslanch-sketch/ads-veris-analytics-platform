@@ -558,6 +558,8 @@ export interface MetricsResult {
   exclusiones_indicadores?: {
     filas_anuladas: number
     columna_estado: string | null
+    /** Fase 19: filas "TOTAL 2025" excluidas para no duplicar el periodo. */
+    filas_totales_estructurales?: number
   }
   analysis_scope?: AnalysisScope
   analysis_provenance?: Record<string, unknown>
@@ -683,6 +685,30 @@ export interface MetricsResult {
     grupos_totales: number
     fuera_de_rango?: { filas: number; monto_asociado: number }
   }>
+  /** Fase 19: interpretación de rentabilidad para DECIDIR (Explorar).
+   * Clasificación de portafolio por participación × margen contra las
+   * medianas del propio archivo, margen negativo y ventas bajo costo.
+   * Null cuando la moneda es mixta (los montos no son comparables). */
+  analisis_rentabilidad?: {
+    clasificacion_productos: Array<{
+      nombre: string
+      participacion_bruta_pct: number
+      margen_pct: number
+      utilidad: number | null
+      ingresos: number
+      filas_pareadas: number | null
+      cuadrante: 'estrella' | 'vaca_lechera' | 'oportunidad' | 'problema'
+    }>
+    umbrales: { margen_mediano_pct: number; participacion_mediana_pct: number } | null
+    productos_margen_negativo: Array<{
+      nombre: string
+      margen_pct: number
+      utilidad: number | null
+      ingresos: number
+    }>
+    ventas_bajo_costo: { filas: number; perdida: number }
+    filas_margen_atipico: number
+  } | null
 }
 
 /** Compact response from POST /restore/latest. */

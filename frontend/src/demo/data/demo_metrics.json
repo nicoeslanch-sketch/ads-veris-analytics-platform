@@ -7,6 +7,83 @@
   "Se detectaron 2 repetición(es) exacta(s) en el archivo original. Se conservarán mientras no confirmes explícitamente su eliminación."
  ],
  "agrupado_por_canal": "sucursal",
+ "analisis_rentabilidad": {
+  "clasificacion_productos": [
+   {
+    "cuadrante": "estrella",
+    "filas_pareadas": 35,
+    "ingresos": 4139820.0,
+    "margen_pct": 28.0,
+    "nombre": "Harina 25kg",
+    "participacion_bruta_pct": 38.5,
+    "utilidad": 1132575.0
+   },
+   {
+    "cuadrante": "estrella",
+    "filas_pareadas": 40,
+    "ingresos": 1949560.0,
+    "margen_pct": 29.0,
+    "nombre": "Papel Higiénico 12un",
+    "participacion_bruta_pct": 18.0,
+    "utilidad": 551490.0
+   },
+   {
+    "cuadrante": "estrella",
+    "filas_pareadas": 36,
+    "ingresos": 1712550.0,
+    "margen_pct": 26.0,
+    "nombre": "Arroz Grado 1 5kg",
+    "participacion_bruta_pct": 15.9,
+    "utilidad": 434375.0
+   },
+   {
+    "cuadrante": "estrella",
+    "filas_pareadas": 39,
+    "ingresos": 1515240.0,
+    "margen_pct": 30.0,
+    "nombre": "Detergente 3L",
+    "participacion_bruta_pct": 14.1,
+    "utilidad": 415058.0
+   },
+   {
+    "cuadrante": "problema",
+    "filas_pareadas": 35,
+    "ingresos": 610050.0,
+    "margen_pct": 22.0,
+    "nombre": "Aceite Vegetal 1L",
+    "participacion_bruta_pct": 5.6,
+    "utilidad": 124911.0
+   },
+   {
+    "cuadrante": "problema",
+    "filas_pareadas": 33,
+    "ingresos": 540930.0,
+    "margen_pct": 24.0,
+    "nombre": "Bebida Cola 3L",
+    "participacion_bruta_pct": 5.0,
+    "utilidad": 113020.0
+   },
+   {
+    "cuadrante": "problema",
+    "filas_pareadas": 37,
+    "ingresos": 304440.0,
+    "margen_pct": 20.0,
+    "nombre": "Azúcar 1kg",
+    "participacion_bruta_pct": 2.8,
+    "utilidad": 58308.0
+   }
+  ],
+  "filas_margen_atipico": 0,
+  "productos_margen_negativo": [],
+  "umbrales": {
+   "margen_mediano_pct": 26.0,
+   "participacion_mediana_pct": 14.1
+  },
+  "ventas_bajo_costo": {
+   "filas": 0,
+   "perdida": 0.0
+  }
+ },
  "archivo": "demo_empresa_ficticia.csv",
  "calculo_costos": {
   "columna_cantidad": null,

@@ -161,7 +161,29 @@ function buildOperationalIndicators(m: MetricsResult): Array<{ label: string; va
           : undefined,
     })
   }
-  return items.slice(0, 10)
+  // Fase 19: ratios de riesgo del analista — concentración de producto (guía:
+  // sobre ~25% en uno solo es dependencia crítica) y tasa de anulación.
+  const liderBruto = m.lideres_productos?.por_ventas_brutas
+  if (liderBruto?.participacion_bruta_pct != null && (m.lideres_productos?.total_productos ?? 0) > 1) {
+    items.push({
+      label: 'Concentración top producto',
+      value: `${formatNumber(liderBruto.participacion_bruta_pct)}%`,
+      hint:
+        liderBruto.participacion_bruta_pct >= 25
+          ? `${liderBruto.nombre} — dependencia alta: conviene diversificar`
+          : `${liderBruto.nombre} de tus ventas brutas`,
+    })
+  }
+  const exclusiones = m.exclusiones_indicadores
+  if (exclusiones?.filas_anuladas) {
+    const base = m.kpis.transacciones + exclusiones.filas_anuladas
+    items.push({
+      label: 'Tasa de anulación',
+      value: base > 0 ? `${formatNumber(Math.round((exclusiones.filas_anuladas / base) * 1000) / 10)}%` : '—',
+      hint: `${formatNumber(exclusiones.filas_anuladas)} documento(s) anulados, fuera de los indicadores`,
+    })
+  }
+  return items.slice(0, 12)
 }
 
 function Variation({

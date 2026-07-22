@@ -766,6 +766,7 @@ def test_ventas_anuladas_se_conservan_pero_no_entran_en_indicadores():
     assert metrics["exclusiones_indicadores"] == {
         "filas_anuladas": 1,
         "columna_estado": "Estado",
+        "filas_totales_estructurales": 0,
     }
 
 
@@ -1405,8 +1406,14 @@ def test_stress_append_join_export_reconciles_scope_totals_and_ambiguities():
 
     manifest_sheet = workbook["Manifest"]
     manifest_columns = {cell.value: cell.column for cell in manifest_sheet[1]}
+    # Fase 19: el alcance analítico vive en la fila-resumen "(libro completo)";
+    # cada hoja solo lo declara si participa en él.
+    book_row = next(
+        row for row in range(2, manifest_sheet.max_row + 1)
+        if manifest_sheet.cell(row, manifest_columns["hoja"]).value == "(libro completo)"
+    )
     exported_scope = json.loads(
-        manifest_sheet.cell(2, manifest_columns["alcance_analisis"]).value
+        manifest_sheet.cell(book_row, manifest_columns["alcance_analisis"]).value
     )
     assert exported_scope["mode"] == "append_join"
     assert exported_scope["append_sheets"] == sales

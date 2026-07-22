@@ -1,28 +1,29 @@
 # Estado del proyecto por fases — ADS Veris
 
-**Estado actual: Fases 0 a 18 completas en código.**
+**Estado actual: Fases 0 a 19 completas en código.**
+La Fase 19 (`CHANGELOG` [0.23.0]) audita la limpieza contra el libro PYME
+Desafiante 2026 y corrige: filas TOTAL excluidas de indicadores (los KPI
+duplicaban el periodo), `Total Documento` numérico, validaciones IVA/total por
+fila, costos peligrosos y duplicados posnormalización en Observaciones, ruido
+de columnas de texto libre eliminado y Manifest honesto por libro. Además
+consolida la regla editorial — Resumen muestra números; Explorar interpreta y
+decide — con "Rentabilidad para decidir" (portafolio por cuadrantes, ventas
+bajo costo, margen mensual) y `docs/ANALISIS_FINANCIERO.md` como referencia de
+ratios y relaciones. Motor `0.23.0`; la última migración sigue siendo **0021**.
+
+**Historial de Fase 18.**
 La Fase 18 (`CHANGELOG` [0.21.0]) audita la plataforma contra la Prueba de
 Estrés Multihoja (todos los KPI reproducidos de forma independiente) y corrige
 lo encontrado: convención de `"1,234"` por magnitud de la columna, canónicos
 estables entre hojas (TipoCliente), grupos sin etiqueta "nan", filtro mensual
 consistente y conflictos de ID sin falsos positivos de claves foráneas. Además
-lleva gráficos a TODOS los resúmenes adaptativos (inventario y campañas por
-sucursal/plataforma; clientes, sucursales, trabajadores y metas con
-distribuciones), agrega "Ventas por {columna}" flexibles (sucursal, región,
-zona… incluidas columnas enriquecidas al relacionar hojas), amplía la
-cobertura de negocio de Observaciones en la exportación, hace legibles las
-hojas exportadas y aclara la Limpieza (franja de acción en navy, botón mayor,
-preguntas de mapeo solo con columnas candidatas). El parche `0.21.1` permite
-revisar y repetir una limpieza sin resubir el archivo, simplifica la relación
-automática de ventas con costos y corrige conteos auditables de columnas
-completas. El parche `0.21.2` valida el libro avanzado multihoja: unifica la
-escala de porcentajes, elimina falsos conflictos de ID y reconoce maestras de
-costos con fecha de vigencia para relacionarlas por SKU. También persiste la
-selección recomendada para que una recarga no reactive hojas auxiliares. El
-parche `0.21.3` evita que `ID_Inventario` se confunda con una venta por una
-coincidencia parcial. El parche `0.21.4` conserva la selección multihoja cuando
-una versión nueva obliga a recalcular snapshots. Motor `0.21.4`; la última
-migración sigue siendo **0021**.
+lleva gráficos a TODOS los resúmenes adaptativos, agrega "Ventas por
+{columna}" flexibles, amplía la cobertura de negocio de Observaciones, hace
+legibles las hojas exportadas y aclara la Limpieza. Los parches `0.21.1` a
+`0.21.4` y `0.22.0` (Codex) completan el flujo multihoja: revisar/repetir una
+limpieza sin resubir, relación automática de costos simplificada, escala de
+porcentajes unificada, maestras de costos con vigencia reconocidas por SKU y
+selección persistente ante recálculo de snapshots.
 
 **Historial de Fase 17.**
 La Fase 17 (`CHANGELOG` [0.20.0]) simplifica el mapeo Básico y completa el
