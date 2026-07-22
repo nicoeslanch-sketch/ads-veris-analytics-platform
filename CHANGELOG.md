@@ -2,6 +2,18 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [Sin publicar] - Regresiones XLSX reproducibles
+
+- Las bases sintéticas pequeña y de estrés pasan a ser fixtures versionadas:
+  GitHub Actions ya no omite las ocho regresiones que dependían de rutas
+  locales.
+- Corrige la expectativa obsoleta de descuentos tras `0.21.2`: `20`, `20%` y
+  `0.2` son 20%, por lo que el libro visible tiene 177 filas realmente fuera
+  de rango, no 360.
+- Documenta y prueba la diferencia entre los montos visibles reproducibles y
+  los totales declarados en `CONTROL_ESPERADO`; el motor no imputa los valores
+  que fueron reemplazados por vacíos o `N/D`.
+
 ## [0.21.4] - 2026-07-21 - Restauración multihoja tras actualizar el motor
 
 - Cuando una nueva versión invalida snapshots antiguos, el recálculo conserva

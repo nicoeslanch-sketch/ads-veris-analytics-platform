@@ -1054,10 +1054,19 @@ def test_single_scope_export_does_not_create_related_sheet():
     assert workbook["LEEME_NO_PROCESAR"]["A2"].value == "No modificar"
 
 
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 _stress_path = os.getenv("ADSVERIS_STRESS_XLSX")
 _small_path = os.getenv("ADSVERIS_SMALL_XLSX")
-STRESS_PATH = Path(_stress_path) if _stress_path else None
-SMALL_PATH = Path(_small_path) if _small_path else None
+STRESS_PATH = (
+    Path(_stress_path)
+    if _stress_path
+    else FIXTURE_DIR / "Prueba_Estres_Multihoja_ADS_VerIs_2025.xlsx"
+)
+SMALL_PATH = (
+    Path(_small_path)
+    if _small_path
+    else FIXTURE_DIR / "Prueba_Fase17_Multihoja_ADS_VerIs.xlsx"
+)
 
 
 @pytest.mark.skipif(
@@ -1195,7 +1204,7 @@ def test_stress_append_join_exact_cost_regression():
     STRESS_PATH is None or not STRESS_PATH.is_file(),
     reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
 )
-def test_stress_append_join_preserves_verified_control_totals():
+def test_stress_append_join_preserves_reproducible_visible_data_totals():
     from app.routes.pipeline import _analyze_cached
 
     content = STRESS_PATH.read_bytes()
@@ -1254,9 +1263,13 @@ def test_stress_append_join_preserves_verified_control_totals():
         item for item in metrics["agrupaciones_flexibles"]
         if item["columna"] == "Descuento_Pct"
     )
+    # Desde 0.21.2, 20, 20% y 0.2 representan el mismo descuento de 20%.
+    # La expectativa anterior (360) contaba como inválidas 183 filas con
+    # enteros porcentuales válidos. Las 177 restantes sí están fuera de
+    # 0–100%; incluyen cinco copias exactas que se conservan en este alcance.
     assert discount_grouping["fuera_de_rango"] == {
-        "filas": 360,
-        "monto_asociado": 222_999_470.0,
+        "filas": 177,
+        "monto_asociado": 127_950_949.0,
     }
     assert "Fuera de rango" in {
         group["nombre"] for group in discount_grouping["grupos"]
@@ -1426,3 +1439,29 @@ def test_stress_control_amounts_reconcile_with_duplicate_decision():
         after_total += compute_metrics(result["_df_limpio"], result["mapeo"])["kpis"]["ingresos_totales"]["valor"]
     assert before_total == 3_200_889_420
     assert after_total == 3_165_894_176
+
+
+@pytest.mark.skipif(
+    STRESS_PATH is None or not STRESS_PATH.is_file(),
+    reason="Define ADSVERIS_STRESS_XLSX para ejecutar la regresion del libro de estres",
+)
+def test_stress_declared_control_totals_are_not_present_in_visible_sales_cells():
+    """Impide volver a afirmar que CONTROL es reconciliable sin imputar datos.
+
+    CONTROL_ESPERADO conserva totales declarados al generar la base, pero las
+    hojas entregadas ya reemplazaron montos por vacíos/N/D. El pipeline solo
+    puede sumar los 5.302 valores visibles y legibles: inventar los originales
+    ocultos violaría la política no destructiva.
+    """
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(STRESS_PATH, read_only=True, data_only=True)
+    control = workbook["CONTROL_ESPERADO"]
+    declared_before = control["B14"].value
+    declared_after = control["C14"].value
+    workbook.close()
+
+    assert declared_before == 3_278_490_880
+    assert declared_after == 3_243_120_100
+    assert declared_before - 3_200_889_420 == 77_601_460
+    assert declared_after - 3_165_894_176 == 77_225_924
