@@ -4,6 +4,16 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
 
 ## [Sin publicar] - Regresiones XLSX reproducibles
 
+- Limpieza permite completar todas las hojas pendientes o fallidas desde el
+  resumen superior y eliminar, con una sola confirmación, los duplicados
+  exactos de todas las hojas que los contengan. La limpieza general conserva
+  filas por defecto y sigue permitiendo la decisión individual por hoja.
+- Los catálogos de costos con producto y costo ya no preguntan por una columna
+  inexistente de "total vendido".
+- Una limpieza calculada deja de marcarse como fallo del motor si el snapshot
+  protegido no pudo guardarse: el resultado queda disponible en la sesión y
+  se muestra una advertencia explícita. No se agrega ninguna escritura sin
+  guardia ni migración.
 - Las bases sintéticas pequeña y de estrés pasan a ser fixtures versionadas:
   GitHub Actions ya no omite las ocho regresiones que dependían de rutas
   locales.

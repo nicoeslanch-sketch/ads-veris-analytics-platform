@@ -2915,19 +2915,42 @@ async def clean(
     if revision is not None:
         result["revision"] = revision
     if apply and dataset_id and revision is not None:
-        await run_in_threadpool(
-            _build_and_store_restore_snapshot,
-            dataset_id,
-            user.id,
-            filename,
-            content,
-            result,
-            mapping_dict,
-            sheet_name,
-            eliminar_duplicados,
-            revision,
-            state,
-        )
+        try:
+            await run_in_threadpool(
+                _build_and_store_restore_snapshot,
+                dataset_id,
+                user.id,
+                filename,
+                content,
+                result,
+                mapping_dict,
+                sheet_name,
+                eliminar_duplicados,
+                revision,
+                state,
+            )
+            result["persistencia"] = {"guardada": True}
+        except HTTPException as exc:
+            # La limpieza ya terminó y sus datos son utilizables cuando el
+            # guardado falla por disponibilidad. Una revisión realmente
+            # obsoleta se sigue rechazando abajo para impedir que una acción
+            # antigua reemplace otra nueva. Nunca se escribe sin guardia.
+            if exc.status_code != 503:
+                raise
+            authoritative = await run_in_threadpool(
+                fetch_restore_state_metadata, dataset_id, user.id, settings
+            )
+            if int((authoritative or {}).get("revision") or 0) > revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Esta limpieza quedó obsoleta porque ya existe una acción "
+                        "más reciente. Se conservó el resultado nuevo."
+                    ),
+                ) from exc
+            message = str(exc.detail)
+            result["persistencia"] = {"guardada": False, "mensaje": message}
+            result.setdefault("avisos", []).append(message)
     return result
 
 
@@ -3032,19 +3055,38 @@ async def clean_assisted(
 
     result["dirigida"] = {"instrucciones": instructions, **plan.to_dict(), "cupo": cupo}
     if dataset_id and revision is not None:
-        await run_in_threadpool(
-            _build_and_store_restore_snapshot,
-            dataset_id,
-            user.id,
-            filename,
-            content,
-            result,
-            mapping_dict,
-            sheet_name,
-            eliminar_duplicados,
-            revision,
-            state,
-        )
+        try:
+            await run_in_threadpool(
+                _build_and_store_restore_snapshot,
+                dataset_id,
+                user.id,
+                filename,
+                content,
+                result,
+                mapping_dict,
+                sheet_name,
+                eliminar_duplicados,
+                revision,
+                state,
+            )
+            result["persistencia"] = {"guardada": True}
+        except HTTPException as exc:
+            if exc.status_code != 503:
+                raise
+            authoritative = await run_in_threadpool(
+                fetch_restore_state_metadata, dataset_id, user.id, settings
+            )
+            if int((authoritative or {}).get("revision") or 0) > revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Esta limpieza quedó obsoleta porque ya existe una acción "
+                        "más reciente. Se conservó el resultado nuevo."
+                    ),
+                ) from exc
+            message = str(exc.detail)
+            result["persistencia"] = {"guardada": False, "mensaje": message}
+            result.setdefault("avisos", []).append(message)
     return result
 
 

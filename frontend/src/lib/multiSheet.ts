@@ -159,8 +159,14 @@ export function basicMappingQuestions(
     const wanted = role === 'fecha' ? 'fecha' : 'numero'
     return Object.values(columnTypes).some((tipo) => tipo === wanted)
   }
+  // Un catalogo/historial de costos no es una tabla de ventas. Si ya se
+  // detectaron una llave de producto y una columna de costo, cualquier otro
+  // numero (precio de lista, stock, unidades por compra, etc.) NO debe
+  // presentarse como candidato obligatorio a "total vendido".
+  const costReferenceSheet = Boolean(mapping.costo && mapping.producto && !mapping.monto)
   return BASIC_CRITICAL_ROLES.filter((role) => {
     if (confirmed.includes(role)) return false
+    if (role === 'monto' && costReferenceSheet) return false
     const column = mapping[role]
     if (!column) return hasCandidate(role)
     const match = extended[column]
@@ -168,6 +174,10 @@ export function basicMappingQuestions(
       match && match.rol_motor === role && match.confianza < MEDIUM_CONFIDENCE,
     )
   })
+}
+
+export function requiresSalesAmountMapping(mapping: Record<string, string>): boolean {
+  return !mapping.monto && !(mapping.costo && mapping.producto)
 }
 
 export function sheetStatusLabel(

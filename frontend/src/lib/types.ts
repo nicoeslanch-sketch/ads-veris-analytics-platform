@@ -42,6 +42,10 @@ export interface CleanIssue {
 
 export interface CleanResult {
   revision?: number
+  persistencia?: {
+    guardada: boolean
+    mensaje?: string
+  }
   archivo: string
   resumen: {
     filas_antes: number

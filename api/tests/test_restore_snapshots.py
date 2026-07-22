@@ -6,6 +6,7 @@ from statistics import median
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from app.config import Settings
 from app.engine.clean import DEFAULT_RULES
@@ -18,6 +19,72 @@ from app.restore_cache import (
 
 
 SOURCE_SHA = "d" * 64
+
+
+def test_cleaning_result_is_not_lost_when_guarded_snapshot_cannot_be_saved(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline as pl
+
+    dataset_id = "00000000-0000-0000-0000-000000000099"
+    monkeypatch.setattr(pl, "reserve_restore_snapshot_revision", lambda *_args: 99)
+
+    def reject_snapshot(*_args, **_kwargs):
+        raise HTTPException(
+            status_code=503,
+            detail="El resultado se calculó, pero no pudo confirmarse su persistencia.",
+        )
+
+    monkeypatch.setattr(pl, "_build_and_store_restore_snapshot", reject_snapshot)
+    csv = (
+        "SKU_Producto;Costo Unitario;Fecha Vigencia\n"
+        "SKU-001;1200;01/01/2026\n"
+        "SKU-002;1500;02/01/2026\n"
+    ).encode("utf-8")
+
+    response = client.post(
+        "/clean",
+        headers=auth_headers,
+        data={"apply": "true", "dataset_id": dataset_id},
+        files={"file": ("costos.csv", csv, "text/csv")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["resumen"]["aplicado"] is True
+    assert body["resumen"]["filas_despues"] == 2
+    assert body["persistencia"] == {
+        "guardada": False,
+        "mensaje": "El resultado se calculó, pero no pudo confirmarse su persistencia.",
+    }
+
+
+def test_cleaning_stale_revision_is_still_rejected(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline as pl
+
+    dataset_id = "00000000-0000-0000-0000-000000000098"
+    monkeypatch.setattr(pl, "reserve_restore_snapshot_revision", lambda *_args: 98)
+    monkeypatch.setattr(
+        pl,
+        "fetch_restore_state_metadata",
+        lambda *_args: {"revision": 99},
+    )
+
+    def reject_snapshot(*_args, **_kwargs):
+        raise HTTPException(status_code=503, detail="Snapshot rechazado.")
+
+    monkeypatch.setattr(pl, "_build_and_store_restore_snapshot", reject_snapshot)
+    response = client.post(
+        "/clean",
+        headers=auth_headers,
+        data={"apply": "true", "dataset_id": dataset_id},
+        files={"file": ("ventas.csv", b"Monto\n1000\n", "text/csv")},
+    )
+
+    assert response.status_code == 409
+    assert "acción más reciente" in response.json()["detail"]
 
 
 def _snapshot(revision: int = 10, sheet: str | None = None) -> dict:

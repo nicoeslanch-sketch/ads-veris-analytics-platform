@@ -45,6 +45,36 @@ rows.to_excel(path, sheet_name="Ventas", index=False)
   execFileSync('python', ['-c', script, path])
 }
 
+function createBatchDuplicateWorkbook(path: string) {
+  const script = String.raw`
+import pandas as pd
+import sys
+path = sys.argv[1]
+ventas_a = pd.DataFrame({
+    "ID Venta": ["A-1", "A-2", "A-2"],
+    "Fecha": ["01/01/2026", "02/01/2026", "02/01/2026"],
+    "SKU_Producto": ["SKU-1", "SKU-2", "SKU-2"],
+    "Monto": [1000, 2000, 2000],
+})
+ventas_b = pd.DataFrame({
+    "ID Venta": ["B-1", "B-1", "B-2"],
+    "Fecha": ["03/01/2026", "03/01/2026", "04/01/2026"],
+    "SKU_Producto": ["SKU-1", "SKU-1", "SKU-2"],
+    "Monto": [1500, 1500, 2500],
+})
+costos = pd.DataFrame({
+    "SKU_Producto": ["SKU-1", "SKU-2"],
+    "Costo Unitario": [500, 900],
+    "Fecha Vigencia": ["01/01/2026", "01/01/2026"],
+})
+with pd.ExcelWriter(path, engine="openpyxl") as writer:
+    ventas_a.to_excel(writer, sheet_name="Ventas_A", index=False)
+    ventas_b.to_excel(writer, sheet_name="Ventas_B", index=False)
+    costos.to_excel(writer, sheet_name="Costos_Productos", index=False)
+`
+  execFileSync('python', ['-c', script, path])
+}
+
 function createProviderWorkbook(path: string) {
   const script = String.raw`
 import pandas as pd
@@ -267,6 +297,33 @@ test('permite revisar una limpieza terminada y volver a limpiar sin subir el arc
   await expect(page.getByText('Revisando el diagnóstico original')).toBeVisible()
   await page.getByRole('button', { name: 'Volver al resultado limpio' }).click()
   await expect(page.getByText(/1 eliminados/)).toBeVisible()
+})
+
+test('limpia todas las hojas y elimina duplicados en lote sin bloquear catalogos de costos', async ({ page }, testInfo) => {
+  const workbook = testInfo.outputPath('duplicados_por_lote.xlsx')
+  createBatchDuplicateWorkbook(workbook)
+
+  await page.goto('/estandarizacion')
+  const chooserPromise = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: /Subir archivo/ }).click()
+  const chooser = await chooserPromise
+  await chooser.setFiles(workbook)
+  await expect(page.getByText(/Dataset activo:/)).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(3, { timeout: 90_000 })
+
+  await page.getByRole('link', { name: /Limpieza de datos/ }).first().click()
+  await expect(page.getByText('Problemas detectados')).toBeVisible({ timeout: 90_000 })
+  await page.getByLabel('Hoja mostrada').selectOption('Costos_Productos')
+  await expect(page.getByText('Hoja mostrada: Costos_Productos').first()).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText('¿En qué columna está el total vendido?')).toHaveCount(0)
+  await page.getByRole('button', { name: /Completar limpieza de todas \(3\)/ }).click()
+  await expect(page.getByText('3 limpias', { exact: true })).toBeVisible({ timeout: 90_000 })
+
+  await page.getByRole('button', { name: /Eliminar duplicados de todas \(2\)/ }).click()
+  await expect(page.getByRole('heading', { name: /¿Eliminar 2 duplicados en 2 hoja/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Eliminar en todas' }).click()
+  await expect(page.getByText('3 limpias', { exact: true })).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByRole('button', { name: /Eliminar duplicados de todas/ })).toHaveCount(0)
 })
 
 test('Resumen prioriza y Explorar profundiza en una hoja operacional', async ({ page }, testInfo) => {

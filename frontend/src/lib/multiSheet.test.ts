@@ -13,6 +13,7 @@ import {
   sheetsForAutomaticCleaning,
   sheetsForAutomaticPreparation,
   relationshipPlainMessage,
+  requiresSalesAmountMapping,
   restoredAnalysisSelection,
   restoredSheetStatus,
   serializedAnalysisScope,
@@ -65,6 +66,23 @@ describe('mapeo simple del plan Basico', () => {
     expect(
       basicMappingQuestions({}, {}, [], { Total: 'numero', Nombre: 'texto' }),
     ).toEqual(['monto'])
+  })
+
+  it('no confunde un catalogo de costos con una tabla de ventas', () => {
+    const mapping = {
+      producto: 'SKU_Producto',
+      costo: 'Costo Unitario',
+      fecha: 'Fecha Vigencia',
+    }
+    expect(
+      basicMappingQuestions(mapping, {}, [], {
+        SKU_Producto: 'texto',
+        'Costo Unitario': 'numero',
+        'Fecha Vigencia': 'fecha',
+      }),
+    ).toEqual([])
+    expect(requiresSalesAmountMapping(mapping)).toBe(false)
+    expect(requiresSalesAmountMapping({ producto: 'SKU_Producto' })).toBe(true)
   })
 })
 

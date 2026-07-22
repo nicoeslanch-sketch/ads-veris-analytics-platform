@@ -41,6 +41,7 @@ import { useCapability, usePlan } from '../lib/usePlan'
 import {
   basicMappingQuestions,
   cleaningScopeState,
+  requiresSalesAmountMapping,
   serializedAnalysisScope,
   updateBatchSheetErrors,
 } from '../lib/multiSheet'
@@ -185,6 +186,7 @@ export default function Limpieza() {
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
   const [duplicateConfirmOpen, setDuplicateConfirmOpen] = useState(false)
+  const [batchDuplicateConfirmOpen, setBatchDuplicateConfirmOpen] = useState(false)
   const [duplicateRemovalPending, setDuplicateRemovalPending] = useState(false)
   const [reviewMode, setReviewMode] = useState(
     () => new URLSearchParams(location.search).get('revision') === '1',
@@ -212,7 +214,9 @@ export default function Limpieza() {
       )
     })
     .map(([role]) => role)
-  const missingAmount = Boolean(standardization && !effectiveMapping.monto)
+  const missingAmount = Boolean(
+    standardization && requiresSalesAmountMapping(effectiveMapping),
+  )
   const highlightedRole = mappingNavigation?.highlightRole ?? (missingAmount ? 'monto' : null)
   const [mappingExpanded, setMappingExpanded] = useState(
     Boolean(mappingNavigation?.openMapping || missingAmount || lowConfidenceRoles.length),
@@ -244,7 +248,11 @@ export default function Limpieza() {
 
   const handleApplySheets = useCallback(async (
     names: string[],
-    options: { retryErrors?: boolean; reclean?: boolean } = {},
+    options: {
+      retryErrors?: boolean
+      reclean?: boolean
+      removeExactDuplicates?: boolean
+    } = {},
   ) => {
     if (!file || names.length === 0 || cleaningRunRef.current) return
     const runnable = names.filter((name) => {
@@ -296,7 +304,9 @@ export default function Limpieza() {
               ),
               // El lote conserva la decision explicita de cada hoja. Detectar
               // duplicados nunca autoriza por si solo a eliminar filas.
-              eliminar_duplicados: String(session.eliminarDuplicados),
+              eliminar_duplicados: String(
+                options.removeExactDuplicates ?? session.eliminarDuplicados,
+              ),
               ...(datasetId ? { dataset_id: datasetId } : {}),
               sheet: name,
               ...(session.mappingOverride
@@ -310,6 +320,12 @@ export default function Limpieza() {
           )
           batchSheetErrors = successSheetErrors
           setCleaning(response, { activate: name === target })
+          if (response.persistencia?.guardada === false) {
+            setPersistWarning(
+              response.persistencia.mensaje ??
+              'La hoja se limpió, pero el punto de restauración no pudo guardarse.',
+            )
+          }
           // El historial es best-effort y no debe frenar el inicio de la hoja
           // siguiente. Se verifica el lote completo antes de cerrar el flujo.
           historyWrites.push(saveCleaningJob(datasetId, response.reglas_activas, response))
@@ -412,14 +428,17 @@ export default function Limpieza() {
   ])
 
   useEffect(() => {
-    if (!duplicateConfirmOpen) return
+    if (!duplicateConfirmOpen && !batchDuplicateConfirmOpen) return
     cancelDuplicateRef.current?.focus()
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setDuplicateConfirmOpen(false)
+      if (event.key === 'Escape') {
+        setDuplicateConfirmOpen(false)
+        setBatchDuplicateConfirmOpen(false)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [duplicateConfirmOpen])
+  }, [batchDuplicateConfirmOpen, duplicateConfirmOpen])
 
   useEffect(() => {
     if (!file || (cleaning && !reviewMode) || applying) return
@@ -718,6 +737,12 @@ export default function Limpieza() {
 
   const finishApply = async (response: CleanResult) => {
     setCleaning(response)
+    if (response.persistencia?.guardada === false) {
+      setPersistWarning(
+        response.persistencia.mensaje ??
+        'La limpieza se aplicó, pero no pudo guardarse el punto de restauración.',
+      )
+    }
     // Best-effort: si falla el guardado, la limpieza IGUAL quedó aplicada —
     // jamás mostrarlo como error de limpieza (solo aviso de historial).
     const saved = await saveCleaningJob(datasetId, rules, response)
@@ -841,6 +866,24 @@ export default function Limpieza() {
       0
     ),
     0,
+  )
+  const duplicateSheets = selectedSheets.filter((name) => {
+    const sheetCleaning = sheetSessions[name]?.cleaning
+    const detected = sheetCleaning?.duplicados_detalle?.exactos ??
+      sheetCleaning?.problemas.duplicados ?? 0
+    const removed = sheetCleaning?.duplicados_detalle?.filas_eliminadas ?? 0
+    return detected > removed
+  })
+  const aggregateExactDuplicates = duplicateSheets.reduce((total, name) => {
+    const sheetCleaning = sheetSessions[name]?.cleaning
+    const detected = sheetCleaning?.duplicados_detalle?.exactos ??
+      sheetCleaning?.problemas.duplicados ?? 0
+    const removed = sheetCleaning?.duplicados_detalle?.filas_eliminadas ?? 0
+    return total + Math.max(detected - removed, 0)
+  }, 0)
+  const unfinishedPreparedSheets = selectedSheets.filter((name) =>
+    Boolean(sheetSessions[name]?.standardization) &&
+    (!sheetSessions[name]?.cleaning || sheetSessions[name]?.status === 'error'),
   )
 
   const steps = [
@@ -1010,6 +1053,37 @@ export default function Limpieza() {
               {failedSheets.length > 0 && <Badge tone="coral">{failedSheets.length} con error</Badge>}
             </div>
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-teal/20 bg-teal/[0.04] p-3">
+            <p className="mr-auto text-xs leading-relaxed text-navy/65">
+              Limpiar formatos, tipos y nulos es independiente de borrar filas duplicadas.
+              Primero puedes completar todas las hojas conservando sus filas y decidir los
+              duplicados después.
+            </p>
+            {unfinishedPreparedSheets.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleApplySheets(unfinishedPreparedSheets, {
+                  retryErrors: true,
+                })}
+                disabled={applying}
+                className="inline-flex items-center gap-2 rounded-lg bg-teal px-3.5 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Completar limpieza de todas ({unfinishedPreparedSheets.length})
+              </button>
+            )}
+            {aggregateExactDuplicates > 0 && (
+              <button
+                type="button"
+                onClick={() => setBatchDuplicateConfirmOpen(true)}
+                disabled={applying}
+                className="inline-flex items-center gap-2 rounded-lg bg-coral px-3.5 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Eliminar duplicados de todas ({formatNumber(aggregateExactDuplicates)})
+              </button>
+            )}
+          </div>
           <div className="mt-3 divide-y divide-navy/10 rounded-lg border border-navy/10">
             {selectedSheets.map((name) => {
               const session = sheetSessions[name]
@@ -1025,6 +1099,9 @@ export default function Limpieza() {
                   <button type="button" onClick={() => setSheet(name)} className="min-w-0 flex-1 truncate text-left font-semibold text-navy hover:text-teal" title={`Vista previa: ${name}`}>{name}</button>
                   {name === sheet && <span className="text-teal">Vista previa activa</span>}
                   <span className={session?.status === 'error' ? 'text-coral' : 'text-navy/55'}>{status}</span>
+                  {session?.status === 'error' && session.error && (
+                    <span className="basis-full text-coral" title={session.error}>{session.error}</span>
+                  )}
                 </div>
               )
             })}
@@ -1930,6 +2007,66 @@ export default function Limpieza() {
               >
                 <Trash2 className="h-4 w-4" />
                 {reviewMode ? 'Incluir en la próxima limpieza' : 'Eliminar duplicados exactos'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {batchDuplicateConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-navy-deep/55 p-4"
+          onMouseDown={() => setBatchDuplicateConfirmOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="batch-duplicate-confirm-title"
+            className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-coral/10">
+                <ShieldAlert className="h-5 w-5 text-coral" />
+              </div>
+              <div>
+                <h2 id="batch-duplicate-confirm-title" className="text-base font-semibold text-navy">
+                  ¿Eliminar {formatNumber(aggregateExactDuplicates)} duplicados en {duplicateSheets.length} hoja(s)?
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-navy/70">
+                  Se volverán a procesar únicamente las hojas que tienen repeticiones exactas.
+                  Las hojas sin duplicados, como un catálogo de costos válido, no se tocarán.
+                </p>
+              </div>
+            </div>
+            <p className="mt-4 rounded-lg border border-gold/40 bg-gold/[0.09] px-3 py-3 text-xs leading-relaxed text-navy/75">
+              Solo se borran repeticiones idénticas del archivo original. Coincidencias tras
+              normalización e identificadores reutilizados con contenido distinto se conservan
+              para revisión.
+            </p>
+            <p className="mt-3 text-xs text-navy/60">
+              Hojas: {duplicateSheets.join(', ')}
+            </p>
+            <div className="mt-5 flex justify-end gap-2.5">
+              <button
+                ref={cancelDuplicateRef}
+                type="button"
+                onClick={() => setBatchDuplicateConfirmOpen(false)}
+                className="rounded-lg border border-navy/20 bg-white px-4 py-2 text-sm font-semibold text-navy hover:bg-navy/5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBatchDuplicateConfirmOpen(false)
+                  void handleApplySheets(duplicateSheets, {
+                    reclean: true,
+                    removeExactDuplicates: true,
+                  })
+                }}
+                className="inline-flex items-center gap-2 rounded-lg bg-coral px-4 py-2 text-sm font-semibold text-white hover:bg-coral/90"
+              >
+                <Trash2 className="h-4 w-4" /> Eliminar en todas
               </button>
             </div>
           </div>
