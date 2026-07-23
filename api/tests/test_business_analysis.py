@@ -642,3 +642,71 @@ def test_iva_exempt_rows_are_not_flagged_as_formula_inconsistent():
     # Las filas exentas quedan fuera de la evaluación (no se comparan contra
     # la tasa de las afectas), no se cuentan como correctas ni incorrectas.
     assert iva_control["filas_evaluadas"] == 5
+
+
+def test_inventory_without_date_column_keeps_summing_every_row():
+    """Regresión guardia P1-2: un inventario de una sola foto (sin columna de
+    fecha) debe seguir sumando todas sus filas como antes -- el fix de
+    cortes temporales no debe afectar el caso de archivo único, el más
+    común."""
+    frames = {
+        "Ventas_2026": _sales_frame_for_products(["A"]),
+        "Inventario": pd.DataFrame(
+            [
+                {"SKU Producto": "A", "Valor Inventario": "500"},
+                {"SKU Producto": "B", "Valor Inventario": "300"},
+            ]
+        ),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    assert result["operacion"]["valor_inventario"] == 800
+    assert result["operacion"]["inventario_corte"] is None
+
+
+def test_inventory_with_multiple_dated_snapshots_uses_only_the_latest_cut():
+    """Regresión QA P1-2: el ratio de rotación ya documentaba "usa un solo
+    corte de inventario", pero el motor sumaba TODAS las filas sin mirar la
+    fecha -- un conteo mensual con varios cortes en la misma hoja duplicaba
+    el valor de inventario real tantas veces como meses tuviera el archivo."""
+    frames = {
+        "Ventas_2026": _sales_frame_for_products(["A", "B"]),
+        "Inventario": pd.DataFrame(
+            [
+                {"SKU Producto": "A", "Fecha Conteo": "15/01/2026", "Valor Inventario": "500"},
+                {"SKU Producto": "A", "Fecha Conteo": "15/02/2026", "Valor Inventario": "700"},
+                {"SKU Producto": "B", "Fecha Conteo": "15/02/2026", "Valor Inventario": "300"},
+            ]
+        ),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    # Solo el corte de febrero (700 + 300), no 500 + 700 + 300.
+    assert result["operacion"]["valor_inventario"] == 1000
+    assert result["operacion"]["inventario_corte"] == "2026-02-15"
+
+
+def test_inventory_snapshot_respects_period_filter_end_date():
+    """Un corte de inventario posterior al fin del periodo filtrado (ej. un
+    conteo de marzo mientras se analiza enero) no representa el inventario
+    "al corte" de ese periodo -- debe usarse el último corte disponible
+    DENTRO del periodo, no el más reciente del archivo completo."""
+    frames = {
+        "Ventas_2026": _sales_frame_for_products(["A"]),
+        "Inventario": pd.DataFrame(
+            [
+                {"SKU Producto": "A", "Fecha Conteo": "15/01/2026", "Valor Inventario": "500"},
+                {"SKU Producto": "A", "Fecha Conteo": "15/03/2026", "Valor Inventario": "999"},
+            ]
+        ),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {}, date_to="2026-01-31")
+
+    assert result is not None
+    assert result["operacion"]["valor_inventario"] == 500
+    assert result["operacion"]["inventario_corte"] == "2026-01-15"

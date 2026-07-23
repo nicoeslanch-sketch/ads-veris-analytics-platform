@@ -520,6 +520,7 @@ export interface BusinessAnalysis {
     documentos_sobrepagados: number
     pagos_duplicados_excluidos: number
     valor_inventario: number | null
+    inventario_corte: string | null
     compras_efectivas: number | null
     gastos_fijos: number | null
     gastos_variables: number | null

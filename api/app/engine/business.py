@@ -931,9 +931,31 @@ def analyze_business_workbook(
 
     inventory_frame = frames.get((kinds.get("inventario") or [None])[0]) if kinds.get("inventario") else None
     inventory_value = None
+    inventory_asof = None
     if inventory_frame is not None:
+        # P1-2: el ratio de rotación ya documenta "usa un solo corte de
+        # inventario" -- pero si la hoja trae varios cortes en el tiempo (un
+        # conteo mensual con columna de fecha, no una foto única), sumar
+        # TODAS las filas suma el mismo inventario varias veces. Con fecha
+        # disponible, se usa solo el corte más reciente (hasta el fin del
+        # periodo filtrado, si hay uno) en vez de todo el historial.
+        inventory_rows = inventory_frame
+        inventory_date_col = find_column(inventory_frame.columns, "fecha")
+        if inventory_date_col:
+            inventory_dates = _dates(inventory_frame, inventory_date_col)
+            eligible = inventory_dates.notna() & _date_filter(inventory_dates, None, date_to)
+            if eligible.any():
+                cutoff = inventory_dates[eligible].max()
+                inventory_rows = inventory_frame.loc[inventory_dates.eq(cutoff)]
+                inventory_asof = cutoff.date().isoformat()
+            inventory_key = (
+                find_column(inventory_rows.columns, "sku", "producto")
+                or find_column(inventory_rows.columns, "id", "producto")
+            )
+            if inventory_key:
+                inventory_rows = inventory_rows.drop_duplicates(subset=[inventory_key], keep="last")
         inventory_values = numeric_series(
-            inventory_frame, find_column(inventory_frame.columns, "valor", "inventario")
+            inventory_rows, find_column(inventory_rows.columns, "valor", "inventario")
         )
         inventory_value = float(inventory_values.dropna().sum()) if inventory_values.notna().any() else None
 
@@ -1650,6 +1672,7 @@ def analyze_business_workbook(
             "documentos_sobrepagados": overpaid_documents,
             "pagos_duplicados_excluidos": collection_duplicates_excluded,
             "valor_inventario": round(inventory_value, 2) if inventory_value is not None else None,
+            "inventario_corte": inventory_asof,
             "compras_efectivas": round(purchases_total, 2) if purchases_total is not None else None,
             "gastos_fijos": round(fixed_expenses, 2) if fixed_expenses is not None else None,
             "gastos_variables": round(variable_expenses, 2) if variable_expenses is not None else None,

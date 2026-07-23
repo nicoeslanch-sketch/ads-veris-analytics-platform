@@ -226,9 +226,12 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
     {
       label: 'Inventario valorizado',
       value: money(operation.valor_inventario),
-      detail: operation.rotacion_inventario_aprox == null
-        ? 'corte disponible, sin rotación fiable'
-        : `${formatNumber(operation.rotacion_inventario_aprox)}x de rotación aproximada`,
+      detail: [
+        operation.inventario_corte ? `corte ${operation.inventario_corte}` : null,
+        operation.rotacion_inventario_aprox == null
+          ? 'sin rotación fiable'
+          : `${formatNumber(operation.rotacion_inventario_aprox)}x de rotación aproximada`,
+      ].filter(Boolean).join(' · '),
       icon: Package,
       color: CATEGORICAL[3],
     },
