@@ -2,7 +2,11 @@
 
 import pandas as pd
 
-from app.engine.business import analyze_business_workbook, classify_business_sheets
+from app.engine.business import (
+    _cost_outlier_mask,
+    analyze_business_workbook,
+    classify_business_sheets,
+)
 
 
 def _sales_mapping() -> dict[str, dict[str, str]]:
@@ -450,3 +454,144 @@ def test_inventory_is_not_misclassified_as_sales_and_unsupported_ratios_stay_una
         "roa": "unavailable",
         "ebitda": "unavailable",
     }
+
+
+def test_cost_outlier_mask_uses_category_limit_that_global_comparison_would_miss():
+    """Regresión QA P1-6: un costo alto en una categoria barata (ej. un
+    insumo de aseo a 200 cuando el resto de aseo cuesta 40-59) es un
+    verdadero atipico que alguien deberia revisar. Comparado contra el
+    catalogo COMPLETO -- que incluye una categoria de precio base muy
+    distinto (electronica a 900-919) -- el mismo valor pasa piola porque
+    el limite global queda inflado por esa otra categoria. El analisis
+    por categoria debe detectarlo igual; el global-only, no."""
+    aseo_values = list(range(40, 60)) + [200]
+    electronica_values = list(range(900, 920))
+    values = pd.Series(aseo_values + electronica_values, dtype=float)
+    groups = pd.Series(["Aseo"] * len(aseo_values) + ["Electronica"] * len(electronica_values))
+
+    global_mask = _cost_outlier_mask(values)
+    category_mask = _cost_outlier_mask(values, groups)
+
+    outlier_index = aseo_values.index(200)
+    assert not global_mask.iloc[outlier_index]
+    assert category_mask.iloc[outlier_index]
+    # Ningun valor normal de ninguna categoria queda marcado.
+    assert category_mask.sum() == 1
+
+
+def test_cost_outlier_mask_falls_back_to_global_limit_for_small_groups():
+    """Un grupo con pocas filas (< 20) no tiene evidencia propia para su
+    propio limite -- debe evaluarse igual usando el limite global en vez
+    de quedar sin evaluar por pertenecer a una categoria chica."""
+    common_values = list(range(40, 65))  # 25 valores, categoria con evidencia propia
+    small_group_values = [41, 5000]  # categoria con solo 2 filas
+    values = pd.Series(common_values + small_group_values, dtype=float)
+    groups = pd.Series(["Comun"] * len(common_values) + ["Chica"] * len(small_group_values))
+
+    mask = _cost_outlier_mask(values, groups)
+
+    assert not mask.iloc[len(common_values)]  # 41 en la categoria chica: no es atipico
+    assert mask.iloc[len(common_values) + 1]  # 5000 en la categoria chica: si lo es
+
+
+def test_cost_outlier_mask_never_reduces_to_empty_when_no_groups_given():
+    values = pd.Series(list(range(40, 61)) + [5000], dtype=float)
+
+    mask = _cost_outlier_mask(values)
+
+    assert mask.sum() == 1
+    assert mask.iloc[-1]
+
+
+def _sales_frame_for_products(product_ids: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Fecha Venta": "01/01/2026",
+                "ID Documento": f"D{i}",
+                "SKU Producto": product_id,
+                "Cantidad": "1",
+                "Monto Venta": "1000",
+                "Estado": "Vigente",
+                "ID Cliente": "C1",
+            }
+            for i, product_id in enumerate(product_ids)
+        ]
+    )
+
+
+def test_atypical_cost_is_never_excluded_from_official_profit_but_is_reported_separately():
+    """Regresion QA P1-6: antes, un costo atipico del catalogo quedaba
+    fuera del lookup (`trustworthy &= current_values.le(limit)`) y la
+    venta pareada perdia su costo real sin avisar. Ahora el costo real
+    SIEMPRE se usa en el resultado oficial; solo se marca aparte y se
+    informa cuanto pesaria si se excluyera."""
+    # Necesitan variacion real (no todos el mismo valor) para que el IQR
+    # tenga un spread > 0 y pueda calcular un limite.
+    normal_products = [f"P{i:03d}" for i in range(21)]
+    normal_rows = [
+        {"SKU Producto": pid, "Costo Unitario": str(40 + i)} for i, pid in enumerate(normal_products)
+    ]
+    outlier_row = [{"SKU Producto": "P-OUT", "Costo Unitario": "5000"}]
+
+    frames = {
+        "Ventas_2026": _sales_frame_for_products(normal_products + ["P-OUT"]),
+        "Costos_Productos": pd.DataFrame(normal_rows + outlier_row),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    costos = result["calidad"]["costos"]
+    assert costos["extremos"] >= 1
+    assert costos["analisis_por_categoria"] is False
+
+    normal_cost_total = sum(40 + i for i in range(21))
+    # El costo atipico real (5000) sigue sumado en el resultado oficial.
+    assert result["estado_resultados"]["costo_venta_conocido"] == normal_cost_total + 5000
+
+    escenario = costos["escenario_sin_atipicos"]
+    assert escenario["estado_revision"] == "requiere_revision"
+    assert escenario["monto_costo_atipico_incluido"] == 5000
+    # Sin el atipico se excluye TODA la fila (venta 1000 + costo 5000): la
+    # utilidad pareada sube en el neto, 5000 - 1000 = 4000.
+    assert escenario["utilidad_bruta"] == result["estado_resultados"]["utilidad_bruta"] + 4000
+
+    decision_titles = [d["titulo"] for d in result["decisiones"]]
+    assert "Validar costos que distorsionan el margen" in decision_titles
+    flagged_decision = next(
+        d for d in result["decisiones"] if d["titulo"] == "Validar costos que distorsionan el margen"
+    )
+    assert "5000" in flagged_decision["evidencia"]
+
+
+def test_cost_quality_uses_category_column_when_catalogue_provides_one():
+    """Con columna de categoria en el catalogo de costos, el motor debe
+    compararlos POR CATEGORIA (no todos contra todos) y exponerlo via
+    `analisis_por_categoria`."""
+    aseo_products = [f"AS{i:03d}" for i in range(20)]
+    aseo_rows = [
+        {"SKU Producto": pid, "Categoria": "Aseo", "Costo Unitario": str(40 + i)}
+        for i, pid in enumerate(aseo_products)
+    ]
+    electronica_products = [f"EL{i:03d}" for i in range(20)]
+    electronica_rows = [
+        {"SKU Producto": pid, "Categoria": "Electronica", "Costo Unitario": str(900 + i)}
+        for i, pid in enumerate(electronica_products)
+    ]
+    outlier_row = [{"SKU Producto": "AS-OUT", "Categoria": "Aseo", "Costo Unitario": "200"}]
+
+    frames = {
+        "Ventas_2026": _sales_frame_for_products(aseo_products + electronica_products + ["AS-OUT"]),
+        "Costos_Productos": pd.DataFrame(aseo_rows + electronica_rows + outlier_row),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    costos = result["calidad"]["costos"]
+    assert costos["analisis_por_categoria"] is True
+    # El atipico de Aseo (200 entre 40-59) se detecta pese a que Electronica
+    # (900-919) opaca esa diferencia si se comparara todo junto.
+    assert costos["extremos"] >= 1
+    assert costos["escenario_sin_atipicos"]["monto_costo_atipico_incluido"] == 200

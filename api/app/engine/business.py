@@ -349,6 +349,34 @@ def _cost_outlier_limit(values: pd.Series) -> float | None:
     return float(q3 + 5 * spread) if spread > 0 else None
 
 
+def _cost_outlier_mask(values: pd.Series, groups: pd.Series | None = None) -> pd.Series:
+    """P1-6: máscara de costos atípicos -- NUNCA se usa para excluir datos
+    reales de un cálculo, solo para marcarlos aparte y que alguien los
+    revise (un costo alto de verdad no deja de ser un costo real).
+
+    Con ``groups`` (ej. categoría/subcategoría), el límite se calcula POR
+    GRUPO cuando el grupo trae evidencia suficiente (>=20 valores
+    positivos, mismo mínimo que el límite global) -- un costo de
+    electrónica no debe compararse contra el de un insumo de aseo. Un
+    grupo sin evidencia propia usa el límite global como respaldo: ningún
+    valor queda sin evaluar solo por pertenecer a un grupo chico."""
+    positive = values > 0
+    mask = pd.Series(False, index=values.index)
+    if not positive.any():
+        return mask
+    global_limit = _cost_outlier_limit(values)
+    if groups is None or groups[positive].notna().sum() < 2:
+        if global_limit is not None:
+            mask = positive & (values > global_limit)
+        return mask
+    for _group_name, group_values in values[positive].groupby(groups[positive], dropna=True):
+        local_limit = _cost_outlier_limit(group_values)
+        limit = local_limit if local_limit is not None else global_limit
+        if limit is not None:
+            mask.loc[group_values.index] = group_values > limit
+    return mask
+
+
 def _applicable_unit_cost(
     sales: pd.DataFrame,
     product_key: str | None,
@@ -357,7 +385,8 @@ def _applicable_unit_cost(
     cost_key: str | None,
     unit_cost_col: str | None,
     cost_history: pd.DataFrame | None,
-) -> tuple[pd.Series, pd.Series, dict[str, Any]]:
+    cost_category_col: str | None = None,
+) -> tuple[pd.Series, pd.Series, pd.Series, dict[str, Any]]:
     """Return one applicable cost per sale without multiplying rows.
 
     Historical costs use an as-of match (last effective date not after the
@@ -365,12 +394,20 @@ def _applicable_unit_cost(
     value is exposed as an estimate. Its provenance remains separate so it can
     improve the management view without turning a historical estimate into a
     certifiable accounting result.
+
+    P1-6: el tercer valor devuelto es una máscara booleana (alineada con
+    `sales`) marcando qué filas tomaron un costo del catálogo actual
+    considerado atípico frente al resto del catálogo. Esos costos NUNCA se
+    excluyen del cálculo -- se usan igual porque son datos reales -- pero
+    quedan identificados para que el llamador pueda mostrar el efecto
+    monetario y dejarlos en revisión.
     """
 
     empty_cost = pd.Series(float("nan"), index=sales.index, dtype=float)
     empty_source = pd.Series(None, index=sales.index, dtype=object)
+    empty_atypical = pd.Series(False, index=sales.index, dtype=bool)
     if not product_key or product_key not in sales.columns:
-        return empty_cost, empty_source, {
+        return empty_cost, empty_source, empty_atypical, {
             "metodo": "sin_clave_producto",
             "filas_historicas": 0,
             "filas_catalogo_actual": 0,
@@ -455,41 +492,56 @@ def _applicable_unit_cost(
         current_costs, cost_key, [unit_cost_col] if unit_cost_col else []
     )
     if safe_current.empty or not unit_cost_col:
-        return cost, source, {
+        return cost, source, empty_atypical, {
             "metodo": "historial_asof" if usable_history else "sin_costos_utilizables",
             "filas_historicas": historical_rows,
             "filas_catalogo_actual": 0,
+            "filas_catalogo_actual_atipico": 0,
             "claves_historicas_conflictivas": len(conflicting_pairs),
             **reference_quality,
         }
     current_values = numeric_series(safe_current, unit_cost_col)
-    limit = _cost_outlier_limit(current_values)
-    trustworthy = current_values.gt(0)
-    if limit is not None:
-        trustworthy &= current_values.le(limit)
+    positive = current_values.gt(0)
+    # P1-6: un costo atípico (ej. un monitor caro entre accesorios baratos)
+    # antes se EXCLUÍA del lookup -- la venta quedaba "sin costo" en vez de
+    # usar su valor real, y nada lo informaba. Ahora SIEMPRE se usa (nunca
+    # se descarta un dato real sin mostrarlo); solo se marca aparte para
+    # que quien certifique el resultado sepa qué filas conviene revisar.
+    category_groups = (
+        current_costs.loc[safe_current.index, cost_category_col]
+        if cost_category_col and current_costs is not None and cost_category_col in current_costs.columns
+        else None
+    )
+    atypical_mask = _cost_outlier_mask(current_values, category_groups)
+    atypical_keys = set(safe_current.loc[positive & atypical_mask, "_key"])
     lookup = dict(
         zip(
-            safe_current.loc[trustworthy, "_key"],
-            current_values.loc[trustworthy],
+            safe_current.loc[positive, "_key"],
+            current_values.loc[positive],
             strict=False,
         )
     )
-    current_cost = _keys(sales[product_key]).map(lookup).astype(float)
+    sale_keys = _keys(sales[product_key])
+    current_cost = sale_keys.map(lookup).astype(float)
+    atypical_sale = sale_keys.isin(atypical_keys)
     if usable_history:
         fallback = cost.isna() & current_cost.notna()
         cost.loc[fallback] = current_cost.loc[fallback]
         source.loc[fallback] = "catalogo_actual_estimado"
         method = "historial_asof_con_respaldo_actual"
         current_rows = int(fallback.sum())
+        atypical_row_mask = fallback & atypical_sale
     else:
         cost = current_cost
         source.loc[cost.notna()] = "catalogo_actual"
         method = "catalogo_actual"
         current_rows = int(cost.notna().sum())
-    return cost, source, {
+        atypical_row_mask = cost.notna() & atypical_sale
+    return cost, source, atypical_row_mask, {
         "metodo": method,
         "filas_historicas": historical_rows,
         "filas_catalogo_actual": current_rows,
+        "filas_catalogo_actual_atipico": int(atypical_row_mask.sum()),
         "claves_historicas_conflictivas": len(conflicting_pairs),
         **reference_quality,
     }
@@ -732,7 +784,12 @@ def analyze_business_workbook(
     safe_costs, cost_reference_quality = _unique_reference(
         current_costs, cost_key, [unit_cost_col] if unit_cost_col else []
     )
-    unit_cost, cost_source, cost_method = _applicable_unit_cost(
+    # P1-6: con columna de categoria, un costo atipico se compara contra su
+    # propia categoria (electronica vs. aseo), no contra todo el catalogo.
+    cost_category_col = (
+        find_column(current_costs.columns, "categoria") if current_costs is not None else None
+    )
+    unit_cost, cost_source, atypical_cost_row, cost_method = _applicable_unit_cost(
         sales,
         product_key,
         sales_dates,
@@ -740,6 +797,7 @@ def analyze_business_workbook(
         cost_key,
         unit_cost_col,
         cost_history,
+        cost_category_col,
     )
     cost_of_sales = (quantity * unit_cost).where(quantity.notna() & unit_cost.notna())
     paired = indicator_mask & amount.notna() & cost_of_sales.notna()
@@ -759,6 +817,24 @@ def analyze_business_workbook(
     paired_cost = float(cost_of_sales[paired].sum())
     gross_profit = paired_sales - paired_cost if paired.any() else None
     gross_margin = gross_profit / paired_sales * 100 if gross_profit is not None and paired_sales else None
+    # P1-6: costos atípicos NUNCA se excluyen del escenario oficial de
+    # arriba (paired/gross_profit) -- son datos reales. Este es solo un
+    # escenario ALTERNATIVO, informativo, para ver cuánto pesan si alguien
+    # decide excluirlos tras revisarlos a mano.
+    paired_without_atypical = paired & ~atypical_cost_row
+    atypical_cost_amount = float(cost_of_sales[paired & atypical_cost_row].sum())
+    sales_without_atypical = float(amount[paired_without_atypical].sum())
+    cost_without_atypical = float(cost_of_sales[paired_without_atypical].sum())
+    profit_without_atypical = (
+        sales_without_atypical - cost_without_atypical
+        if paired_without_atypical.any()
+        else None
+    )
+    margin_without_atypical = (
+        profit_without_atypical / sales_without_atypical * 100
+        if profit_without_atypical is not None and sales_without_atypical
+        else None
+    )
     certified_paired_sales = float(amount[certified_paired].sum())
     certified_cost = float(cost_of_sales[certified_paired].sum())
     certified_profit = certified_paired_sales - certified_cost if certified_paired.any() else None
@@ -1133,6 +1209,13 @@ def analyze_business_workbook(
     orphan_rows = sum(item["huerfanas"] + item["sin_clave"] for item in integrity)
 
     cost_values = numeric_series(current_costs, unit_cost_col) if current_costs is not None else pd.Series(dtype=float)
+    # P1-6: análisis contextual -- un límite ÚNICO para todo el catálogo
+    # compara un costo de electrónica contra uno de un insumo de aseo. Con
+    # columna de categoría disponible (ya detectada arriba, la misma que usa
+    # `_applicable_unit_cost` para marcar `atypical_cost_row`), el límite se
+    # calcula POR CATEGORÍA; sin ella, se degrada al límite global.
+    cost_categories = current_costs[cost_category_col] if cost_category_col and current_costs is not None else None
+    extreme_mask = _cost_outlier_mask(cost_values, cost_categories)
     upper = _cost_outlier_limit(cost_values)
     cost_quality = {
         **cost_reference_quality,
@@ -1140,8 +1223,9 @@ def analyze_business_workbook(
         "faltantes": int(cost_values.isna().sum()),
         "negativos": int((cost_values < 0).sum()),
         "ceros": int((cost_values == 0).sum()),
-        "extremos": int((cost_values > upper).sum()) if upper is not None else 0,
+        "extremos": int(extreme_mask.sum()),
         "limite_extremo": round(upper, 2) if upper is not None else None,
+        "analisis_por_categoria": cost_category_col is not None,
         "ventas_con_costo_pct": cost_coverage,
         "ventas_certificables_con_costo_pct": certified_cost_coverage,
         "filas_costo_historico": int((cost_source == "historial_asof").sum()),
@@ -1149,6 +1233,22 @@ def analyze_business_workbook(
         "filas_costo_actual_estimado": int(
             (cost_source == "catalogo_actual_estimado").sum()
         ),
+        # P1-6: escenario ALTERNATIVO informativo -- el escenario oficial de
+        # arriba (utilidad_bruta, margen_bruto_pct) NUNCA excluye costos
+        # atípicos por sí solo, son datos reales. Esto muestra cuánto
+        # pesarían si alguien decide excluirlos tras revisarlos a mano.
+        "escenario_sin_atipicos": {
+            "monto_costo_atipico_incluido": round(atypical_cost_amount, 2),
+            "ventas_pareadas": round(sales_without_atypical, 2),
+            "costo_pareado": round(cost_without_atypical, 2),
+            "utilidad_bruta": round(profit_without_atypical, 2)
+            if profit_without_atypical is not None
+            else None,
+            "margen_bruto_pct": round(margin_without_atypical, 2)
+            if margin_without_atypical is not None
+            else None,
+            "estado_revision": "requiere_revision" if atypical_cost_row.any() else "sin_atipicos",
+        },
     }
 
     goals_frame = frames.get((kinds.get("metas") or [None])[0]) if kinds.get("metas") else None
@@ -1372,10 +1472,20 @@ def analyze_business_workbook(
             "confianza": 1.0,
         })
     if cost_quality["negativos"] or cost_quality["ceros"] or cost_quality["extremos"]:
+        atypical_amount_note = (
+            f" El costo atípico incluido en el resultado suma {round(atypical_cost_amount, 2)}."
+            if atypical_cost_amount
+            else ""
+        )
         decisions.append({
             "severidad": "alta",
             "titulo": "Validar costos que distorsionan el margen",
-            "evidencia": f"{cost_quality['negativos']} negativos, {cost_quality['ceros']} en cero y {cost_quality['extremos']} extremos.",
+            "evidencia": (
+                f"{cost_quality['negativos']} negativos, {cost_quality['ceros']} en cero y "
+                f"{cost_quality['extremos']} extremos"
+                + (" (comparados por categoría)." if cost_quality["analisis_por_categoria"] else ".")
+                + atypical_amount_note
+            ),
             "accion": "Confirma el costo vigente por SKU; no se reemplazó ningún valor automáticamente.",
             "confianza": 0.98,
         })

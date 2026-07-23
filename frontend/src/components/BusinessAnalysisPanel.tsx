@@ -470,6 +470,7 @@ function ProfitabilityChart({ rows }: { rows: BusinessGroupRow[] }) {
 function DiagnosticAnalysis({ analysis }: { analysis: BusinessAnalysis }) {
   const costQuality = analysis.calidad.costos
   const problematicCosts = numeric(costQuality.negativos) + numeric(costQuality.ceros) + numeric(costQuality.extremos)
+  const atypicalScenario = costQuality.escenario_sin_atipicos
   const sensitivityRows = [
     { escenario: 'Costo actual', utilidad: analysis.sensibilidad.base_utilidad_bruta },
     { escenario: 'Costo +5%', utilidad: analysis.sensibilidad.costo_mas_5 },
@@ -624,6 +625,14 @@ function DiagnosticAnalysis({ analysis }: { analysis: BusinessAnalysis }) {
               <QualityLine label="Documentos sobrepagados" value={analysis.operacion.documentos_sobrepagados} />
               <QualityLine label="Pagos duplicados excluidos" value={analysis.operacion.pagos_duplicados_excluidos} />
             </dl>
+            {atypicalScenario?.estado_revision === 'requiere_revision' && (
+              <p className="mt-3 rounded-lg bg-gold/[0.08] px-3 py-2 text-[11px] leading-relaxed text-navy/65">
+                Los costos a revisar no se excluyen del resultado oficial porque son datos reales. Si se excluyeran,
+                la utilidad bruta pareada sería {money(atypicalScenario.utilidad_bruta)}
+                {atypicalScenario.margen_bruto_pct != null && ` (${percent(atypicalScenario.margen_bruto_pct)} de margen)`},
+                {' '}frente a un costo atípico de {money(atypicalScenario.monto_costo_atipico_incluido)} incluido hoy.
+              </p>
+            )}
           </Card>
           {unavailable.length > 0 && (
             <Card>

@@ -566,7 +566,17 @@ export interface BusinessAnalysis {
     nota: string
   }
   calidad: {
-    costos: Record<string, number | string | null>
+    costos: Record<string, unknown> & {
+      analisis_por_categoria?: boolean
+      escenario_sin_atipicos?: {
+        monto_costo_atipico_incluido: number
+        ventas_pareadas: number
+        costo_pareado: number
+        utilidad_bruta: number | null
+        margen_bruto_pct: number | null
+        estado_revision: 'requiere_revision' | 'sin_atipicos'
+      }
+    }
     integridad_referencial: Array<{
       relacion: string
       tipo: 'clave' | 'atributo'
