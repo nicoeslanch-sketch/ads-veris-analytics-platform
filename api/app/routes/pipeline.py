@@ -1639,11 +1639,17 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         ),
         None,
     )
+    # "total" como subcadena también matchea componentes de línea que NO son el
+    # total del documento (p. ej. "Flete Total" en Compras, "Descuento Total").
+    # Esos no cumplen total = neto + IVA y generaban cientos de falsos positivos:
+    # se excluyen por palabra clave.
+    total_component_terms = ("flete", "descuento", "unitario")
     total_col = next(
         (
             str(column)
             for column in base.columns
             if "total" in normalized_header(column)
+            and not any(term in normalized_header(column) for term in total_component_terms)
             and column_types.get(str(column)) == "numero"
             and str(column) != monto_col
         ),
@@ -1658,7 +1664,10 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
             if 0.03 <= rate <= 0.35:
                 expected_tax = net * rate
                 tolerance = expected_tax.abs().mul(0.02).clip(lower=2.0)
-                mismatch = paired & tax.sub(expected_tax).abs().gt(tolerance)
+                # Un IVA en cero suele ser exento (remuneraciones, servicios
+                # exentos), no un error de tasa — marcarlo generaba cientos de
+                # falsos positivos. Solo señalamos un IVA PRESENTE que no cuadra.
+                mismatch = paired & tax.ne(0) & tax.sub(expected_tax).abs().gt(tolerance)
                 for row_idx in mismatch[mismatch].index[:300]:
                     yellow.setdefault(
                         (int(row_idx), iva_col),
