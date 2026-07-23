@@ -595,3 +595,50 @@ def test_cost_quality_uses_category_column_when_catalogue_provides_one():
     # (900-919) opaca esa diferencia si se comparara todo junto.
     assert costos["extremos"] >= 1
     assert costos["escenario_sin_atipicos"]["monto_costo_atipico_incluido"] == 200
+
+
+def test_iva_exempt_rows_are_not_flagged_as_formula_inconsistent():
+    """Regresion QA P1-4: la tasa de IVA se inferia como la mediana de TODAS
+    las filas y luego se exigia calce exacto -- un catalogo real chileno con
+    productos exentos (IVA=0, valido y frecuente) hacia que esas filas
+    quedaran marcadas como "formula que no cuadra" pese a estar correctas."""
+    taxed_rows = [
+        {
+            "Fecha Venta": "01/01/2026",
+            "ID Documento": f"DA{i}",
+            "SKU Producto": "A",
+            "Cantidad": "1",
+            "Monto Venta": "1000",
+            "IVA": "190",
+            "Total Documento": "1190",
+            "Estado": "Vigente",
+            "ID Cliente": "C1",
+        }
+        for i in range(5)
+    ]
+    exempt_rows = [
+        {
+            "Fecha Venta": "01/01/2026",
+            "ID Documento": f"DE{i}",
+            "SKU Producto": "B",
+            "Cantidad": "1",
+            "Monto Venta": "1000",
+            "IVA": "0",
+            "Total Documento": "1000",
+            "Estado": "Vigente",
+            "ID Cliente": "C1",
+        }
+        for i in range(3)
+    ]
+    frames = {"Ventas_2026": pd.DataFrame(taxed_rows + exempt_rows)}
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    iva_control = next(
+        c for c in result["calidad"]["controles_formula"] if c["control"] == "iva_venta"
+    )
+    assert iva_control["filas_inconsistentes"] == 0
+    # Las filas exentas quedan fuera de la evaluación (no se comparan contra
+    # la tasa de las afectas), no se cuentan como correctas ni incorrectas.
+    assert iva_control["filas_evaluadas"] == 5

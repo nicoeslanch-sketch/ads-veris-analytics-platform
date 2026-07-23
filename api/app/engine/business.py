@@ -577,15 +577,25 @@ def _formula_controls(frames: dict[str, pd.DataFrame], kinds: dict[str, list[str
         )
         tax = numeric_series(frame, tax_col)
         comparable = amount.notna() & tax.notna() & (amount.abs() > 0)
-        rate = float((tax[comparable] / amount[comparable]).abs().median()) if comparable.any() else 0.19
+        # P1-4: filas exentas (IVA=0 con monto>0) son un caso válido y
+        # frecuente en Chile (productos exentos, servicios sin IVA, etc.),
+        # no un error -- se excluyen de la inferencia de tasa para que un
+        # catálogo mixto (afecto + exento) no arrastre la tasa dominante
+        # hacia abajo.
+        taxed = comparable & tax.ne(0)
+        rate = float((tax[taxed] / amount[taxed]).abs().median()) if taxed.any() else 0.19
         if not 0.03 <= rate <= 0.35:
             rate = 0.19
+        # Solo se evalúa la fórmula sobre filas afectas: una fila exenta no
+        # se compara contra la tasa de las afectas, así que no se marca
+        # como inconsistente por no llevar el 19% que no le corresponde.
         controls.append(
             {"hoja": name, **formula_mismatch(
                 "iva_venta",
                 tax,
                 amount * rate,
                 source_rows=source_rows,
+                eligible=taxed,
                 relative_tolerance=0.0,
             ).to_dict()}
         )
