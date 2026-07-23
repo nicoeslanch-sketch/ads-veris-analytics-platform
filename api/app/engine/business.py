@@ -179,6 +179,60 @@ def _relation_quality(
     }
 
 
+def _attribute_consistency(
+    source: pd.DataFrame | None,
+    source_key: str | None,
+    source_attr: str | None,
+    reference: pd.DataFrame | None,
+    reference_key: str | None,
+    reference_attr: str | None,
+    label: str,
+) -> dict[str, Any] | None:
+    """Para filas cuya CLAVE sí existe en el maestro, cuenta cuántas traen un
+    ATRIBUTO (p. ej. el nombre del producto) distinto al del maestro. Una clave
+    válida con nombre incoherente no es huérfana, pero delata un error de
+    captura que un join a ciegas propagaría (SKU correcto, producto equivocado).
+    """
+    if (
+        source is None
+        or reference is None
+        or not source_key
+        or not source_attr
+        or not reference_key
+        or not reference_attr
+        or source_key not in source.columns
+        or source_attr not in source.columns
+        or reference_key not in reference.columns
+        or reference_attr not in reference.columns
+    ):
+        return None
+    ref = reference[[reference_key, reference_attr]].copy()
+    ref["_k"] = _keys(ref[reference_key])
+    ref = ref[ref["_k"].notna()].drop_duplicates(subset=["_k"], keep="first")
+    ref_map = {
+        key: _text_key(value)
+        for key, value in zip(ref["_k"], ref[reference_attr])
+        if _text_key(value) is not None
+    }
+    source_keys = _keys(source[source_key])
+    source_attr_norm = source[source_attr].map(_text_key)
+    # Solo filas con la clave presente en el maestro y ambos nombres legibles.
+    resolvable = source_keys.map(lambda key: key in ref_map) & source_attr_norm.notna()
+    expected = source_keys.map(ref_map)
+    mismatch = resolvable & (source_attr_norm != expected)
+    checked = int(resolvable.sum())
+    conflicts = int(mismatch.sum())
+    return {
+        "relacion": label,
+        "filas": checked,
+        "validas": checked - conflicts,
+        "huerfanas": conflicts,
+        "sin_clave": 0,
+        "cobertura_pct": round((checked - conflicts) / max(checked, 1) * 100, 1),
+        "ejemplos": sorted({str(value) for value in source.loc[mismatch, source_key].head(8)}),
+    }
+
+
 def _group_profit(
     frame: pd.DataFrame,
     column: str | None,
@@ -969,8 +1023,31 @@ def analyze_business_workbook(
             )
             portfolio.append({**row, "cuadrante": quadrant})
 
+    # Columna de NOMBRE de producto (no la clave): "Producto" descriptivo, nunca
+    # la columna de SKU/ID/código.
+    def _name_column(frame: pd.DataFrame | None, key_column: str | None) -> str | None:
+        if frame is None:
+            return None
+        for column in frame.columns:
+            header = normalized_header(column)
+            if (
+                "producto" in header
+                and column != key_column
+                and not any(term in header for term in ("sku", "id", "cod"))
+            ):
+                return str(column)
+        return None
+
+    sales_product_name = _name_column(sales, product_key)
+    products_product_name = _name_column(products_frame, product_ref_key)
+
     integrity = [
         _relation_quality(sales.loc[~structural], product_key, products_frame, product_ref_key, "Ventas → Productos"),
+        _attribute_consistency(
+            sales.loc[~structural], product_key, sales_product_name,
+            products_frame, product_ref_key, products_product_name,
+            "Ventas → Productos (nombre)",
+        ),
         _relation_quality(sales.loc[~structural], product_key, current_costs, cost_key, "Ventas → Costos"),
         _relation_quality(sales.loc[~structural], client_col, clients_frame, client_ref_key, "Ventas → Clientes"),
         _relation_quality(sales.loc[~structural], branch_col, branches_frame, branch_ref_key, "Ventas → Sucursales"),

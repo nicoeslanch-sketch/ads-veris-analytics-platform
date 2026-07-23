@@ -548,6 +548,9 @@ export default function Resumen() {
   // muestra el top 5 clásico.
   const topProducts = (metrics?.top_productos ?? []).slice(0, 5)
   const maxProduct = topProducts[0]?.ingresos ?? 1
+  // Solo en una hoja de ventas (sin costos relacionados) las columnas de costo,
+  // utilidad y margen salen todas "—": no aportan y las ocultamos.
+  const categoriaConCostos = (metrics?.por_categoria ?? []).some((row) => row.costo != null)
 
   return (
     <>
@@ -792,9 +795,13 @@ export default function Resumen() {
                       <th className="pb-2 pr-4 text-right">Ingresos</th>
                       {/* Fase 14b: participación BRUTA — distribución real que suma 100% */}
                       <th className="pb-2 pr-4 text-right">% Ventas brutas</th>
-                      <th className="pb-2 pr-4 text-right">Costo asociado</th>
-                      <th className="pb-2 pr-4 text-right">Utilidad</th>
-                      <th className="pb-2">Margen</th>
+                      {categoriaConCostos && (
+                        <>
+                          <th className="pb-2 pr-4 text-right">Costo asociado</th>
+                          <th className="pb-2 pr-4 text-right">Utilidad</th>
+                          <th className="pb-2">Margen</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -805,35 +812,39 @@ export default function Resumen() {
                         <td className="py-2.5 pr-4 text-right text-navy/75">
                           {formatNumber(row.participacion_bruta_pct ?? row.porcentaje)}%
                         </td>
-                        <td className="py-2.5 pr-4 text-right text-navy/75">
-                          {row.costo != null ? formatCLP(row.costo) : '—'}
-                        </td>
-                        <td className="py-2.5 pr-4 text-right text-navy/75">
-                          {row.utilidad != null ? formatCLP(row.utilidad) : '—'}
-                        </td>
-                        <td className="py-2.5">
-                          {row.margen_pct !== undefined && row.margen_pct !== null ? (
-                            <span className="flex items-center gap-2">
-                              <span className="text-navy/75">{formatNumber(row.margen_pct)}%</span>
-                              <span className="h-1.5 w-16 overflow-hidden rounded-full bg-navy/10">
-                                <span
-                                  className="block h-full rounded-full"
-                                  style={{
-                                    width: `${Math.min(Math.max(row.margen_pct, 0), 100)}%`,
-                                    background:
-                                      row.margen_pct >= 30
-                                        ? CHART.utilidad
-                                        : row.margen_pct >= 15
-                                          ? CHART.gastos
-                                          : CHART.alerta,
-                                  }}
-                                />
-                              </span>
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
+                        {categoriaConCostos && (
+                          <>
+                            <td className="py-2.5 pr-4 text-right text-navy/75">
+                              {row.costo != null ? formatCLP(row.costo) : '—'}
+                            </td>
+                            <td className="py-2.5 pr-4 text-right text-navy/75">
+                              {row.utilidad != null ? formatCLP(row.utilidad) : '—'}
+                            </td>
+                            <td className="py-2.5">
+                              {row.margen_pct !== undefined && row.margen_pct !== null ? (
+                                <span className="flex items-center gap-2">
+                                  <span className="text-navy/75">{formatNumber(row.margen_pct)}%</span>
+                                  <span className="h-1.5 w-16 overflow-hidden rounded-full bg-navy/10">
+                                    <span
+                                      className="block h-full rounded-full"
+                                      style={{
+                                        width: `${Math.min(Math.max(row.margen_pct, 0), 100)}%`,
+                                        background:
+                                          row.margen_pct >= 30
+                                            ? CHART.utilidad
+                                            : row.margen_pct >= 15
+                                              ? CHART.gastos
+                                              : CHART.alerta,
+                                      }}
+                                    />
+                                  </span>
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -841,15 +852,19 @@ export default function Resumen() {
               </div>
               </Card>
               )}
+            </div>
 
-              {/* Las tarjetas dinámicas fluyen por altura: ninguna reserva el
-                  alto de su vecina ni deja huecos antes de la siguiente. */}
+            {/* Grilla auto-ajustable: tantas columnas como quepan de ≥300px,
+                  según el ESPACIO REAL disponible (no el ancho de ventana). Así
+                  no quedan huecos a la derecha aunque el panel de IA esté abierto
+                  o el sidebar reduzca el ancho — el problema de `columns` + media
+                  query, que colapsaba a 1 columna y desperdiciaba el espacio. */}
               <div
                 data-testid="summary-compact-flow"
-                className="order-5 columns-1 gap-6 lg:columns-2"
+                className="order-5 xl:order-last xl:col-span-2 grid items-start gap-6 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]"
               >
                   {canal.length > 0 && (
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
                     <div className="mt-2 flex flex-col items-center gap-3">
                       <div className="relative h-44 w-44 shrink-0">
@@ -903,7 +918,7 @@ export default function Resumen() {
                   )}
 
                   {topProducts.length > 0 && (
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
                     <ul className="mt-4 space-y-3">
                       {topProducts.map((product) => (
@@ -932,7 +947,7 @@ export default function Resumen() {
                   </Card>
                   )}
 
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     {/* Fase 12b §20: es una EXTRAPOLACIÓN del promedio observado, no
                         una predicción — el copy no debe prometer más que el método. */}
                     <h2 className="text-base font-semibold text-navy">
@@ -1005,12 +1020,11 @@ export default function Resumen() {
                   zona u otras columnas categóricas del archivo (incluidas las
                   enriquecidas por "Relacionar otras hojas"). */}
                   {(metrics.agrupaciones_flexibles ?? []).map((agrupacion) => (
-                    <div key={agrupacion.columna} className="mb-6 break-inside-avoid">
+                    <div key={agrupacion.columna} className="min-w-0">
                     <FlexibleGroupCard key={agrupacion.columna} agrupacion={agrupacion} />
                     </div>
                   ))}
               </div>
-            </div>
 
             <div className="contents xl:block xl:space-y-6">
               <Card className="order-2">

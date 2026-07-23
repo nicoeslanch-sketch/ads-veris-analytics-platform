@@ -96,9 +96,9 @@ function certificationBlockers(analysis: BusinessAnalysis): CertificationBlocker
   if (alcance.documentos_repetidos > 0) {
     blockers.push({
       key: 'duplicados',
-      label: `${formatNumber(alcance.documentos_repetidos)} documento(s) repetido(s)`,
-      detail: 'El mismo número de documento aparece más de una vez. Elimina los duplicados exactos para no contar la misma venta dos veces.',
-      cta: { to: '/limpieza?revision=1', label: 'Resolver duplicados' },
+      label: `${formatNumber(alcance.documentos_repetidos)} documento(s) con ID repetido`,
+      detail: 'Son filas que comparten el mismo N° de documento pero NO son copias exactas — por eso la limpieza de "duplicados exactos" no las quita. Suelen ser el mismo documento cargado desde fuentes distintas, o un ID reutilizado con datos diferentes. Se resuelven por clave de negocio, no como duplicado exacto.',
+      cta: { to: '/limpieza?revision=1', label: 'Revisar IDs repetidos' },
     })
   }
   if (alcance.documentos_conflictivos > 0) {

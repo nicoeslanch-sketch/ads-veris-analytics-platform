@@ -317,6 +317,28 @@ def _parse_text_month_date(text: str) -> pd.Timestamp | None:
         return None
 
 
+# Formatos AÑO-MES sin día ("2025-10", "08/2025"): válidos e inequívocos por el
+# año de 4 dígitos. Frecuentes en columnas mensuales (Mes Vigencia, Mes de
+# metas). Se anclan al día 1 para poder ordenarlos y cruzarlos por mes en vez de
+# dejarlos como "fecha no interpretable".
+_YEAR_MONTH_SHAPE = re.compile(r"^\s*(\d{4})[-/.](\d{1,2})\s*$")
+_MONTH_YEAR_SHAPE = re.compile(r"^\s*(\d{1,2})[-/.](\d{4})\s*$")
+
+
+def _parse_year_month(text: str) -> pd.Timestamp | None:
+    match = _YEAR_MONTH_SHAPE.match(text)
+    if match:
+        year, month = int(match.group(1)), int(match.group(2))
+    else:
+        match = _MONTH_YEAR_SHAPE.match(text)
+        if not match:
+            return None
+        month, year = int(match.group(1)), int(match.group(2))
+    if 1 <= month <= 12 and 1900 <= year <= 2100:
+        return pd.Timestamp(year=year, month=month, day=1)
+    return None
+
+
 def parse_date(value: str, dayfirst: bool = True) -> pd.Timestamp | None:
     text = str(value).strip()
     if is_missing(text):
@@ -324,6 +346,9 @@ def parse_date(value: str, dayfirst: bool = True) -> pd.Timestamp | None:
     text_month = _parse_text_month_date(text)
     if text_month is not None:
         return text_month
+    year_month = _parse_year_month(text)
+    if year_month is not None:
+        return year_month
     if not _DATE_SHAPE.match(text):
         # También aceptar fechas ya ISO con hora ("2026-05-01 00:00:00")
         text = text.split(" ")[0]
