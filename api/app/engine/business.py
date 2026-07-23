@@ -1305,6 +1305,11 @@ def analyze_business_workbook(
         goal_period = _date_filter(goal_dates, date_from, date_to)
         goal_amount = numeric_series(goals_frame, goal_amount_col)
         goal_margin = numeric_series(goals_frame, goal_margin_col)
+        # P1-5: "Meta Margen %" llega mezclado -- 0.30 o 35, ambos para
+        # decir 30%/35% -- exactamente el caso que metrics.py ya blinda
+        # para esta misma columna (ver test_porcentajes_mixtos_...). Sin
+        # esto, un valor ya en puntos (35) se multiplicaba x100 -> 3500%.
+        goal_margin = goal_margin.where(goal_margin.abs() > 1.5, goal_margin * 100.0)
         goal_clients = numeric_series(goals_frame, goal_clients_col)
         comparable_goals = goal_period & goal_dates.notna() & goal_amount.notna()
         if comparable_goals.any():
@@ -1350,7 +1355,7 @@ def analyze_business_workbook(
                 "cumplimiento_pct": round(total_actual / total_target * 100, 2)
                 if total_target
                 else None,
-                "meta_margen_pct": round(float(goal_margin[goal_period].mean()) * 100, 2)
+                "meta_margen_pct": round(float(goal_margin[goal_period].mean()), 2)
                 if goal_margin[goal_period].notna().any()
                 else None,
                 "meta_nuevos_clientes": round(float(goal_clients[goal_period].sum()), 2)

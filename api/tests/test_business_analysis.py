@@ -710,3 +710,31 @@ def test_inventory_snapshot_respects_period_filter_end_date():
     assert result is not None
     assert result["operacion"]["valor_inventario"] == 500
     assert result["operacion"]["inventario_corte"] == "2026-01-15"
+
+
+def test_goal_margin_percentage_mixed_convention_is_not_double_scaled():
+    """Regresión QA P1-5: "Meta Margen Bruto %" puede llegar como fracción
+    (0.30) o ya en puntos (35) en la misma columna -- metrics.py ya blinda
+    esta ambigüedad para esta misma columna (ver
+    test_porcentajes_mixtos_se_llevan_a_puntos_sin_escalar_35_a_3500 en
+    test_dashboard_audit_2026.py), pero analyze_business_workbook
+    multiplicaba por 100 sin condición: un valor ya en puntos (35) se
+    convertía en 3500%."""
+    frames = {
+        "Ventas_2026": _sales_frame_for_products(["A"]),
+        "Metas_2026": pd.DataFrame(
+            [
+                {"Mes": "01/01/2026", "Meta Venta": "100", "Meta Margen Bruto %": "0.30"},
+                {"Mes": "01/02/2026", "Meta Venta": "100", "Meta Margen Bruto %": "35"},
+                {"Mes": "01/03/2026", "Meta Venta": "100", "Meta Margen Bruto %": "-0.20"},
+            ]
+        ),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    assert result["metas"]["disponible"] is True
+    # (30 + 35 - 20) / 3 = 15 -- nunca 1500 (si se re-escalara lo ya
+    # convertido) ni una mezcla inconsistente de escalas.
+    assert result["metas"]["meta_margen_pct"] == 15.0
