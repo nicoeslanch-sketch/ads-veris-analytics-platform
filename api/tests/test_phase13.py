@@ -31,8 +31,10 @@ def test_sin_plan_no_tiene_capacidades():
 
 
 def test_cuentas_existentes_conservan_basico():
-    """Sin fila en profiles o plan legado → 'basico': nadie pierde acceso."""
-    assert normalize_plan(None) == "basico"
+    """Una fila real con plan='basico' conserva su acceso. P0-4: la AUSENCIA
+    de fila (o un valor de plan nulo/desconocido) ya no se lee como 'basico'
+    por defecto — ver test_qa_fail_closed_plan.py — se resuelve a sin_plan."""
+    assert normalize_plan(None) == "sin_plan"
     assert normalize_plan("basico") == "basico"
     assert plan_allows("basico", Capability.STANDARDIZE)
 

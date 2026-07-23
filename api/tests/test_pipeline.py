@@ -576,7 +576,9 @@ def test_capabilities_basico_vs_analista():
     # Fase 7: 'gold' ya es el tercer plan; el ex-gold vive migrado a 'analista'.
     assert normalize_plan("analista") == "analista"
     assert normalize_plan("gold") == "gold"
-    assert normalize_plan(None) == "basico"
+    # P0-4: un plan ausente/desconocido nunca se normaliza como 'basico' —
+    # ver test_qa_fail_closed_plan.py.
+    assert normalize_plan(None) == "sin_plan"
     assert plan_allows("basico", Capability.ASK_DATA_AI) is True
     assert plan_allows("basico", Capability.DOWNLOAD_CLEAN_DATASET) is False
     assert plan_allows("basico", Capability.AI_CLEANING) is False

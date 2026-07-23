@@ -17,6 +17,7 @@ contra una base sin migrar, los ``gold`` legacy reciben el set Gold — que es u
 superconjunto de Analista, así que nadie pierde capacidades.
 """
 
+import uuid
 from enum import StrEnum
 
 import httpx
@@ -89,17 +90,37 @@ TRIAL_CAPABILITIES: set[Capability] = {
 PLAN_ORDER = ("basico", "analista", "gold")
 
 
+_KNOWN_PLAN_VALUES = {
+    "sin_plan", "ninguno", "none", "free", "",
+    "analista", "analyst", "gold", "basico", "basic",
+}
+
+
 def normalize_plan(plan: str | None) -> str:
-    # Sin fila en profiles (cuentas antiguas / entorno local) → 'basico':
-    # las cuentas existentes quedan protegidas por diseño.
-    value = (plan or "basico").strip().lower()
-    if value in {"sin_plan", "ninguno", "none", "free"}:
+    """Normaliza el plan guardado en ``profiles.plan``.
+
+    P0-4: un valor ausente o desconocido JAMÁS se trata como 'basico' — eso
+    otorgaría acceso comercial por defecto ante una fila corrupta o un plan
+    nuevo que todavía no se agregó a este mapa. Se resuelve a 'sin_plan'
+    (cero capacidades, fail-closed) y el llamador con contexto (user_id) es
+    responsable de registrar la anomalía; esta función se mantiene pura.
+    """
+    value = (plan or "").strip().lower()
+    if value in {"sin_plan", "ninguno", "none", "free", ""}:
         return "sin_plan"
     if value in {"analista", "analyst"}:
         return "analista"
     if value == "gold":
         return "gold"
-    return "basico"
+    if value in {"basico", "basic"}:
+        return "basico"
+    return "sin_plan"
+
+
+def is_known_plan_value(plan: str | None) -> bool:
+    """True si ``plan`` es un valor reconocido (para distinguir, en logs, un
+    plan realmente desconocido de una cuenta legítimamente sin_plan)."""
+    return (plan or "").strip().lower() in _KNOWN_PLAN_VALUES
 
 
 def display_plan(plan: str | None) -> str:
@@ -133,7 +154,18 @@ def get_plan(user_id: str, settings: Settings) -> str:
 
 
 def get_profile_flags(user_id: str, settings: Settings) -> tuple[str, bool]:
-    """(plan, is_admin) en UNA consulta a profiles. Sin Supabase → ('basico', False)."""
+    """(plan, is_admin) en UNA consulta a profiles. Sin Supabase (dev local
+    sin backend configurado) → ('basico', False): fail-open coherente con las
+    demás puertas en ese modo.
+
+    P0-4: con Supabase SÍ configurado, una fila ausente en profiles NUNCA se
+    trata como 'basico' — el trigger `handle_new_user` (migración 0001) crea
+    la fila en cada alta desde el primer día, así que su ausencia con un JWT
+    válido es una anomalía (fila borrada, corrupción, o una carrera muy
+    estrecha justo tras el registro), no una cuenta legítima sin plan que
+    hubiera que 'proteger' con acceso básico por defecto. Se resuelve a
+    sin_plan (cero capacidades) y se registra la anomalía con un id de
+    incidente — nunca el user_id ni el email en el log."""
     if not settings.supabase_url or not settings.supabase_service_role_key:
         return "basico", False
     response = httpx.get(
@@ -145,8 +177,14 @@ def get_profile_flags(user_id: str, settings: Settings) -> tuple[str, bool]:
     response.raise_for_status()
     rows = response.json()
     if not rows:
-        return "basico", False
-    return normalize_plan(rows[0].get("plan")), bool(rows[0].get("is_admin"))
+        incident = uuid.uuid4().hex[:8]
+        print(f"[plan] incidente {incident}: perfil inexistente para un JWT válido — se resuelve sin_plan.")
+        return "sin_plan", False
+    raw_plan = rows[0].get("plan")
+    if not is_known_plan_value(raw_plan):
+        incident = uuid.uuid4().hex[:8]
+        print(f"[plan] incidente {incident}: valor de plan desconocido en profiles.plan — se resuelve sin_plan.")
+    return normalize_plan(raw_plan), bool(rows[0].get("is_admin"))
 
 
 def get_is_admin(user_id: str, settings: Settings) -> bool:
