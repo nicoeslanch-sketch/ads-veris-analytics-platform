@@ -548,6 +548,9 @@ export default function Resumen() {
   // muestra el top 5 clásico.
   const topProducts = (metrics?.top_productos ?? []).slice(0, 5)
   const maxProduct = topProducts[0]?.ingresos ?? 1
+  // Solo en una hoja de ventas (sin costos relacionados) las columnas de costo,
+  // utilidad y margen salen todas "—": no aportan y las ocultamos.
+  const categoriaConCostos = (metrics?.por_categoria ?? []).some((row) => row.costo != null)
 
   return (
     <>
@@ -792,9 +795,13 @@ export default function Resumen() {
                       <th className="pb-2 pr-4 text-right">Ingresos</th>
                       {/* Fase 14b: participación BRUTA — distribución real que suma 100% */}
                       <th className="pb-2 pr-4 text-right">% Ventas brutas</th>
-                      <th className="pb-2 pr-4 text-right">Costo asociado</th>
-                      <th className="pb-2 pr-4 text-right">Utilidad</th>
-                      <th className="pb-2">Margen</th>
+                      {categoriaConCostos && (
+                        <>
+                          <th className="pb-2 pr-4 text-right">Costo asociado</th>
+                          <th className="pb-2 pr-4 text-right">Utilidad</th>
+                          <th className="pb-2">Margen</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -805,35 +812,39 @@ export default function Resumen() {
                         <td className="py-2.5 pr-4 text-right text-navy/75">
                           {formatNumber(row.participacion_bruta_pct ?? row.porcentaje)}%
                         </td>
-                        <td className="py-2.5 pr-4 text-right text-navy/75">
-                          {row.costo != null ? formatCLP(row.costo) : '—'}
-                        </td>
-                        <td className="py-2.5 pr-4 text-right text-navy/75">
-                          {row.utilidad != null ? formatCLP(row.utilidad) : '—'}
-                        </td>
-                        <td className="py-2.5">
-                          {row.margen_pct !== undefined && row.margen_pct !== null ? (
-                            <span className="flex items-center gap-2">
-                              <span className="text-navy/75">{formatNumber(row.margen_pct)}%</span>
-                              <span className="h-1.5 w-16 overflow-hidden rounded-full bg-navy/10">
-                                <span
-                                  className="block h-full rounded-full"
-                                  style={{
-                                    width: `${Math.min(Math.max(row.margen_pct, 0), 100)}%`,
-                                    background:
-                                      row.margen_pct >= 30
-                                        ? CHART.utilidad
-                                        : row.margen_pct >= 15
-                                          ? CHART.gastos
-                                          : CHART.alerta,
-                                  }}
-                                />
-                              </span>
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
+                        {categoriaConCostos && (
+                          <>
+                            <td className="py-2.5 pr-4 text-right text-navy/75">
+                              {row.costo != null ? formatCLP(row.costo) : '—'}
+                            </td>
+                            <td className="py-2.5 pr-4 text-right text-navy/75">
+                              {row.utilidad != null ? formatCLP(row.utilidad) : '—'}
+                            </td>
+                            <td className="py-2.5">
+                              {row.margen_pct !== undefined && row.margen_pct !== null ? (
+                                <span className="flex items-center gap-2">
+                                  <span className="text-navy/75">{formatNumber(row.margen_pct)}%</span>
+                                  <span className="h-1.5 w-16 overflow-hidden rounded-full bg-navy/10">
+                                    <span
+                                      className="block h-full rounded-full"
+                                      style={{
+                                        width: `${Math.min(Math.max(row.margen_pct, 0), 100)}%`,
+                                        background:
+                                          row.margen_pct >= 30
+                                            ? CHART.utilidad
+                                            : row.margen_pct >= 15
+                                              ? CHART.gastos
+                                              : CHART.alerta,
+                                      }}
+                                    />
+                                  </span>
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </>
+                        )}
                       </tr>
                     ))}
                   </tbody>
