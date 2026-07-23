@@ -713,7 +713,7 @@ export default function Resumen() {
             <div className="contents xl:block xl:space-y-6">
               <Card className="order-1 min-w-0">
               <h2 className="text-base font-semibold text-navy">
-                Evolución de Ingresos, Gastos y Utilidad
+                {hasCosts ? 'Evolución de Ingresos, Gastos y Utilidad' : 'Ingresos por mes'}
               </h2>
               {(period.from || period.to) && (
                 <p className="mt-0.5 text-xs text-navy/45">
@@ -738,30 +738,36 @@ export default function Resumen() {
                     </div>
                   </div>
                 </div>
-              ) : (
+              ) : hasCosts ? (
                 <div className="mt-4 h-72">
                   <FinancialLineChart
                     evolution={evolution}
                     mesParcial={mesParcial?.mes}
-                    series={hasCosts ? ['ingresos', 'gastos', 'utilidad'] : ['ingresos']}
+                    series={['ingresos', 'gastos', 'utilidad']}
                     showAverage
                   />
                 </div>
+              ) : (
+                /* Hoja de ventas sin costos: un solo indicador (ingresos) se lee
+                   mejor como barras por mes que como una línea suelta. */
+                <div className="mt-4 h-72">
+                  <MonthlyIncomeBars evolution={evolution} mesParcial={mesParcial?.mes} />
+                </div>
               )}
-              <div className="mt-2 flex flex-wrap gap-4 text-xs text-navy/70">
-                {[
-                  { name: 'Ingresos', color: CHART.ingresos, show: true },
-                  { name: 'Gastos', color: CHART.gastos, show: hasCosts },
-                  { name: 'Utilidad', color: CHART.utilidad, show: hasCosts },
-                ]
-                  .filter((s) => s.show)
-                  .map((s) => (
+              {hasCosts && (
+                <div className="mt-2 flex flex-wrap gap-4 text-xs text-navy/70">
+                  {[
+                    { name: 'Ingresos', color: CHART.ingresos },
+                    { name: 'Gastos', color: CHART.gastos },
+                    { name: 'Utilidad', color: CHART.utilidad },
+                  ].map((s) => (
                     <span key={s.name} className="flex items-center gap-1.5">
                       <span className="h-0.5 w-4 rounded" style={{ background: s.color }} />
                       {s.name}
                     </span>
                   ))}
-              </div>
+                </div>
+              )}
               {mesParcial && (
                 /* Fase 14b: el copy declara el HECHO (último registro), no la
                    causa — el archivo no permite saber si faltan datos o
@@ -840,7 +846,7 @@ export default function Resumen() {
                   alto de su vecina ni deja huecos antes de la siguiente. */}
               <div
                 data-testid="summary-compact-flow"
-                className="order-5 columns-1 gap-6 lg:columns-2 xl:columns-1 2xl:columns-2"
+                className="order-5 columns-1 gap-6 lg:columns-2"
               >
                   {canal.length > 0 && (
                   <Card className="mb-6 min-w-0 break-inside-avoid">
@@ -1122,6 +1128,51 @@ function FinancialLineChart({
   )
 }
 
+/** Ingresos por mes en barras — para hojas de venta sin costos, donde la
+ * evolución tiene un solo indicador y una línea suelta se lee peor. */
+function MonthlyIncomeBars({
+  evolution,
+  mesParcial,
+}: {
+  evolution: MetricsResult['evolucion_mensual']
+  mesParcial?: string
+}) {
+  const promedio =
+    evolution.length >= 2
+      ? evolution.reduce((sum, row) => sum + row.ingresos, 0) / evolution.length
+      : null
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={evolution} margin={{ top: 8, right: 12, bottom: 0, left: 8 }}>
+        <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+        <XAxis
+          dataKey="mes"
+          tickFormatter={(value: string) => `${formatMonthShort(value)}${value === mesParcial ? '*' : ''}`}
+          tick={{ fill: AXIS_INK, fontSize: 11 }}
+          axisLine={{ stroke: GRID_STROKE }}
+          tickLine={false}
+        />
+        <YAxis tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} width={62} />
+        <Tooltip content={<ChartTooltip />} cursor={{ fill: `${CHART.ingresos}14` }} />
+        {promedio != null && (
+          <ReferenceLine
+            y={promedio}
+            stroke={AXIS_INK}
+            strokeDasharray="6 4"
+            strokeOpacity={0.55}
+            label={{ value: 'promedio', position: 'insideTopRight', fill: AXIS_INK, fontSize: 10 }}
+          />
+        )}
+        <Bar dataKey="ingresos" name="Ingresos" fill={CHART.ingresos} radius={[4, 4, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+          {evolution.map((row) => (
+            <Cell key={row.mes} fill={row.mes === mesParcial ? `${CHART.ingresos}99` : CHART.ingresos} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
 /** Fase 18: gráfico de una agrupación flexible (ventas por sucursal/región…). */
 function FlexibleGroupCard({
   agrupacion,
@@ -1134,6 +1185,8 @@ function FlexibleGroupCard({
   }))
   const chartColor = chartColorForKey(agrupacion.columna)
   const useDonut = rows.length >= 2 && rows.length <= 5 && rows.every((row) => row.ingresos >= 0)
+  const total = rows.reduce((sum, row) => sum + row.ingresos, 0)
+  const hasNegative = rows.some((row) => row.ingresos < 0)
   return (
     <Card className="min-w-0" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
       <div className="flex items-center gap-2">
@@ -1159,16 +1212,44 @@ function FlexibleGroupCard({
           </Link>
         </div>
       )}
-      <div className="mt-4" style={{ height: Math.max(rows.length * 30 + 40, 140) }}>
-        <ResponsiveContainer width="100%" height="100%">
-          {useDonut ? (
-            <PieChart>
-              <Pie data={rows} dataKey="ingresos" nameKey="etiqueta" innerRadius={52} outerRadius={82} paddingAngle={2}>
-                {rows.map((row, index) => <Cell key={row.nombre} fill={CATEGORICAL[index % CATEGORICAL.length]} />)}
-              </Pie>
-              <Tooltip formatter={(value) => formatCLP(Number(value))} />
-            </PieChart>
-          ) : (
+      {useDonut ? (
+        /* Dona + leyenda lado a lado: aprovecha el ancho y — a diferencia de
+           antes — muestra el nombre de cada segmento (p. ej. cada Medio Pago). */
+        <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row">
+          <div className="relative h-40 w-40 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={rows} dataKey="ingresos" nameKey="etiqueta" innerRadius="60%" outerRadius="92%" stroke="#ffffff" strokeWidth={2} isAnimationActive={false}>
+                  {rows.map((row, index) => <Cell key={row.nombre} fill={CATEGORICAL[index % CATEGORICAL.length]} />)}
+                </Pie>
+                <Tooltip formatter={(value) => formatCLP(Number(value))} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <p className="text-sm font-bold text-navy">{formatCLPCompact(total)}</p>
+              <p className="text-[10px] text-navy/50">Total</p>
+            </div>
+          </div>
+          <ul className="w-full flex-1 space-y-1.5">
+            {rows.map((row, index) => (
+              <li key={row.nombre} className="flex items-center justify-between gap-2 text-xs">
+                <span className="flex min-w-0 items-center gap-1.5 text-navy/75">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: CATEGORICAL[index % CATEGORICAL.length] }} />
+                  <span className="truncate" title={row.nombre}>{row.nombre}</span>
+                </span>
+                <span className="shrink-0 font-semibold text-navy">
+                  {formatCLPCompact(row.ingresos)}
+                  <span className="ml-1.5 font-normal text-navy/45">
+                    {formatNumber(row.participacion_neta_pct ?? row.porcentaje)}%
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="mt-4" style={{ height: Math.max(rows.length * 34 + 44, 150) }}>
+          <ResponsiveContainer width="100%" height="100%">
             <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
               <XAxis type="number" tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -1179,9 +1260,20 @@ function FlexibleGroupCard({
                 {rows.map((row) => <Cell key={row.nombre} fill={row.ingresos < 0 ? CHART.alerta : chartColor} />)}
               </Bar>
             </BarChart>
-          )}
-        </ResponsiveContainer>
-      </div>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {hasNegative && (
+        /* Explica por qué una barra puede ir a la izquierda del cero — p. ej. una
+           Nota de Crédito, que resta ventas en vez de sumarlas. */
+        <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-navy/50">
+          <Info className="mt-0.5 h-3 w-3 shrink-0 text-coral" />
+          <span>
+            Los valores en <span className="font-semibold text-coral">coral (negativos)</span> restan ingresos:
+            son notas de crédito, devoluciones o anulaciones que reducen la venta neta. No es un error.
+          </span>
+        </p>
+      )}
     </Card>
   )
 }

@@ -80,6 +80,70 @@ function certificationMeta(state: BusinessAnalysis['estado_certificacion']) {
   }
 }
 
+type CertificationBlocker = {
+  key: string
+  label: string
+  detail: string
+  cta?: { to: string; label: string; state?: Record<string, unknown> }
+}
+
+/** Traduce el "por qué" de una confianza baja a problemas concretos, cada uno
+ * con el lugar donde resolverlo. Sin inventar datos: solo explica y guía. */
+function certificationBlockers(analysis: BusinessAnalysis): CertificationBlocker[] {
+  const { alcance, estado_resultados: result, calidad } = analysis
+  const blockers: CertificationBlocker[] = []
+
+  if (alcance.documentos_repetidos > 0) {
+    blockers.push({
+      key: 'duplicados',
+      label: `${formatNumber(alcance.documentos_repetidos)} documento(s) repetido(s)`,
+      detail: 'El mismo número de documento aparece más de una vez. Elimina los duplicados exactos para no contar la misma venta dos veces.',
+      cta: { to: '/limpieza?revision=1', label: 'Resolver duplicados' },
+    })
+  }
+  if (alcance.documentos_conflictivos > 0) {
+    blockers.push({
+      key: 'conflictos',
+      label: `${formatNumber(alcance.documentos_conflictivos)} documento(s) en conflicto`,
+      detail: 'Un mismo documento trae datos que no coinciden entre filas (montos o fechas distintas). Hay que decidir cuál es la versión válida.',
+      cta: { to: '/limpieza?revision=1', label: 'Revisar conflictos' },
+    })
+  }
+  const coverage = result.cobertura_costos_certificable_pct
+  if (coverage != null && coverage < 95) {
+    blockers.push({
+      key: 'costos',
+      label: `Costos incompletos — ${formatNumber(coverage)}% de las ventas con costo`,
+      detail: 'El resto de las ventas no tiene un costo relacionado, así que la utilidad y el margen salen de una base parcial. Relaciona la hoja de costos o productos, o asigna la columna de costo.',
+      cta: { to: '/limpieza', label: 'Asignar costos', state: { openMapping: true, highlightRole: 'costo' } },
+    })
+  }
+  const negativos = numeric(calidad.costos.negativos)
+  if (negativos > 0) {
+    blockers.push({
+      key: 'costos_negativos',
+      label: `${formatNumber(negativos)} costo(s) negativo(s)`,
+      detail: 'Hay costos con valor negativo que distorsionan la utilidad. Conviene corregirlos en el archivo o en la limpieza.',
+      cta: { to: '/limpieza?revision=1', label: 'Revisar costos' },
+    })
+  }
+  if (calidad.filas_inconsistentes_formula > 0) {
+    blockers.push({
+      key: 'formula',
+      label: `${formatNumber(calidad.filas_inconsistentes_formula)} fila(s) con fórmula que no cuadra`,
+      detail: 'En esas filas, cantidad × precio no coincide con el total declarado. Conviene revisar esos registros.',
+    })
+  }
+  if (calidad.referencias_problematicas > 0) {
+    blockers.push({
+      key: 'referencias',
+      label: `${formatNumber(calidad.referencias_problematicas)} referencia(s) problemática(s)`,
+      detail: 'Algunas filas apuntan a un producto o cliente que no existe en su tabla; quedan fuera del enriquecimiento.',
+    })
+  }
+  return blockers
+}
+
 function BusinessTooltip({
   active,
   payload,
@@ -170,31 +234,66 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
     },
   ]
   const availableRatios = analysis.ratios.filter((ratio) => ratio.estado !== 'unavailable')
+  const blockers = certificationBlockers(analysis)
 
   return (
     <div className="space-y-6">
-      <section className={`flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 ${certification.classes}`}>
-        {analysis.estado_certificacion === 'certified' ? (
-          <CheckCircle2 className="h-5 w-5 shrink-0 text-green" />
-        ) : (
-          <AlertTriangle className={`h-5 w-5 shrink-0 ${analysis.estado_certificacion === 'blocked' ? 'text-coral' : 'text-gold'}`} />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-navy">Estado de la información</p>
-            <Badge tone={certification.tone}>{certification.label}</Badge>
+      <section className={`rounded-lg border px-4 py-3 ${certification.classes}`}>
+        <div className="flex flex-wrap items-center gap-3">
+          {analysis.estado_certificacion === 'certified' ? (
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-green" />
+          ) : (
+            <AlertTriangle className={`h-5 w-5 shrink-0 ${analysis.estado_certificacion === 'blocked' ? 'text-coral' : 'text-gold'}`} />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold text-navy">Estado de la información</p>
+              <Badge tone={certification.tone}>{certification.label}</Badge>
+            </div>
+            <p className="mt-0.5 text-xs text-navy/65">
+              {certification.note} Confianza técnica: {formatNumber(analysis.confianza_pct)}%.
+            </p>
           </div>
-          <p className="mt-0.5 text-xs text-navy/65">
-            {certification.note} Confianza técnica: {formatNumber(analysis.confianza_pct)}%.
-          </p>
+          {analysis.estado_certificacion !== 'certified' && (
+            <Link
+              to="/limpieza?revision=1"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-navy/15 bg-white px-3 py-2 text-xs font-semibold text-navy hover:border-teal/50"
+            >
+              Revisar calidad <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          )}
         </div>
-        {analysis.estado_certificacion !== 'certified' && (
-          <Link
-            to="/limpieza?revision=1"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-navy/15 bg-white px-3 py-2 text-xs font-semibold text-navy hover:border-teal/50"
-          >
-            Revisar calidad <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
+
+        {blockers.length > 0 && (
+          /* Desglose accionable: cada motivo que baja la confianza, con el lugar
+             exacto para resolverlo. La plataforma no inventa datos, pero sí guía. */
+          <div className="mt-3 border-t border-navy/10 pt-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-navy/45">
+              Qué baja la confianza y cómo resolverlo
+            </p>
+            <ul className="mt-2 space-y-2">
+              {blockers.map((blocker) => (
+                <li
+                  key={blocker.key}
+                  className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg bg-white/70 px-3 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-navy">{blocker.label}</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-navy/60">{blocker.detail}</p>
+                  </div>
+                  {blocker.cta && (
+                    <Link
+                      to={blocker.cta.to}
+                      state={blocker.cta.state}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-navy/15 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-navy hover:border-teal/50"
+                    >
+                      {blocker.cta.label} <ArrowRight className="h-3 w-3" />
+                    </Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
 
@@ -232,9 +331,11 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
                   <YAxis tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 10 }} width={64} axisLine={false} tickLine={false} />
                   <Tooltip content={<BusinessTooltip />} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="ventas" name="Ventas" fill={CHART.ingresos} radius={[3, 3, 0, 0]} maxBarSize={24} />
-                  <Bar dataKey="costo" name="Costo relacionado" fill={CHART.gastos} radius={[3, 3, 0, 0]} maxBarSize={24} />
-                  <Line type="monotone" dataKey="resultado_operacional" name="Resultado operacional" stroke={CHART.utilidad} strokeWidth={2.5} dot={false} connectNulls={false} />
+                  <Bar dataKey="ventas" name="Ventas" fill={CHART.ingresos} radius={[3, 3, 0, 0]} maxBarSize={24} fillOpacity={0.85} />
+                  <Bar dataKey="costo" name="Costo relacionado" fill={CHART.gastos} radius={[3, 3, 0, 0]} maxBarSize={24} fillOpacity={0.85} />
+                  {/* Resultado operacional en coral y más grueso: es la línea clave
+                      y debe leerse por encima de las barras de ventas/costo. */}
+                  <Line type="monotone" dataKey="resultado_operacional" name="Resultado operacional" stroke={CHART.alerta} strokeWidth={3.25} dot={{ r: 3, strokeWidth: 1.5, stroke: '#ffffff', fill: CHART.alerta }} activeDot={{ r: 5 }} connectNulls={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>

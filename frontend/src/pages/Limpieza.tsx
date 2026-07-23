@@ -191,6 +191,10 @@ export default function Limpieza() {
     current: number
     total: number
     sheet: string
+    // 'processing' = el backend limpia todas las hojas en un solo pedido (no hay
+    // avance parcial real, así que no mostramos un "0 de X" que engaña).
+    // 'saving' = ya volvieron los resultados y se están aplicando/guardando.
+    phase: 'processing' | 'saving'
   } | null>(null)
   const [applySameRules, setApplySameRules] = useState(true)
   const [downloading, setDownloading] = useState<'xlsx' | 'csv' | null>(null)
@@ -333,7 +337,7 @@ export default function Limpieza() {
         }),
       }
       runnable.forEach((name) => setSheetStatus(name, 'limpiando'))
-      setCleaningProgress({ current: 0, total: runnable.length, sheet: 'Procesando el libro' })
+      setCleaningProgress({ current: 0, total: runnable.length, sheet: 'Procesando el libro', phase: 'processing' })
       const extra: Record<string, string> = {
         manifest: JSON.stringify(batchManifest),
         restore_state: JSON.stringify(batchRestoreState),
@@ -349,7 +353,7 @@ export default function Limpieza() {
       for (const [index, name] of runnable.entries()) {
         const session = sheetSessions[name]
         if (!session?.standardization) continue
-        setCleaningProgress({ current: index + 1, total: runnable.length, sheet: name })
+        setCleaningProgress({ current: index + 1, total: runnable.length, sheet: name, phase: 'saving' })
         const response = batch.resultados[name]
         if (response) {
           setCleaning(response, { activate: name === target })
@@ -1020,10 +1024,19 @@ export default function Limpieza() {
       {applying && cleaningProgress && (
         <div className="mb-4 flex items-center gap-3 rounded-xl border border-teal/25 bg-teal/[0.06] px-4 py-3 text-sm text-navy">
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-teal" />
-          <p>
-            <strong>Limpieza por lote {cleaningProgress.current} de {cleaningProgress.total}:</strong>{' '}
-            {cleaningProgress.sheet}. No necesitas abrir ni limpiar las hojas una por una.
-          </p>
+          {cleaningProgress.phase === 'processing' ? (
+            <p>
+              <strong>
+                Limpiando {cleaningProgress.total} hoja{cleaningProgress.total === 1 ? '' : 's'} del libro…
+              </strong>{' '}
+              Se procesan juntas en un solo paso; puede tardar un momento. No necesitas abrir ni limpiar las hojas una por una.
+            </p>
+          ) : (
+            <p>
+              <strong>Guardando resultados ({cleaningProgress.current} de {cleaningProgress.total})…</strong>{' '}
+              {cleaningProgress.sheet}
+            </p>
+          )}
         </div>
       )}
 
