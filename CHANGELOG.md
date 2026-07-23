@@ -37,10 +37,11 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
   29,0 s a 20,7 s y una descarga identica repetida reutiliza bytes en
   milisegundos.
 - Resumen y Explorar ya no reabren el XLSX por cada hoja al reconstruir un
-  analisis empresarial. En el libro de 16 hojas suministrado, una pasada fria
-  local de deteccion de relaciones + metricas baja a 34,2 s en total, mantiene
-  los mismos resultados y las siguientes consultas reutilizan el cache por
-  contenido, dataset y revision.
+  analisis empresarial. Relacion y metricas se calculan en una misma pasada y
+  se precalientan al terminar la limpieza sin bloquear su respuesta. En el
+  libro de 16 hojas suministrado, una pasada fria local completa tarda 29,1 s;
+  la repeticion identica tarda 0,009 s. El cache incluye usuario, contenido,
+  dataset, configuracion y revision, y agrupa peticiones simultaneas.
 
 Sube `ENGINE_VERSION` a `0.23.0`. No agrega migraciones: `0021` sigue siendo
 la ultima.

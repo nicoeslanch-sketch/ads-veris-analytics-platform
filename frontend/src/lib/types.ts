@@ -387,6 +387,8 @@ export interface RelationshipResult {
   safe_count: number
   manual?: RelationshipCandidate | null
   message: string | null
+  analysis_scope?: AnalysisScope
+  metrics?: MetricsResult
 }
 
 export const DEFAULT_CLEANING_OPTIONS: CleaningOptions = {

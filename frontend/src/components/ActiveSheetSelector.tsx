@@ -28,6 +28,7 @@ export default function ActiveSheetSelector() {
     analysisScope,
     metrics,
     setAnalysisScope,
+    setMetrics,
     setSheet,
   } = useDataset()
   const { plan } = usePlan()
@@ -221,19 +222,28 @@ export default function ActiveSheetSelector() {
             : appendSelection
         ))
         setSheet(recommended.left_sheet)
-        setAnalysisScope({
-          mode: 'append_join',
-          sheets: [...new Set([...appendSelection, recommended.right_sheet])],
-          append_sheets: appendSelection,
-          active_sheet: recommended.left_sheet,
-          join: {
-            left_sheet: recommended.left_sheet,
-            right_sheet: recommended.right_sheet,
-            left_keys: recommended.left_keys,
-            right_keys: recommended.right_keys,
-            type: 'left',
-          },
-        })
+        const nextScope: AnalysisScope = response.analysis_scope?.mode === 'append_join'
+          ? response.analysis_scope
+          : {
+              mode: 'append_join',
+              sheets: [...new Set([...appendSelection, recommended.right_sheet])],
+              append_sheets: appendSelection,
+              active_sheet: recommended.left_sheet,
+              join: {
+                left_sheet: recommended.left_sheet,
+                right_sheet: recommended.right_sheet,
+                left_keys: recommended.left_keys,
+                right_keys: recommended.right_keys,
+                type: 'left',
+              },
+            }
+        setAnalysisScope(nextScope)
+        if (
+          response.metrics &&
+          JSON.stringify(response.metrics.analysis_scope ?? null) === JSON.stringify(nextScope)
+        ) {
+          setMetrics(response.metrics)
+        }
         setRelationMessage(
           `Listo: analizamos ${appendSelection.length} hojas de ventas como un solo periodo y vinculamos los costos de ${recommended.right_sheet} usando ${recommended.left_keys.join(' + ')}.`,
         )

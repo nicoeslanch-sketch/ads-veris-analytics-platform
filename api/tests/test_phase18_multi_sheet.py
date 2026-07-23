@@ -553,6 +553,9 @@ def test_relationship_focus_discovers_neutral_cost_catalog_from_headers(monkeypa
     assert catalog_relations
     assert all(item["purpose"] == "enriquecer_costos" for item in catalog_relations)
     assert any(item["safe"] and item["recommended"] for item in catalog_relations)
+    assert response["analysis_scope"]["mode"] == "append_join"
+    assert response["metrics"]["analysis_scope"] == response["analysis_scope"]
+    assert response["metrics"]["kpis"]["ingresos_totales"]["valor"] == 1000
     assert workbook_opens == 1
 
 

@@ -1,9 +1,11 @@
 """Multi-sheet batch endpoints open and process the workbook as one action."""
 
+import copy
 import io
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from openpyxl import Workbook
 
@@ -220,6 +222,115 @@ def test_multi_sheet_metrics_open_workbook_once(monkeypatch):
 
     assert set(frames) == {"Enero", "Febrero"}
     assert calls == 1
+
+
+def test_analysis_response_cache_is_user_and_revision_isolated(monkeypatch):
+    from app.routes import pipeline
+
+    calls = 0
+
+    def fake_relationships(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        time.sleep(0.04)
+        return {"candidates": [], "safe_count": 0, "message": None}
+
+    monkeypatch.setattr(pipeline, "_relationships_sync", fake_relationships)
+    with pipeline._ANALYSIS_CACHE_LOCK:
+        pipeline._ANALYSIS_CACHE.clear()
+        pipeline._ANALYSIS_INFLIGHT.clear()
+
+    manifest = {
+        "hojas": [
+            {
+                "nombre": "Enero",
+                "procesar": True,
+                "rules": {},
+                "mapping": {},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "revision": 41,
+            }
+        ]
+    }
+    args = (
+        "ventas.xlsx",
+        b"same-workbook",
+        manifest,
+        None,
+        "dataset-1",
+        {"sheets": ["Enero"]},
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(pipeline._relationships_cached_sync, *args, "user-a")
+            for _index in range(2)
+        ]
+        for future in futures:
+            future.result()
+    assert calls == 1
+
+    changed = copy.deepcopy(manifest)
+    changed["hojas"][0]["revision"] = 42
+    pipeline._relationships_cached_sync(
+        "ventas.xlsx",
+        b"same-workbook",
+        changed,
+        None,
+        "dataset-1",
+        {"sheets": ["Enero"]},
+        "user-a",
+    )
+    pipeline._relationships_cached_sync(*args, "user-b")
+
+    assert calls == 3
+
+
+def test_business_prewarm_uses_only_transaction_sheets(monkeypatch):
+    from app.routes import pipeline
+
+    captured = {}
+
+    def fake_cached(*args):
+        captured["focus"] = args[5]
+        captured["user"] = args[6]
+        return {"metrics": {"analisis_negocio": {}}}
+
+    monkeypatch.setattr(pipeline, "_relationships_cached_sync", fake_cached)
+    manifest = {
+        "hojas": [
+            {"nombre": "Ventas_2025", "procesar": True, "mapping": {}},
+            {"nombre": "Ventas_2026", "procesar": True, "mapping": {}},
+            {"nombre": "Costos", "procesar": True, "mapping": {}},
+        ]
+    }
+    responses = {
+        "Ventas_2025": {
+            "mapeo": {"monto": "Monto", "producto": "SKU"},
+            "preview": {"columnas": ["Monto", "SKU"]},
+        },
+        "Ventas_2026": {
+            "mapeo": {"monto": "Monto", "producto": "SKU"},
+            "preview": {"columnas": ["Monto", "SKU"]},
+        },
+        "Costos": {
+            "mapeo": {"costo": "Costo", "producto": "SKU"},
+            "preview": {"columnas": ["Costo", "SKU"]},
+        },
+    }
+
+    warmed = pipeline._prewarm_business_analysis_sync(
+        "libro.xlsx",
+        b"workbook",
+        manifest,
+        responses,
+        "dataset-1",
+        "user-a",
+    )
+
+    assert warmed is True
+    assert captured["focus"] == {"sheets": ["Ventas_2025", "Ventas_2026"]}
+    assert captured["user"] == "user-a"
 
 
 def test_batch_snapshot_persistence_is_bounded_and_concurrent(monkeypatch):

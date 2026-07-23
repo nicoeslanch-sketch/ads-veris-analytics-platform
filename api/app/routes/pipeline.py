@@ -116,6 +116,15 @@ _FRAME_CACHE: "OrderedDict[tuple, tuple[object, dict]]" = OrderedDict()
 _FRAME_CACHE_CELL_BUDGET = 1_600_000
 _FRAME_CACHE_MAX_ENTRY_CELLS = 1_200_000
 
+# Resumen, Explorar, Reportes y el panel IA pueden pedir el mismo analisis
+# multihoja en navegaciones consecutivas. El resultado agregado es pequeno
+# frente al libro original y puede reutilizarse siempre que usuario, contenido,
+# dataset, manifiesto (incluidas sus revisiones), alcance y periodo coincidan.
+_ANALYSIS_CACHE_LOCK = threading.Lock()
+_ANALYSIS_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
+_ANALYSIS_INFLIGHT: dict[tuple, threading.Event] = {}
+_ANALYSIS_CACHE_MAX_ENTRIES = 16
+
 # Reopening the app should not repeatedly fetch and deserialize the same
 # validated snapshots. Writes invalidate this short, per-user production cache.
 _RESTORE_RESPONSE_CACHE_LOCK = threading.Lock()
@@ -257,6 +266,86 @@ def _frame_cache_store(key: tuple, frame, report: dict) -> None:
         while len(_FRAME_CACHE) > 1 and total > _FRAME_CACHE_CELL_BUDGET:
             _, removed = _FRAME_CACHE.popitem(last=False)
             total -= len(removed[0]) * max(len(removed[0].columns), 1)
+
+
+def _analysis_cache_store(key: tuple, value: dict) -> dict:
+    stored = copy.deepcopy(value)
+    with _ANALYSIS_CACHE_LOCK:
+        _ANALYSIS_CACHE[key] = stored
+        _ANALYSIS_CACHE.move_to_end(key)
+        while len(_ANALYSIS_CACHE) > _ANALYSIS_CACHE_MAX_ENTRIES:
+            _ANALYSIS_CACHE.popitem(last=False)
+    return copy.deepcopy(stored)
+
+
+def _analysis_cache_compute(key: tuple, producer) -> dict:
+    while True:
+        with _ANALYSIS_CACHE_LOCK:
+            cached = _ANALYSIS_CACHE.get(key)
+            if cached is not None:
+                _ANALYSIS_CACHE.move_to_end(key)
+                return copy.deepcopy(cached)
+            event = _ANALYSIS_INFLIGHT.get(key)
+            if event is None:
+                event = threading.Event()
+                _ANALYSIS_INFLIGHT[key] = event
+                owns_work = True
+            else:
+                owns_work = False
+        if owns_work:
+            break
+        event.wait(timeout=180)
+
+    try:
+        return _analysis_cache_store(key, producer())
+    finally:
+        with _ANALYSIS_CACHE_LOCK:
+            finished = _ANALYSIS_INFLIGHT.pop(key, None)
+            if finished is not None:
+                finished.set()
+
+
+def _analysis_cache_key(
+    kind: str,
+    user_id: str,
+    filename: str,
+    content: bytes,
+    dataset_id: str | None,
+    *parts: object,
+) -> tuple:
+    encoded_parts = tuple(
+        json.dumps(part, sort_keys=True, separators=(",", ":"), default=str)
+        for part in parts
+    )
+    return (
+        kind,
+        user_id,
+        dataset_id or "",
+        ENGINE_VERSION,
+        hashlib.sha256(content).digest(),
+        os.path.splitext(filename)[1].lower(),
+        *encoded_parts,
+    )
+
+
+def _analysis_manifest_identity(manifest: dict) -> dict:
+    """Keep only fields that can change processed values or their revision."""
+
+    relevant = (
+        "nombre",
+        "procesar",
+        "rules",
+        "mapping",
+        "scope",
+        "eliminar_duplicados",
+        "revision",
+    )
+    return {
+        "hojas": [
+            {key: entry.get(key) for key in relevant}
+            for entry in manifest.get("hojas", [])
+        ]
+    }
 
 
 def _frame_key(kind: str, filename: str, content: bytes, sheet: str | None, extra: str = "") -> tuple:
@@ -2529,23 +2618,16 @@ def _clean_download_book_sync(
                 finished.set()
 
 
-def _metrics_multi_sync(
+def _metrics_multi_from_processed(
     filename: str,
-    content: bytes,
-    manifest: dict,
+    frames: dict[str, object],
+    mappings: dict[str, dict[str, str]],
+    results: dict[str, dict],
     analysis_scope: dict,
     date_from: str | None,
     date_to: str | None,
-    cache_dataset_id: str | None = None,
 ) -> dict:
     business_view = analysis_scope["mode"] == "append_join"
-    frames, mappings, results = _processed_manifest_frames(
-        filename,
-        content,
-        manifest,
-        cache_dataset_id,
-        None if business_view else set(analysis_scope["sheets"]),
-    )
     _validate_scope_currencies(analysis_scope, mappings, results)
     try:
         frame, mapping, provenance = build_analysis_frame(frames, mappings, analysis_scope)
@@ -2607,6 +2689,69 @@ def _metrics_multi_sync(
     return computed
 
 
+def _metrics_multi_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    analysis_scope: dict,
+    date_from: str | None,
+    date_to: str | None,
+    cache_dataset_id: str | None = None,
+) -> dict:
+    business_view = analysis_scope["mode"] == "append_join"
+    frames, mappings, results = _processed_manifest_frames(
+        filename,
+        content,
+        _analysis_manifest_identity(manifest),
+        cache_dataset_id,
+        None if business_view else set(analysis_scope["sheets"]),
+    )
+    return _metrics_multi_from_processed(
+        filename,
+        frames,
+        mappings,
+        results,
+        analysis_scope,
+        date_from,
+        date_to,
+    )
+
+
+def _metrics_multi_cached_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    analysis_scope: dict,
+    date_from: str | None,
+    date_to: str | None,
+    cache_dataset_id: str | None,
+    user_id: str,
+) -> dict:
+    key = _analysis_cache_key(
+        "metrics_multi",
+        user_id,
+        filename,
+        content,
+        cache_dataset_id,
+        _analysis_manifest_identity(manifest),
+        analysis_scope,
+        date_from,
+        date_to,
+    )
+    return _analysis_cache_compute(
+        key,
+        lambda: _metrics_multi_sync(
+            filename,
+            content,
+            manifest,
+            analysis_scope,
+            date_from,
+            date_to,
+            cache_dataset_id,
+        ),
+    )
+
+
 def _relationships_sync(
     filename: str,
     content: bytes,
@@ -2617,6 +2762,7 @@ def _relationships_sync(
 ) -> dict:
     selected_sheets: set[str] | None = None
     focused_transaction_sheets: set[str] = set()
+    focused_transaction_order: list[str] = []
     manifest_names = {entry["nombre"] for entry in manifest["hojas"] if entry["procesar"]}
     if isinstance(manual, dict):
         requested_pair = {
@@ -2628,8 +2774,11 @@ def _relationships_sync(
     elif isinstance(focus, dict):
         requested = focus.get("sheets")
         if isinstance(requested, list) and all(isinstance(name, str) for name in requested):
-            focused_transaction_sheets = {
+            focused_transaction_order = [
                 name for name in requested if name in manifest_names
+            ]
+            focused_transaction_sheets = {
+                *focused_transaction_order
             }
             if focused_transaction_sheets:
                 # Primero procesa solo las ventas pedidas. El reporte de carga
@@ -2665,9 +2814,25 @@ def _relationships_sync(
                     )
                     if mapped_cost_reference or named_cost_reference:
                         selected_sheets.add(name)
-    frames, mappings, results = _processed_manifest_frames(
-        filename, content, manifest, cache_dataset_id, selected_sheets
+    processed_selection = None if focused_transaction_sheets else selected_sheets
+    all_frames, all_mappings, all_results = _processed_manifest_frames(
+        filename, content, manifest, cache_dataset_id, processed_selection
     )
+    if focused_transaction_sheets:
+        relation_names = selected_sheets or focused_transaction_sheets
+        frames = {
+            name: all_frames[name] for name in relation_names if name in all_frames
+        }
+        mappings = {
+            name: all_mappings[name] for name in frames
+        }
+        results = {
+            name: all_results[name] for name in frames
+        }
+    else:
+        frames = all_frames
+        mappings = all_mappings
+        results = all_results
 
     if focused_transaction_sheets and results:
         first_result = next(iter(results.values()))
@@ -2711,13 +2876,17 @@ def _relationships_sync(
             if reference_profile or (not headers and "producto" in name.casefold()):
                 reference_sheets.add(name)
         if reference_sheets:
-            extra_frames, extra_mappings, extra_results = _processed_manifest_frames(
-                filename,
-                content,
-                manifest,
-                cache_dataset_id,
-                reference_sheets,
-            )
+            extra_frames = {
+                name: all_frames[name]
+                for name in reference_sheets
+                if name in all_frames
+            }
+            extra_mappings = {
+                name: all_mappings[name] for name in extra_frames
+            }
+            extra_results = {
+                name: all_results[name] for name in extra_frames
+            }
             frames.update(extra_frames)
             mappings.update(extra_mappings)
             results.update(extra_results)
@@ -2833,12 +3002,133 @@ def _relationships_sync(
             "type": "left",
             **stats.to_dict(),
         })
-    return {
+    response = {
         "candidates": candidates,
         "safe_count": len(safe),
         "manual": manual_result,
         "message": None if safe else "No encontramos una conexion segura entre estas hojas. Puedes analizarlas por separado.",
     }
+    if focused_transaction_order:
+        automatic = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.get("safe")
+                and candidate.get("recommended")
+                and candidate.get("purpose") == "enriquecer_costos"
+                and candidate["left_sheet"] in focused_transaction_sheets
+                and candidate["right_sheet"] not in focused_transaction_sheets
+            ),
+            None,
+        )
+        if automatic is not None:
+            right_sheet = automatic["right_sheet"]
+            scope = {
+                "mode": "append_join",
+                "sheets": list(dict.fromkeys([*focused_transaction_order, right_sheet])),
+                "append_sheets": focused_transaction_order,
+                "active_sheet": automatic["left_sheet"],
+                "join": {
+                    "left_sheet": automatic["left_sheet"],
+                    "right_sheet": right_sheet,
+                    "left_keys": automatic["left_keys"],
+                    "right_keys": automatic["right_keys"],
+                    "type": "left",
+                },
+            }
+            try:
+                response["analysis_scope"] = scope
+                response["metrics"] = _metrics_multi_from_processed(
+                    filename,
+                    all_frames,
+                    all_mappings,
+                    all_results,
+                    scope,
+                    None,
+                    None,
+                )
+            except HTTPException:
+                # Detectar una relacion sigue siendo util aunque una metrica
+                # adicional falle; el endpoint /metrics conservara su error
+                # explicito y su boton de reintento habitual.
+                response.pop("analysis_scope", None)
+    return response
+
+
+def _relationships_cached_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    manual: dict | None,
+    cache_dataset_id: str | None,
+    focus: dict | None,
+    user_id: str,
+) -> dict:
+    key = _analysis_cache_key(
+        "relationships",
+        user_id,
+        filename,
+        content,
+        cache_dataset_id,
+        _analysis_manifest_identity(manifest),
+        manual,
+        focus,
+    )
+    return _analysis_cache_compute(
+        key,
+        lambda: _relationships_sync(
+            filename,
+            content,
+            manifest,
+            manual,
+            cache_dataset_id,
+            focus,
+        ),
+    )
+
+
+def _business_focus_from_clean_responses(
+    manifest: dict,
+    responses: dict[str, dict],
+) -> list[str]:
+    focused: list[str] = []
+    for entry in manifest.get("hojas", []):
+        name = entry.get("nombre")
+        response = responses.get(name)
+        if not entry.get("procesar") or not isinstance(response, dict):
+            continue
+        mapping = response.get("mapeo") or entry.get("mapping") or {}
+        preview = response.get("preview") or {}
+        columns = preview.get("columnas") or list(mapping.values())
+        if is_transaction_profile(columns, mapping):
+            focused.append(name)
+    return focused
+
+
+def _prewarm_business_analysis_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    responses: dict[str, dict],
+    dataset_id: str | None,
+    user_id: str,
+) -> bool:
+    focus_sheets = _business_focus_from_clean_responses(manifest, responses)
+    if not focus_sheets:
+        return False
+    try:
+        warmed = _relationships_cached_sync(
+            filename,
+            content,
+            manifest,
+            None,
+            dataset_id,
+            {"sheets": focus_sheets},
+            user_id,
+        )
+    except (HTTPException, KeyError, ValueError):
+        return False
+    return bool(warmed.get("metrics"))
 
 
 def _metrics_from_clean_result(
@@ -3963,6 +4253,19 @@ async def clean_batch(
             if analysis_scope
             else None
         )
+        # El usuario suele continuar a Resumen tras revisar la limpieza. Las
+        # hojas ya estan en memoria, asi que preparar aqui la relacion segura y
+        # sus metricas evita otra espera larga sin retrasar la respuesta del
+        # boton Limpiar datos.
+        background_tasks.add_task(
+            _prewarm_business_analysis_sync,
+            filename,
+            content,
+            warm_manifest,
+            response["resultados"],
+            dataset_id,
+            user.id,
+        )
         background_tasks.add_task(
             _clean_download_book_sync,
             filename,
@@ -4214,7 +4517,7 @@ async def metrics(
         available = [entry["nombre"] for entry in sheet_manifest["hojas"]]
         parsed_analysis_scope = _parse_analysis_scope(analysis_scope, available)
         return await run_in_threadpool(
-            _metrics_multi_sync,
+            _metrics_multi_cached_sync,
             filename,
             content,
             sheet_manifest,
@@ -4222,6 +4525,7 @@ async def metrics(
             date_from,
             date_to,
             dataset_id,
+            user.id,
         )
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
@@ -4252,11 +4556,12 @@ async def sheet_relationships(
     if sheet_manifest is None:
         raise HTTPException(status_code=422, detail="Envia un manifiesto de hojas.")
     return await run_in_threadpool(
-        _relationships_sync,
+        _relationships_cached_sync,
         filename,
         content,
         sheet_manifest,
         _parse_json_field(relationship, "relationship") if relationship else None,
         dataset_id,
         _parse_json_field(focus, "focus") if focus else None,
+        user.id,
     )

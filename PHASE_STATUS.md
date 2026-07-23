@@ -10,7 +10,9 @@ exportación auditada mediante una sola lectura del libro, snapshots por
 revisión, caché aislada por contenido/usuario y precalentamiento. Los costos
 actuales usados para cubrir vacíos históricos se muestran como estimaciones y
 no se certifican. Resumen y Explorar también reconstruyen el alcance multihoja
-con una sola apertura del XLSX, incluso tras un arranque frío del backend.
+con una sola apertura del XLSX, incluso tras un arranque frío del backend. La
+vista empresarial se precalienta después de limpiar y su respuesta se reutiliza
+solo si coinciden usuario, archivo, configuración y revisión.
 **No agrega migraciones: 0021 sigue siendo la última.**
 
 La Fase 18 (`CHANGELOG` [0.21.0]) audita la plataforma contra la Prueba de
