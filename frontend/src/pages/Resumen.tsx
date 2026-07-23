@@ -551,6 +551,9 @@ export default function Resumen() {
   // Solo en una hoja de ventas (sin costos relacionados) las columnas de costo,
   // utilidad y margen salen todas "—": no aportan y las ocultamos.
   const categoriaConCostos = (metrics?.por_categoria ?? []).some((row) => row.costo != null)
+  // Sin esas 3 columnas la tabla queda con huecos: una barra de participación
+  // que se estira llena el ancho con algo útil.
+  const maxCategoria = Math.max(...(metrics?.por_categoria ?? []).map((row) => row.ingresos), 1)
 
   return (
     <>
@@ -791,16 +794,18 @@ export default function Resumen() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-navy/10 text-left text-xs font-semibold uppercase tracking-wide text-navy/50">
-                      <th className="pb-2 pr-4">Categoría</th>
-                      <th className="pb-2 pr-4 text-right">Ingresos</th>
+                      <th className="whitespace-nowrap pb-2 pr-4">Categoría</th>
+                      <th className="whitespace-nowrap pb-2 pr-4 text-right">Ingresos</th>
                       {/* Fase 14b: participación BRUTA — distribución real que suma 100% */}
-                      <th className="pb-2 pr-4 text-right">% Ventas brutas</th>
-                      {categoriaConCostos && (
+                      <th className="whitespace-nowrap pb-2 pr-4 text-right">% Ventas brutas</th>
+                      {categoriaConCostos ? (
                         <>
-                          <th className="pb-2 pr-4 text-right">Costo asociado</th>
-                          <th className="pb-2 pr-4 text-right">Utilidad</th>
+                          <th className="whitespace-nowrap pb-2 pr-4 text-right">Costo asociado</th>
+                          <th className="whitespace-nowrap pb-2 pr-4 text-right">Utilidad</th>
                           <th className="pb-2">Margen</th>
                         </>
+                      ) : (
+                        <th className="w-full pb-2" aria-label="Participación" />
                       )}
                     </tr>
                   </thead>
@@ -809,10 +814,10 @@ export default function Resumen() {
                       <tr key={row.nombre} className="border-b border-navy/5">
                         <td className="py-2.5 pr-4 font-medium text-navy">{row.nombre}</td>
                         <td className="py-2.5 pr-4 text-right text-navy/75">{formatCLP(row.ingresos)}</td>
-                        <td className="py-2.5 pr-4 text-right text-navy/75">
+                        <td className="whitespace-nowrap py-2.5 pr-4 text-right text-navy/75">
                           {formatNumber(row.participacion_bruta_pct ?? row.porcentaje)}%
                         </td>
-                        {categoriaConCostos && (
+                        {categoriaConCostos ? (
                           <>
                             <td className="py-2.5 pr-4 text-right text-navy/75">
                               {row.costo != null ? formatCLP(row.costo) : '—'}
@@ -844,6 +849,18 @@ export default function Resumen() {
                               )}
                             </td>
                           </>
+                        ) : (
+                          <td className="w-full py-2.5 pl-2">
+                            <span className="block h-1.5 w-full overflow-hidden rounded-full bg-navy/10">
+                              <span
+                                className="block h-full rounded-full"
+                                style={{
+                                  width: `${(row.ingresos / maxCategoria) * 100}%`,
+                                  background: CHART.ingresos,
+                                }}
+                              />
+                            </span>
+                          </td>
                         )}
                       </tr>
                     ))}
@@ -1227,9 +1244,10 @@ function FlexibleGroupCard({
         </div>
       )}
       {useDonut ? (
-        /* Dona + leyenda lado a lado: aprovecha el ancho y — a diferencia de
-           antes — muestra el nombre de cada segmento (p. ej. cada Medio Pago). */
-        <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row">
+        /* Dona arriba, leyenda debajo a TODO el ancho de la card (como "Ventas
+           por Canal"). Lado a lado, en cards angostas de la grilla, la leyenda
+           no cabía y el texto se salía del recuadro. */
+        <div className="mt-4 flex flex-col items-center gap-3">
           <div className="relative h-40 w-40 shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -1244,14 +1262,14 @@ function FlexibleGroupCard({
               <p className="text-[10px] text-navy/50">Total</p>
             </div>
           </div>
-          <ul className="w-full flex-1 space-y-1.5">
+          <ul className="w-full space-y-1.5">
             {rows.map((row, index) => (
               <li key={row.nombre} className="flex items-center justify-between gap-2 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5 text-navy/75">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: CATEGORICAL[index % CATEGORICAL.length] }} />
                   <span className="truncate" title={row.nombre}>{row.nombre}</span>
                 </span>
-                <span className="shrink-0 font-semibold text-navy">
+                <span className="shrink-0 whitespace-nowrap font-semibold text-navy">
                   {formatCLPCompact(row.ingresos)}
                   <span className="ml-1.5 font-normal text-navy/45">
                     {formatNumber(row.participacion_neta_pct ?? row.porcentaje)}%
