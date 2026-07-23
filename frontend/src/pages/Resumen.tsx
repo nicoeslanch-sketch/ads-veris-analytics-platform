@@ -871,17 +871,19 @@ export default function Resumen() {
               )}
             </div>
 
-            {/* Grilla auto-ajustable: tantas columnas como quepan de ≥300px,
-                  según el ESPACIO REAL disponible (no el ancho de ventana). Así
-                  no quedan huecos a la derecha aunque el panel de IA esté abierto
-                  o el sidebar reduzca el ancho — el problema de `columns` + media
-                  query, que colapsaba a 1 columna y desperdiciaba el espacio. */}
+            {/* `@container`: las columnas responden al ANCHO REAL de este bloque
+                y no al de la ventana, así el panel de IA abierto no lo colapsa.
+                Con un número de columnas CONOCIDO (2 en @2xl, 3 en @5xl) la
+                última card se estira para no dejar celdas vacías en la última
+                fila. El rango de 2 columnas se acota con @max-5xl: si no, su
+                regla `odd` se filtraría al modo de 3 y estiraría de más. */}
+            <div className="order-5 @container xl:order-last xl:col-span-2">
               <div
                 data-testid="summary-compact-flow"
-                className="order-5 xl:order-last xl:col-span-2 grid items-start gap-6 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]"
+                className="grid grid-cols-1 gap-6 @2xl:grid-cols-2 @5xl:grid-cols-3 @2xl:@max-5xl:[&>*:last-child:nth-child(odd)]:col-span-2 @5xl:[&>*:last-child:nth-child(3n+1)]:col-span-3 @5xl:[&>*:last-child:nth-child(3n+2)]:col-span-2"
               >
                   {canal.length > 0 && (
-                  <Card className="min-w-0">
+                  <Card className="flex h-full min-w-0 flex-col">
                     <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
                     <div className="mt-2 flex flex-col items-center gap-3">
                       <div className="relative h-44 w-44 shrink-0">
@@ -935,7 +937,7 @@ export default function Resumen() {
                   )}
 
                   {topProducts.length > 0 && (
-                  <Card className="min-w-0">
+                  <Card className="flex h-full min-w-0 flex-col">
                     <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
                     <ul className="mt-4 space-y-3">
                       {topProducts.map((product) => (
@@ -964,7 +966,7 @@ export default function Resumen() {
                   </Card>
                   )}
 
-                  <Card className="min-w-0">
+                  <Card className="flex h-full min-w-0 flex-col">
                     {/* Fase 12b §20: es una EXTRAPOLACIÓN del promedio observado, no
                         una predicción — el copy no debe prometer más que el método. */}
                     <h2 className="text-base font-semibold text-navy">
@@ -1020,7 +1022,7 @@ export default function Resumen() {
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
-                        <p className="mt-2 text-[11px] text-navy/45">
+                        <p className="mt-auto pt-3 text-[11px] text-navy/45">
                           Extrapolación del crecimiento promedio de {evolution.length} mes(es) de
                           historia — no considera estacionalidad ni meses incompletos. Línea
                           punteada = extrapolación.
@@ -1036,12 +1038,13 @@ export default function Resumen() {
               {/* Fase 18: agrupaciones flexibles — ventas por sucursal, región,
                   zona u otras columnas categóricas del archivo (incluidas las
                   enriquecidas por "Relacionar otras hojas"). */}
+                  {/* Sin div envolvente: cada card ES el ítem de la grilla, así
+                      `h-full` iguala alturas y el conteo nth-child es correcto. */}
                   {(metrics.agrupaciones_flexibles ?? []).map((agrupacion) => (
-                    <div key={agrupacion.columna} className="min-w-0">
                     <FlexibleGroupCard key={agrupacion.columna} agrupacion={agrupacion} />
-                    </div>
                   ))}
               </div>
+            </div>
 
             <div className="contents xl:block xl:space-y-6">
               <Card className="order-2">
@@ -1212,14 +1215,17 @@ function FlexibleGroupCard({
 }) {
   const rows = agrupacion.grupos.slice(0, 10).map((grupo) => ({
     ...grupo,
-    etiqueta: truncateLabel(grupo.nombre, 18),
+    // El eje Y reserva 150px: a 11px de fuente entran ~22 caracteres en UNA
+    // línea. Truncar a 20 evita que Recharts parta la etiqueta en dos
+    // ("Fuera de / rango", "Nota de / Crédito") o la recorte contra el borde.
+    etiqueta: truncateLabel(grupo.nombre, 20),
   }))
   const chartColor = chartColorForKey(agrupacion.columna)
   const useDonut = rows.length >= 2 && rows.length <= 5 && rows.every((row) => row.ingresos >= 0)
   const total = rows.reduce((sum, row) => sum + row.ingresos, 0)
   const hasNegative = rows.some((row) => row.ingresos < 0)
   return (
-    <Card className="min-w-0" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
+    <Card className="flex h-full min-w-0 flex-col" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
       <div className="flex items-center gap-2">
         <span className="h-3 w-3 rounded-full" style={{ background: chartColor }} />
         <h2 className="text-base font-semibold text-navy">Ventas por {agrupacion.columna}</h2>
@@ -1285,7 +1291,7 @@ function FlexibleGroupCard({
             <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
               <XAxis type="number" tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="etiqueta" width={120} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="etiqueta" width={150} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
               <ReferenceLine x={0} stroke={AXIS_INK} strokeOpacity={0.45} />
               <Tooltip formatter={(value) => formatCLP(Number(value))} />
               <Bar dataKey="ingresos" name="Ingresos" fill={chartColor} radius={[0, 4, 4, 0]}>
@@ -1298,7 +1304,7 @@ function FlexibleGroupCard({
       {hasNegative && (
         /* Explica por qué una barra puede ir a la izquierda del cero — p. ej. una
            Nota de Crédito, que resta ventas en vez de sumarlas. */
-        <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-navy/50">
+        <p className="mt-auto flex items-start gap-1.5 pt-3 text-[11px] leading-relaxed text-navy/50">
           <Info className="mt-0.5 h-3 w-3 shrink-0 text-coral" />
           <span>
             Los valores en <span className="font-semibold text-coral">coral (negativos)</span> restan ingresos:
