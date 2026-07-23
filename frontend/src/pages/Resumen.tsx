@@ -841,15 +841,16 @@ export default function Resumen() {
               </div>
               </Card>
               )}
+            </div>
 
-              {/* Grilla auto-ajustable: tantas columnas como quepan de ≥300px,
+            {/* Grilla auto-ajustable: tantas columnas como quepan de ≥300px,
                   según el ESPACIO REAL disponible (no el ancho de ventana). Así
                   no quedan huecos a la derecha aunque el panel de IA esté abierto
                   o el sidebar reduzca el ancho — el problema de `columns` + media
                   query, que colapsaba a 1 columna y desperdiciaba el espacio. */}
               <div
                 data-testid="summary-compact-flow"
-                className="order-5 grid items-start gap-6 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]"
+                className="order-5 xl:order-last xl:col-span-2 grid items-start gap-6 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]"
               >
                   {canal.length > 0 && (
                   <Card className="min-w-0">
@@ -1013,7 +1014,6 @@ export default function Resumen() {
                     </div>
                   ))}
               </div>
-            </div>
 
             <div className="contents xl:block xl:space-y-6">
               <Card className="order-2">
