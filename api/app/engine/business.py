@@ -163,17 +163,27 @@ def _relation_quality(
     ):
         return None
     source_keys = _keys(source[source_column])
-    reference_keys = set(_keys(reference[reference_column]).dropna())
+    reference_key_series = _keys(reference[reference_column]).dropna()
+    reference_keys = set(reference_key_series)
     informed = source_keys.notna()
     orphan = informed & ~source_keys.isin(reference_keys)
     missing = ~informed
     valid = informed & ~orphan
+    # P1-8: un maestro con la clave repetida hace que "válida" sea ambigua —
+    # cuál de las filas duplicadas es la referencia real. Se informa aparte
+    # de huérfanas/sin_clave, sin bloquear ni alterar el conteo de arriba.
+    key_counts = reference_key_series.value_counts()
+    duplicated_master_keys = int((key_counts > 1).sum())
     return {
         "relacion": label,
+        "tipo": "clave",
         "filas": int(len(source)),
         "validas": int(valid.sum()),
         "huerfanas": int(orphan.sum()),
         "sin_clave": int(missing.sum()),
+        "conflictos": 0,
+        "maestro_duplicado": duplicated_master_keys,
+        "maestro_conflictivo": 0,
         "cobertura_pct": round(float(valid.sum()) / max(len(source), 1) * 100, 1),
         "ejemplos": sorted({str(value) for value in source.loc[orphan, source_column].head(8)}),
     }
@@ -208,7 +218,26 @@ def _attribute_consistency(
         return None
     ref = reference[[reference_key, reference_attr]].copy()
     ref["_k"] = _keys(ref[reference_key])
-    ref = ref[ref["_k"].notna()].drop_duplicates(subset=["_k"], keep="first")
+    ref = ref[ref["_k"].notna()]
+    # P1-8: un maestro duplicado hace que "el nombre correcto" para esa clave
+    # sea ambiguo. Se cuenta aparte de los conflictos de atributo por fila —
+    # keep="first" sigue siendo la referencia usada para comparar (no cambia
+    # el criterio de negocio), pero ahora se informa cuándo esa elección era
+    # arbitraria entre valores REALMENTE distintos (maestro conflictivo) o
+    # solo copias exactas repetidas (maestro duplicado sin conflicto).
+    dedup_keys = ref["_k"].value_counts()
+    duplicated_keys = dedup_keys[dedup_keys > 1].index
+    maestro_duplicado = int(len(duplicated_keys))
+    maestro_conflictivo = 0
+    if maestro_duplicado:
+        attr_variety = (
+            ref[ref["_k"].isin(duplicated_keys)]
+            .assign(_attr_norm=ref[reference_attr].map(_text_key))
+            .groupby("_k")["_attr_norm"]
+            .nunique(dropna=True)
+        )
+        maestro_conflictivo = int((attr_variety > 1).sum())
+    ref = ref.drop_duplicates(subset=["_k"], keep="first")
     ref_map = {
         key: _text_key(value)
         for key, value in zip(ref["_k"], ref[reference_attr])
@@ -224,10 +253,15 @@ def _attribute_consistency(
     conflicts = int(mismatch.sum())
     return {
         "relacion": label,
+        "tipo": "atributo",
         "filas": checked,
         "validas": checked - conflicts,
-        "huerfanas": conflicts,
+        # No son huérfanas: la CLAVE existe en el maestro. Ver "conflictos".
+        "huerfanas": 0,
         "sin_clave": 0,
+        "conflictos": conflicts,
+        "maestro_duplicado": maestro_duplicado,
+        "maestro_conflictivo": maestro_conflictivo,
         "cobertura_pct": round((checked - conflicts) / max(checked, 1) * 100, 1),
         "ejemplos": sorted({str(value) for value in source.loc[mismatch, source_key].head(8)}),
     }
@@ -344,7 +378,10 @@ def _applicable_unit_cost(
         }
 
     history_key = (
-        find_column(cost_history.columns, "sku", "producto")
+        (
+            find_column(cost_history.columns, "sku", "producto")
+            or find_column(cost_history.columns, "id", "producto")
+        )
         if cost_history is not None
         else None
     )
@@ -926,7 +963,14 @@ def analyze_business_workbook(
     sellers_frame = frames.get((kinds.get("vendedores") or [None])[0]) if kinds.get("vendedores") else None
     suppliers_frame = frames.get((kinds.get("proveedores") or [None])[0]) if kinds.get("proveedores") else None
 
-    product_ref_key = find_column(products_frame.columns, "sku", "producto") if products_frame is not None else None
+    product_ref_key = (
+        (
+            find_column(products_frame.columns, "sku", "producto")
+            or find_column(products_frame.columns, "id", "producto")
+        )
+        if products_frame is not None
+        else None
+    )
     client_ref_key = find_column(clients_frame.columns, "id", "cliente") if clients_frame is not None else None
     branch_ref_key = find_column(branches_frame.columns, "id", "sucursal") if branches_frame is not None else None
     seller_ref_key = find_column(sellers_frame.columns, "id", "vendedor") if sellers_frame is not None else None
@@ -1070,7 +1114,14 @@ def analyze_business_workbook(
         _relation_quality(sales.loc[~structural], branch_col, branches_frame, branch_ref_key, "Ventas → Sucursales"),
         _relation_quality(sales.loc[~structural], seller_col, sellers_frame, seller_ref_key, "Ventas → Vendedores"),
         _relation_quality(products_frame, find_column(products_frame.columns, "id", "proveedor") if products_frame is not None else None, suppliers_frame, find_column(suppliers_frame.columns, "id", "proveedor") if suppliers_frame is not None else None, "Productos → Proveedores"),
-        _relation_quality(purchase_frame, find_column(purchase_frame.columns, "sku", "producto") if purchase_frame is not None else None, products_frame, product_ref_key, "Compras → Productos"),
+        _relation_quality(
+            purchase_frame,
+            (
+                find_column(purchase_frame.columns, "sku", "producto")
+                or find_column(purchase_frame.columns, "id", "producto")
+            ) if purchase_frame is not None else None,
+            products_frame, product_ref_key, "Compras → Productos",
+        ),
         _relation_quality(purchase_frame, find_column(purchase_frame.columns, "id", "proveedor") if purchase_frame is not None else None, suppliers_frame, find_column(suppliers_frame.columns, "id", "proveedor") if suppliers_frame is not None else None, "Compras → Proveedores"),
         _relation_quality(collections_frame, find_column(collections_frame.columns, "id", "documento") if collections_frame is not None else None, sales.loc[~structural], document_key, "Cobranzas → Ventas"),
         _relation_quality(sellers_frame, find_column(sellers_frame.columns, "id", "sucursal") if sellers_frame is not None else None, branches_frame, find_column(branches_frame.columns, "id", "sucursal") if branches_frame is not None else None, "Vendedores → Sucursales"),

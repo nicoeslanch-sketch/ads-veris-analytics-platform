@@ -157,6 +157,82 @@ def test_document_duplicates_split_into_identical_conflict_and_observation_only(
     assert alcance["documentos_solo_observacion_distinta"] == 1
 
 
+def test_attribute_conflicts_never_inflate_referencias_problematicas():
+    """Regresión P1-8: un SKU que SÍ existe en el maestro pero con un nombre
+    distinto es un conflicto de ATRIBUTO, no una referencia huérfana. Antes,
+    _attribute_consistency reutilizaba el campo "huerfanas" para contar
+    conflictos de nombre, y ese número se sumaba al total agregado
+    referencias_problematicas -- una clave perfectamente válida inflaba la
+    cifra que el usuario lee como "referencias sin correspondencia"."""
+    frames = {
+        "Ventas": pd.DataFrame(
+            [
+                {"ID_Producto": "P-001", "Producto": "Nombre Incorrecto", "Monto": "100", "Fecha": "01/01/2026"},
+                {"ID_Producto": "P-001", "Producto": "Nombre Incorrecto", "Monto": "200", "Fecha": "02/01/2026"},
+            ]
+        ),
+        "Productos": pd.DataFrame(
+            [{"ID_Producto": "P-001", "Producto": "Nombre Correcto", "Costo_Unitario": "50"}]
+        ),
+    }
+    mapping = {"Ventas": {"fecha": "Fecha", "monto": "Monto"}}
+
+    result = analyze_business_workbook(frames, mapping, {})
+
+    assert result is not None
+    integrity = result["calidad"]["integridad_referencial"]
+    attr_entry = next(item for item in integrity if item["tipo"] == "atributo")
+    assert attr_entry["conflictos"] == 2
+    assert attr_entry["huerfanas"] == 0
+    # La clave SÍ existe -- 0 referencias problemáticas, no 2.
+    assert result["calidad"]["referencias_problematicas"] == 0
+
+
+def test_products_relation_recognizes_id_producto_key_not_only_sku():
+    """Regresión P1-8: product_ref_key (usado en "Ventas → Productos" y su
+    verificación de nombre) solo buscaba el patrón "sku"+"producto" -- un
+    maestro de productos con clave "ID_Producto" (el patrón más común visto
+    en los archivos de prueba de esta sesión) nunca generaba esas dos
+    entradas de integridad referencial, aunque el cruce fuera perfecto."""
+    frames = {
+        "Ventas": pd.DataFrame(
+            [{"ID_Producto": "P-001", "Producto": "Correcto", "Monto": "100", "Fecha": "01/01/2026"}]
+        ),
+        "Productos": pd.DataFrame([{"ID_Producto": "P-001", "Producto": "Correcto"}]),
+    }
+    mapping = {"Ventas": {"fecha": "Fecha", "monto": "Monto"}}
+
+    result = analyze_business_workbook(frames, mapping, {})
+
+    assert result is not None
+    relations = {item["relacion"] for item in result["calidad"]["integridad_referencial"]}
+    assert "Ventas → Productos" in relations
+    assert "Ventas → Productos (nombre)" in relations
+
+
+def test_duplicated_master_key_is_reported_separately_from_conflict():
+    """Regresión P1-8: un maestro con la misma clave repetida hace que la
+    fila usada como referencia sea arbitraria (keep="first"). Se informa
+    aparte según si los valores repetidos coinciden (maestro_duplicado) o
+    realmente difieren entre sí (maestro_conflictivo, subconjunto)."""
+    from app.engine.business import _attribute_consistency
+
+    ventas = pd.DataFrame(
+        {"SKU": ["A", "B"], "Nombre": ["Widget", "Gadget"]}
+    )
+    # A: duplicado pero con el MISMO nombre -- no es conflictivo.
+    # B: duplicado con nombres DISTINTOS -- sí es conflictivo.
+    maestro = pd.DataFrame(
+        {
+            "SKU": ["A", "A", "B", "B"],
+            "Nombre": ["Widget", "Widget", "Gadget", "Artilugio"],
+        }
+    )
+    res = _attribute_consistency(ventas, "SKU", "Nombre", maestro, "SKU", "Nombre", "V-M")
+    assert res["maestro_duplicado"] == 2  # A y B están duplicados
+    assert res["maestro_conflictivo"] == 1  # solo B tiene valores distintos
+
+
 def test_current_catalogue_fills_history_gaps_without_certifying_the_estimate():
     frames = {
         "Ventas_2024": pd.DataFrame(

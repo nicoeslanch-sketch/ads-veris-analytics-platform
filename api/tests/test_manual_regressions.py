@@ -33,7 +33,11 @@ def test_sku_name_conflict_is_detected_against_master():
     # SKU-1 y SKU-2 coinciden (ignorando acentos/mayúsculas/espacios); SKU-3 no.
     # SKU-9 no está en el maestro: no se revisa (no infla el conflicto).
     assert res["filas"] == 3
-    assert res["huerfanas"] == 1
+    # P1-8: la clave SÍ existe en el maestro -- esto es un conflicto de
+    # ATRIBUTO, nunca una huérfana (esa categoría es para claves ausentes).
+    assert res["tipo"] == "atributo"
+    assert res["conflictos"] == 1
+    assert res["huerfanas"] == 0
     assert res["validas"] == 2
 
 

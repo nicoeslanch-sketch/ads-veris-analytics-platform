@@ -569,10 +569,14 @@ export interface BusinessAnalysis {
     costos: Record<string, number | string | null>
     integridad_referencial: Array<{
       relacion: string
+      tipo: 'clave' | 'atributo'
       filas: number
       validas: number
       huerfanas: number
       sin_clave: number
+      conflictos: number
+      maestro_duplicado: number
+      maestro_conflictivo: number
       cobertura_pct: number
       ejemplos: string[]
     }>

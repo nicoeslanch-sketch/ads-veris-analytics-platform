@@ -568,12 +568,21 @@ function DiagnosticAnalysis({ analysis }: { analysis: BusinessAnalysis }) {
           </div>
           <p className="mt-1 text-xs text-navy/55">Una referencia huérfana queda fuera del enriquecimiento; nunca multiplica ventas ni se une a ciegas.</p>
           <div className="mt-4 space-y-3 sm:hidden">
-            {analysis.calidad.integridad_referencial.map((row) => (
-              <div key={row.relacion} className="rounded-lg bg-navy/[0.04] px-3 py-3 text-xs">
-                <p className="font-semibold text-navy">{row.relacion}</p>
-                <p className="mt-1 text-navy/60">Cobertura {percent(row.cobertura_pct)} · {formatNumber(row.huerfanas)} huérfanas · {formatNumber(row.sin_clave)} sin clave</p>
-              </div>
-            ))}
+            {analysis.calidad.integridad_referencial.map((row) => {
+              const isAttribute = row.tipo === 'atributo'
+              const problemCount = isAttribute ? row.conflictos : row.huerfanas
+              const problemLabel = isAttribute ? 'conflictos de nombre' : 'huérfanas'
+              return (
+                <div key={row.relacion} className="rounded-lg bg-navy/[0.04] px-3 py-3 text-xs">
+                  <p className="font-semibold text-navy">{row.relacion}</p>
+                  <p className="mt-1 text-navy/60">
+                    Cobertura {percent(row.cobertura_pct)} · {formatNumber(problemCount)} {problemLabel}
+                    {!isAttribute && ` · ${formatNumber(row.sin_clave)} sin clave`}
+                    {row.maestro_duplicado > 0 && ` · ${formatNumber(row.maestro_duplicado)} clave(s) duplicadas en el maestro`}
+                  </p>
+                </div>
+              )
+            })}
           </div>
           <div className="mt-4 hidden overflow-x-auto sm:block">
             <table className="w-full text-sm">
@@ -581,19 +590,25 @@ function DiagnosticAnalysis({ analysis }: { analysis: BusinessAnalysis }) {
                 <tr className="border-b border-navy/10 text-left text-[11px] uppercase text-navy/45">
                   <th className="pb-2 pr-4">Relación</th>
                   <th className="pb-2 pr-4 text-right">Cobertura</th>
-                  <th className="pb-2 pr-4 text-right">Huérfanas</th>
-                  <th className="pb-2 text-right">Sin clave</th>
+                  <th className="pb-2 pr-4 text-right">Huérfanas / conflictos</th>
+                  <th className="pb-2 pr-4 text-right">Sin clave</th>
+                  <th className="pb-2 text-right">Maestro duplicado</th>
                 </tr>
               </thead>
               <tbody>
-                {analysis.calidad.integridad_referencial.map((row) => (
-                  <tr key={row.relacion} className="border-b border-navy/5">
-                    <td className="py-2.5 pr-4 font-medium text-navy">{row.relacion}</td>
-                    <td className="py-2.5 pr-4 text-right text-navy/70">{percent(row.cobertura_pct)}</td>
-                    <td className="py-2.5 pr-4 text-right text-navy/70">{formatNumber(row.huerfanas)}</td>
-                    <td className="py-2.5 text-right text-navy/70">{formatNumber(row.sin_clave)}</td>
-                  </tr>
-                ))}
+                {analysis.calidad.integridad_referencial.map((row) => {
+                  const isAttribute = row.tipo === 'atributo'
+                  const problemCount = isAttribute ? row.conflictos : row.huerfanas
+                  return (
+                    <tr key={row.relacion} className="border-b border-navy/5">
+                      <td className="py-2.5 pr-4 font-medium text-navy">{row.relacion}</td>
+                      <td className="py-2.5 pr-4 text-right text-navy/70">{percent(row.cobertura_pct)}</td>
+                      <td className="py-2.5 pr-4 text-right text-navy/70">{formatNumber(problemCount)}</td>
+                      <td className="py-2.5 pr-4 text-right text-navy/70">{isAttribute ? '—' : formatNumber(row.sin_clave)}</td>
+                      <td className="py-2.5 text-right text-navy/70">{row.maestro_duplicado > 0 ? formatNumber(row.maestro_duplicado) : '—'}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
