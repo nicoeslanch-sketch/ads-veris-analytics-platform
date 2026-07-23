@@ -591,11 +591,28 @@ def analyze_business_workbook(
     certified_mask = indicator_mask & ~duplicate_extra & ~conflicting_document
 
     current_cost_name = (kinds.get("costos") or [None])[0]
+    if not current_cost_name:
+        # Una PyME pequeña suele tener un solo "Productos" con ID, categoria
+        # Y costo unitario en la misma hoja, sin nombrarla "Costos_...". Se
+        # acepta como fuente de costo si trae clave de producto + costo por
+        # unidad reales, igual que ya reconoce join_related_frames en
+        # multi_sheet.py para la misma combinacion de columnas.
+        for name in kinds.get("productos", []):
+            candidate = frames[name]
+            candidate_headers = " | ".join(
+                normalized_header(column) for column in candidate.columns
+            )
+            if "costo" in candidate_headers and "unitario" in candidate_headers:
+                current_cost_name = name
+                break
     current_costs = frames.get(current_cost_name) if current_cost_name else None
     cost_history_name = (kinds.get("historial_costos") or [None])[0]
     cost_history = frames.get(cost_history_name) if cost_history_name else None
     cost_key = (
-        find_column(current_costs.columns, "sku", "producto")
+        (
+            find_column(current_costs.columns, "sku", "producto")
+            or find_column(current_costs.columns, "id", "producto")
+        )
         if current_costs is not None
         else None
     )

@@ -428,7 +428,9 @@ export default function Estandarizacion() {
                   ? `Preparando automáticamente ${batchProgress.current} de ${batchProgress.total}: ${batchProgress.sheet}. Espera un momento.`
                   : selectedSheetErrors.length > 0
                     ? `${selectedSheetErrors.length} hoja(s) necesitan reintento antes de continuar.`
-                    : `Estamos preparando automáticamente las ${selectedSheets.length} hojas seleccionadas. No necesitas hacer nada.`}
+                    : selectedSheets.length > 0
+                      ? `Estamos preparando automáticamente las ${selectedSheets.length} hojas seleccionadas. No necesitas hacer nada.`
+                      : 'Estamos preparando tu archivo automáticamente. No necesitas hacer nada.'}
               </span>
             )}
             <button

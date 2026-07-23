@@ -83,6 +83,46 @@ def test_business_analysis_excludes_totals_and_cancelled_rows_and_uses_asof_cost
     assert "Parametros" not in result["alcance"]["hojas_utilizadas"]
 
 
+def test_products_sheet_without_costo_in_its_name_is_still_used_as_cost_source():
+    """Regresión QA: una PyME chica suele tener un solo "Productos" con ID,
+    categoria y Costo_Unitario en la misma hoja, sin nombrarla "Costos_...".
+    classify_business_sheets la clasificaba como "productos" (por el nombre
+    de la hoja) y el motor nunca la usaba como fuente de costo, aunque traía
+    un costo unitario real por SKU -- la cobertura de costos quedaba en 0%
+    pese a que el cruce por ID_Producto era perfecto."""
+    frames = {
+        "Ventas": pd.DataFrame(
+            [
+                {"ID_Producto": "P-001", "Cantidad": "2", "Monto": "200", "Fecha": "01/01/2026"},
+                {"ID_Producto": "P-002", "Cantidad": "1", "Monto": "150", "Fecha": "02/01/2026"},
+            ]
+        ),
+        "Productos": pd.DataFrame(
+            [
+                {"ID_Producto": "P-001", "Producto": "Audifonos", "Costo_Unitario": "40"},
+                {"ID_Producto": "P-002", "Producto": "Mouse", "Costo_Unitario": "70"},
+            ]
+        ),
+    }
+    mapping = {
+        "Ventas": {
+            "fecha": "Fecha",
+            "monto": "Monto",
+            "cantidad": "Cantidad",
+            "producto": "ID_Producto",
+        }
+    }
+
+    result = analyze_business_workbook(frames, mapping, {})
+
+    assert result is not None
+    assert result["alcance"]["hoja_costos"] == "Productos"
+    assert result["estado_resultados"]["cobertura_costos_pct"] == 100
+    # 2×40 + 1×70
+    assert result["estado_resultados"]["costo_venta_conocido"] == 150
+    assert result["estado_resultados"]["utilidad_bruta"] == 200
+
+
 def test_current_catalogue_fills_history_gaps_without_certifying_the_estimate():
     frames = {
         "Ventas_2024": pd.DataFrame(

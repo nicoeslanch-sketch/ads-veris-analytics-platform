@@ -924,7 +924,17 @@ export default function Limpieza() {
   const cleaningRunSheets = reviewMode
     ? selectedSheets.filter((name) => Boolean(sheetSessions[name]?.standardization))
     : pendingPreparedSheets
-  const scopeState = cleaningScopeState(selectedSheets, sheetSessions, applying)
+  // Un CSV (o cualquier archivo de una sola hoja) nunca registra entradas en
+  // selectedSheets/sheetSessions -- esas estructuras son solo para libros
+  // multihoja -- así que cleaningScopeState siempre devolvería 'pending' para
+  // él aunque ya esté limpio. Se usa la señal legada de una sola hoja.
+  const scopeState = availableSheets.length > 1
+    ? cleaningScopeState(selectedSheets, sheetSessions, applying)
+    : applying
+      ? 'cleaning'
+      : applied
+        ? 'complete'
+        : 'pending'
   const cleaningComplete = scopeState === 'complete'
   const cleaningLifecycle = {
     pending: 'Pendiente',
@@ -1068,7 +1078,9 @@ export default function Limpieza() {
               <p className="text-xl font-bold text-navy">
                 {formatNumber(applied && result ? result.resumen.filas_despues : standardization.filas)}
               </p>
-              <p className="text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+              {availableSheets.length > 1 && (
+                <p className="text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+              )}
             </div>
           </div>
         </Card>
@@ -1082,7 +1094,9 @@ export default function Limpieza() {
               <p className="text-xl font-bold text-navy">
                 {formatNumber(applied && result ? result.resumen.columnas_despues : standardization.columnas)}
               </p>
-              <p className="text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+              {availableSheets.length > 1 && (
+                <p className="text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+              )}
             </div>
           </div>
         </Card>
@@ -1094,7 +1108,9 @@ export default function Limpieza() {
               {quality !== null && (
                 <Badge tone={qualityLabel(quality).tone}>{qualityLabel(quality).text}</Badge>
               )}
-              <p className="mt-1 text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+              {availableSheets.length > 1 && (
+                <p className="mt-1 text-xs text-navy/50">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+              )}
             </div>
           </div>
         </Card>
@@ -1109,9 +1125,13 @@ export default function Limpieza() {
                 {cleaningLifecycle}
               </p>
               <p className="text-xs text-navy/50">
-                {cleaningComplete
-                  ? `Las ${selectedSheets.length} hojas seleccionadas están limpias.`
-                  : `${cleanedSheets.length} limpias, ${pendingSheets.length} pendientes y ${failedSheets.length} con error.`}
+                {availableSheets.length > 1
+                  ? cleaningComplete
+                    ? `Las ${selectedSheets.length} hojas seleccionadas están limpias.`
+                    : `${cleanedSheets.length} limpias, ${pendingSheets.length} pendientes y ${failedSheets.length} con error.`
+                  : cleaningComplete
+                    ? 'El dataset está limpio.'
+                    : 'Limpieza pendiente.'}
               </p>
             </div>
           </div>
@@ -1584,7 +1604,9 @@ export default function Limpieza() {
                     </div>
                     <h3 className="text-sm font-semibold text-navy">Problemas detectados</h3>
                   </div>
-                  <p className="mt-1 text-[11px] text-navy/45">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+                  {availableSheets.length > 1 && (
+                    <p className="mt-1 text-[11px] text-navy/45">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+                  )}
                   <ul className="mt-4 space-y-2.5">
                     {PROBLEM_LABELS.map(({ key, label, unit, icon: Icon }) => (
                       <li key={key} className="flex items-center justify-between gap-2 text-sm">
@@ -1615,7 +1637,9 @@ export default function Limpieza() {
                       Qué se eliminará / corregirá
                     </h3>
                   </div>
-                  <p className="mt-1 text-[11px] text-navy/45">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+                  {availableSheets.length > 1 && (
+                    <p className="mt-1 text-[11px] text-navy/45">Hoja mostrada: {sheet ?? 'hoja actual'}</p>
+                  )}
                   <ul className="mt-4 space-y-2.5">
                     {planned.map(({ label, value }) => (
                       <li key={label} className="flex items-center justify-between gap-2 text-sm">

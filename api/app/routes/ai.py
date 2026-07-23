@@ -103,9 +103,12 @@ def _guard_monetary_integrity(metrics: dict) -> None:
 
 def _client(settings: Settings) -> AsyncAnthropic:
     if not settings.anthropic_api_key:
+        # Nunca se expone al usuario el nombre de la variable de entorno
+        # faltante: es un detalle interno del servidor, no algo que el
+        # usuario pueda corregir.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Asistente IA no disponible: falta ANTHROPIC_API_KEY en el servidor.",
+            detail="El asistente no está disponible en este momento. Intenta de nuevo más tarde.",
         )
     return AsyncAnthropic(api_key=settings.anthropic_api_key)
 

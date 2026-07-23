@@ -387,10 +387,13 @@ def test_ai_summary_requiere_token(client):
 
 def test_ai_summary_sin_api_key_devuelve_503(client, auth_headers):
     # En tests no hay ANTHROPIC_API_KEY: el endpoint debe fallar con un
-    # mensaje claro, nunca con un 500 opaco.
+    # mensaje claro, nunca con un 500 opaco ni con detalles internos del
+    # servidor (el nombre de la variable de entorno no es asunto del usuario).
     response = client.post("/ai/summary", json={"metrics": {}}, headers=auth_headers)
     assert response.status_code == 503
-    assert "ANTHROPIC_API_KEY" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "ANTHROPIC_API_KEY" not in detail
+    assert detail == "El asistente no está disponible en este momento. Intenta de nuevo más tarde."
 
 
 def test_ai_summary_error_del_proveedor_no_expone_detalle_crudo(monkeypatch, client, auth_headers):
@@ -537,7 +540,9 @@ def test_ai_recommendation_requiere_token_y_api_key(client, auth_headers):
         headers=auth_headers,
     )
     assert response.status_code == 503
-    assert "ANTHROPIC_API_KEY" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "ANTHROPIC_API_KEY" not in detail
+    assert detail == "El asistente no está disponible en este momento. Intenta de nuevo más tarde."
 
 
 # ── Límite de tamaño también para archivos que vienen de Storage ──
