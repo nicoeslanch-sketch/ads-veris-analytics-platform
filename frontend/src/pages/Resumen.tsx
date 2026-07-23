@@ -885,7 +885,7 @@ export default function Resumen() {
                   {canal.length > 0 && (
                   <Card className="flex h-full min-w-0 flex-col">
                     <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
-                    <div className="mt-2 flex flex-col items-center gap-3">
+                    <div className="mt-2 flex flex-1 flex-col items-center justify-center gap-3">
                       <div className="relative h-44 w-44 shrink-0">
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
@@ -939,7 +939,9 @@ export default function Resumen() {
                   {topProducts.length > 0 && (
                   <Card className="flex h-full min-w-0 flex-col">
                     <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
-                    <ul className="mt-4 space-y-3">
+                    {/* flex-1 + reparto uniforme: los productos ocupan el alto
+                        sobrante en vez de dejar un hueco al pie de la card. */}
+                    <ul className="mt-4 flex flex-1 flex-col justify-around gap-3">
                       {topProducts.map((product) => (
                         <li key={product.nombre}>
                           <div className="flex items-center justify-between gap-2 text-sm">
@@ -982,7 +984,7 @@ export default function Resumen() {
                           {formatNumber(metrics.proyeccion.crecimiento_pct)}%
                         </p>
                         <p className="text-xs text-navy/50">mensual promedio</p>
-                        <div className="mt-3 h-24">
+                        <div className="mt-3 flex-1" style={{ minHeight: 96 }}>
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart
                               data={[
@@ -1225,7 +1227,7 @@ function FlexibleGroupCard({
   const total = rows.reduce((sum, row) => sum + row.ingresos, 0)
   const hasNegative = rows.some((row) => row.ingresos < 0)
   return (
-    <Card className="flex h-full min-w-0 flex-col" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
+    <Card className="@container flex h-full min-w-0 flex-col" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
       <div className="flex items-center gap-2">
         <span className="h-3 w-3 rounded-full" style={{ background: chartColor }} />
         <h2 className="text-base font-semibold text-navy">Ventas por {agrupacion.columna}</h2>
@@ -1250,11 +1252,13 @@ function FlexibleGroupCard({
         </div>
       )}
       {useDonut ? (
-        /* Dona arriba, leyenda debajo a TODO el ancho de la card (como "Ventas
-           por Canal"). Lado a lado, en cards angostas de la grilla, la leyenda
-           no cabía y el texto se salía del recuadro. */
-        <div className="mt-4 flex flex-col items-center gap-3">
-          <div className="relative h-40 w-40 shrink-0">
+        /* El layout depende del ancho de LA CARD (@container), no de la
+           ventana: angosta → dona arriba y leyenda debajo en una columna;
+           ancha (cuando ocupa la fila completa) → dona a la izquierda y
+           leyenda en DOS columnas que llenan el ancho, en vez de una dona
+           chica al centro con los montos pegados a los bordes. */
+        <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-4 @2xl:flex-row @2xl:gap-8">
+          <div className="relative h-40 w-40 shrink-0 @2xl:h-48 @2xl:w-48">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={rows} dataKey="ingresos" nameKey="etiqueta" innerRadius="60%" outerRadius="92%" stroke="#ffffff" strokeWidth={2} isAnimationActive={false}>
@@ -1268,7 +1272,7 @@ function FlexibleGroupCard({
               <p className="text-[10px] text-navy/50">Total</p>
             </div>
           </div>
-          <ul className="w-full space-y-1.5">
+          <ul className="w-full space-y-1.5 @2xl:grid @2xl:flex-1 @2xl:grid-cols-2 @2xl:gap-x-10 @2xl:gap-y-2 @2xl:space-y-0">
             {rows.map((row, index) => (
               <li key={row.nombre} className="flex items-center justify-between gap-2 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5 text-navy/75">
@@ -1286,7 +1290,10 @@ function FlexibleGroupCard({
           </ul>
         </div>
       ) : (
-        <div className="mt-4" style={{ height: Math.max(rows.length * 34 + 44, 150) }}>
+        /* flex-1: el gráfico ABSORBE el alto sobrante de la card en vez de
+           quedarse chico y dejar un hueco antes de la nota. El minHeight
+           conserva el piso necesario para que las barras se lean. */
+        <div className="mt-4 flex-1" style={{ minHeight: Math.max(rows.length * 34 + 44, 150) }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
