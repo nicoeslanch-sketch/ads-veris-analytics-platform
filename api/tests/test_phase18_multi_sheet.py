@@ -1288,6 +1288,75 @@ def test_export_documents_orphan_references_from_business_audit():
     assert "referencia(s) huérfana(s)" in detail
 
 
+def test_export_documents_attribute_conflicts_from_business_audit():
+    """Regresión P1-9: P1-8 separó los conflictos de ATRIBUTO (clave válida,
+    nombre distinto al maestro) de las huérfanas reales -- pero el volcado a
+    Observaciones seguía filtrando solo por "huerfanas", así que estos
+    conflictos (que sí se ven en el panel Visión del negocio) dejaron de
+    documentarse en el Excel descargado sin ningún aviso."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "ID_Producto": ["P-001", "P-001", "P-002"],
+                "Producto": ["Nombre Incorrecto", "Nombre Incorrecto", "Mouse"],
+                "Monto": [1000, 2000, 3000],
+                "Fecha": ["01/01/2026", "02/01/2026", "03/01/2026"],
+            }
+        ).to_excel(writer, sheet_name="Ventas", index=False)
+        pd.DataFrame(
+            {
+                "ID_Producto": ["P-001", "P-002"],
+                "Producto": ["Nombre Correcto", "Mouse"],
+                "Costo_Unitario": [500, 800],
+            }
+        ).to_excel(writer, sheet_name="Productos", index=False)
+    content = output.getvalue()
+    names = ["Ventas", "Productos"]
+    manifest = {
+        "hojas": [
+            {
+                "nombre": name,
+                "procesar": True,
+                "rules": {},
+                "mapping": {"monto": "Monto", "fecha": "Fecha"} if name == "Ventas" else {},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "status": "pendiente",
+                "error": "",
+            }
+            for name in names
+        ]
+    }
+    scope = {
+        "mode": "append_join",
+        "sheets": names,
+        "append_sheets": ["Ventas"],
+        "active_sheet": "Ventas",
+        "join": {
+            "left_sheet": "Ventas",
+            "right_sheet": "Productos",
+            "left_keys": ["ID_Producto"],
+            "right_keys": ["ID_Producto"],
+            "type": "left",
+        },
+    }
+
+    payload, _, _ = _clean_download_book_sync("libro.xlsx", content, manifest, "xlsx", scope)
+
+    observations = pd.read_excel(
+        io.BytesIO(payload), sheet_name="Observaciones", dtype=str, keep_default_na=False
+    )
+    conflict_rows = observations[observations["Tipo"] == "conflicto_atributo"]
+    assert len(conflict_rows) >= 1
+    detail = " ".join(conflict_rows["Detalle"].tolist())
+    assert "P-001" in detail
+    assert "conflicto(s) de nombre" in detail
+    # No debe reaparecer como huérfana -- la clave sí existe en el maestro.
+    orphan_rows = observations[observations["Tipo"] == "referencia_huerfana"]
+    assert "P-001" not in " ".join(orphan_rows["Detalle"].tolist())
+
+
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 _stress_path = os.getenv("ADSVERIS_STRESS_XLSX")
 _small_path = os.getenv("ADSVERIS_SMALL_XLSX")

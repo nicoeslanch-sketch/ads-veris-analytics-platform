@@ -2456,17 +2456,26 @@ def _clean_download_book_uncached_sync(
         business_audit = analyze_business_workbook(frames, mappings, results)
         if business_audit is not None:
             for relation in business_audit.get("calidad", {}).get("integridad_referencial", []):
-                if not relation.get("huerfanas"):
+                # P1-9: una relación "atributo" (P1-8) nunca trae huérfanas —
+                # su problema son "conflictos" (clave válida, nombre distinto
+                # al maestro). Filtrar solo por huerfanas dejaba estas
+                # relaciones afuera de Observaciones sin ningún aviso.
+                is_attribute = relation.get("tipo") == "atributo"
+                problem_count = relation.get("conflictos") if is_attribute else relation.get("huerfanas")
+                if not problem_count:
                     continue
                 examples = ", ".join(relation.get("ejemplos", [])[:8])
+                problem_label = "conflicto(s) de nombre" if is_attribute else "referencia(s) huérfana(s)"
                 detail = (
-                    f"{relation['relacion']}: {relation['huerfanas']} referencia(s) huérfana(s) "
+                    f"{relation['relacion']}: {problem_count} {problem_label} "
                     f"de {relation['filas']} fila(s) evaluadas ({relation['cobertura_pct']}% válidas)."
                 )
                 if examples:
                     detail += f" Ejemplos: {examples}."
                 observations.append((
-                    "-", "Todas las hojas procesadas", "*", "referencia_huerfana", detail,
+                    "-", "Todas las hojas procesadas", "*",
+                    "conflicto_atributo" if is_attribute else "referencia_huerfana",
+                    detail,
                 ))
     for record in records:
         record["analysis_provenance"] = (
