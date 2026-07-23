@@ -842,14 +842,17 @@ export default function Resumen() {
               </Card>
               )}
 
-              {/* Las tarjetas dinámicas fluyen por altura: ninguna reserva el
-                  alto de su vecina ni deja huecos antes de la siguiente. */}
+              {/* Grilla auto-ajustable: tantas columnas como quepan de ≥300px,
+                  según el ESPACIO REAL disponible (no el ancho de ventana). Así
+                  no quedan huecos a la derecha aunque el panel de IA esté abierto
+                  o el sidebar reduzca el ancho — el problema de `columns` + media
+                  query, que colapsaba a 1 columna y desperdiciaba el espacio. */}
               <div
                 data-testid="summary-compact-flow"
-                className="order-5 columns-1 gap-6 lg:columns-2"
+                className="order-5 grid items-start gap-6 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]"
               >
                   {canal.length > 0 && (
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
                     <div className="mt-2 flex flex-col items-center gap-3">
                       <div className="relative h-44 w-44 shrink-0">
@@ -903,7 +906,7 @@ export default function Resumen() {
                   )}
 
                   {topProducts.length > 0 && (
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
                     <ul className="mt-4 space-y-3">
                       {topProducts.map((product) => (
@@ -932,7 +935,7 @@ export default function Resumen() {
                   </Card>
                   )}
 
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     {/* Fase 12b §20: es una EXTRAPOLACIÓN del promedio observado, no
                         una predicción — el copy no debe prometer más que el método. */}
                     <h2 className="text-base font-semibold text-navy">
@@ -1005,7 +1008,7 @@ export default function Resumen() {
                   zona u otras columnas categóricas del archivo (incluidas las
                   enriquecidas por "Relacionar otras hojas"). */}
                   {(metrics.agrupaciones_flexibles ?? []).map((agrupacion) => (
-                    <div key={agrupacion.columna} className="mb-6 break-inside-avoid">
+                    <div key={agrupacion.columna} className="min-w-0">
                     <FlexibleGroupCard key={agrupacion.columna} agrupacion={agrupacion} />
                     </div>
                   ))}
