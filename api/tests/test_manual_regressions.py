@@ -7,8 +7,23 @@ import pandas as pd
 
 from app.engine.mapping import detect_column_roles
 from app.engine.metrics import CurrencyDetection, compute_metrics
-from app.engine.standardize import standardize_dataframe
+from app.engine.standardize import parse_date, standardize_dataframe
 from app.routes import pipeline
+
+
+def test_year_month_values_parse_to_first_of_month():
+    """Meses como '2025-10' u '08/2025' (Mes Vigencia, Mes de metas) deben
+    quedar como fecha (día 1), no como 'fecha no interpretable'."""
+    assert parse_date("2025-10") == pd.Timestamp(2025, 10, 1)
+    assert parse_date("2025-2") == pd.Timestamp(2025, 2, 1)
+    assert parse_date("08/2025") == pd.Timestamp(2025, 8, 1)
+    assert parse_date("12.2024") == pd.Timestamp(2024, 12, 1)
+    # Mes fuera de rango o sin año de 4 dígitos no se fuerza a fecha.
+    assert parse_date("2025-13") is None
+    assert parse_date("10/25") is None
+    # Las fechas completas de siempre siguen intactas.
+    assert parse_date("15/02/2025") == pd.Timestamp(2025, 2, 15)
+    assert parse_date("2026-05-01") == pd.Timestamp(2026, 5, 1)
 
 
 def test_channel_equivalences_are_role_scoped_and_auditable():
