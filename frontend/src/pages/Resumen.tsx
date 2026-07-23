@@ -1272,7 +1272,9 @@ function FlexibleGroupCard({
               <p className="text-[10px] text-navy/50">Total</p>
             </div>
           </div>
-          <ul className="w-full space-y-1.5 @2xl:grid @2xl:flex-1 @2xl:grid-cols-2 @2xl:gap-x-10 @2xl:gap-y-2 @2xl:space-y-0">
+          {/* Más columnas a medida que la card crece: así cada fila queda
+              angosta y el monto no se despega del nombre. */}
+          <ul className="w-full space-y-1.5 @2xl:grid @2xl:flex-1 @2xl:grid-cols-2 @2xl:gap-x-8 @2xl:gap-y-2 @2xl:space-y-0 @4xl:grid-cols-3">
             {rows.map((row, index) => (
               <li key={row.nombre} className="flex items-center justify-between gap-2 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5 text-navy/75">
