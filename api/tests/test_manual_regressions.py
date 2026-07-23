@@ -5,10 +5,36 @@ import io
 import openpyxl
 import pandas as pd
 
+from app.engine.business import _attribute_consistency
 from app.engine.mapping import detect_column_roles
 from app.engine.metrics import CurrencyDetection, compute_metrics
 from app.engine.standardize import parse_date, standardize_dataframe
 from app.routes import pipeline
+
+
+def test_sku_name_conflict_is_detected_against_master():
+    """SKU que existe en el maestro pero con nombre distinto = conflicto (no
+    huérfano). Un SKU inexistente no cuenta aquí (eso es huérfano)."""
+    ventas = pd.DataFrame(
+        {
+            "SKU_Producto": ["SKU-1", "SKU-2", "SKU-3", "SKU-9"],
+            "Producto": ["Lápiz Azul", "TÓNER negro ", "Producto Equivocado", "X"],
+        }
+    )
+    maestro = pd.DataFrame(
+        {
+            "SKU_Producto": ["SKU-1", "SKU-2", "SKU-3"],
+            "Producto": ["Lapiz azul", "Toner Negro", "Guante Nitrilo"],
+        }
+    )
+    res = _attribute_consistency(
+        ventas, "SKU_Producto", "Producto", maestro, "SKU_Producto", "Producto", "V-P"
+    )
+    # SKU-1 y SKU-2 coinciden (ignorando acentos/mayúsculas/espacios); SKU-3 no.
+    # SKU-9 no está en el maestro: no se revisa (no infla el conflicto).
+    assert res["filas"] == 3
+    assert res["huerfanas"] == 1
+    assert res["validas"] == 2
 
 
 def test_year_month_values_parse_to_first_of_month():
