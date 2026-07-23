@@ -20,7 +20,12 @@ from fastapi import HTTPException, status
 from .config import get_settings
 
 MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
-_CACHE_TTL_SECONDS = 5 * 60
+# P0-6: única caché de bytes de Storage del backend. Antes pipeline.py
+# mantenía una segunda copia envolviendo download_from_storage (mismo
+# archivo duplicado en memoria con dos políticas de expiración distintas).
+# El TTL de 15 min favorece flujos multihoja: muchas peticiones sobre el
+# mismo objeto mientras el usuario trabaja hoja por hoja.
+_CACHE_TTL_SECONDS = 15 * 60
 _CACHE_MAX_BYTES = 45 * 1024 * 1024
 _CACHE_LOCK = threading.Lock()
 _DOWNLOAD_CACHE: "OrderedDict[tuple[str, str, str], tuple[float, bytes]]" = OrderedDict()

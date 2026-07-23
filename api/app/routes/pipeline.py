@@ -25,6 +25,7 @@ import copy
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import threading
@@ -50,6 +51,7 @@ from fastapi.responses import StreamingResponse
 from .. import quota
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import Capability, require_capability_for_user
+from ..concurrency import heavy_job_slot
 from ..config import Settings, get_settings
 from ..engine.ai_refine import refine_with_ai
 from ..engine.audit import AUDIT_COLUMNS, build_audit_dataframe
@@ -63,6 +65,7 @@ from ..engine.export import safe_export_dataframe
 from ..engine.loader import (
     SOURCE_ROWS_ATTR,
     UnsupportedFileError,
+    estimate_memory_bytes,
     load_dataframes_with_reports,
     load_dataframe_with_report,
     xlsx_sheet_names,
@@ -104,6 +107,7 @@ from ..storage import download_from_storage, normalize_user_storage_path
 from ..version import ENGINE_VERSION
 
 router = APIRouter()
+logger = logging.getLogger("app.pipeline")
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # multipart es solo para archivos pequeños
 PREVIEW_ROWS = 5
@@ -112,9 +116,15 @@ PREVIEW_ROWS = 5
 # /clean, /metrics y descargas. Un presupuesto único evita duplicar memoria sin
 # límite: una base grande desplaza las entradas antiguas por LRU.
 _FRAME_CACHE_LOCK = threading.Lock()
-_FRAME_CACHE: "OrderedDict[tuple, tuple[object, dict]]" = OrderedDict()
+_FRAME_CACHE: "OrderedDict[tuple, tuple[object, dict, int]]" = OrderedDict()
 _FRAME_CACHE_CELL_BUDGET = 1_600_000
 _FRAME_CACHE_MAX_ENTRY_CELLS = 1_200_000
+# P0-6: la cantidad de celdas subestima la memoria real con columnas de texto
+# (todo se carga como dtype=str). El presupuesto en bytes reales de
+# memory_usage(deep=True) es un segundo techo, independiente del de celdas —
+# cualquiera de los dos que se supere primero desaloja entradas por LRU.
+_FRAME_CACHE_MEMORY_BUDGET_BYTES = 300 * 1024 * 1024
+_FRAME_CACHE_MAX_ENTRY_BYTES = 150 * 1024 * 1024
 
 # Resumen, Explorar, Reportes y el panel IA pueden pedir el mismo analisis
 # multihoja en navegaciones consecutivas. El resultado agregado es pequeno
@@ -132,51 +142,12 @@ _RESTORE_RESPONSE_CACHE: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
 _RESTORE_RESPONSE_CACHE_TTL_SECONDS = 10 * 60
 _RESTORE_RESPONSE_CACHE_MAX_USERS = 8
 
-# Un flujo multihoja hace muchas peticiones sobre el mismo objeto de Storage.
-# Volver a descargar el XLSX completo para cada hoja multiplica la latencia y
-# puede superar el limite del proxy aunque pandas termine correctamente. Los
-# bytes son inmutables, la ruta ya fue validada contra el propietario y los
-# nombres de subida son unicos; por eso una LRU breve y acotada es segura.
-_STORAGE_CONTENT_CACHE_LOCK = threading.Lock()
-_STORAGE_CONTENT_CACHE: "OrderedDict[str, tuple[float, bytes]]" = OrderedDict()
-_STORAGE_CONTENT_CACHE_TTL_SECONDS = 15 * 60
-_STORAGE_CONTENT_CACHE_MAX_ENTRY_BYTES = MAX_UPLOAD_BYTES
-_STORAGE_CONTENT_CACHE_TOTAL_BYTES = 2 * MAX_UPLOAD_BYTES
-
-
-def _storage_content_cache_get(path: str) -> bytes | None:
-    now = time.monotonic()
-    with _STORAGE_CONTENT_CACHE_LOCK:
-        cached = _STORAGE_CONTENT_CACHE.get(path)
-        if cached is None:
-            return None
-        stored_at, content = cached
-        if now - stored_at > _STORAGE_CONTENT_CACHE_TTL_SECONDS:
-            _STORAGE_CONTENT_CACHE.pop(path, None)
-            return None
-        _STORAGE_CONTENT_CACHE.move_to_end(path)
-        return content
-
-
-def _storage_content_cache_store(path: str, content: bytes) -> None:
-    if len(content) > _STORAGE_CONTENT_CACHE_MAX_ENTRY_BYTES:
-        return
-    now = time.monotonic()
-    with _STORAGE_CONTENT_CACHE_LOCK:
-        for key, (stored_at, _value) in list(_STORAGE_CONTENT_CACHE.items()):
-            if now - stored_at > _STORAGE_CONTENT_CACHE_TTL_SECONDS:
-                _STORAGE_CONTENT_CACHE.pop(key, None)
-        _STORAGE_CONTENT_CACHE[path] = (now, content)
-        _STORAGE_CONTENT_CACHE.move_to_end(path)
-        total = sum(len(value) for _stored_at, value in _STORAGE_CONTENT_CACHE.values())
-        while len(_STORAGE_CONTENT_CACHE) > 1 and total > _STORAGE_CONTENT_CACHE_TOTAL_BYTES:
-            _key, (_stored_at, removed) = _STORAGE_CONTENT_CACHE.popitem(last=False)
-            total -= len(removed)
-
-
-def _storage_content_cache_clear() -> None:
-    with _STORAGE_CONTENT_CACHE_LOCK:
-        _STORAGE_CONTENT_CACHE.clear()
+# P0-6: la caché de bytes de Storage vive SOLO en storage.py
+# (download_from_storage) — antes este módulo mantenía una segunda copia
+# envolviéndola, duplicando el mismo archivo en memoria con una política de
+# expiración distinta. Un flujo multihoja igual reutiliza los bytes: la
+# caché de storage.py ya cubre las muchas peticiones sobre el mismo objeto
+# mientras el usuario trabaja hoja por hoja.
 
 
 def _restore_response_cache_get(cache_key: str) -> dict | None:
@@ -242,7 +213,7 @@ def _frame_cache_get(key: tuple):
         if cached is None:
             return None
         _FRAME_CACHE.move_to_end(key)
-        frame, report = cached
+        frame, report, _memory_bytes = cached
     return _clone_frame(frame), copy.deepcopy(report)
 
 
@@ -255,17 +226,30 @@ def _frame_cache_store(key: tuple, frame, report: dict) -> None:
     cells = len(frame) * max(len(frame.columns), 1)
     if cells > _FRAME_CACHE_MAX_ENTRY_CELLS:
         return
-    stored = (_clone_frame(frame), copy.deepcopy(report))
+    memory_bytes = estimate_memory_bytes(frame)
+    if memory_bytes > _FRAME_CACHE_MAX_ENTRY_BYTES:
+        logger.info(
+            "[memory] %s filas x %s columnas (%.1f MB) supera el presupuesto "
+            "individual de caché; no se guarda.",
+            len(frame), len(frame.columns), memory_bytes / (1024 * 1024),
+        )
+        return
+    stored = (_clone_frame(frame), copy.deepcopy(report), memory_bytes)
     with _FRAME_CACHE_LOCK:
         _FRAME_CACHE[key] = stored
         _FRAME_CACHE.move_to_end(key)
-        total = sum(
+        total_cells = sum(
             len(item[0]) * max(len(item[0].columns), 1)
             for item in _FRAME_CACHE.values()
         )
-        while len(_FRAME_CACHE) > 1 and total > _FRAME_CACHE_CELL_BUDGET:
+        total_bytes = sum(item[2] for item in _FRAME_CACHE.values())
+        while len(_FRAME_CACHE) > 1 and (
+            total_cells > _FRAME_CACHE_CELL_BUDGET
+            or total_bytes > _FRAME_CACHE_MEMORY_BUDGET_BYTES
+        ):
             _, removed = _FRAME_CACHE.popitem(last=False)
-            total -= len(removed[0]) * max(len(removed[0].columns), 1)
+            total_cells -= len(removed[0]) * max(len(removed[0].columns), 1)
+            total_bytes -= removed[2]
 
 
 def _analysis_cache_store(key: tuple, value: dict) -> dict:
@@ -392,10 +376,7 @@ async def _read_input(
         return file.filename or "archivo.csv", content
     if storage_path:
         safe_storage_path = _normalize_user_storage_path(storage_path, user)
-        content = _storage_content_cache_get(safe_storage_path)
-        if content is None:
-            content = await run_in_threadpool(download_from_storage, safe_storage_path)
-            _storage_content_cache_store(safe_storage_path, content)
+        content = await run_in_threadpool(download_from_storage, safe_storage_path)
         return _display_filename(os.path.basename(safe_storage_path)), content
     raise HTTPException(
         status_code=422,
@@ -407,11 +388,23 @@ def _load_or_400(filename: str, content: bytes, sheet: str | None = None):
     key = _frame_key("raw", filename, content, sheet)
     cached = _frame_cache_get(key)
     if cached is not None:
+        logger.debug("[carga] %s cache=hit", filename)
         return cached
-    try:
-        frame, report = load_dataframe_with_report(filename, content, sheet=sheet)
-    except UnsupportedFileError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    started = time.perf_counter()
+    # P0-6: el parseo (no la petición HTTP completa) es lo que se limita —
+    # dos o tres archivos grandes parseándose a la vez son lo que agota
+    # memoria, no la validación o el resto de la respuesta.
+    with heavy_job_slot(get_settings(), label=f"cargar {filename}"):
+        try:
+            frame, report = load_dataframe_with_report(filename, content, sheet=sheet)
+        except UnsupportedFileError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    memory_bytes = estimate_memory_bytes(frame)
+    logger.info(
+        "[carga] %s filas=%d columnas=%d bytes_archivo=%d memoria=%.1fMB duracion=%.3fs cache=miss",
+        filename, len(frame), len(frame.columns), len(content),
+        memory_bytes / (1024 * 1024), time.perf_counter() - started,
+    )
     _frame_cache_store(key, frame, report)
     return frame, report
 
@@ -1169,17 +1162,34 @@ def _load_batch_frames_cached(
             available = list(cached[1].get("hojas_disponibles") or [])
 
     if missing:
-        try:
-            fresh, fresh_available = load_dataframes_with_reports(
-                filename, content, missing
-            )
-        except UnsupportedFileError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        started = time.perf_counter()
+        # P0-6: mismo semáforo que el parseo de una sola hoja — un libro
+        # multihoja pesado no debe correr en paralelo sin control con otro
+        # archivo grande.
+        with heavy_job_slot(get_settings(), label=f"cargar {filename} ({len(missing)} hoja(s))"):
+            try:
+                fresh, fresh_available = load_dataframes_with_reports(
+                    filename, content, missing
+                )
+            except UnsupportedFileError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         available = fresh_available
+        total_memory_bytes = 0
+        total_rows = 0
         for name, value in fresh.items():
             frame, report = value
+            total_memory_bytes += estimate_memory_bytes(frame)
+            total_rows += len(frame)
             _frame_cache_store(_frame_key("raw", filename, content, name), frame, report)
             loaded[name] = value
+        logger.info(
+            "[carga] %s hojas=%d filas=%d bytes_archivo=%d memoria=%.1fMB "
+            "duracion=%.3fs cache=miss",
+            filename, len(fresh), total_rows, len(content),
+            total_memory_bytes / (1024 * 1024), time.perf_counter() - started,
+        )
+    else:
+        logger.debug("[carga] %s cache=hit (%d hoja(s))", filename, len(sheets))
 
     return ({name: loaded[name] for name in sheets if name in loaded}, available or sheets)
 

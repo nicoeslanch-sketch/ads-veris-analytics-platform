@@ -310,18 +310,42 @@ def test_storage_path_propio_pasa_validacion_de_propiedad(client, auth_headers):
 
 
 def test_storage_reutiliza_bytes_del_mismo_archivo_multihoja(monkeypatch):
-    """Cada hoja reutiliza el XLSX ya descargado sin saltarse la validación."""
+    """Cada hoja reutiliza el XLSX ya descargado sin saltarse la validación.
+
+    P0-6: la caché de bytes vive solo en storage.py (download_from_storage);
+    pipeline.py ya no mantiene una segunda copia. Se simula la descarga en la
+    capa de transporte (httpx.stream), no download_from_storage, para
+    ejercer la caché real en vez de saltársela."""
+    from app import storage
+    from app.config import get_settings
     from app.routes import pipeline as pipeline_module
 
-    calls: list[str] = []
+    settings = get_settings()
+    monkeypatch.setattr(settings, "supabase_url", "https://cache-reuse-test.supabase.co")
+    monkeypatch.setattr(settings, "supabase_service_role_key", "service-role-test")
+    calls = {"stream": 0}
     content = b"archivo-xlsx-simulado"
 
-    def fake_download(storage_path: str) -> bytes:
-        calls.append(storage_path)
-        return content
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-length": str(len(content))}
 
-    pipeline_module._storage_content_cache_clear()
-    monkeypatch.setattr(pipeline_module, "download_from_storage", fake_download)
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def iter_bytes(self):
+            yield content
+
+    def fake_stream(*args, **kwargs):
+        calls["stream"] += 1
+        return FakeResponse()
+
+    with storage._CACHE_LOCK:
+        storage._DOWNLOAD_CACHE.clear()
+    monkeypatch.setattr(storage.httpx, "stream", fake_stream)
     user = SimpleNamespace(id="user-test-123")
     storage_path = "user-test-123/prueba-multihoja.xlsx"
 
@@ -329,11 +353,12 @@ def test_storage_reutiliza_bytes_del_mismo_archivo_multihoja(monkeypatch):
         first = asyncio.run(pipeline_module._read_input(None, storage_path, user))
         second = asyncio.run(pipeline_module._read_input(None, storage_path, user))
     finally:
-        pipeline_module._storage_content_cache_clear()
+        with storage._CACHE_LOCK:
+            storage._DOWNLOAD_CACHE.clear()
 
     assert first == ("prueba-multihoja.xlsx", content)
     assert second == first
-    assert calls == [storage_path]
+    assert calls["stream"] == 1
 
 
 # ── CORS: preflight del navegador ──

@@ -52,6 +52,23 @@ _MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
 _MAX_COMPRESSION_RATIO = 120
 
 
+def estimate_memory_bytes(df: pd.DataFrame) -> int:
+    """Memoria real del DataFrame en bytes (P0-6).
+
+    La cantidad de celdas (filas × columnas) subestima la memoria real
+    cuando las columnas son de texto (el caso normal aquí: todo se carga
+    como ``dtype=str``) — dos archivos con las mismas celdas pueden diferir
+    en memoria real por un orden de magnitud según el largo de sus strings.
+    ``memory_usage(deep=True)`` sí mide el contenido de cada objeto Python,
+    no solo el tamaño del puntero; es una lectura, nunca una copia de datos.
+    """
+    try:
+        return int(df.memory_usage(deep=True, index=True).sum())
+    except (TypeError, ValueError):
+        # Defensivo: nunca debe tumbar una carga porque la medición falló.
+        return len(df) * max(len(df.columns), 1) * 8
+
+
 def _guard_xlsx_zip(content: bytes) -> None:
     """Rechaza .xlsx corruptos o con expansión anómala ANTES de cargarlos."""
     try:

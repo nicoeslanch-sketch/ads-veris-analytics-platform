@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     storage_retention_days: int = 60
     storage_keep_last: int = 5
 
+    # ── P0-6: control de concurrencia para trabajos pandas pesados ──
+    # Cargar (parsear) un archivo es el paso que más memoria y CPU consume
+    # del pipeline. Sin un tope, dos o tres archivos grandes cargándose a la
+    # vez pueden agotar la memoria del proceso aunque cada uno, solo, hubiera
+    # terminado bien. Quien no alcanza a entrar en la cola recibe un 503
+    # claro, nunca un proceso sin memoria ni un 500 opaco.
+    max_concurrent_heavy_jobs: int = 4
+    heavy_job_queue_max: int = 12
+    heavy_job_acquire_timeout_s: float = 30.0
+
     # SOLO desarrollo local sin Supabase: acepta requests sin JWT.
     # Jamás activar en producción.
     dev_auth_bypass: bool = False
