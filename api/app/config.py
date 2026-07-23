@@ -50,10 +50,21 @@ class Settings(BaseSettings):
     ai_classifier_enabled: bool = False
 
     # ── Fase 10: cuenta administradora de respaldo ──
-    # El panel /admin acepta también a este correo aunque profiles.is_admin
-    # no esté marcado todavía (bootstrap robusto: la migración 0010 depende
-    # de que la cuenta exista al ejecutarla). Vacío = solo is_admin.
+    # El panel /admin puede aceptar también a este correo aunque
+    # profiles.is_admin no esté marcado todavía (bootstrap: la migración
+    # 0010 depende de que la cuenta exista al ejecutarla). Vacío = solo
+    # is_admin.
     admin_email: str = "servicios@adsveris.com"
+    # P1-10: el fallback por correo queda APAGADO por defecto, incluso con
+    # admin_email configurado. Antes de esto, dejar ADMIN_EMAIL sin vaciar
+    # en producción (ver docs/OPERACION.md §3) convertía ese correo en una
+    # credencial de administrador permanente para siempre — el código no lo
+    # exigía, dependía de que un operador se acordara de vaciar la variable.
+    # Ahora hay que prender ESTE flag a propósito para usar el bootstrap
+    # (alta inicial antes de ejecutar la migración 0010, o recuperación si
+    # is_admin se desmarcó por error) — profiles.is_admin es la única fuente
+    # de verdad mientras el flag esté apagado.
+    admin_email_bootstrap_enabled: bool = False
 
     # ── Fase 8: retención de archivos en Storage (por usuario) ──
     # Tope de archivos guardados por plan; al subir uno nuevo, el frontend

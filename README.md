@@ -178,6 +178,10 @@ python -m pytest tests/ -v
 | `STRUCTURAL_NULL_OUTSIDE_FILLED_THRESHOLD` | Proporción informada fuera del grupo (default: `0.95`) |
 | `STRUCTURAL_NULL_MIN_GROUP_SIZE` | Tamaño mínimo del grupo estructural (default: `20`) |
 | `STRUCTURAL_NULL_MAX_GROUP_CARDINALITY` | Máximo de categorías de la variable agrupadora (default: `50`) |
+| `ADMIN_EMAIL_BOOTSTRAP_ENABLED` | **P1-10**: apagado por defecto (`false`). Con `ADMIN_EMAIL` configurado pero este flag apagado, el correo NO otorga acceso admin — `profiles.is_admin` es la única fuente de verdad. Prender solo para el alta inicial o recuperación (ver `docs/OPERACION.md` §3), y apagar de nuevo después |
+| `MAX_CONCURRENT_HEAVY_JOBS` | **P0-6**: trabajos pandas pesados (parseo de archivos) corriendo a la vez antes de encolar (default: `4`) |
+| `HEAVY_JOB_QUEUE_MAX` | Máximo de trabajos esperando cupo antes de responder 503 de inmediato (default: `12`) |
+| `HEAVY_JOB_ACQUIRE_TIMEOUT_S` | Segundos que un trabajo espera un cupo libre antes de responder 503 (default: `30`) |
 
 ## Deploy
 

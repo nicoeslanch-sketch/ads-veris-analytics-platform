@@ -9,6 +9,8 @@ Soporta dos modos de firma detectados automáticamente desde el header del token
 El cliente JWKS (PyJWKClient) se cachea por URL y renueva claves cada 5 minutos.
 """
 
+import logging
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -20,6 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from .config import Settings, get_settings
 
 _bearer = HTTPBearer(auto_error=False)
+logger = logging.getLogger("app.auth")
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,28 @@ def _decode(token: str, settings: Settings) -> dict:
     raise jwt.InvalidTokenError(f"Algoritmo de firma no soportado: {alg}.")
 
 
+def _expected_issuer(settings: Settings) -> str | None:
+    if not settings.supabase_url:
+        return None
+    return f"{settings.supabase_url.rstrip('/')}/auth/v1"
+
+
+def _validate_issuer(claims: dict, settings: Settings) -> None:
+    """P1-10: si el token declara ``iss``, debe corresponder a ESTE proyecto
+    de Supabase. No se exige que el claim esté presente (compatibilidad con
+    tokens legítimos que no siempre lo incluyeron), pero si está y no
+    coincide, se rechaza — un token válido de OTRO proyecto Supabase no debe
+    autenticar aquí."""
+    token_issuer = claims.get("iss")
+    if not token_issuer:
+        return
+    expected = _expected_issuer(settings)
+    if expected and token_issuer != expected:
+        raise jwt.InvalidIssuerError(
+            "El emisor del token no corresponde a este proyecto."
+        )
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
@@ -100,19 +125,36 @@ def get_current_user(
 
     try:
         claims = _decode(credentials.credentials, settings)
+        _validate_issuer(claims, settings)
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="La sesión expiró. Inicia sesión nuevamente.",
         )
     except jwt.InvalidTokenError as exc:
+        # P1-10: el detalle de PyJWT/JWKS (rutas, claves, mensajes internos
+        # de la librería) jamás sale al cliente — solo un incidente en logs.
+        incident = uuid.uuid4().hex[:8]
+        logger.info(
+            "[auth] incidente %s: token rechazado (%s).",
+            incident, exc.__class__.__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc) or "Token inválido.",
+            detail="Token inválido o expirado. Inicia sesión nuevamente.",
+        )
+
+    sub = str(claims.get("sub") or "").strip()
+    if not sub:
+        incident = uuid.uuid4().hex[:8]
+        logger.info("[auth] incidente %s: token válido sin claim 'sub'.", incident)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o expirado. Inicia sesión nuevamente.",
         )
 
     return AuthenticatedUser(
-        id=claims.get("sub", ""),
+        id=sub,
         email=claims.get("email"),
         claims=claims,
     )

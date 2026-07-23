@@ -54,10 +54,12 @@ def _rest(settings: Settings, table: str) -> str:
 def _require_admin_sync(user_id: str, settings: Settings, email: str | None = None) -> None:
     """503 sin Supabase, 403 si el caller no es administrador.
 
-    Bootstrap robusto (Fase 10): el correo ADMIN_EMAIL entra aunque
-    profiles.is_admin aún no esté marcado (la migración 0010 depende de que
-    la cuenta exista al ejecutarla; el correo del JWT viene verificado por
-    Supabase Auth, no es un dato editable por el usuario)."""
+    P1-10: el bootstrap por ADMIN_EMAIL solo actúa si
+    admin_email_bootstrap_enabled está prendido A PROPÓSITO (apagado por
+    defecto). profiles.is_admin es la única fuente de verdad mientras tanto
+    — el correo del JWT viene verificado por Supabase Auth, pero dejarlo
+    como bypass permanente por defecto convertía un correo conocido en una
+    credencial de administrador para siempre si alguien olvidaba apagarlo."""
     if not _configured(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -65,7 +67,8 @@ def _require_admin_sync(user_id: str, settings: Settings, email: str | None = No
             "(y la migración 0010 ejecutada).",
         )
     if (
-        settings.admin_email
+        settings.admin_email_bootstrap_enabled
+        and settings.admin_email
         and email
         and email.strip().lower() == settings.admin_email.strip().lower()
     ):

@@ -62,7 +62,10 @@ if _violations:
 app = FastAPI(
     title="ADS Veris — Motor de datos",
     description="Estandarización, limpieza y métricas para la plataforma de análisis.",
-    version="0.1.0",
+    # P1-10: version="0.1.0" quedó fijo desde la Fase 0 y nunca reflejó el
+    # motor real — /docs y OpenAPI mostraban una versión falsa desde hace
+    # 20+ fases. ENGINE_VERSION es la MISMA fuente que ya usa GET /version.
+    version=ENGINE_VERSION,
 )
 
 app.add_middleware(

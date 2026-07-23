@@ -105,6 +105,10 @@ def _billing_identity_sync(user_id: str, settings: Settings) -> dict | None:
 
 
 def _is_designated_admin(email: str | None, settings: Settings) -> bool:
+    """P1-10: igual que admin.py — el bootstrap por correo exige el flag
+    explícito admin_email_bootstrap_enabled, apagado por defecto."""
+    if not getattr(settings, "admin_email_bootstrap_enabled", False):
+        return False
     configured_email = getattr(settings, "admin_email", "").strip().lower()
     return bool(configured_email and email and email.strip().lower() == configured_email)
 

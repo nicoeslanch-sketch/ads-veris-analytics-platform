@@ -67,7 +67,32 @@ def _sin_plan(monkeypatch, trial=TRIAL_INACTIVO):
 
 
 def test_correo_designado_recupera_rol_admin_en_contexto_de_acceso(monkeypatch):
-    """El JWT verificado cierra la ventana entre el alta y la migracion 0018."""
+    """El JWT verificado cierra la ventana entre el alta y la migracion 0018.
+
+    P1-10: el bootstrap por correo ahora exige el flag explícito
+    admin_email_bootstrap_enabled (apagado por defecto) — esta prueba
+    ejercita justamente el modo de recuperación, así que lo prende."""
+    from app.routes import me as me_module
+
+    monkeypatch.setattr(
+        me_module, "get_profile_flags", lambda uid, st: ("basico", False)
+    )
+    monkeypatch.setattr(me_module, "_billing_identity_sync", lambda uid, st: None)
+    settings = _settings_enforced()
+    settings.admin_email_bootstrap_enabled = True
+    result = me_module._build_access_sync(
+        "admin-test", "servicios@adsveris.com", settings
+    )
+    assert result["is_admin"] is True
+    assert result["plan_display"] == "Administrador"
+    from app.capabilities import Capability
+
+    assert set(result["capabilities"]) == {cap.value for cap in Capability}
+
+
+def test_correo_designado_no_recupera_admin_sin_el_flag_de_bootstrap(monkeypatch):
+    """Sin el flag explícito (el valor por defecto), ni el correo designado
+    otorga is_admin -- profiles.is_admin es la única fuente de verdad."""
     from app.routes import me as me_module
 
     monkeypatch.setattr(
@@ -77,11 +102,7 @@ def test_correo_designado_recupera_rol_admin_en_contexto_de_acceso(monkeypatch):
     result = me_module._build_access_sync(
         "admin-test", "servicios@adsveris.com", _settings_enforced()
     )
-    assert result["is_admin"] is True
-    assert result["plan_display"] == "Administrador"
-    from app.capabilities import Capability
-
-    assert set(result["capabilities"]) == {cap.value for cap in Capability}
+    assert result["is_admin"] is False
 
 
 # ── Gates por HTTP: 403 real y CERO trabajo ejecutado ────────────────────────

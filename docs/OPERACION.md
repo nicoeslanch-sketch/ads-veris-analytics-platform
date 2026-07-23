@@ -41,9 +41,14 @@ CHANGELOG [0.20.0].)
 
 ## 3. Seguridad operacional
 
-- **Administración**: una vez confirmado `profiles.is_admin = true` en la
-  cuenta administradora, vaciar `ADMIN_EMAIL` en Render (la variable es solo
-  bootstrap; mantenerla convierte un correo en credencial permanente).
+- **Administración**: el bootstrap por `ADMIN_EMAIL` está APAGADO por
+  defecto (P1-10, `admin_email_bootstrap_enabled=false`) — `profiles.is_admin`
+  es la única fuente de verdad aunque `ADMIN_EMAIL` quede configurado. Para
+  el alta inicial (antes de ejecutar la migración 0010) o para recuperar el
+  acceso si `is_admin` se desmarcó por error, prende
+  `ADMIN_EMAIL_BOOTSTRAP_ENABLED=true` en Render A PROPÓSITO, confirma
+  `profiles.is_admin = true` en la cuenta administradora, y vuelve a apagar
+  la variable de inmediato — no debe quedar prendida en operación normal.
   Activar **MFA** en esa cuenta (Supabase → Authentication → MFA) y en los
   paneles de Render/Vercel/GitHub.
 - **Protección de `main`** (GitHub → Settings → Branches): pull request
