@@ -627,17 +627,34 @@ def analyze_business_workbook(
     duplicated_document = document_keys.notna() & document_keys.duplicated(keep=False)
     duplicate_groups = int(document_keys[duplicated_document].nunique())
     duplicate_extra_rows = int(duplicated_document.sum() - duplicate_groups)
+    # Un ID repetido cae en exactamente una de tres categorías: conflicto real
+    # de negocio (difiere en una columna que no es Observación), duplicado
+    # idéntico (fila igual en todas las columnas) o solo difiere en una
+    # columna Observación.* (no es conflicto, pero tampoco copia exacta).
     conflicting_document_keys: set[str] = set()
+    identical_document_keys: set[str] = set()
+    observation_only_document_keys: set[str] = set()
     if document_key and duplicate_groups:
         compare_columns = [
             column for column in sales.columns
             if column not in {document_key, "_hoja_origen"}
             and "observa" not in normalized_header(column)
         ]
+        all_columns = [
+            column for column in sales.columns
+            if column not in {document_key, "_hoja_origen"}
+        ]
         for key, group in sales.loc[duplicated_document].groupby(document_keys[duplicated_document]):
+            key_str = str(key)
             if len(group[compare_columns].drop_duplicates()) > 1:
-                conflicting_document_keys.add(str(key))
+                conflicting_document_keys.add(key_str)
+            elif len(group[all_columns].drop_duplicates()) > 1:
+                observation_only_document_keys.add(key_str)
+            else:
+                identical_document_keys.add(key_str)
     conflict_groups = len(conflicting_document_keys)
+    identical_groups = len(identical_document_keys)
+    observation_only_groups = len(observation_only_document_keys)
     duplicate_extra = document_keys.notna() & document_keys.duplicated(keep="first")
     conflicting_document = document_keys.isin(conflicting_document_keys)
     # Exact copies contribute once. Reused IDs with conflicting payload stay
@@ -1422,6 +1439,8 @@ def analyze_business_workbook(
             "documentos_repetidos": duplicate_groups,
             "filas_adicionales_documento": duplicate_extra_rows,
             "documentos_conflictivos": conflict_groups,
+            "documentos_identicos": identical_groups,
+            "documentos_solo_observacion_distinta": observation_only_groups,
         },
         "estado_resultados": {
             "ventas_observadas": round(observed_sales, 2),

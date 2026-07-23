@@ -2437,10 +2437,40 @@ def _clean_download_book_uncached_sync(
             )
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+    if analysis_scope and analysis_scope["mode"] == "append_join":
+        # Las validaciones cruzadas de Visión del negocio (claves huérfanas,
+        # documentos conflictivos, etc.) solo vivían en la respuesta JSON del
+        # panel — el Excel descargado no documentaba por qué una referencia
+        # como un SKU o folio quedaba fuera del enriquecimiento. Se vuelcan a
+        # Observaciones para que la auditoría no dependa de mirar la pantalla.
+        business_audit = analyze_business_workbook(frames, mappings, results)
+        if business_audit is not None:
+            for relation in business_audit.get("calidad", {}).get("integridad_referencial", []):
+                if not relation.get("huerfanas"):
+                    continue
+                examples = ", ".join(relation.get("ejemplos", [])[:8])
+                detail = (
+                    f"{relation['relacion']}: {relation['huerfanas']} referencia(s) huérfana(s) "
+                    f"de {relation['filas']} fila(s) evaluadas ({relation['cobertura_pct']}% válidas)."
+                )
+                if examples:
+                    detail += f" Ejemplos: {examples}."
+                observations.append((
+                    "-", "Todas las hojas procesadas", "*", "referencia_huerfana", detail,
+                ))
     for record in records:
         record["analysis_provenance"] = (
             provenance if record["hoja"] in scope_sheets else None
         )
+    # El alcance recibido refleja la última hoja individual que el usuario
+    # miraba en pantalla (DatasetContext inicializa analysisScope en modo
+    # "single" sobre esa hoja), no el contenido real de este libro. Si se
+    # procesó más de una hoja sin pedir una relación explícita, el registro
+    # del libro completo debe listarlas todas — nunca describir un libro de
+    # 15 hojas como si fuera la hoja "single" que alguien miraba al bajarlo.
+    book_scope = analysis_scope
+    if (not book_scope or book_scope.get("mode") == "single") and len(processed_names) > 1:
+        book_scope = {"mode": "sheets_independientes", "sheets": processed_names}
     book_record = {
         "hoja": "(libro completo)",
         "estado": "resumen_libro",
@@ -2451,7 +2481,7 @@ def _clean_download_book_uncached_sync(
         "mapeo": {},
         "error": "",
         "source_sha256": source_hash,
-        "analysis_scope": analysis_scope,
+        "analysis_scope": book_scope,
         "analysis_provenance": provenance,
         "revision": max((int(record.get("revision") or 0) for record in records), default=0),
     }
@@ -2474,7 +2504,7 @@ def _clean_download_book_uncached_sync(
         "archivo_origen": filename,
         "version_motor": ENGINE_VERSION,
         "source_sha256": source_hash,
-        "analysis_scope": analysis_scope,
+        "analysis_scope": book_scope,
         "analysis_provenance": provenance,
         "hojas": records,
     }

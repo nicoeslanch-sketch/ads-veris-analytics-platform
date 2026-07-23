@@ -272,28 +272,34 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await expect(page.getByText('Datos que estas analizando')).toBeVisible({ timeout: 60_000 })
     await page.getByRole('button', { name: /Unir periodos de venta/ }).click()
     await expect(page.getByText(/hoja_origen/)).toBeVisible()
-    await expect(page.getByText('Evolución de Ingresos')).toBeVisible({ timeout: 90_000 })
+    // "Unir periodos de venta" no incorpora costos: el título del gráfico de
+    // evolución cambia a "Ingresos por mes" (Resumen.tsx, `hasCosts` false).
+    await expect(page.getByText(/Evolución de Ingresos|Ingresos por mes/)).toBeVisible({ timeout: 90_000 })
     const compactFlow = page.getByTestId('summary-compact-flow')
     await expect(compactFlow).toBeVisible()
+    // El layout dejó de usar CSS `columns` (masonry) y pasó a
+    // `grid-template-columns: repeat(auto-fit, minmax(300px, 1fr))` para que
+    // el ancho REAL disponible defina las columnas y no queden huecos a la
+    // derecha (ver comentario en Resumen.tsx). Se verifica el resultado —
+    // varias tarjetas usando el ancho disponible en paralelo — no la técnica
+    // CSS específica.
     const compactLayout = await compactFlow.evaluate((element) => {
       const children = Array.from(element.children) as HTMLElement[]
+      const columnTracks = getComputedStyle(element)
+        .gridTemplateColumns.split(' ')
+        .filter(Boolean).length
+      const rowTops = new Set(children.map((child) => child.getBoundingClientRect().top))
       return {
-        columnCount: getComputedStyle(element).columnCount,
-        flowHeight: element.getBoundingClientRect().height,
-        totalCardHeight: children.reduce(
-          (total, child) => total + child.getBoundingClientRect().height,
-          0,
-        ),
-        avoidsSplits: children.every(
-          (child) => getComputedStyle(child).breakInside === 'avoid',
-        ),
+        columnTracks,
         cardCount: children.length,
+        rowCount: rowTops.size,
       }
     })
-    expect(compactLayout.columnCount).toBe('2')
+    expect(compactLayout.columnTracks).toBeGreaterThanOrEqual(2)
     expect(compactLayout.cardCount).toBeGreaterThan(1)
-    expect(compactLayout.avoidsSplits).toBe(true)
-    expect(compactLayout.flowHeight).toBeLessThan(compactLayout.totalCardHeight - 20)
+    // Con >=2 columnas, N tarjetas ocupan menos filas que tarjetas — nunca
+    // colapsan en una sola columna (el bug que este layout reemplazó).
+    expect(compactLayout.rowCount).toBeLessThan(compactLayout.cardCount)
 
     await page.getByRole('button', { name: /Visión del negocio/ }).click()
     await expect(page.getByText('Ventas + costos activo')).toBeVisible({ timeout: 90_000 })
@@ -431,7 +437,7 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await page.getByRole('link', { name: /Resumen/ }).first().click()
   await expect(page.getByText('Estado de la información')).toBeVisible({ timeout: 90_000 })
   await expect(page.getByText('Evolución del negocio')).toBeVisible()
-  await expect(page.getByText('Indicadores disponibles')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Indicadores disponibles' })).toBeVisible()
   const flow = page.getByTestId('business-summary-flow')
   await expect(flow).toBeVisible()
   const layout = await flow.evaluate((element) => ({

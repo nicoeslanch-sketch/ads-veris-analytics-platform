@@ -52,6 +52,60 @@ def test_year_month_values_parse_to_first_of_month():
     assert parse_date("2026-05-01") == pd.Timestamp(2026, 5, 1)
 
 
+def test_flete_total_excluded_and_zero_iva_not_flagged_as_mismatch():
+    """Regresión (frente 1, commit 04c6467) sin cobertura dedicada según la
+    auditoría externa: "Flete Total" contiene la subcadena "total" pero es un
+    componente de línea, no el total del documento -- no debe validarse
+    contra neto+IVA (generaba ~300 falsos positivos). Un IVA en cero (exento,
+    ej. Remuneraciones) tampoco es un error de tasa -- solo se marca un IVA
+    PRESENTE que no cuadra (generaba ~178 falsos positivos)."""
+    rows = []
+    for i in range(15):
+        monto = 1000 + i
+        iva = round(monto * 0.19)
+        rows.append({
+            "Monto": monto, "IVA": iva,
+            # "Flete Total" antes de "Total Documento" a propósito: si el
+            # filtro por palabra clave no excluyera "flete", el primer
+            # candidato encontrado por orden de columnas sería el equivocado.
+            "Flete Total": 500,
+            "Total Documento": monto + iva,
+        })
+    # Filas exentas: IVA en cero, no es un error de tasa.
+    for i in range(3):
+        monto = 2000 + i
+        rows.append({
+            "Monto": monto, "IVA": 0,
+            "Flete Total": 500,
+            "Total Documento": monto,
+        })
+    # Filas con un error real de IVA (muy distinto de la tasa del 19%).
+    for i in range(2):
+        monto = 3000 + i
+        rows.append({
+            "Monto": monto, "IVA": 1,
+            "Flete Total": 500,
+            "Total Documento": monto + 1,
+        })
+    df = pd.DataFrame(rows)
+    result = {
+        "column_types": {col: "numero" for col in df.columns},
+        "mapeo": {"monto": "Monto"},
+        "carga": {},
+    }
+
+    yellow, _red, _observations = pipeline._export_annotations(result, df)
+
+    # "Flete Total" jamás se valida como el total del documento.
+    assert not any(col == "Flete Total" for (_row, col) in yellow)
+    # Las 3 filas exentas (índices 15-17) no se marcan como error de tasa.
+    for row_idx in range(15, 18):
+        assert (row_idx, "IVA") not in yellow
+    # Las 2 filas con IVA realmente distinto de la tasa SÍ se marcan.
+    for row_idx in range(18, 20):
+        assert (row_idx, "IVA") in yellow
+
+
 def test_channel_equivalences_are_role_scoped_and_auditable():
     frame = pd.DataFrame(
         {

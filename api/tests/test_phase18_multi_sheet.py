@@ -1168,6 +1168,126 @@ def test_single_scope_export_does_not_create_related_sheet():
     assert workbook["LEEME_NO_PROCESAR"]["A2"].value == "No modificar"
 
 
+def _two_sales_sheets_workbook() -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        pd.DataFrame({"ID": [1, 2], "Monto": [100, 200]}).to_excel(
+            writer, sheet_name="Ventas_Enero", index=False
+        )
+        pd.DataFrame({"ID": [3, 4], "Monto": [300, 400]}).to_excel(
+            writer, sheet_name="Ventas_Febrero", index=False
+        )
+    return output.getvalue()
+
+
+def test_manifest_book_record_lists_every_processed_sheet_not_just_the_stale_active_one():
+    """Regresión QA (auditoría externa): el frontend inicializa analysisScope
+    en modo "single" apuntando a la última hoja individual que se miraba en
+    pantalla -- ese valor viaja tal cual al Manifest exportado. Un libro de 2
+    (o 15) hojas procesadas independientemente terminaba describiéndose a sí
+    mismo como "alcance single, hoja activa Ventas_Enero", escondiendo que
+    Ventas_Febrero también se procesó. El registro "(libro completo)" debe
+    listar TODAS las hojas procesadas cuando no se pidió una relación real."""
+    content = _two_sales_sheets_workbook()
+    names = ["Ventas_Enero", "Ventas_Febrero"]
+    manifest = {
+        "hojas": [
+            {
+                "nombre": name,
+                "procesar": True,
+                "rules": {},
+                "mapping": {"monto": "Monto"},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "status": "pendiente",
+                "error": "",
+            }
+            for name in names
+        ]
+    }
+    # Alcance "stale": el usuario miraba Ventas_Enero por última vez antes de
+    # descargar; Ventas_Febrero no aparece aunque también se proceso.
+    stale_scope = {"mode": "single", "sheets": ["Ventas_Enero"], "active_sheet": "Ventas_Enero"}
+
+    payload, _, _ = _clean_download_book_sync(
+        "libro.xlsx", content, manifest, "xlsx", stale_scope
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(payload), data_only=False)
+    manifest_sheet = workbook["Manifest"]
+    manifest_columns = {cell.value: cell.column for cell in manifest_sheet[1]}
+    book_row = next(
+        row
+        for row in range(2, manifest_sheet.max_row + 1)
+        if manifest_sheet.cell(row, manifest_columns["hoja"]).value == "(libro completo)"
+    )
+    book_scope = json.loads(
+        manifest_sheet.cell(book_row, manifest_columns["alcance_analisis"]).value
+    )
+    assert book_scope["mode"] == "sheets_independientes"
+    assert sorted(book_scope["sheets"]) == names
+
+
+def test_export_documents_orphan_references_from_business_audit():
+    """Regresión QA (auditoría externa): las claves huérfanas que Visión del
+    negocio detecta (ej. un SKU que no existe en Productos) solo se veían en
+    el panel JSON en pantalla -- el Excel descargado no las documentaba ni en
+    Observaciones ni en Auditoría, así que la auditoría del archivo exportado
+    no podía reproducir por qué una referencia quedaba fuera del enriquecimiento."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "ID_Producto": ["P-001", "P-002", "SKU-X237"],
+                "Monto": [1000, 2000, 3000],
+                "Fecha": ["01/01/2026", "02/01/2026", "03/01/2026"],
+            }
+        ).to_excel(writer, sheet_name="Ventas", index=False)
+        pd.DataFrame(
+            {"ID_Producto": ["P-001", "P-002"], "Costo_Unitario": [500, 800]}
+        ).to_excel(writer, sheet_name="Productos", index=False)
+    content = output.getvalue()
+    names = ["Ventas", "Productos"]
+    manifest = {
+        "hojas": [
+            {
+                "nombre": name,
+                "procesar": True,
+                "rules": {},
+                "mapping": {"monto": "Monto", "fecha": "Fecha"} if name == "Ventas" else {},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "status": "pendiente",
+                "error": "",
+            }
+            for name in names
+        ]
+    }
+    scope = {
+        "mode": "append_join",
+        "sheets": names,
+        "append_sheets": ["Ventas"],
+        "active_sheet": "Ventas",
+        "join": {
+            "left_sheet": "Ventas",
+            "right_sheet": "Productos",
+            "left_keys": ["ID_Producto"],
+            "right_keys": ["ID_Producto"],
+            "type": "left",
+        },
+    }
+
+    payload, _, _ = _clean_download_book_sync("libro.xlsx", content, manifest, "xlsx", scope)
+
+    observations = pd.read_excel(
+        io.BytesIO(payload), sheet_name="Observaciones", dtype=str, keep_default_na=False
+    )
+    orphan_rows = observations[observations["Tipo"] == "referencia_huerfana"]
+    assert len(orphan_rows) >= 1
+    detail = " ".join(orphan_rows["Detalle"].tolist())
+    assert "SKU-X237" in detail
+    assert "referencia(s) huérfana(s)" in detail
+
+
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 _stress_path = os.getenv("ADSVERIS_STRESS_XLSX")
 _small_path = os.getenv("ADSVERIS_SMALL_XLSX")

@@ -123,6 +123,40 @@ def test_products_sheet_without_costo_in_its_name_is_still_used_as_cost_source()
     assert result["estado_resultados"]["utilidad_bruta"] == 200
 
 
+def test_document_duplicates_split_into_identical_conflict_and_observation_only():
+    """Regresión QA (auditoría externa): un ID de documento repetido debe
+    clasificarse en exactamente una de tres categorías -- conflicto real de
+    negocio, copia idéntica, o solo difiere en una columna Observación.* --
+    expuestas por separado. Antes solo se exponía el total agregado de
+    repetidos y de conflictivos, mezclando copias idénticas con diferencias
+    de Observación dentro del mismo resto sin desglosar."""
+    frames = {
+        "Ventas": pd.DataFrame(
+            [
+                # D1: copia idéntica exacta (incluye Observación.1 igual).
+                {"ID Documento": "D1", "Fecha": "01/01/2026", "Monto": "100", "Observación.1": "nota"},
+                {"ID Documento": "D1", "Fecha": "01/01/2026", "Monto": "100", "Observación.1": "nota"},
+                # D2: solo difiere en Observación.1 -- no es conflicto real.
+                {"ID Documento": "D2", "Fecha": "02/01/2026", "Monto": "200", "Observación.1": "nota A"},
+                {"ID Documento": "D2", "Fecha": "02/01/2026", "Monto": "200", "Observación.1": "nota B"},
+                # D3: conflicto real -- el Monto difiere.
+                {"ID Documento": "D3", "Fecha": "03/01/2026", "Monto": "300", "Observación.1": "nota"},
+                {"ID Documento": "D3", "Fecha": "03/01/2026", "Monto": "999", "Observación.1": "nota"},
+            ]
+        )
+    }
+    mapping = {"Ventas": {"fecha": "Fecha", "monto": "Monto"}}
+
+    result = analyze_business_workbook(frames, mapping, {})
+
+    assert result is not None
+    alcance = result["alcance"]
+    assert alcance["documentos_repetidos"] == 3
+    assert alcance["documentos_conflictivos"] == 1
+    assert alcance["documentos_identicos"] == 1
+    assert alcance["documentos_solo_observacion_distinta"] == 1
+
+
 def test_current_catalogue_fills_history_gaps_without_certifying_the_estimate():
     frames = {
         "Ventas_2024": pd.DataFrame(

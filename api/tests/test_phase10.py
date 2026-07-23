@@ -299,7 +299,7 @@ def test_auditoria_identificadores_jamas_alimentan_el_motor_metrico():
     import csv
     from pathlib import Path
 
-    path = Path("app/data/palabras_clave_roles.csv")
+    path = Path(__file__).resolve().parents[1] / "app/data/palabras_clave_roles.csv"
     with path.open(encoding="utf-8-sig") as fh:
         rows = list(csv.DictReader(fh, delimiter=";"))
     malas = [
