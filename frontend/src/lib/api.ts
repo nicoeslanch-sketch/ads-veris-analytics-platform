@@ -92,6 +92,32 @@ function requireBase(): string {
   return API_BASE_URL
 }
 
+// El backend corre en Render, que DUERME el servidor tras ~15 min sin tráfico;
+// despertarlo agrega ~50 s al primer pedido (la lentitud "al cargar" que se
+// reportó). Despierto, responde en ~150 ms. Mientras la pestaña esté abierta y
+// visible, pingeamos /health (endpoint público, sin credenciales ni efectos)
+// para mantenerlo despierto y precalentarlo apenas se abre la app.
+let warmupStarted = false
+
+export function startApiWarmup(): void {
+  if (warmupStarted || typeof window === 'undefined' || !API_BASE_URL) return
+  warmupStarted = true
+
+  const ping = () => {
+    fetch(`${API_BASE_URL}/health`, { method: 'GET', mode: 'cors', cache: 'no-store' }).catch(() => {})
+  }
+
+  ping() // precalentar al abrir la app
+  // Render duerme a los ~15 min; 10 min de margen lo mantienen despierto.
+  window.setInterval(() => {
+    if (document.visibilityState === 'visible') ping()
+  }, 10 * 60 * 1000)
+  // Al volver a la pestaña tras un rato, despertarlo antes de que el usuario actúe.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') ping()
+  })
+}
+
 async function getAccessToken(): Promise<string | null> {
   if (!supabase) return null
   const { data } = await supabase.auth.getSession()

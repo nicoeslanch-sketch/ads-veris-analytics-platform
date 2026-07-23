@@ -1,6 +1,7 @@
-import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from 'react'
+import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
+import { startApiWarmup } from './lib/api'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { hasPasswordRecoveryHint, PASSWORD_RECOVERY_PATH } from './auth/recovery'
 import { AccessProvider } from './lib/access'
@@ -82,6 +83,11 @@ function AppRoutes() {
 }
 
 export default function App() {
+  // Despertar/precalentar el backend de Render lo antes posible (una sola vez).
+  useEffect(() => {
+    startApiWarmup()
+  }, [])
+
   return (
     <AuthProvider>
       <AccessProvider>
