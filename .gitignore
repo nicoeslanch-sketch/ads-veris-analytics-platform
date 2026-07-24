@@ -234,7 +234,8 @@ frontend/.env.*.local
 .vercel/
 *.tsbuildinfo
 npm-debug.log*
-
+# Parches de entrega: no versionar
+*.patch
 # ─── Editor / OS ───────────────────────────────────
 .DS_Store
 .idea/
