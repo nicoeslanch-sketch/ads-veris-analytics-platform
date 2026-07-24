@@ -86,6 +86,8 @@ from ..engine.multi_sheet import (
     relation_stats,
     validate_analysis_scope,
 )
+from ..engine.relationships import detect_relationship_catalog
+from ..engine.relationship_dashboard import build_relationship_dashboard
 from ..engine.standardize import normalize_headers, standardize_dataframe
 from ..restore_cache import (
     RestoreSnapshotUnavailable,
@@ -4602,5 +4604,185 @@ async def sheet_relationships(
         _parse_json_field(relationship, "relationship") if relationship else None,
         dataset_id,
         _parse_json_field(focus, "focus") if focus else None,
+        user.id,
+    )
+
+
+# ── Workspace de relaciones (catálogo ampliado + dashboard por relación) ──────
+# Endpoints NUEVOS y separados: no alteran /sheets/relationships ni la
+# autodetección de "Visión del negocio". Reutilizan la lectura inmutable del
+# libro (_processed_manifest_frames) y la caché aislada por contenido/usuario.
+
+
+def _relationship_catalog_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    cache_dataset_id: str | None = None,
+) -> dict:
+    frames, mappings, results = _processed_manifest_frames(
+        filename, content, manifest, cache_dataset_id, None
+    )
+    return detect_relationship_catalog(frames, mappings, results)
+
+
+def _relationship_catalog_cached_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    cache_dataset_id: str | None,
+    user_id: str,
+) -> dict:
+    key = _analysis_cache_key(
+        "relationship_catalog",
+        user_id,
+        filename,
+        content,
+        cache_dataset_id,
+        _analysis_manifest_identity(manifest),
+    )
+    return _analysis_cache_compute(
+        key,
+        lambda: _relationship_catalog_sync(filename, content, manifest, cache_dataset_id),
+    )
+
+
+def _relationship_dashboard_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    relationship: dict,
+    date_from: str | None,
+    date_to: str | None,
+    cache_dataset_id: str | None = None,
+) -> dict:
+    left = str(relationship.get("left_sheet", ""))
+    right = str(relationship.get("right_sheet", ""))
+    manifest_names = {entry["nombre"] for entry in manifest["hojas"] if entry["procesar"]}
+    if {left, right} - manifest_names or left == right:
+        raise HTTPException(status_code=422, detail="La relación referencia hojas inválidas.")
+    frames, mappings, results = _processed_manifest_frames(
+        filename, content, manifest, cache_dataset_id, {left, right}
+    )
+    return build_relationship_dashboard(
+        frames, mappings, results, relationship, date_from=date_from, date_to=date_to
+    )
+
+
+def _relationship_dashboard_cached_sync(
+    filename: str,
+    content: bytes,
+    manifest: dict,
+    relationship: dict,
+    date_from: str | None,
+    date_to: str | None,
+    cache_dataset_id: str | None,
+    user_id: str,
+) -> dict:
+    key = _analysis_cache_key(
+        "relationship_dashboard",
+        user_id,
+        filename,
+        content,
+        cache_dataset_id,
+        _analysis_manifest_identity(manifest),
+        relationship,
+        date_from,
+        date_to,
+    )
+    return _analysis_cache_compute(
+        key,
+        lambda: _relationship_dashboard_sync(
+            filename, content, manifest, relationship, date_from, date_to, cache_dataset_id
+        ),
+    )
+
+
+def _validate_manual_relationship(raw: dict | None) -> dict:
+    allowed = {"left_sheet", "right_sheet", "left_keys", "right_keys", "type"}
+    if not isinstance(raw, dict) or set(raw) - allowed:
+        raise HTTPException(status_code=422, detail="La relación no es válida.")
+    left = str(raw.get("left_sheet", "")).strip()
+    right = str(raw.get("right_sheet", "")).strip()
+    left_keys = raw.get("left_keys")
+    right_keys = raw.get("right_keys")
+    if (
+        not left
+        or not right
+        or left == right
+        or not isinstance(left_keys, list)
+        or not isinstance(right_keys, list)
+        or not left_keys
+        or len(left_keys) != len(right_keys)
+        or len(left_keys) > 2
+        or not all(isinstance(key, str) and key.strip() for key in left_keys + right_keys)
+    ):
+        raise HTTPException(status_code=422, detail="Las hojas o claves de la relación no son válidas.")
+    return {
+        "left_sheet": left,
+        "right_sheet": right,
+        "left_keys": [key.strip() for key in left_keys],
+        "right_keys": [key.strip() for key in right_keys],
+        "type": "left",
+    }
+
+
+@router.post("/sheets/relationship-catalog")
+async def sheet_relationship_catalog(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
+    manifest: str = Form(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    )
+    filename, content = await _read_input(file, storage_path, user)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if sheet_manifest is None:
+        raise HTTPException(status_code=422, detail="Envia un manifiesto de hojas.")
+    return await run_in_threadpool(
+        _relationship_catalog_cached_sync,
+        filename,
+        content,
+        sheet_manifest,
+        dataset_id,
+        user.id,
+    )
+
+
+@router.post("/sheets/relationship-dashboard")
+async def sheet_relationship_dashboard(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
+    manifest: str = Form(...),
+    relationship: str = Form(...),
+    date_from: str | None = Form(None),
+    date_to: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    )
+    filename, content = await _read_input(file, storage_path, user)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if sheet_manifest is None:
+        raise HTTPException(status_code=422, detail="Envia un manifiesto de hojas.")
+    parsed_relationship = _validate_manual_relationship(
+        _parse_json_field(relationship, "relationship")
+    )
+    return await run_in_threadpool(
+        _relationship_dashboard_cached_sync,
+        filename,
+        content,
+        sheet_manifest,
+        parsed_relationship,
+        date_from,
+        date_to,
+        dataset_id,
         user.id,
     )

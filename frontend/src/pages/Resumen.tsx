@@ -36,6 +36,7 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
+import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
@@ -50,7 +51,7 @@ import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { summaryContentKind } from '../lib/metrics'
 import { analysisScopesEqual, serializedAnalysisScope } from '../lib/multiSheet'
-import type { MetricsResult } from '../lib/types'
+import type { AnalysisScope, MetricsResult } from '../lib/types'
 
 type UsableMonetaryKpis = MetricsResult['kpis'] & {
   ingresos_totales: NonNullable<MetricsResult['kpis']['ingresos_totales']>
@@ -238,6 +239,12 @@ export default function Resumen() {
   // Fase 11 §9.3: tras un fallo (timeout, red) el usuario puede reintentar sin
   // recargar la página — el botón incrementa retryTick y el efecto vuelve a correr.
   const [retryTick, setRetryTick] = useState(0)
+  // Modo del selector de datos: cuando es 'join' se muestra el workspace de
+  // relaciones en lugar del dashboard genérico (Parte 2).
+  const [selectorMode, setSelectorMode] = useState<AnalysisScope['mode']>(
+    analysisScope?.mode ?? 'single',
+  )
+  const relationshipMode = selectorMode === 'join'
   const defaultPeriodSet = useRef(false)
   const lastFetchKey = useRef<string | null>(null)
   const lastDatasetKey = useRef<string | null>(null)
@@ -257,6 +264,9 @@ export default function Resumen() {
 
   useEffect(() => {
     if (demo.active) return // la demo no consulta /metrics: snapshot congelado
+    // En modo "Relación manual" el workspace calcula su propio dashboard con
+    // /sheets/relationship-dashboard; el dashboard genérico no aplica.
+    if (relationshipMode) return
     if (!file || !cleaning) return
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
@@ -581,8 +591,12 @@ export default function Resumen() {
         </Link>
       </div>
 
-      <ActiveSheetSelector />
+      <ActiveSheetSelector onModeChange={setSelectorMode} />
 
+      {relationshipMode && !demo.active ? (
+        <RelationshipWorkspace />
+      ) : (
+      <>
       {error && (
         <div className="mb-6 flex flex-wrap items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1104,6 +1118,8 @@ export default function Resumen() {
 
         </div>
       ) : null}
+      </>
+      )}
     </>
   )
 }

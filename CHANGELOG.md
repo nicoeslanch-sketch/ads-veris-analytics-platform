@@ -2,6 +2,35 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [Fase 20] - 2026-07-24 - Botonera del Resumen y workspace de relaciones
+
+- La sección "Datos que estás analizando" del Resumen se rediseñó como un
+  selector segmentado, compacto y accesible (`AnalysisModeSwitcher`), con los
+  cuatro modos de siempre. Los tres primeros (`single`, `append_join`,
+  `append`) ejecutan exactamente la misma lógica; "Relación manual" (`join`)
+  abre un workspace nuevo dentro del Resumen.
+- El workspace "Relaciones entre hojas" detecta automáticamente TODAS las
+  relaciones seguras del libro (no solo la recomendada) mediante un catálogo
+  determinista separado (`detect_relationship_catalog`), las clasifica en una
+  plantilla de dashboard y permite elegir una desde un panel lateral. Solo
+  aprueba uno_a_uno y muchos_a_uno; bloquea uniones que multiplicarían filas o
+  alterarían totales. El inventario multi-snapshot se colapsa a su último
+  registro antes de relacionar, para no duplicar stock.
+- Cada relación calcula su dashboard en FastAPI/pandas
+  (`build_relationship_dashboard`): KPIs, gráficos, tabla, hallazgos, alertas y
+  acciones con reglas deterministas (sin IA, sin cifras ficticias). Plantillas:
+  Productos↔Ventas, Ventas↔Costos, Ventas↔Inventario, Ventas↔Clientes/
+  Vendedores/Sucursales, Compras↔Costos, Gastos↔Sucursales y genérica.
+- El costo faltante no se trata como cero, el margen usa solo ventas pareadas,
+  el stock se toma del último snapshot sin sumar por el join, los días de
+  cobertura salen de la fecha máxima del Excel y las monedas incompatibles
+  bloquean los cálculos monetarios. El periodo global del Topbar filtra el
+  dashboard.
+- Nuevos endpoints protegidos `POST /sheets/relationship-catalog` y
+  `POST /sheets/relationship-dashboard`, cacheados por contenido/usuario/manifest/
+  relación/periodo. No cambian `/sheets/relationships`, `detect_relationships`
+  ni el `append_join` automático. No se agrega ninguna migración.
+
 ## [0.23.0] - 2026-07-22 - Motor empresarial multihoja y restauracion rapida
 
 - `Resumen` obtiene una vista ejecutiva realmente multihoja: estado de

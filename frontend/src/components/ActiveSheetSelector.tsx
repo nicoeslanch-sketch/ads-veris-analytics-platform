@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Layers3, Link2, Loader2, Rows3 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Link2, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDataset } from '../data/DatasetContext'
@@ -11,11 +11,17 @@ import {
   shouldAutoBuildBusinessScope,
 } from '../lib/multiSheet'
 import type { AnalysisScope, RelationshipCandidate, RelationshipResult } from '../lib/types'
-import { usePlan } from '../lib/usePlan'
+import AnalysisModeSwitcher from './summary/AnalysisModeSwitcher'
 
 type Mode = AnalysisScope['mode']
 
-export default function ActiveSheetSelector() {
+interface ActiveSheetSelectorProps {
+  /** Notifica a la página el modo actual para decidir si mostrar el workspace
+   * de relaciones (mode === 'join') en lugar del dashboard genérico. */
+  onModeChange?: (mode: Mode) => void
+}
+
+export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelectorProps = {}) {
   const {
     file,
     datasetId,
@@ -31,8 +37,6 @@ export default function ActiveSheetSelector() {
     setMetrics,
     setSheet,
   } = useDataset()
-  const { plan } = usePlan()
-  const advanced = plan === 'analista' || plan === 'gold'
   const cleanedSheets = useMemo(
     () => availableSheets.filter(
       (name) => selectedSheets.includes(name) && Boolean(sheetSessions[name]?.cleaning),
@@ -59,11 +63,6 @@ export default function ActiveSheetSelector() {
   const [candidates, setCandidates] = useState<RelationshipCandidate[]>([])
   const [relationMessage, setRelationMessage] = useState<string | null>(null)
   const [detecting, setDetecting] = useState(false)
-  const [manualLeft, setManualLeft] = useState(cleanedSheets[0] ?? '')
-  const [manualRight, setManualRight] = useState(cleanedSheets[1] ?? '')
-  const [manualLeftKeys, setManualLeftKeys] = useState<string[]>(['', ''])
-  const [manualRightKeys, setManualRightKeys] = useState<string[]>(['', ''])
-  const [showAdvanced, setShowAdvanced] = useState(false)
   const autoBusinessAttempt = useRef<string | null>(null)
   const manualModeSelected = useRef(false)
 
@@ -71,12 +70,10 @@ export default function ActiveSheetSelector() {
     if (analysisScope) setMode(analysisScope.mode)
   }, [analysisScope])
 
+  // Mantiene informada a la página del modo activo (para el workspace de join).
   useEffect(() => {
-    if (!cleanedSheets.includes(manualLeft)) setManualLeft(cleanedSheets[0] ?? '')
-    if (!cleanedSheets.includes(manualRight) || manualRight === manualLeft) {
-      setManualRight(cleanedSheets.find((name) => name !== manualLeft) ?? '')
-    }
-  }, [cleanedSheets, manualLeft, manualRight])
+    onModeChange?.(mode)
+  }, [mode, onModeChange])
 
   useEffect(() => {
     if (compatibleSheets.length < 1) return
@@ -88,15 +85,6 @@ export default function ActiveSheetSelector() {
         : next
     })
   }, [compatibleSheets])
-
-  useEffect(() => {
-    const candidate = candidates[0]
-    if (!candidate) return
-    setManualLeft(candidate.left_sheet)
-    setManualRight(candidate.right_sheet)
-    setManualLeftKeys([candidate.left_keys[0] ?? '', candidate.left_keys[1] ?? ''])
-    setManualRightKeys([candidate.right_keys[0] ?? '', candidate.right_keys[1] ?? ''])
-  }, [candidates])
 
   const activeAppendJoin = mode === 'append_join' && analysisScope?.mode === 'append_join'
     ? analysisScope
@@ -178,11 +166,11 @@ export default function ActiveSheetSelector() {
   }
 
   async function findRelationships(
-    nextMode: 'join' | 'append_join' = 'join',
+    _nextMode: 'append_join' = 'append_join',
     requestedAppendSheets?: string[],
   ) {
     if (!file || !sheetManifest || detecting) return
-    setMode(nextMode)
+    setMode('append_join')
     setDetecting(true)
     setRelationMessage(null)
     try {
@@ -191,7 +179,7 @@ export default function ActiveSheetSelector() {
       const appendSelection = retainedAppendSelection.length >= 1
         ? retainedAppendSelection
         : compatibleSheets
-      const focus = nextMode === 'append_join' ? { sheets: appendSelection } : null
+      const focus = { sheets: appendSelection }
       const datasetKey = datasetId ?? storagePath ?? `${file.name}:${file.size}:${file.lastModified}`
       const cacheKey = `${datasetKey}|${JSON.stringify(sheetManifest)}|${JSON.stringify(focus)}`
       let response = getCachedRelationships(cacheKey)
@@ -201,19 +189,14 @@ export default function ActiveSheetSelector() {
           buildDatasetForm(file, storagePath, {
             manifest: JSON.stringify(sheetManifest),
             ...(datasetId ? { dataset_id: datasetId } : {}),
-            ...(focus ? { focus: JSON.stringify(focus) } : {}),
+            focus: JSON.stringify(focus),
           }),
         )
         cacheRelationships(cacheKey, response)
       }
-      const costSelection = nextMode === 'append_join'
-        ? selectAppendJoinCostCandidates(response.candidates, appendSelection)
-        : null
-      const safeCandidates = costSelection?.candidates ?? response.candidates
-        .filter((candidate) => candidate.safe)
-        .sort((left, right) => Number(Boolean(right.recommended)) - Number(Boolean(left.recommended)))
-      setCandidates(safeCandidates)
-      const recommended = costSelection?.automatic ?? null
+      const costSelection = selectAppendJoinCostCandidates(response.candidates, appendSelection)
+      setCandidates(costSelection.candidates)
+      const recommended = costSelection.automatic ?? null
       if (recommended && appendSelection.length >= 1) {
         setAppendSheets((current) => (
           appendSelection.length === current.length &&
@@ -248,21 +231,17 @@ export default function ActiveSheetSelector() {
           `Listo: analizamos ${appendSelection.length} hojas de ventas como un solo periodo y vinculamos los costos de ${recommended.right_sheet} usando ${recommended.left_keys.join(' + ')}.`,
         )
       } else {
-        if (nextMode === 'append_join') {
-          // No conservar detrás de este diagnóstico un alcance anterior que
-          // afirmaba haber agregado costos.
-          if (analysisScope?.mode === 'append_join') setAnalysisScope(null)
-          const explanation = costSelection?.blocked ?? costSelection?.candidates[0]
-          setRelationMessage(
-            explanation
-              ? relationshipPlainMessage(explanation)
-              : response.candidates.length > 0
-                ? 'No encontramos una relación de costos recomendada. Las conexiones con Clientes, Sucursales u otras tablas están disponibles en “Relacionar otras hojas”.'
-                : response.message ?? 'No encontramos una hoja de costos segura.',
-          )
-        } else {
-          setRelationMessage(response.message)
-        }
+        // No conservar detrás de este diagnóstico un alcance anterior que
+        // afirmaba haber agregado costos.
+        if (analysisScope?.mode === 'append_join') setAnalysisScope(null)
+        const explanation = costSelection.blocked ?? costSelection.candidates[0]
+        setRelationMessage(
+          explanation
+            ? relationshipPlainMessage(explanation)
+            : response.candidates.length > 0
+              ? 'No encontramos una relación de costos recomendada. Las conexiones con Clientes, Sucursales u otras tablas están disponibles en “Relación manual”.'
+              : response.message ?? 'No encontramos una hoja de costos segura.',
+        )
       }
     } catch (err) {
       setCandidates([])
@@ -278,81 +257,23 @@ export default function ActiveSheetSelector() {
     setMode(next)
     if (next === 'single') chooseSingle(sheet && cleanedSheets.includes(sheet) ? sheet : cleanedSheets[0])
     if (next === 'append') chooseAppend(compatibleSheets)
-    if (next === 'join' || next === 'append_join') void findRelationships(next)
-  }
-
-  const validateManualRelationship = async () => {
-    if (!sheetManifest || !manualLeft || !manualRight) return
-    const pairs = manualLeftKeys
-      .map((leftKey, index) => [leftKey, manualRightKeys[index]] as const)
-      .filter(([leftKey, rightKey]) => leftKey && rightKey)
-    if (!pairs.length) {
-      setRelationMessage('Elige al menos una columna en cada hoja.')
-      return
-    }
-    setDetecting(true)
-    setRelationMessage(null)
-    try {
-      const response = await apiPost<RelationshipResult>(
-        '/sheets/relationships',
-        buildDatasetForm(file, storagePath, {
-          manifest: JSON.stringify(sheetManifest),
-          ...(datasetId ? { dataset_id: datasetId } : {}),
-          relationship: JSON.stringify({
-            left_sheet: manualLeft,
-            right_sheet: manualRight,
-            left_keys: pairs.map(([leftKey]) => leftKey),
-            right_keys: pairs.map(([, rightKey]) => rightKey),
-            type: 'left',
-          }),
-        }),
-      )
-      if (response.manual?.safe) {
-        setCandidates([response.manual])
-        setRelationMessage(relationshipPlainMessage(response.manual))
-      } else {
-        setCandidates([])
-        const inspected = response.manual
-        setRelationMessage(
-          inspected
-            ? relationshipPlainMessage(inspected)
-            : 'No se pudo validar la relacion.',
-        )
-      }
-    } catch (err) {
-      setRelationMessage(err instanceof ApiError ? err.message : 'No pudimos validar esas columnas.')
-    } finally {
-      setDetecting(false)
-    }
+    if (next === 'append_join') void findRelationships('append_join')
+    // 'join' (Relación manual) abre el workspace de relaciones, que detecta el
+    // catálogo, permite elegir una relación y calcula su dashboard.
   }
 
   const confirmRelation = (candidate: RelationshipCandidate) => {
     setSheet(candidate.left_sheet)
-    if (mode === 'append_join') {
-      const retained = compatibleSheets.filter((name) => appendSheets.includes(name))
-      const appendSelection = retained.length >= 1 ? retained : compatibleSheets
-      if (appendSelection.length < 1 || !appendSelection.includes(candidate.left_sheet)) {
-        setRelationMessage('Selecciona al menos una hoja de ventas que use la clave validada.')
-        return
-      }
-      setAnalysisScope({
-        mode: 'append_join',
-        sheets: [...new Set([...appendSelection, candidate.right_sheet])],
-        append_sheets: appendSelection,
-        active_sheet: candidate.left_sheet,
-        join: {
-          left_sheet: candidate.left_sheet,
-          right_sheet: candidate.right_sheet,
-          left_keys: candidate.left_keys,
-          right_keys: candidate.right_keys,
-          type: 'left',
-        },
-      })
+    const retained = compatibleSheets.filter((name) => appendSheets.includes(name))
+    const appendSelection = retained.length >= 1 ? retained : compatibleSheets
+    if (appendSelection.length < 1 || !appendSelection.includes(candidate.left_sheet)) {
+      setRelationMessage('Selecciona al menos una hoja de ventas que use la clave validada.')
       return
     }
     setAnalysisScope({
-      mode: 'join',
-      sheets: [candidate.left_sheet, candidate.right_sheet],
+      mode: 'append_join',
+      sheets: [...new Set([...appendSelection, candidate.right_sheet])],
+      append_sheets: appendSelection,
       active_sheet: candidate.left_sheet,
       join: {
         left_sheet: candidate.left_sheet,
@@ -364,30 +285,25 @@ export default function ActiveSheetSelector() {
     })
   }
 
+  const disabledModes: Partial<Record<Mode, string>> = pendingSelectedCount > 0
+    ? {
+        append: 'Espera a que termine la limpieza de todas las hojas seleccionadas.',
+        append_join: 'Espera a que termine la limpieza de todas las hojas seleccionadas.',
+        join: 'Espera a que termine la limpieza de todas las hojas seleccionadas.',
+      }
+    : {}
+
   return (
     <section className="-mt-5 mb-6 border-b border-navy/10 pb-4" aria-label="Datos que estas analizando">
       <div className="flex flex-wrap items-center gap-2">
-        <Layers3 className="h-4 w-4 text-teal" />
+        <Link2 className="h-4 w-4 text-teal" />
         <h2 className="text-xs font-semibold text-navy/75">Datos que estas analizando</h2>
-        <div className="flex max-w-full overflow-x-auto rounded-lg border border-navy/15 bg-white p-1">
-          {([
-            ['single', 'Analizar una hoja', Layers3],
-            ['append_join', 'Visión del negocio', Link2],
-            ['append', 'Unir periodos de venta', Rows3],
-            ['join', 'Relación manual', Link2],
-          ] as const).map(([value, label, Icon]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => selectMode(value)}
-              disabled={detecting || (value !== 'single' && pendingSelectedCount > 0)}
-              title={value !== 'single' && pendingSelectedCount > 0 ? 'Espera a que termine la limpieza de todas las hojas seleccionadas.' : undefined}
-              className={`inline-flex min-w-max items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-45 ${mode === value ? 'bg-teal text-white' : 'text-navy/60 hover:bg-navy/5'}`}
-            >
-              <Icon className="h-3.5 w-3.5" /> {label}
-            </button>
-          ))}
-        </div>
+        <AnalysisModeSwitcher
+          mode={mode}
+          onSelect={selectMode}
+          disabledModes={disabledModes}
+          busy={detecting}
+        />
         <Link to="/estandarizacion" className="ml-auto text-xs font-semibold text-teal hover:underline">
           Administrar hojas
         </Link>
@@ -441,33 +357,31 @@ export default function ActiveSheetSelector() {
         </div>
       )}
 
-      {(mode === 'join' || mode === 'append_join') && (
+      {mode === 'append_join' && (
         <div className="mt-3 rounded-lg border border-navy/10 bg-white p-3">
-          {mode === 'append_join' && (
-            <div className="mb-3 border-b border-navy/10 pb-3">
-              <p className="text-xs text-navy/55">Buscamos automáticamente una clave común (por ejemplo SKU o ID), apilamos las ventas compatibles y agregamos los costos sin cambiar filas ni ingresos. No necesitas elegir columnas.</p>
-              <p className="mt-2 text-xs font-semibold text-navy">Cambiar hojas de ventas</p>
-              <div className="mt-2 flex flex-wrap gap-3">
-                {compatibleSheets.map((name) => (
-                  <label key={name} className="flex items-center gap-1.5 text-xs text-navy/70">
-                    <input
-                      type="checkbox"
-                      checked={appendSheets.includes(name)}
-                      disabled={detecting}
-                      title={detecting ? 'Espera a que termine la validación de la selección.' : undefined}
-                      onChange={(event) => chooseAppendJoin(
-                        event.target.checked
-                          ? [...appendSheets, name]
-                          : appendSheets.filter((item) => item !== name),
-                      )}
-                      className="h-4 w-4 accent-teal disabled:cursor-not-allowed disabled:opacity-60"
-                    />
-                    {name}
-                  </label>
-                ))}
-              </div>
+          <div className="mb-3 border-b border-navy/10 pb-3">
+            <p className="text-xs text-navy/55">Buscamos automáticamente una clave común (por ejemplo SKU o ID), apilamos las ventas compatibles y agregamos los costos sin cambiar filas ni ingresos. No necesitas elegir columnas.</p>
+            <p className="mt-2 text-xs font-semibold text-navy">Cambiar hojas de ventas</p>
+            <div className="mt-2 flex flex-wrap gap-3">
+              {compatibleSheets.map((name) => (
+                <label key={name} className="flex items-center gap-1.5 text-xs text-navy/70">
+                  <input
+                    type="checkbox"
+                    checked={appendSheets.includes(name)}
+                    disabled={detecting}
+                    title={detecting ? 'Espera a que termine la validación de la selección.' : undefined}
+                    onChange={(event) => chooseAppendJoin(
+                      event.target.checked
+                        ? [...appendSheets, name]
+                        : appendSheets.filter((item) => item !== name),
+                    )}
+                    className="h-4 w-4 accent-teal disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                  {name}
+                </label>
+              ))}
             </div>
-          )}
+          </div>
           {detecting ? (
             <p className="flex items-center gap-2 text-xs text-navy/60">
               <Loader2 className="h-4 w-4 animate-spin text-teal" /> Buscando conexiones seguras...
@@ -523,10 +437,7 @@ export default function ActiveSheetSelector() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setShowAdvanced(true)
-                        selectMode('join')
-                      }}
+                      onClick={() => selectMode('join')}
                       className="text-xs font-semibold text-navy/60 hover:text-navy"
                     >
                       La conexión detectada no corresponde
@@ -537,12 +448,12 @@ export default function ActiveSheetSelector() {
             </div>
           ) : candidates.length > 0 ? (
             <div className="space-y-3">
-              {candidates.slice(0, advanced ? 5 : 1).map((candidate) => (
+              {candidates.slice(0, 1).map((candidate) => (
                 <div key={`${candidate.left_sheet}-${candidate.right_sheet}-${candidate.left_keys.join('|')}`} className="flex flex-wrap items-center gap-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-semibold text-navy">
                       {candidate.recommended ? 'Conexión recomendada' : 'Conexión disponible'}:{' '}
-                      {mode === 'append_join' && appendSheets.length > 1
+                      {appendSheets.length > 1
                         ? `${appendSheets.length} hojas de ventas combinadas ↔ ${candidate.right_sheet}`
                         : `${candidate.left_sheet} ↔ ${candidate.right_sheet}`}
                     </p>
@@ -554,7 +465,7 @@ export default function ActiveSheetSelector() {
                     </p>
                   </div>
                   <button type="button" onClick={() => confirmRelation(candidate)} className="rounded-lg bg-teal px-3 py-2 text-xs font-semibold text-white">
-                    {mode === 'append_join' ? 'Apilar y relacionar' : 'Usar esta conexion'}
+                    Apilar y relacionar
                   </button>
                   <button type="button" onClick={() => selectMode('single')} className="text-xs font-semibold text-navy/55 hover:text-navy">
                     Analizar por separado
@@ -568,59 +479,6 @@ export default function ActiveSheetSelector() {
               {relationMessage ?? 'No encontramos una conexion segura entre estas hojas. Puedes analizarlas por separado.'}
             </p>
           )}
-          {(mode === 'join' || showAdvanced) && <details className="mt-3 border-t border-navy/10 pt-3" open={showAdvanced}>
-            <summary className="cursor-pointer text-xs font-semibold text-teal">
-              Opciones avanzadas: elegir columnas manualmente
-            </summary>
-            <p className="mt-1 text-[11px] text-navy/50">
-              Úsalo solo si la conexión automática no corresponde. Comprobaremos que la llave exista y que la unión no multiplique ventas.
-            </p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              {([0, 1] as const).map((index) => (
-                <div key={index} className="contents">
-                  <label className="text-[11px] text-navy/55">
-                    {index === 0 ? 'Clave principal izquierda' : 'Segunda clave izquierda (opcional)'}
-                    <select
-                      value={index === 0 ? manualLeft : manualLeft}
-                      onChange={(event) => index === 0 && setManualLeft(event.target.value)}
-                      className={`${index === 0 ? '' : 'hidden'} mt-1 w-full rounded-md border border-navy/20 px-2 py-1.5 text-xs text-navy`}
-                    >
-                      {cleanedSheets.map((name) => <option key={name} value={name}>{name}</option>)}
-                    </select>
-                    <select
-                      value={manualLeftKeys[index]}
-                      onChange={(event) => setManualLeftKeys((current) => current.map((value, keyIndex) => keyIndex === index ? event.target.value : value))}
-                      className="mt-1 w-full rounded-md border border-navy/20 px-2 py-1.5 text-xs text-navy"
-                    >
-                      <option value="">{index === 0 ? 'Selecciona columna' : 'Sin segunda clave'}</option>
-                      {(sheetSessions[manualLeft]?.cleaning?.preview.columnas ?? []).map((column) => <option key={column} value={column}>{column}</option>)}
-                    </select>
-                  </label>
-                  <label className="text-[11px] text-navy/55">
-                    {index === 0 ? 'Clave principal derecha' : 'Segunda clave derecha (opcional)'}
-                    <select
-                      value={manualRight}
-                      onChange={(event) => index === 0 && setManualRight(event.target.value)}
-                      className={`${index === 0 ? '' : 'hidden'} mt-1 w-full rounded-md border border-navy/20 px-2 py-1.5 text-xs text-navy`}
-                    >
-                      {cleanedSheets.filter((name) => name !== manualLeft).map((name) => <option key={name} value={name}>{name}</option>)}
-                    </select>
-                    <select
-                      value={manualRightKeys[index]}
-                      onChange={(event) => setManualRightKeys((current) => current.map((value, keyIndex) => keyIndex === index ? event.target.value : value))}
-                      className="mt-1 w-full rounded-md border border-navy/20 px-2 py-1.5 text-xs text-navy"
-                    >
-                      <option value="">{index === 0 ? 'Selecciona columna' : 'Sin segunda clave'}</option>
-                      {(sheetSessions[manualRight]?.cleaning?.preview.columnas ?? []).map((column) => <option key={column} value={column}>{column}</option>)}
-                    </select>
-                  </label>
-                </div>
-              ))}
-            </div>
-            <button type="button" onClick={() => void validateManualRelationship()} disabled={detecting} className="mt-3 rounded-lg border border-teal/40 px-3 py-2 text-xs font-semibold text-teal disabled:opacity-50">
-              Validar relacion
-            </button>
-          </details>}
         </div>
       )}
     </section>

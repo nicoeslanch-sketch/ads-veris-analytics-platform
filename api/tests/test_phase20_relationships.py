@@ -1,0 +1,493 @@
+"""Fase 20 — Catálogo ampliado de relaciones y dashboard por relación.
+
+Cubre la detección segura de múltiples relaciones, el bloqueo de uniones que
+multiplican filas o alteran totales, y el cálculo determinista de los dashboards
+por plantilla (Productos↔Ventas, Ventas↔Costos, Ventas↔Inventario, genérico).
+"""
+
+import io
+
+import pandas as pd
+import pytest
+
+from app.engine.multi_sheet import join_related_frames, relation_stats
+from app.engine.relationship_dashboard import build_relationship_dashboard
+from app.engine.relationships import (
+    detect_relationship_catalog,
+    relationship_id,
+)
+from app.routes.pipeline import (
+    _relationship_catalog_sync,
+    _relationship_dashboard_sync,
+)
+
+
+def _ventas() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ID_Venta": ["V1", "V2", "V3", "V4", "V5", "V6"],
+            "Fecha": [
+                "2025-01-05", "2025-01-20", "2025-02-08",
+                "2025-02-15", "2025-03-03", "2025-03-25",
+            ],
+            "ID_Producto": ["0001", "0002", "0001", "0003", "0002", "0001"],
+            "Cantidad": [2, 1, 3, 1, 5, 2],
+            "Monto_Venta": [2000, 1500, 3000, 900, 7500, 2000],
+        }
+    )
+
+
+def _productos() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ID_Producto": ["0001", "0002", "0003"],
+            "Nombre_Producto": ["Alfa", "Beta", "Gamma"],
+            "Categoria": ["Bebidas", "Snacks", "Bebidas"],
+            "Costo_Unitario": [500, 600, 300],
+        }
+    )
+
+
+def _clientes() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ID_Cliente": ["C1", "C2", "C3"],
+            "Nombre_Cliente": ["Uno", "Dos", "Tres"],
+        }
+    )
+
+
+def _relation(left, right, left_keys, right_keys):
+    return {
+        "left_sheet": left,
+        "right_sheet": right,
+        "left_keys": left_keys,
+        "right_keys": right_keys,
+        "type": "left",
+    }
+
+
+# ── Catálogo ─────────────────────────────────────────────────────────────────
+def test_catalog_detects_safe_relationship_with_deterministic_id():
+    frames = {"Ventas": _ventas(), "Productos": _productos()}
+    catalog = detect_relationship_catalog(frames, {}, {})
+    assert catalog["relationships"], "debe encontrar al menos una relación segura"
+    relation = catalog["relationships"][0]
+    assert relation["left_sheet"] == "Ventas"
+    assert relation["right_sheet"] == "Productos"
+    assert relation["safe"] is True
+    assert relation["recommended"] is True
+    assert relation["cardinality"] == "muchos_a_uno"
+    assert relation["template"] == "sales_costs"
+    assert relation["id"] == relationship_id(
+        "Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]
+    )
+
+
+def test_catalog_id_is_stable_across_calls():
+    frames = {"Ventas": _ventas(), "Productos": _productos()}
+    first = detect_relationship_catalog(frames, {}, {})["relationships"][0]["id"]
+    second = detect_relationship_catalog(frames, {}, {})["relationships"][0]["id"]
+    assert first == second
+
+
+def test_catalog_finds_multiple_safe_relationships():
+    ventas = _ventas()
+    ventas["ID_Cliente"] = ["C1", "C2", "C1", "C3", "C2", "C1"]
+    frames = {"Ventas": ventas, "Productos": _productos(), "Clientes": _clientes()}
+    catalog = detect_relationship_catalog(frames, {}, {})
+    templates = {rel["template"] for rel in catalog["relationships"]}
+    assert "sales_costs" in templates
+    assert "sales_customers" in templates
+    assert len(catalog["relationships"]) >= 2
+
+
+def test_catalog_preserves_leading_zeros_in_keys():
+    frames = {"Ventas": _ventas(), "Productos": _productos()}
+    catalog = detect_relationship_catalog(frames, {}, {})
+    relation = catalog["relationships"][0]
+    assert relation["overlap"] == pytest.approx(1.0)
+    assert relation["coverage_left"] == pytest.approx(1.0)
+
+
+def test_catalog_supports_composite_keys():
+    ventas = pd.DataFrame(
+        {
+            "Fecha": ["2025-01-01", "2025-01-02", "2025-01-03"],
+            "ID_Producto": ["P1", "P1", "P2"],
+            "ID_Sucursal": ["S1", "S2", "S1"],
+            "Cantidad": [1, 1, 1],
+            "Monto_Venta": [100, 200, 300],
+        }
+    )
+    precios = pd.DataFrame(
+        {
+            "ID_Producto": ["P1", "P1", "P2"],
+            "ID_Sucursal": ["S1", "S2", "S1"],
+            "Costo_Unitario": [40, 45, 90],
+        }
+    )
+    stats = relation_stats(
+        ventas, ["ID_Producto", "ID_Sucursal"], precios, ["ID_Producto", "ID_Sucursal"]
+    )
+    assert stats.safe is True
+    assert stats.cardinality in {"muchos_a_uno", "uno_a_uno"}
+
+
+def test_catalog_reports_no_relationships_for_unrelated_sheets():
+    ventas = _ventas().drop(columns=["ID_Producto"])
+    otras = pd.DataFrame({"Concepto": ["A", "B"], "Detalle": ["x", "y"]})
+    catalog = detect_relationship_catalog({"Ventas": ventas, "Notas": otras}, {}, {})
+    assert catalog["relationships"] == []
+    assert catalog["message"] is not None
+
+
+def test_catalog_does_not_relate_two_transactional_sheets():
+    enero = _ventas()
+    febrero = _ventas()
+    catalog = detect_relationship_catalog({"Enero": enero, "Febrero": febrero}, {}, {})
+    assert catalog["relationships"] == []
+
+
+# ── Seguridad de la unión ────────────────────────────────────────────────────
+def test_many_to_many_is_blocked():
+    left = pd.DataFrame({"K": ["a", "a", "b", "b"], "Monto_Venta": [1, 2, 3, 4], "Fecha": ["2025-01-01"] * 4})
+    right = pd.DataFrame({"K": ["a", "a", "b"], "Attr": ["x", "y", "z"]})
+    stats = relation_stats(left, ["K"], right, ["K"])
+    assert stats.cardinality == "muchos_a_muchos"
+    assert stats.safe is False
+
+
+def test_duplicate_right_key_is_blocked():
+    left = pd.DataFrame({"K": ["a", "b", "c"], "Monto_Venta": [1, 2, 3], "Fecha": ["2025-01-01"] * 3})
+    right = pd.DataFrame({"K": ["a", "a", "b", "c"], "Attr": ["x", "y", "z", "w"]})
+    stats = relation_stats(left, ["K"], right, ["K"])
+    assert stats.safe is False
+    assert "duplicad" in (stats.reason or "").lower()
+
+
+def test_join_that_multiplies_rows_is_blocked():
+    left = pd.DataFrame({"K": ["a", "b"], "Monto_Venta": [10, 20], "Fecha": ["2025-01-01", "2025-01-02"]})
+    right = pd.DataFrame({"K": ["a", "a", "b"], "Attr": ["x", "y", "z"]})
+    with pytest.raises(ValueError):
+        join_related_frames(
+            {"Ventas": left, "Ref": right}, {}, _relation("Ventas", "Ref", ["K"], ["K"])
+        )
+
+
+def test_join_preserves_rows_and_totals():
+    ventas = _ventas()
+    productos = _productos()
+    merged, mapping, provenance = join_related_frames(
+        {"Ventas": ventas, "Productos": productos},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    assert provenance["rows_before"] == provenance["rows_after"] == len(ventas)
+    assert merged["Monto_Venta"].sum() == ventas["Monto_Venta"].sum()
+    assert merged["Cantidad"].sum() == ventas["Cantidad"].sum()
+
+
+# ── Dashboards por plantilla ─────────────────────────────────────────────────
+def test_products_sales_dashboard_has_expected_kpis():
+    productos = _productos().drop(columns=["Costo_Unitario"])
+    dashboard = build_relationship_dashboard(
+        {"Ventas": _ventas(), "Productos": productos},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    assert dashboard["template"] == "products_sales"
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["ingresos"]["value"] == pytest.approx(16900.0)
+    assert kpis["productos"]["value"] == 3
+
+
+def test_sales_costs_dashboard_margin_only_on_paired_sales():
+    ventas = _ventas()
+    ventas.loc[len(ventas)] = ["V7", "2025-03-28", "0009", 1, 5000]
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Productos": _productos()},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    assert dashboard["template"] == "sales_costs"
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["ventas"]["value"] == pytest.approx(21900.0)
+    assert kpis["cobertura"]["value"] < 100
+    # 1000+600+1500+300+3000+1000 = 7400; la venta de 5000 sin costo no suma.
+    assert kpis["costo"]["value"] == pytest.approx(7400.0)
+
+
+def test_missing_cost_is_not_zero():
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": ["V1", "V2"],
+            "Fecha": ["2025-01-01", "2025-01-02"],
+            "ID_Producto": ["P1", "P9"],
+            "Cantidad": [1, 1],
+            "Monto_Venta": [1000, 1000],
+        }
+    )
+    productos = pd.DataFrame(
+        {
+            "ID_Producto": ["P1", "P9"],
+            "Nombre_Producto": ["A", "Nueve"],
+            "Costo_Unitario": [400, None],
+        }
+    )
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Productos": productos},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["costo"]["value"] == pytest.approx(400.0)
+    assert kpis["cobertura"]["value"] == pytest.approx(50.0)
+    assert any(alert["id"] == "costos_faltantes" for alert in dashboard["alerts"])
+
+
+def test_inventory_dashboard_does_not_duplicate_stock():
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": ["V1", "V2", "V3", "V4"],
+            "Fecha": ["2025-03-01", "2025-03-10", "2025-03-20", "2025-03-30"],
+            "ID_Producto": ["P1", "P1", "P2", "P1"],
+            "Cantidad": [10, 10, 2, 10],
+            "Monto_Venta": [1000, 1000, 400, 1000],
+        }
+    )
+    inventario = pd.DataFrame(
+        {
+            "ID_Producto": ["P1", "P2"],
+            "Nombre_Producto": ["Uno", "Dos"],
+            "Categoria": ["A", "B"],
+            "Stock_Sistema": [30, 500],
+            "Fecha_Snapshot": ["2025-03-31", "2025-03-31"],
+        }
+    )
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Inventario": inventario},
+        {},
+        {},
+        _relation("Ventas", "Inventario", ["ID_Producto"], ["ID_Producto"]),
+    )
+    assert dashboard["template"] == "sales_inventory"
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["stock"]["value"] == pytest.approx(530.0)
+
+
+def test_inventory_uses_last_snapshot():
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": ["V1"],
+            "Fecha": ["2025-03-15"],
+            "ID_Producto": ["P1"],
+            "Cantidad": [5],
+            "Monto_Venta": [500],
+        }
+    )
+    inventario = pd.DataFrame(
+        {
+            "ID_Producto": ["P1", "P1"],
+            "Nombre_Producto": ["Uno", "Uno"],
+            "Stock_Sistema": [100, 40],
+            "Fecha_Snapshot": ["2025-03-01", "2025-03-31"],
+        }
+    )
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Inventario": inventario},
+        {},
+        {},
+        _relation("Ventas", "Inventario", ["ID_Producto"], ["ID_Producto"]),
+    )
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["stock"]["value"] == pytest.approx(40.0)
+
+
+def test_inventory_coverage_days():
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": [f"V{i}" for i in range(10)],
+            "Fecha": [f"2025-03-{i + 1:02d}" for i in range(10)],
+            "ID_Producto": ["P1"] * 10,
+            "Cantidad": [2] * 10,
+            "Monto_Venta": [100] * 10,
+        }
+    )
+    inventario = pd.DataFrame(
+        {
+            "ID_Producto": ["P1"],
+            "Nombre_Producto": ["Uno"],
+            "Stock_Sistema": [20],
+            "Fecha_Snapshot": ["2025-03-31"],
+        }
+    )
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Inventario": inventario},
+        {},
+        {},
+        _relation("Ventas", "Inventario", ["ID_Producto"], ["ID_Producto"]),
+    )
+    table = dashboard["table"]
+    assert table is not None
+    row = table["rows"][0]
+    assert row["dias_cobertura"] == pytest.approx(10.0, abs=0.5)
+    assert row["estado"] in {"alto", "medio"}
+
+
+def test_period_filter_narrows_dashboard():
+    dashboard = build_relationship_dashboard(
+        {"Ventas": _ventas(), "Productos": _productos()},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+        date_from="2025-03-01",
+        date_to="2025-03-31",
+    )
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["ventas"]["value"] == pytest.approx(9500.0)
+
+
+def test_mixed_currency_blocks_cost_dashboard():
+    from app.engine.metrics import CurrencyDetection
+
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": ["V1", "V2"],
+            "Fecha": ["2025-01-01", "2025-01-02"],
+            "ID_Producto": ["P1", "P2"],
+            "Cantidad": [1, 1],
+            "Monto_Venta": [1000, 2000],
+        }
+    )
+    productos = pd.DataFrame(
+        {"ID_Producto": ["P1", "P2"], "Nombre_Producto": ["A", "B"], "Costo_Unitario": [400, 800]}
+    )
+    results = {
+        "Ventas": {
+            "_moneda": CurrencyDetection(
+                dominante="CLP", detectadas=("CLP",), conteos={"CLP": 2}, mixta=False
+            )
+        },
+        "Productos": {
+            "_moneda": CurrencyDetection(
+                dominante="USD", detectadas=("USD",), conteos={"USD": 2}, mixta=False
+            )
+        },
+    }
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Productos": productos},
+        {},
+        results,
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    assert dashboard["available"] is False
+    assert "moneda" in dashboard["message"].lower()
+
+
+def test_generic_relationship_dashboard():
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": ["V1", "V2", "V3"],
+            "Fecha": ["2025-01-01", "2025-01-02", "2025-01-03"],
+            "ID_Externo": ["E1", "E2", "E1"],
+            "Monto_Venta": [100, 200, 300],
+        }
+    )
+    referencia = pd.DataFrame({"ID_Externo": ["E1", "E2"], "Etiqueta": ["Uno", "Dos"]})
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Referencia": referencia},
+        {},
+        {},
+        _relation("Ventas", "Referencia", ["ID_Externo"], ["ID_Externo"]),
+    )
+    assert dashboard["template"] == "generic"
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["filas"]["value"] == 3
+    assert kpis["cobertura"]["available"] is True
+
+
+def test_empty_right_table_is_safe_message():
+    ventas = _ventas()
+    productos = pd.DataFrame({"ID_Producto": [], "Nombre_Producto": [], "Costo_Unitario": []})
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Productos": productos},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    assert dashboard["available"] is False
+
+
+def test_null_ids_do_not_crash_dashboard():
+    ventas = _ventas()
+    ventas.loc[0, "ID_Producto"] = None
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Productos": _productos()},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    assert dashboard["available"] is True
+    assert dashboard["quality"]["rows_before"] == dashboard["quality"]["rows_after"] == 6
+
+
+# ── Camino del endpoint (sync) con XLSX + manifiesto real ────────────────────
+def _multi_sheet_book() -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        _ventas().to_excel(writer, sheet_name="Ventas", index=False)
+        _productos().to_excel(writer, sheet_name="Productos", index=False)
+    return output.getvalue()
+
+
+def _book_manifest() -> dict:
+    return {
+        "hojas": [
+            {
+                "nombre": "Ventas",
+                "procesar": True,
+                "rules": {},
+                "mapping": {
+                    "fecha": "Fecha",
+                    "producto": "ID_Producto",
+                    "cantidad": "Cantidad",
+                    "monto": "Monto_Venta",
+                },
+                "scope": {},
+                "eliminar_duplicados": False,
+            },
+            {
+                "nombre": "Productos",
+                "procesar": True,
+                "rules": {},
+                "mapping": {
+                    "producto": "Nombre_Producto",
+                    "categoria": "Categoria",
+                    "costo": "Costo_Unitario",
+                },
+                "scope": {},
+                "eliminar_duplicados": False,
+            },
+        ]
+    }
+
+
+def test_catalog_sync_endpoint_path_returns_relationship():
+    catalog = _relationship_catalog_sync("libro.xlsx", _multi_sheet_book(), _book_manifest())
+    assert catalog["relationships"], "el camino del endpoint debe detectar la relación"
+    assert catalog["relationships"][0]["safe"] is True
+
+
+def test_dashboard_sync_endpoint_path_preserves_totals():
+    relation = _relationship_catalog_sync(
+        "libro.xlsx", _multi_sheet_book(), _book_manifest()
+    )["relationships"][0]
+    dashboard = _relationship_dashboard_sync(
+        "libro.xlsx", _multi_sheet_book(), _book_manifest(), relation, None, None
+    )
+    assert dashboard["available"] is True
+    assert dashboard["quality"]["rows_before"] == dashboard["quality"]["rows_after"] == 6

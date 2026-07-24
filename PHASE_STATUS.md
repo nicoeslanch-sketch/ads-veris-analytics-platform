@@ -1,5 +1,19 @@
 # Estado del proyecto por fases — ADS Veris
 
+**Fase 20 — Botonera del Resumen + workspace de relaciones.** Rediseña la
+sección "Datos que estás analizando" como un selector segmentado accesible (los
+cuatro modos con su lógica intacta) y desarrolla el workspace "Relaciones entre
+hojas" para el modo "Relación manual" (`join`). Un catálogo determinista
+separado (`engine/relationships.py`) detecta TODAS las relaciones seguras del
+libro y las clasifica por plantilla; cada una calcula su dashboard en
+FastAPI/pandas (`engine/relationship_dashboard.py`) con KPIs, gráficos, tabla,
+hallazgos, alertas y acciones deterministas. Endpoints nuevos
+`/sheets/relationship-catalog` y `/sheets/relationship-dashboard`. No cambia
+`detect_relationships`, `/sheets/relationships`, `AnalysisScope`,
+`build_analysis_frame` ni el `append_join` automático. **No agrega migración:
+0021 sigue siendo la última; el motor sigue en 0.23.0** (los cálculos existentes
+no cambian; los endpoints nuevos son aditivos).
+
 **Estado actual: Fases 0 a 18 completas y motor empresarial 0.23.0.**
 La versión `0.23.0` conserva todo el flujo multihoja y agrega una vista
 ejecutiva segura en Resumen y una vista diagnóstica orientada a decisiones en

@@ -391,6 +391,142 @@ export interface RelationshipResult {
   metrics?: MetricsResult
 }
 
+// ── Workspace de relaciones (Parte 4-10) ─────────────────────────────────────
+// Contratos estrictos del catálogo automático ampliado y del dashboard por
+// relación. Todo el cálculo empresarial vive en FastAPI/pandas; el frontend
+// solo renderiza datos agregados.
+
+export type RelationshipTemplate =
+  | 'products_sales'
+  | 'sales_costs'
+  | 'sales_inventory'
+  | 'sales_customers'
+  | 'sales_sellers'
+  | 'sales_branches'
+  | 'purchases_costs'
+  | 'expenses_branches'
+  | 'generic'
+
+/** Una relación del catálogo del workspace. Extiende el join estándar con la
+ * metadata de seguridad, la plantilla detectada y un ID determinista. */
+export interface CatalogRelationship extends AnalysisJoin {
+  id: string
+  template: RelationshipTemplate
+  label: string
+  purpose: string
+  coverage_left: number
+  coverage_right: number
+  overlap: number
+  cardinality: RelationshipCandidate['cardinality']
+  safe: boolean
+  recommended: boolean
+  source: 'automatic' | 'manual'
+  currency_compatible: boolean
+  reason: string | null
+}
+
+export interface RelationshipCatalog {
+  relationships: CatalogRelationship[]
+  discarded_count: number
+  message: string | null
+}
+
+export type KpiFormat = 'currency' | 'number' | 'percent' | 'integer' | 'text' | 'days'
+export type InsightSeverity = 'info' | 'success' | 'warning' | 'risk'
+export type InsightTone = 'default' | 'positive' | 'warning' | 'risk'
+
+export interface RelationshipKpi {
+  id: string
+  label: string
+  /** `null` cuando el insumo no existe: la UI muestra "No disponible". */
+  value: number | string | null
+  format: KpiFormat
+  help: string | null
+  available: boolean
+  tone?: InsightTone
+}
+
+export type RelationshipChartKind = 'bar' | 'donut' | 'line'
+
+export interface RelationshipChartSeries {
+  key: string
+  label: string
+  format: KpiFormat
+}
+
+export interface RelationshipChart {
+  id: string
+  kind: RelationshipChartKind
+  title: string
+  help: string | null
+  category_key: string
+  series: RelationshipChartSeries[]
+  data: Array<Record<string, string | number | null>>
+}
+
+export interface RelationshipTableColumn {
+  key: string
+  label: string
+  format: KpiFormat
+}
+
+export interface RelationshipTable {
+  id: string
+  title: string
+  columns: RelationshipTableColumn[]
+  rows: Array<Record<string, string | number | null>>
+  total_rows: number
+}
+
+export interface RelationshipInsightImpact {
+  value: number
+  format: KpiFormat
+  label: string
+}
+
+export interface RelationshipInsight {
+  id: string
+  title: string
+  detail: string
+  severity: InsightSeverity
+  evidence: string | null
+  /** Solo cuando es matemáticamente válido; si no, `null`. */
+  impact: RelationshipInsightImpact | null
+  action_id: string | null
+}
+
+export interface RelationshipAction {
+  id: string
+  label: string
+  kind: 'filter_table' | 'highlight' | 'none'
+  target: string | null
+}
+
+export interface RelationshipQuality {
+  rows_before: number
+  rows_after: number
+  matched_rows: number
+  unmatched_rows: number
+  coverage_pct: number
+  warnings: string[]
+}
+
+export interface RelationshipDashboard {
+  relation: CatalogRelationship
+  template: RelationshipTemplate
+  period: { desde: string | null; hasta: string | null; referencia: string | null; meses: string[] }
+  currency: string
+  quality: RelationshipQuality
+  kpis: RelationshipKpi[]
+  charts: RelationshipChart[]
+  table: RelationshipTable | null
+  findings: RelationshipInsight[]
+  alerts: RelationshipInsight[]
+  actions: RelationshipAction[]
+  available: boolean
+  message: string | null
+}
+
 export const DEFAULT_CLEANING_OPTIONS: CleaningOptions = {
   eliminar_duplicados: false,
 }
