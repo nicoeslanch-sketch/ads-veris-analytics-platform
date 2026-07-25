@@ -40,6 +40,7 @@ export interface MetricsCacheKeyParts {
   dateTo?: string | null
   sheet?: string | null
   analysisScope?: unknown
+  businessFilters?: unknown
   mapping?: unknown
   eliminarDuplicados: boolean
   revision?: number | null
@@ -58,6 +59,7 @@ export function metricsCacheKey(parts: MetricsCacheKeyParts): string {
     dateTo: parts.dateTo ?? '',
     sheet: parts.sheet ?? '',
     analysisScope: parts.analysisScope ?? null,
+    businessFilters: parts.businessFilters ?? null,
     mapping: parts.mapping ?? null,
     eliminarDuplicados: parts.eliminarDuplicados,
     revision: parts.revision ?? null,

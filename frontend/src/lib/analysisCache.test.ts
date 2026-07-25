@@ -75,6 +75,25 @@ describe('caché de análisis', () => {
     expect(getCachedMetrics(key)).toBe(resolved)
   })
 
+  it('separa la caché cuando cambian los filtros empresariales', () => {
+    const base = {
+      dataset: 'dataset-1',
+      eliminarDuplicados: false,
+      revision: 3,
+      analysisScope: { mode: 'business', sheets: ['Ventas', 'Productos'] },
+    }
+    const centro = metricsCacheKey({
+      ...base,
+      businessFilters: { sucursal: 'Centro' },
+    })
+    const norte = metricsCacheKey({
+      ...base,
+      businessFilters: { sucursal: 'Norte' },
+    })
+
+    expect(centro).not.toBe(norte)
+  })
+
   it('una petición de una sesión cerrada no repuebla la caché', async () => {
     clearAnalysisCaches()
     const key = metricsCacheKey({ dataset: 'anterior', eliminarDuplicados: false })

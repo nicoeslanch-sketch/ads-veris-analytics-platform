@@ -37,6 +37,7 @@ import RelationshipWorkspace from '../components/relationships/RelationshipWorks
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
+import BusinessFilterBar from '../components/BusinessFilterBar'
 import AnalysisLoadingPanel from '../components/AnalysisLoadingPanel'
 import { useAuth } from '../auth/AuthContext'
 import { useDataset } from '../data/DatasetContext'
@@ -226,7 +227,7 @@ function ChartTooltip({
 export default function Resumen() {
   const { user } = useAuth()
   const location = useLocation()
-  const { file, datasetId, storagePath, cleaning, metrics: contextMetrics, uploadedAt, period, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, sheetManifest, analysisScope, eliminarDuplicados } = useDataset()
+  const { file, datasetId, storagePath, cleaning, metrics: contextMetrics, uploadedAt, period, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, sheetManifest, analysisScope, businessFilters, setBusinessFilters, eliminarDuplicados } = useDataset()
   // Fase 14: la demo ficticia entrega métricas congeladas del bundle — jamás
   // escribe en el DatasetContext ni llama al backend.
   const demo = useDemo()
@@ -291,6 +292,7 @@ export default function Resumen() {
       dateTo: period.to,
       sheet,
       analysisScope,
+      businessFilters,
       mapping: mappingOverride,
       eliminarDuplicados,
       revision: cleaning.revision,
@@ -314,6 +316,7 @@ export default function Resumen() {
       analysisScopesEqual(contextMetrics.analysis_scope, analysisScope) &&
       !period.from &&
       !period.to &&
+      Object.keys(businessFilters).length === 0 &&
       !contextMetrics.periodo.desde &&
       !contextMetrics.periodo.hasta,
     )
@@ -354,6 +357,9 @@ export default function Resumen() {
       const serializedScope = serializedAnalysisScope(analysisScope)
       if (serializedScope) fields.analysis_scope = serializedScope
     }
+    if (Object.keys(businessFilters).length > 0) {
+      fields.business_filters = JSON.stringify(businessFilters)
+    }
     if (period.from) fields.date_from = period.from
     if (period.to) fields.date_to = period.to
     requestMetrics(
@@ -371,7 +377,11 @@ export default function Resumen() {
         setActiveCurrency(result.moneda)
         // El contexto compartido (Alertas/Reportes/IA) solo cachea métricas
         // del periodo COMPLETO — jamás el mes filtrado del Resumen (Fase 10 §5).
-        if (!period.from && !period.to) setContextMetrics(result)
+        if (
+          !period.from
+          && !period.to
+          && Object.keys(businessFilters).length === 0
+        ) setContextMetrics(result)
         const months = result.periodo.meses_disponibles
         setMonthsAvailable(months)
         // `from/to` vacíos ya representan todo el periodo. Antes se convertía
@@ -401,7 +411,7 @@ export default function Resumen() {
       // queda "ya pedida" con la petición abortada, la página no carga jamás.
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
-  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable])
+  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable])
 
   if (!ready && !demo.active) {
     return (
@@ -604,6 +614,14 @@ export default function Resumen() {
         <RelationshipWorkspace />
       ) : (
       <>
+      {metrics?.analisis_negocio?.filtros && (
+        <BusinessFilterBar
+          options={metrics.analisis_negocio.filtros.disponibles}
+          value={businessFilters}
+          disabled={loading}
+          onChange={setBusinessFilters}
+        />
+      )}
       {error && (
         <div className="mb-6 flex flex-wrap items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
