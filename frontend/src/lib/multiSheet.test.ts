@@ -360,6 +360,24 @@ describe('estado multihoja', () => {
     })
   })
 
+  it('conserva la conexión elegida sin cambiar el modo relación manual', () => {
+    const storedScope = {
+      mode: 'join',
+      sheets: ['Ventas_2025', 'Ventas_2026', 'Productos'],
+      active_sheet: 'Ventas_2025',
+      relationship_id: 'todas-ventas-costos',
+      join: {
+        left_sheet: 'Ventas_2025',
+        right_sheet: 'Productos',
+        left_keys: ['SKU'],
+        right_keys: ['SKU'],
+        type: 'left',
+      },
+    }
+
+    expect(restoredAnalysisSelection(storedScope).analysisScope).toEqual(storedScope)
+  })
+
   it('no ofrece apilar hojas de distinta moneda aunque tengan las mismas columnas', () => {
     const result = (currency: string) => ({
       preview: { columnas: ['Fecha', 'Monto'] },

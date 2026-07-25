@@ -4658,11 +4658,17 @@ def _relationship_dashboard_sync(
 ) -> dict:
     left = str(relationship.get("left_sheet", ""))
     right = str(relationship.get("right_sheet", ""))
+    append_sheets = relationship.get("append_sheets") or []
     manifest_names = {entry["nombre"] for entry in manifest["hojas"] if entry["procesar"]}
-    if {left, right} - manifest_names or left == right:
+    requested_names = {left, right, *append_sheets}
+    if (
+        requested_names - manifest_names
+        or left == right
+        or not all(isinstance(name, str) and name for name in append_sheets)
+    ):
         raise HTTPException(status_code=422, detail="La relación referencia hojas inválidas.")
     frames, mappings, results = _processed_manifest_frames(
-        filename, content, manifest, cache_dataset_id, {left, right}
+        filename, content, manifest, cache_dataset_id, requested_names
     )
     return build_relationship_dashboard(
         frames, mappings, results, relationship, date_from=date_from, date_to=date_to
@@ -4699,13 +4705,27 @@ def _relationship_dashboard_cached_sync(
 
 
 def _validate_manual_relationship(raw: dict | None) -> dict:
-    allowed = {"left_sheet", "right_sheet", "left_keys", "right_keys", "type"}
+    allowed = {
+        "left_sheet",
+        "right_sheet",
+        "left_keys",
+        "right_keys",
+        "type",
+        "append_sheets",
+    }
     if not isinstance(raw, dict) or set(raw) - allowed:
         raise HTTPException(status_code=422, detail="La relación no es válida.")
     left = str(raw.get("left_sheet", "")).strip()
     right = str(raw.get("right_sheet", "")).strip()
     left_keys = raw.get("left_keys")
     right_keys = raw.get("right_keys")
+    append_sheets = raw.get("append_sheets") or []
+    normalized_append_sheets = (
+        list(dict.fromkeys(name.strip() for name in append_sheets))
+        if isinstance(append_sheets, list)
+        and all(isinstance(name, str) and name.strip() for name in append_sheets)
+        else []
+    )
     if (
         not left
         or not right
@@ -4716,15 +4736,28 @@ def _validate_manual_relationship(raw: dict | None) -> dict:
         or len(left_keys) != len(right_keys)
         or len(left_keys) > 2
         or not all(isinstance(key, str) and key.strip() for key in left_keys + right_keys)
+        or not isinstance(append_sheets, list)
+        or not all(isinstance(name, str) and name.strip() for name in append_sheets)
+        or (
+            append_sheets
+            and (
+                len(normalized_append_sheets) < 2
+                or left not in normalized_append_sheets
+                or right in normalized_append_sheets
+            )
+        )
     ):
         raise HTTPException(status_code=422, detail="Las hojas o claves de la relación no son válidas.")
-    return {
+    parsed = {
         "left_sheet": left,
         "right_sheet": right,
         "left_keys": [key.strip() for key in left_keys],
         "right_keys": [key.strip() for key in right_keys],
         "type": "left",
     }
+    if append_sheets:
+        parsed["append_sheets"] = normalized_append_sheets
+    return parsed
 
 
 @router.post("/sheets/relationship-catalog")

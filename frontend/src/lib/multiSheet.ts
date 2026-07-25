@@ -106,7 +106,18 @@ export function publicAnalysisScope(value: unknown): AnalysisScope | null {
   }
   if (value.mode === 'join') {
     const join = publicJoin(value.join)
-    return join ? { mode: 'join', sheets, active_sheet: value.active_sheet, join } : null
+    const relationshipId = typeof value.relationship_id === 'string'
+      ? value.relationship_id.trim()
+      : ''
+    return join
+      ? {
+          mode: 'join',
+          sheets,
+          active_sheet: value.active_sheet,
+          join,
+          ...(relationshipId ? { relationship_id: relationshipId } : {}),
+        }
+      : null
   }
   if (value.mode === 'append_join') {
     const join = publicJoin(value.join)

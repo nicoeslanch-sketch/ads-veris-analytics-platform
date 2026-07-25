@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { AlertTriangle, Link2, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Link2, ShieldCheck } from 'lucide-react'
 import type { RelationshipAction, RelationshipDashboard, RelationshipTableColumn } from '../../lib/types'
 import { formatKpiValue, templateDescription, templateLabel } from '../../lib/relationshipDashboard'
 import RelationshipKpis from './RelationshipKpis'
@@ -44,10 +44,12 @@ export default function RelationshipDashboardView({ dashboard }: RelationshipDas
       ? 'text-navy'
       : 'text-coral'
 
+  const actionable = dashboard.actions.filter((action) => action.kind !== 'none')
+
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-3">
       {/* Encabezado compacto de la relación */}
-      <div className="rounded-xl border border-navy/10 bg-white p-4 shadow-sm">
+      <div className="rounded-lg border border-navy/10 bg-white p-3.5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -60,6 +62,12 @@ export default function RelationshipDashboardView({ dashboard }: RelationshipDas
             <p className="mt-0.5 text-xs text-navy/60">{templateDescription(relation.template)}</p>
             <p className="mt-1 text-[11px] text-navy/50">
               Clave: {relation.left_keys.join(' + ')} ↔ {relation.right_keys.join(' + ')}
+            </p>
+            <p className="mt-0.5 text-[11px] text-navy/45">
+              {relation.append_sheets?.length
+                ? `${relation.append_sheets.join(', ')} apiladas antes de relacionar con ${relation.right_sheet}`
+                : `${relation.left_sheet} relacionada con ${relation.right_sheet}`}
+              {' · '}{(relation.cardinality ?? 'relación validada').replace(/_/g, ' ')}
             </p>
           </div>
           <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
@@ -99,75 +107,101 @@ export default function RelationshipDashboardView({ dashboard }: RelationshipDas
       ) : (
         <>
           <RelationshipKpis kpis={dashboard.kpis} currency={currency} />
-          <RelationshipCharts charts={dashboard.charts} currency={currency} />
+          <div className="grid min-w-0 gap-3 @min-[720px]:grid-cols-[minmax(0,1fr)_280px]">
+            <div className="min-w-0 space-y-3">
+              <RelationshipCharts charts={dashboard.charts} currency={currency} />
 
-          {dashboard.table && dashboard.table.rows.length > 0 && (
-            <div
-              ref={tableRef}
-              className={`rounded-xl border bg-white p-4 shadow-sm transition-shadow ${
-                highlightTable === dashboard.table.id ? 'border-teal ring-2 ring-teal/40' : 'border-navy/10'
-              }`}
-            >
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold text-navy">{dashboard.table.title}</h3>
-                <span className="text-[11px] text-navy/50">
-                  {dashboard.table.rows.length} de {dashboard.table.total_rows}
-                </span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[32rem] text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-navy/10 text-navy/55">
-                      {dashboard.table.columns.map((column) => (
-                        <th key={column.key} className="whitespace-nowrap px-2 py-2 font-semibold">
-                          {column.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboard.table.rows.map((row, index) => (
-                      <tr key={index} className="border-b border-navy/5 last:border-0">
-                        {dashboard.table!.columns.map((column) => {
-                          const raw = row[column.key]
-                          const isState = column.key === 'estado' && typeof raw === 'string'
-                          return (
-                            <td key={column.key} className="whitespace-nowrap px-2 py-2 text-navy/80">
-                              {isState ? (
-                                <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATE_BADGE[raw as string] ?? 'bg-navy/10 text-navy/60'}`}>
-                                  {raw}
-                                </span>
-                              ) : (
-                                <TableCell value={raw} format={column.format} currency={currency} />
-                              )}
-                            </td>
-                          )
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {dashboard.table && dashboard.table.rows.length > 0 && (
+                <div
+                  ref={tableRef}
+                  className={`rounded-lg border bg-white p-3.5 shadow-sm transition-shadow ${
+                    highlightTable === dashboard.table.id ? 'border-teal ring-2 ring-teal/40' : 'border-navy/10'
+                  }`}
+                >
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-navy">{dashboard.table.title}</h3>
+                    <span className="text-[11px] text-navy/50">
+                      {dashboard.table.rows.length} de {dashboard.table.total_rows}
+                    </span>
+                  </div>
+                  <div className="max-h-[28rem] overflow-auto">
+                    <table className="w-full min-w-[32rem] text-left text-xs">
+                      <thead className="sticky top-0 z-10 bg-white">
+                        <tr className="border-b border-navy/10 text-navy/55">
+                          <th className="w-8 px-2 py-2 font-semibold">#</th>
+                          {dashboard.table.columns.map((column) => (
+                            <th key={column.key} className="whitespace-nowrap px-2 py-2 font-semibold">
+                              {column.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dashboard.table.rows.map((row, index) => (
+                          <tr key={index} className="border-b border-navy/5 last:border-0">
+                            <td className="px-2 py-2 text-navy/35">{index + 1}</td>
+                            {dashboard.table!.columns.map((column) => {
+                              const raw = row[column.key]
+                              const isState = column.key === 'estado' && typeof raw === 'string'
+                              return (
+                                <td key={column.key} className="whitespace-nowrap px-2 py-2 text-navy/80">
+                                  {isState ? (
+                                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATE_BADGE[raw as string] ?? 'bg-navy/10 text-navy/60'}`}>
+                                      {raw}
+                                    </span>
+                                  ) : (
+                                    <TableCell value={raw} format={column.format} currency={currency} />
+                                  )}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <RelationshipInsights
-              title="Hallazgos clave"
-              icon="lightbulb"
-              items={dashboard.findings}
-              actions={dashboard.actions}
-              currency={currency}
-              onAction={handleAction}
-            />
-            <RelationshipInsights
-              title="Alertas"
-              icon="alert"
-              items={dashboard.alerts}
-              actions={dashboard.actions}
-              currency={currency}
-              onAction={handleAction}
-            />
+            <aside className="space-y-3" aria-label="Hallazgos y acciones">
+              <RelationshipInsights
+                title="Hallazgos clave"
+                icon="lightbulb"
+                items={dashboard.findings}
+                actions={dashboard.actions}
+                currency={currency}
+                onAction={handleAction}
+              />
+              <RelationshipInsights
+                title="Alertas"
+                icon="alert"
+                items={dashboard.alerts}
+                actions={dashboard.actions}
+                currency={currency}
+                onAction={handleAction}
+              />
+              {actionable.length > 0 && (
+                <section className="rounded-lg border border-navy/10 bg-white p-3.5 shadow-sm">
+                  <div className="mb-2 flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-green" aria-hidden />
+                    <h3 className="text-sm font-semibold text-navy">Acciones recomendadas</h3>
+                  </div>
+                  <div className="space-y-1.5">
+                    {actionable.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        onClick={() => handleAction(action)}
+                        className="flex w-full items-center gap-2 rounded-md border border-navy/10 px-2.5 py-2 text-left text-[11px] font-semibold text-navy transition-colors hover:border-teal/40 hover:bg-teal/[0.04]"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green" aria-hidden />
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </aside>
           </div>
         </>
       )}

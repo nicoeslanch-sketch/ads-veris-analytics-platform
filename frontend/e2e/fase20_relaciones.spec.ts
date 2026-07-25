@@ -77,8 +77,18 @@ test('Fase 20: botonera de 4 modos y workspace de relaciones', async ({ page }, 
   await page.getByRole('button', { name: 'Relación manual' }).click()
   await expect(page.getByText('Selecciona una conexión')).toBeVisible({ timeout: 120_000 })
   await expect(page.getByRole('button', { name: /Crear conexión personalizada/ })).toBeVisible()
-  // El dashboard de la relación recomendada se calcula solo (Ventas ↔ Productos).
+  const catalog = page.getByLabel('Catálogo de relaciones')
+  await expect(catalog).toBeVisible()
+  await expect(catalog).toHaveCSS('background-color', 'rgb(26, 58, 82)')
+  await expect(page.getByText('Todas las ventas ↔ Productos', { exact: true })).toBeVisible()
+  await expect(page.getByText('Conexión no disponible')).toHaveCount(0)
+  // El dashboard consolidado recomendado se calcula solo y conserva las tres
+  // medidas con escalas independientes.
   await expect(page.getByText('Conexión segura')).toBeVisible({ timeout: 120_000 })
+  const legend = page.locator('.recharts-legend-item-text')
+  await expect(legend.filter({ hasText: 'Ventas netas' })).toBeVisible()
+  await expect(legend.filter({ hasText: 'Costo de venta' })).toBeVisible()
+  await expect(legend.filter({ hasText: 'Margen bruto' })).toBeVisible()
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true)

@@ -1,8 +1,10 @@
 import {
   Bar,
   BarChart,
+  ComposedChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   Pie,
@@ -36,12 +38,24 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
   const primary = chart.series[0]
   const format = primary?.format ?? 'number'
   const tickFormat = axisFormatter(format, currency)
-  const tooltipFormatter = (value: unknown): [string, string] => [
+  const tooltipFormatter = (value: unknown, name?: string | number): [string, string] => {
+    const displayName = String(name ?? primary?.label ?? '')
+    const series = chart.series.find((item) => item.label === displayName) ?? primary
+    const valueFormat = series?.format ?? format
+    return [
     value === null || value === undefined
       ? 'No disponible'
-      : formatKpiValue(Number(value), format, currency),
-    primary?.label ?? '',
-  ]
+      : formatKpiValue(Number(value), valueFormat, currency),
+    displayName,
+    ]
+  }
+  const seriesColor = (series: RelationshipChart['series'][number], index: number) => {
+    if (series.color_role === 'cost') return CHART.gastos
+    if (series.color_role === 'profit') return CHART.utilidad
+    if (series.color_role === 'warning') return CHART.gastos
+    if (series.color_role === 'risk') return CHART.alerta
+    return CATEGORICAL[index % CATEGORICAL.length]
+  }
 
   return (
     <Card className="!p-4">
@@ -82,8 +96,99 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
               />
               <YAxis tick={{ fill: AXIS_INK, fontSize: 11 }} tickFormatter={tickFormat} width={54} />
               <Tooltip formatter={tooltipFormatter} />
-              <Line type="monotone" dataKey={primary?.key ?? 'value'} stroke={CHART.ingresos} strokeWidth={2} dot={false} />
+              {chart.series.map((series, index) => (
+                <Line
+                  key={series.key}
+                  type="monotone"
+                  dataKey={series.key}
+                  name={series.label}
+                  stroke={seriesColor(series, index)}
+                  strokeWidth={2}
+                  dot={false}
+                />
+              ))}
             </LineChart>
+          ) : chart.kind === 'combo' ? (
+            <ComposedChart data={chart.data} margin={{ top: 8, right: 8, bottom: 8, left: 4 }}>
+              <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+              <XAxis
+                dataKey={chart.category_key}
+                tick={{ fill: AXIS_INK, fontSize: 10 }}
+                tickFormatter={(value: string) => truncateLabel(String(value), 11)}
+              />
+              <YAxis
+                yAxisId="left"
+                tick={{ fill: AXIS_INK, fontSize: 10 }}
+                tickFormatter={axisFormatter(
+                  chart.series.find((series) => series.axis !== 'right')?.format ?? format,
+                  currency,
+                )}
+                width={58}
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                tick={{ fill: AXIS_INK, fontSize: 10 }}
+                tickFormatter={axisFormatter(
+                  chart.series.find((series) => series.axis === 'right')?.format ?? 'percent',
+                  currency,
+                )}
+                width={42}
+              />
+              <Tooltip formatter={tooltipFormatter} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              {chart.series.map((series, index) => (
+                series.kind === 'line' ? (
+                  <Line
+                    key={series.key}
+                    yAxisId={series.axis ?? 'left'}
+                    type="monotone"
+                    dataKey={series.key}
+                    name={series.label}
+                    stroke={seriesColor(series, index)}
+                    strokeWidth={2.5}
+                    dot={{ r: 3 }}
+                  />
+                ) : (
+                  <Bar
+                    key={series.key}
+                    yAxisId={series.axis ?? 'left'}
+                    dataKey={series.key}
+                    name={series.label}
+                    fill={seriesColor(series, index)}
+                    stackId={chart.stacked ? 'total' : undefined}
+                    radius={[3, 3, 0, 0]}
+                  />
+                )
+              ))}
+            </ComposedChart>
+          ) : chart.orientation === 'horizontal' ? (
+            <BarChart
+              data={chart.data}
+              layout="vertical"
+              margin={{ top: 4, right: 18, bottom: 4, left: 8 }}
+            >
+              <CartesianGrid stroke={GRID_STROKE} horizontal={false} />
+              <XAxis type="number" tick={{ fill: AXIS_INK, fontSize: 10 }} tickFormatter={tickFormat} />
+              <YAxis
+                type="category"
+                dataKey={chart.category_key}
+                tick={{ fill: AXIS_INK, fontSize: 10 }}
+                tickFormatter={(value: string) => truncateLabel(String(value), 18)}
+                width={116}
+              />
+              <Tooltip formatter={tooltipFormatter} cursor={{ fill: '#00a8a814' }} />
+              {chart.series.map((series, index) => (
+                <Bar
+                  key={series.key}
+                  dataKey={series.key}
+                  name={series.label}
+                  fill={seriesColor(series, index)}
+                  radius={[0, 4, 4, 0]}
+                  maxBarSize={22}
+                />
+              ))}
+            </BarChart>
           ) : (
             <BarChart data={chart.data} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
               <CartesianGrid stroke={GRID_STROKE} vertical={false} />
@@ -98,15 +203,23 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
               />
               <YAxis tick={{ fill: AXIS_INK, fontSize: 11 }} tickFormatter={tickFormat} width={54} />
               <Tooltip formatter={tooltipFormatter} cursor={{ fill: '#00a8a814' }} />
-              <Bar dataKey={primary?.key ?? 'value'} radius={[4, 4, 0, 0]}>
-                {chart.data.map((_, index) => (
-                  <Cell key={index} fill={CATEGORICAL[index % CATEGORICAL.length]} />
-                ))}
-              </Bar>
+              {chart.series.map((series, index) => (
+                <Bar
+                  key={series.key}
+                  dataKey={series.key}
+                  name={series.label}
+                  fill={seriesColor(series, index)}
+                  stackId={chart.stacked ? 'total' : undefined}
+                  radius={[4, 4, 0, 0]}
+                />
+              ))}
             </BarChart>
           )}
         </ResponsiveContainer>
       </div>
+      {chart.note && (
+        <p className="mt-2 text-[10px] leading-relaxed text-navy/45">{chart.note}</p>
+      )}
     </Card>
   )
 }
@@ -117,7 +230,7 @@ export default function RelationshipCharts({ charts, currency }: RelationshipCha
   const usable = charts.filter((chart) => chart.data.length > 0)
   if (!usable.length) return null
   return (
-    <div className={`grid gap-4 ${usable.length > 1 ? 'lg:grid-cols-2' : ''}`}>
+    <div className={`@container grid gap-3 ${usable.length > 1 ? '@min-[680px]:grid-cols-2' : ''}`}>
       {usable.map((chart) => (
         <ChartFrame key={chart.id} chart={chart} currency={currency} />
       ))}

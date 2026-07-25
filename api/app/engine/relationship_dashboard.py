@@ -187,21 +187,43 @@ def build_relationship_dashboard(
 
     left_name = str(relationship.get("left_sheet", ""))
     right_name = str(relationship.get("right_sheet", ""))
+    append_sheets = list(dict.fromkeys(relationship.get("append_sheets") or []))
     left_keys = relationship.get("left_keys") or []
     right_keys = relationship.get("right_keys") or []
     currency = _currency_label(results, left_name) if left_name in results else "CLP"
 
-    if left_name not in frames or right_name not in frames:
+    if (
+        left_name not in frames
+        or right_name not in frames
+        or any(name not in frames for name in append_sheets)
+    ):
         return _empty_dashboard(relationship, "generic", currency, "Las hojas de la relación no están disponibles.")
 
-    left = frames[left_name]
+    left = (
+        pd.concat(
+            [frames[name].copy() for name in append_sheets],
+            ignore_index=True,
+            sort=False,
+        )
+        if append_sheets
+        else frames[left_name]
+    )
     right = frames[right_name]
     left_mapping = resolve_mapping([str(c) for c in left.columns], mappings.get(left_name))
     right_mapping = resolve_mapping([str(c) for c in right.columns], mappings.get(right_name))
     template, label, purpose = classify_relationship_template(
         left_name, left, left_mapping, right_name, right, right_mapping
     )
-    relation_meta = {**relationship, "template": template, "label": label, "purpose": purpose}
+    relation_meta = {
+        **relationship,
+        "template": template,
+        "label": (
+            f"Todas las ventas ↔ {right_name}"
+            if append_sheets
+            else label
+        ),
+        "purpose": purpose,
+    }
 
     # El inventario multi-snapshot se colapsa al último por clave para el JOIN
     # (así no multiplica ventas). El frame ORIGINAL se conserva para el stock.
@@ -210,6 +232,11 @@ def build_relationship_dashboard(
         join_right = collapse_inventory_snapshots(right, keys=list(right_keys))
 
     stats = relation_stats(left, list(left_keys), join_right, list(right_keys))
+    relation_meta["cardinality"] = stats.cardinality
+    relation_meta["coverage_left"] = stats.coverage_left
+    relation_meta["coverage_right"] = stats.coverage_right
+    relation_meta["overlap"] = stats.overlap
+    relation_meta["safe"] = stats.safe
     if not stats.safe:
         return _empty_dashboard(
             relation_meta, template, currency, stats.reason or "La relación no es segura."
@@ -217,22 +244,26 @@ def build_relationship_dashboard(
 
     # Bloqueo de monedas incompatibles cuando la relación calcula costos.
     if purpose in {"ventas_costos", "compras_costos"}:
-        left_currency = results.get(left_name, {}).get("_moneda")
-        right_currency = results.get(right_name, {}).get("_moneda")
-        if isinstance(left_currency, CurrencyDetection) and isinstance(
-            right_currency, CurrencyDetection
+        currency_sheets = append_sheets or [left_name]
+        detections = [
+            results.get(sheet, {}).get("_moneda")
+            for sheet in [*currency_sheets, right_name]
+        ]
+        typed_detections = [
+            detection
+            for detection in detections
+            if isinstance(detection, CurrencyDetection)
+        ]
+        if typed_detections and (
+            any(detection.mixta for detection in typed_detections)
+            or len({detection.dominante for detection in typed_detections}) > 1
         ):
-            if (
-                left_currency.mixta
-                or right_currency.mixta
-                or left_currency.dominante != right_currency.dominante
-            ):
-                return _empty_dashboard(
-                    relation_meta,
-                    template,
-                    currency,
-                    "Las hojas usan monedas incompatibles; los costos y la utilidad quedan bloqueados.",
-                )
+            return _empty_dashboard(
+                relation_meta,
+                template,
+                currency,
+                "Las hojas usan monedas incompatibles; los costos y la utilidad quedan bloqueados.",
+            )
 
     join = {
         "left_sheet": left_name,
@@ -264,6 +295,7 @@ def build_relationship_dashboard(
         date_from=date_from,
         date_to=date_to,
         derived_cost=provenance.get("costo_derivado"),
+        append_sheets=append_sheets,
     )
     return context.build()
 
@@ -285,6 +317,7 @@ class _DashboardContext:
         self.date_from: str | None = kwargs["date_from"]
         self.date_to: str | None = kwargs["date_to"]
         self.derived_cost: dict[str, Any] | None = kwargs["derived_cost"]
+        self.append_sheets: list[str] = kwargs.get("append_sheets", [])
 
         merged = self.merged
         mapping = self.merged_mapping
@@ -346,8 +379,13 @@ class _DashboardContext:
         matched = max(rows_after - unmatched, 0)
         warnings: list[str] = []
         if unmatched:
+            left_label = (
+                "las ventas consolidadas"
+                if self.append_sheets
+                else self.left_name
+            )
             warnings.append(
-                f"{unmatched:,} filas de {self.left_name} no encontraron correspondencia "
+                f"{unmatched:,} filas de {left_label} no encontraron correspondencia "
                 f"en {self.right_name}.".replace(",", ".")
             )
         return {
@@ -655,6 +693,7 @@ class _DashboardContext:
         return {
             "id": "utilidad_producto",
             "kind": "bar",
+            "orientation": "horizontal",
             "title": "Top productos por utilidad bruta",
             "help": "Utilidad bruta (ingreso − costo pareado) por producto.",
             "category_key": "producto",
@@ -681,16 +720,47 @@ class _DashboardContext:
             if row["ingresos"] else 0.0,
             axis=1,
         )
-        agg = agg.sort_values("margen", ascending=False).head(TOP_LIMIT)
+        agg = agg.sort_values("ingresos", ascending=False).head(TOP_LIMIT)
         return {
             "id": "margen_categoria",
-            "kind": "bar",
-            "title": "Margen por categoría",
-            "help": "Margen bruto porcentual por categoría (solo ventas pareadas).",
+            "kind": "combo",
+            "title": "Ventas, costos y margen por categoría",
+            "help": "Compara ventas y costos pareados; la línea usa el eje derecho para el margen.",
             "category_key": "categoria",
-            "series": [{"key": "margen", "label": "Margen", "format": "percent"}],
+            "series": [
+                {
+                    "key": "ingresos",
+                    "label": "Ventas netas",
+                    "format": "currency",
+                    "kind": "bar",
+                    "axis": "left",
+                    "color_role": "primary",
+                },
+                {
+                    "key": "costo",
+                    "label": "Costo de venta",
+                    "format": "currency",
+                    "kind": "bar",
+                    "axis": "left",
+                    "color_role": "cost",
+                },
+                {
+                    "key": "margen",
+                    "label": "Margen bruto",
+                    "format": "percent",
+                    "kind": "line",
+                    "axis": "right",
+                    "color_role": "profit",
+                },
+            ],
+            "note": "El margen se calcula solo sobre ventas con costo válido; las ventas sin costo no se tratan como costo cero.",
             "data": [
-                {"categoria": str(index), "margen": _clean_number(row["margen"])}
+                {
+                    "categoria": str(index),
+                    "ingresos": _clean_number(row["ingresos"]),
+                    "costo": _clean_number(row["costo"]),
+                    "margen": _clean_number(row["margen"]),
+                }
                 for index, row in agg.iterrows()
             ],
         }

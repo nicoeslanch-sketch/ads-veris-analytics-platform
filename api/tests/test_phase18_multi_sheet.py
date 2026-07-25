@@ -210,6 +210,28 @@ def test_append_join_accepts_one_sales_sheet_and_one_catalog():
     assert provenance["join"]["filas_sin_correspondencia"] == 0
 
 
+def test_join_scope_preserves_relationship_id_without_changing_mode():
+    scope = validate_analysis_scope(
+        {
+            "mode": "join",
+            "sheets": ["Ventas_2025", "Ventas_2026", "Productos"],
+            "active_sheet": "Ventas_2025",
+            "relationship_id": "todas-ventas-costos",
+            "join": {
+                "left_sheet": "Ventas_2025",
+                "right_sheet": "Productos",
+                "left_keys": ["ID_Producto"],
+                "right_keys": ["ID_Producto"],
+                "type": "left",
+            },
+        },
+        ["Ventas_2025", "Ventas_2026", "Productos"],
+    )
+
+    assert scope["mode"] == "join"
+    assert scope["relationship_id"] == "todas-ventas-costos"
+
+
 def test_product_catalog_has_unit_statistics_not_fake_cost_sum():
     frame = pd.DataFrame(
         {

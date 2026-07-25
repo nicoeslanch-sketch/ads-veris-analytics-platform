@@ -98,6 +98,7 @@ export function relationshipMatchesQuery(
     relation.right_sheet,
     relation.label,
     templateLabel(relation.template),
+    ...(relation.append_sheets ?? []),
     ...relation.left_keys,
     ...relation.right_keys,
   ]
@@ -237,6 +238,9 @@ export async function fetchRelationshipDashboard(
     left_keys: relationship.left_keys,
     right_keys: relationship.right_keys,
     type: 'left' as const,
+    ...(relationship.append_sheets?.length
+      ? { append_sheets: relationship.append_sheets }
+      : {}),
   }
   const key = `${requestIdentity(params)}|${JSON.stringify(join)}|${period.from ?? ''}|${period.to ?? ''}`
   const cached = dashboardCache.get(key)

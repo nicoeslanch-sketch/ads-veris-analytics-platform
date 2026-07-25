@@ -17,15 +17,16 @@ interface RelationshipKpisProps {
 /** Rejilla de KPIs. Los no disponibles se muestran como "No disponible" en
  * lugar de ocultarse, para que el usuario sepa qué insumo falta. */
 export default function RelationshipKpis({ kpis, currency }: RelationshipKpisProps) {
-  if (!kpis.length) return null
+  const available = kpis.filter((kpi) => kpi.available)
+  if (!available.length) return null
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {kpis.map((kpi) => {
+    <div className="grid grid-cols-2 gap-2 @min-[680px]:grid-cols-3 @min-[980px]:grid-cols-6">
+      {available.slice(0, 7).map((kpi) => {
         const accent = TONE_ACCENT[kpi.tone ?? 'default']
         return (
           <div
             key={kpi.id}
-            className="rounded-xl border border-navy/10 bg-white p-4 shadow-sm"
+            className="rounded-lg border border-navy/10 bg-white p-3 shadow-sm"
             style={{ background: `linear-gradient(135deg, ${accent}0d, #ffffff 60%)` }}
           >
             <div className="flex items-center gap-1.5">
@@ -40,7 +41,7 @@ export default function RelationshipKpis({ kpis, currency }: RelationshipKpisPro
               )}
             </div>
             <p
-              className={`mt-1.5 text-xl font-bold ${kpi.available ? 'text-navy' : 'text-navy/35'}`}
+              className="mt-1.5 text-lg font-bold text-navy"
             >
               {formatKpiValue(kpi.value, kpi.format, currency)}
             </p>

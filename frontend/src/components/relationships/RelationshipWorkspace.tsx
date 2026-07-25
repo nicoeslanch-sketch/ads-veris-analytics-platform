@@ -27,16 +27,45 @@ function matchingCatalogId(
   scope: ReturnType<typeof useDataset>['analysisScope'],
   relationships: CatalogRelationship[],
 ): string | null {
-  if (scope?.mode !== 'join') return null
+  if (scope?.mode !== 'join' && scope?.mode !== 'append_join') return null
+  if (scope.mode === 'join' && scope.relationship_id) {
+    const direct = relationships.find((relation) => relation.id === scope.relationship_id)
+    if (direct) return direct.id
+  }
   const join = scope.join
   const match = relationships.find(
     (relation) =>
       relation.left_sheet === join.left_sheet &&
       relation.right_sheet === join.right_sheet &&
       relation.left_keys.join('|') === join.left_keys.join('|') &&
-      relation.right_keys.join('|') === join.right_keys.join('|'),
+      relation.right_keys.join('|') === join.right_keys.join('|') &&
+      (
+        !relation.append_sheets?.length
+        || (
+          scope.mode === 'append_join'
+          && relation.append_sheets.join('|') === scope.append_sheets.join('|')
+        )
+      ),
   )
   return match?.id ?? null
+}
+
+function scopeForRelationship(relation: CatalogRelationship) {
+  const join = {
+    left_sheet: relation.left_sheet,
+    right_sheet: relation.right_sheet,
+    left_keys: relation.left_keys,
+    right_keys: relation.right_keys,
+    type: 'left' as const,
+  }
+  const base = joinScope(join)
+  return {
+    ...base,
+    sheets: relation.append_sheets?.length
+      ? [...new Set([...relation.append_sheets, relation.right_sheet])]
+      : base.sheets,
+    relationship_id: relation.id,
+  }
 }
 
 function manualCatalogRelationship(
@@ -189,28 +218,14 @@ export default function RelationshipWorkspace() {
   const selectRelation = (relation: CatalogRelationship) => {
     if (!relation.safe || relation.overlap <= 0) return
     setSelected(relation)
-    setAnalysisScope(
-      joinScope({
-        left_sheet: relation.left_sheet,
-        right_sheet: relation.right_sheet,
-        left_keys: relation.left_keys,
-        right_keys: relation.right_keys,
-        type: 'left',
-      }),
-    )
+    setAnalysisScope(scopeForRelationship(relation))
   }
 
   // ── Cargar el dashboard de la relación activa ──────────────────────────────
   const selectedId = selected?.id ?? null
   useEffect(() => {
     if (!selected) return
-    const scope = joinScope({
-      left_sheet: selected.left_sheet,
-      right_sheet: selected.right_sheet,
-      left_keys: selected.left_keys,
-      right_keys: selected.right_keys,
-      type: 'left',
-    })
+    const scope = scopeForRelationship(selected)
     setAnalysisScope(scope)
     if (!datasetId) return
 
@@ -364,39 +379,45 @@ export default function RelationshipWorkspace() {
   }
 
   return (
-    <section aria-label="Relaciones entre hojas" className="grid gap-4 min-[1100px]:grid-cols-[240px_minmax(0,1fr)]">
-      <RelationshipCatalogPanel
-        relationships={relationships}
-        selectedId={selectedId}
-        onSelect={selectRelation}
-        onCreate={() => setBuilderOpen(true)}
-      />
-      <div className="min-w-0">
-        {dashboardLoading && !dashboard ? (
-          <div className="rounded-xl border border-navy/10 bg-white p-8 text-center shadow-sm">
-            <Loader2 className="mx-auto h-6 w-6 animate-spin text-teal" aria-hidden />
-            <p className="mt-3 text-sm text-navy/60">Calculando el dashboard de la relación…</p>
-          </div>
-        ) : dashboardError ? (
-          <WorkspaceState
-            icon={AlertTriangle}
-            title="No pudimos calcular el dashboard"
-            detail={dashboardError}
-            action={
-              <button
-                type="button"
-                onClick={() => setDashboardRetry((tick) => tick + 1)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-teal/40 px-3 py-2 text-xs font-semibold text-teal hover:bg-teal/5"
-              >
-                <RefreshCw className="h-3.5 w-3.5" /> Reintentar
-              </button>
-            }
-          />
-        ) : dashboard ? (
-          <div className={dashboardLoading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
-            <RelationshipDashboardView dashboard={dashboard} />
-          </div>
-        ) : null}
+    <section
+      aria-label="Relaciones entre hojas"
+      className="@container"
+    >
+      <div className="grid gap-4 @min-[880px]:grid-cols-[250px_minmax(0,1fr)]">
+        <RelationshipCatalogPanel
+          relationships={relationships}
+          selectedId={selectedId}
+          onSelect={selectRelation}
+          onCreate={() => setBuilderOpen(true)}
+          discardedCount={catalog?.discarded_count ?? 0}
+        />
+        <div className="min-w-0">
+          {dashboardLoading && !dashboard ? (
+            <div className="rounded-xl border border-navy/10 bg-white p-8 text-center shadow-sm">
+              <Loader2 className="mx-auto h-6 w-6 animate-spin text-teal" aria-hidden />
+              <p className="mt-3 text-sm text-navy/60">Calculando el dashboard de la relación…</p>
+            </div>
+          ) : dashboardError ? (
+            <WorkspaceState
+              icon={AlertTriangle}
+              title="No pudimos calcular el dashboard"
+              detail={dashboardError}
+              action={
+                <button
+                  type="button"
+                  onClick={() => setDashboardRetry((tick) => tick + 1)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-teal/40 px-3 py-2 text-xs font-semibold text-teal hover:bg-teal/5"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> Reintentar
+                </button>
+              }
+            />
+          ) : dashboard ? (
+            <div className={dashboardLoading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
+              <RelationshipDashboardView dashboard={dashboard} />
+            </div>
+          ) : null}
+        </div>
       </div>
       {showBuilder}
     </section>

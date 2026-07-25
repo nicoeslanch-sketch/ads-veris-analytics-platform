@@ -19,6 +19,7 @@ from app.engine.relationships import (
 from app.routes.pipeline import (
     _relationship_catalog_sync,
     _relationship_dashboard_sync,
+    _validate_manual_relationship,
 )
 
 
@@ -149,6 +150,90 @@ def test_catalog_does_not_relate_two_transactional_sheets():
     assert catalog["relationships"] == []
 
 
+def test_catalog_hides_inventory_costs_without_supported_template():
+    inventory = pd.DataFrame(
+        {
+            "Fecha Corte": ["2026-01-31", "2026-01-31"],
+            "SKU_Producto": ["P1", "P2"],
+            "Stock Disponible": [10, 20],
+            "Valor Inventario": [4000, 12000],
+        }
+    )
+    costs = pd.DataFrame(
+        {
+            "SKU_Producto": ["P1", "P2"],
+            "Costo Unitario": [400, 600],
+        }
+    )
+    catalog = detect_relationship_catalog(
+        {"Inventario": inventory, "Costos_Productos": costs},
+        {},
+        {},
+    )
+    assert catalog["relationships"] == []
+    assert catalog["discarded_count"] == 1
+
+
+def test_catalog_adds_all_sales_periods_to_costs_without_replacing_individual_views():
+    first = _ventas()
+    second = _ventas().assign(
+        ID_Venta=lambda frame: frame["ID_Venta"] + "-B",
+        Fecha="2026-01-05",
+    )
+    catalog = detect_relationship_catalog(
+        {
+            "Ventas_2025": first,
+            "Ventas_2026": second,
+            "Productos": _productos(),
+        },
+        {},
+        {},
+    )
+    consolidated = [
+        item for item in catalog["relationships"] if item.get("append_sheets")
+    ]
+    assert len(consolidated) == 1
+    assert consolidated[0]["label"] == "Todas las ventas ↔ Productos"
+    assert consolidated[0]["append_sheets"] == ["Ventas_2025", "Ventas_2026"]
+    assert consolidated[0]["recommended"] is True
+    assert sum(
+        item["left_sheet"].startswith("Ventas_")
+        and not item.get("append_sheets")
+        for item in catalog["relationships"]
+    ) == 2
+
+
+def test_catalog_recognizes_neutral_month_names_as_sales_by_structure():
+    january = pd.DataFrame(
+        {
+            "ID Producto": ["A", "B"],
+            "ID Cliente": ["C1", "C2"],
+            "Fecha": ["2026-01-01", "2026-01-02"],
+            "Cantidad": [2, 1],
+            "Venta": [2000, 1500],
+        }
+    )
+    february = january.assign(Fecha="2026-02-01")
+    products = pd.DataFrame(
+        {
+            "ID Producto": ["A", "B"],
+            "Producto": ["Alfa", "Beta"],
+            "Costo_Unitario": [500, 600],
+        }
+    )
+    catalog = detect_relationship_catalog(
+        {"Enero": january, "Febrero": february, "Productos": products},
+        {},
+        {},
+    )
+    consolidated = [
+        item for item in catalog["relationships"] if item.get("append_sheets")
+    ]
+    assert len(consolidated) == 1
+    assert consolidated[0]["append_sheets"] == ["Enero", "Febrero"]
+    assert consolidated[0]["template"] == "sales_costs"
+
+
 # ── Seguridad de la unión ────────────────────────────────────────────────────
 def test_many_to_many_is_blocked():
     left = pd.DataFrame({"K": ["a", "a", "b", "b"], "Monto_Venta": [1, 2, 3, 4], "Fecha": ["2025-01-01"] * 4})
@@ -222,6 +307,45 @@ def test_sales_costs_dashboard_margin_only_on_paired_sales():
     assert kpis["cobertura"]["value"] < 100
     # 1000+600+1500+300+3000+1000 = 7400; la venta de 5000 sin costo no suma.
     assert kpis["costo"]["value"] == pytest.approx(7400.0)
+
+
+def test_consolidated_sales_costs_dashboard_preserves_rows_and_sales_total():
+    first = _ventas()
+    second = _ventas().assign(
+        ID_Venta=lambda frame: frame["ID_Venta"] + "-B",
+        Fecha="2026-01-05",
+    )
+    frames = {
+        "Ventas_2025": first,
+        "Ventas_2026": second,
+        "Productos": _productos(),
+    }
+    relationship = detect_relationship_catalog(frames, {}, {})["relationships"][0]
+    dashboard = build_relationship_dashboard(frames, {}, {}, relationship)
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert relationship["append_sheets"] == ["Ventas_2025", "Ventas_2026"]
+    assert dashboard["available"] is True
+    assert dashboard["quality"]["rows_before"] == len(first) + len(second)
+    assert dashboard["quality"]["rows_after"] == len(first) + len(second)
+    assert kpis["ventas"]["value"] == pytest.approx(
+        first["Monto_Venta"].sum() + second["Monto_Venta"].sum()
+    )
+    assert {chart["kind"] for chart in dashboard["charts"]} >= {"bar", "combo"}
+
+
+def test_consolidated_relationship_requires_two_sales_sheets_and_keeps_costs_out():
+    base = _relation("Ventas_2025", "Productos", ["ID_Producto"], ["ID_Producto"])
+    with pytest.raises(Exception):
+        _validate_manual_relationship({**base, "append_sheets": ["Ventas_2025"]})
+    with pytest.raises(Exception):
+        _validate_manual_relationship(
+            {**base, "append_sheets": ["Ventas_2025", "Productos"]}
+        )
+
+    parsed = _validate_manual_relationship(
+        {**base, "append_sheets": ["Ventas_2025", "Ventas_2026"]}
+    )
+    assert parsed["append_sheets"] == ["Ventas_2025", "Ventas_2026"]
 
 
 def test_missing_cost_is_not_zero():

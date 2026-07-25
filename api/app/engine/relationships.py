@@ -122,6 +122,51 @@ def _has_derived_unit_cost(
     )
 
 
+def _is_sales_transaction(
+    name: str,
+    frame: pd.DataFrame,
+    mapping: dict[str, str],
+) -> bool:
+    """Reconoce ventas por semántica aunque la hoja se llame solo "Enero".
+
+    Los dominios operacionales conocidos (compras, gastos, inventario, etc.)
+    nunca se reinterpretan como ventas. Para nombres neutros se exige el perfil
+    transaccional completo detectado por el motor.
+    """
+
+    kind = _sheet_kind(name, frame)
+    if kind == "ventas":
+        return True
+    sheet_tokens = set(_slug(name).split("-"))
+    non_sales_tokens = {
+        "compra",
+        "compras",
+        "gasto",
+        "gastos",
+        "inventario",
+        "stock",
+        "costo",
+        "costos",
+        "producto",
+        "productos",
+        "cliente",
+        "clientes",
+        "proveedor",
+        "proveedores",
+        "cobranza",
+        "cobranzas",
+        "meta",
+        "metas",
+        "sucursal",
+        "sucursales",
+        "vendedor",
+        "vendedores",
+    }
+    if sheet_tokens & non_sales_tokens:
+        return False
+    return is_transaction_profile(frame.columns, mapping)
+
+
 def classify_relationship_template(
     left_name: str,
     left_frame: pd.DataFrame,
@@ -138,37 +183,137 @@ def classify_relationship_template(
 
     left_kind = _sheet_kind(left_name, left_frame)
     right_kind = _sheet_kind(right_name, right_frame)
+    left_sales = _is_sales_transaction(left_name, left_frame, left_mapping)
     label = f"{right_name} ↔ {left_name}"
 
     def build(template: str, purpose: str, pretty: str) -> tuple[str, str, str]:
         return template, pretty, purpose
 
     # Ventas ↔ Costos: la maestra aporta costo unitario multiplicable por cantidad.
-    if left_kind == "ventas" and _has_derived_unit_cost(right_mapping, left_mapping):
+    if left_sales and _has_derived_unit_cost(right_mapping, left_mapping):
         return build("sales_costs", "ventas_costos", f"{left_name} ↔ {right_name}")
-    if left_kind == "ventas" and right_kind in {"costos", "historial_costos"}:
+    if left_sales and right_kind in {"costos", "historial_costos"}:
         return build("sales_costs", "ventas_costos", f"{left_name} ↔ {right_name}")
-    if left_kind == "ventas" and right_kind == "inventario":
+    if left_sales and right_kind == "inventario":
         return build("sales_inventory", "ventas_inventario", f"{left_name} ↔ {right_name}")
-    if left_kind == "ventas" and right_kind == "clientes":
+    if left_sales and right_kind == "clientes":
         return build("sales_customers", "ventas_clientes", f"{left_name} ↔ {right_name}")
-    if left_kind == "ventas" and right_kind == "vendedores":
+    if left_sales and right_kind == "vendedores":
         return build("sales_sellers", "ventas_vendedores", f"{left_name} ↔ {right_name}")
-    if left_kind == "ventas" and right_kind == "sucursales":
+    if left_sales and right_kind == "sucursales":
         return build("sales_branches", "ventas_sucursales", f"{left_name} ↔ {right_name}")
-    if left_kind == "ventas" and right_kind == "productos":
+    if left_sales and right_kind == "productos":
         return build("products_sales", "productos_ventas", f"{right_name} ↔ {left_name}")
     if left_kind == "compras" and right_kind in {"costos", "historial_costos", "productos", "proveedores"}:
         return build("purchases_costs", "compras_costos", f"{left_name} ↔ {right_name}")
     if left_kind == "gastos" and right_kind == "sucursales":
         return build("expenses_branches", "gastos_sucursales", f"{left_name} ↔ {right_name}")
-    # Ventas contra cualquier otra maestra con costo unitario sigue siendo costos.
-    if _has_derived_unit_cost(right_mapping, left_mapping):
+    # Solo una tabla de ventas puede producir "Ventas ↔ Costos". Inventario,
+    # compras u otros hechos también pueden traer monto/cantidad, pero tratarlos
+    # como ventas crea dashboards financieros falsos.
+    if left_sales and _has_derived_unit_cost(right_mapping, left_mapping):
         return build("sales_costs", "ventas_costos", f"{left_name} ↔ {right_name}")
     # Ventas contra una maestra genérica de producto.
-    if left_kind == "ventas" and left_mapping.get("producto"):
+    if left_sales and left_mapping.get("producto"):
         return build("products_sales", "productos_ventas", f"{right_name} ↔ {left_name}")
     return build("generic", "relacion_generica", label)
+
+
+def _unsupported_generic_pair(
+    left_name: str,
+    left: pd.DataFrame,
+    right_name: str,
+    right: pd.DataFrame,
+) -> bool:
+    """Descarta cruces que comparten una clave pero no tienen todavía una
+    plantilla empresarial honesta. No deben aparecer para terminar luego en
+    "Conexión no disponible"."""
+
+    kinds = {_sheet_kind(left_name, left), _sheet_kind(right_name, right)}
+    return kinds in (
+        {"inventario", "costos"},
+        {"inventario", "historial_costos"},
+    )
+
+
+def _consolidated_sales_relationships(
+    frames: dict[str, pd.DataFrame],
+    resolved: dict[str, dict[str, str]],
+    results: dict[str, dict],
+) -> list[dict[str, Any]]:
+    """Crea conexiones explícitas de todos los periodos de venta con una
+    dimensión de costos/productos. La izquierda se concatena, nunca se une
+    horizontalmente, por lo que no multiplica filas ni altera ventas."""
+
+    sales_names = [
+        name
+        for name, frame in frames.items()
+        if _is_sales_transaction(name, frame, resolved[name])
+    ]
+    if len(sales_names) < 2:
+        return []
+
+    combined = pd.concat(
+        [frames[name].copy() for name in sales_names],
+        ignore_index=True,
+        sort=False,
+    )
+    consolidated: list[dict[str, Any]] = []
+    for right_name, right in frames.items():
+        if right_name in sales_names:
+            continue
+        right_kind = _sheet_kind(right_name, right)
+        right_mapping = resolved[right_name]
+        if (
+            right_kind not in {"costos", "productos"}
+            or not is_unit_cost_column(right_mapping.get("costo"))
+        ):
+            continue
+        best, _ = _best_relationship_for_pair(
+            sales_names[0],
+            combined,
+            right_name,
+            right,
+        )
+        if not best or not best["safe"]:
+            continue
+        currency_ok = all(
+            _currency_compatible(
+                "ventas_costos", sale_name, right_name, results
+            )[0]
+            for sale_name in sales_names
+        )
+        if not currency_ok:
+            continue
+        consolidated.append(
+            {
+                "id": relationship_id(
+                    "todas-las-ventas",
+                    right_name,
+                    best["left_keys"],
+                    best["right_keys"],
+                ),
+                "left_sheet": sales_names[0],
+                "append_sheets": sales_names,
+                "right_sheet": right_name,
+                "left_keys": best["left_keys"],
+                "right_keys": best["right_keys"],
+                "type": "left",
+                "template": "sales_costs",
+                "label": f"Todas las ventas ↔ {right_name}",
+                "purpose": "ventas_costos",
+                "coverage_left": best["coverage_left"],
+                "coverage_right": best["coverage_right"],
+                "overlap": best["overlap"],
+                "cardinality": best["cardinality"],
+                "safe": True,
+                "recommended": False,
+                "source": "automatic",
+                "currency_compatible": True,
+                "reason": None,
+            }
+        )
+    return consolidated
 
 
 def _best_relationship_for_pair(
@@ -304,6 +449,11 @@ def detect_relationship_catalog(
         template, label, purpose = classify_relationship_template(
             left_name, left, resolved[left_name], right_name, right, resolved[right_name]
         )
+        if template == "generic" and _unsupported_generic_pair(
+            left_name, left, right_name, right
+        ):
+            discarded += 1
+            continue
         currency_ok, currency_reason = _currency_compatible(
             purpose, left_name, right_name, results
         )
@@ -338,6 +488,10 @@ def detect_relationship_catalog(
         elif had_candidates:
             discarded += 1
 
+    relationships.extend(
+        _consolidated_sales_relationships(frames, resolved, results)
+    )
+
     # Orden de utilidad: costos primero, luego el resto por solapamiento.
     template_order = {
         "sales_costs": 0,
@@ -352,6 +506,7 @@ def detect_relationship_catalog(
     }
     relationships.sort(
         key=lambda item: (
+            0 if item.get("append_sheets") else 1,
             template_order.get(item["template"], 9),
             -item["overlap"],
             -item["coverage_left"],

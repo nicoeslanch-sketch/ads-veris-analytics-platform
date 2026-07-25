@@ -18,6 +18,7 @@ function relation(overrides: Partial<CatalogRelationship>): CatalogRelationship 
     id: overrides.id ?? 'r',
     left_sheet: overrides.left_sheet ?? 'Ventas',
     right_sheet: overrides.right_sheet ?? 'Productos',
+    append_sheets: overrides.append_sheets,
     left_keys: overrides.left_keys ?? ['ID_Producto'],
     right_keys: overrides.right_keys ?? ['ID_Producto'],
     type: 'left',
@@ -89,6 +90,12 @@ describe('relationshipMatchesQuery / filterRelationships', () => {
   it('filtra por clave', () => {
     expect(relationshipMatchesQuery(list[0], 'sku')).toBe(true)
     expect(relationshipMatchesQuery(list[1], 'sku')).toBe(false)
+  })
+  it('encuentra periodos incluidos en una conexión consolidada', () => {
+    expect(relationshipMatchesQuery(
+      relation({ append_sheets: ['Ventas_2025', 'Ventas_2026'] }),
+      '2026',
+    )).toBe(true)
   })
   it('query vacía devuelve todo', () => {
     expect(filterRelationships(list, '  ')).toHaveLength(2)

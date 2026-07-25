@@ -61,7 +61,15 @@ def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> di
         return {"mode": "single", "sheets": [active] if active else [], "active_sheet": active}
     if not isinstance(raw, dict):
         raise ValueError("analysis_scope debe ser un objeto JSON.")
-    unknown = set(raw) - {"mode", "sheets", "active_sheet", "join", "append_sheets", "_selection_mode"}
+    unknown = set(raw) - {
+        "mode",
+        "sheets",
+        "active_sheet",
+        "join",
+        "append_sheets",
+        "relationship_id",
+        "_selection_mode",
+    }
     if unknown:
         raise ValueError(f"analysis_scope contiene campos desconocidos: {', '.join(sorted(unknown))}.")
     mode = str(raw.get("mode", "single")).strip().lower()
@@ -88,6 +96,9 @@ def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> di
     if active_sheet not in sheets:
         raise ValueError("analysis_scope.active_sheet debe estar incluido en sheets.")
     normalized: dict[str, Any] = {"mode": mode, "sheets": sheets, "active_sheet": active_sheet}
+    relationship_id = raw.get("relationship_id")
+    if mode == "join" and isinstance(relationship_id, str) and relationship_id.strip():
+        normalized["relationship_id"] = relationship_id.strip()
     selection_mode = raw.get("_selection_mode")
     if selection_mode in {"all", "custom"}:
         normalized["_selection_mode"] = selection_mode

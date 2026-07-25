@@ -359,7 +359,13 @@ export interface AnalysisJoin {
 export type AnalysisScope =
   | { mode: 'single'; sheets: string[]; active_sheet: string }
   | { mode: 'append'; sheets: string[]; active_sheet: string }
-  | { mode: 'join'; sheets: string[]; active_sheet: string; join: AnalysisJoin }
+  | {
+      mode: 'join'
+      sheets: string[]
+      active_sheet: string
+      join: AnalysisJoin
+      relationship_id?: string
+    }
   | {
       mode: 'append_join'
       sheets: string[]
@@ -415,6 +421,8 @@ export type RelationshipTemplate =
  * metadata de seguridad, la plantilla detectada y un ID determinista. */
 export interface CatalogRelationship extends AnalysisJoin {
   id: string
+  /** Hojas transaccionales compatibles que se apilan antes de relacionar. */
+  append_sheets?: string[]
   template: RelationshipTemplate
   label: string
   purpose: string
@@ -450,12 +458,15 @@ export interface RelationshipKpi {
   tone?: InsightTone
 }
 
-export type RelationshipChartKind = 'bar' | 'donut' | 'line'
+export type RelationshipChartKind = 'bar' | 'donut' | 'line' | 'combo'
 
 export interface RelationshipChartSeries {
   key: string
   label: string
   format: KpiFormat
+  kind?: 'bar' | 'line'
+  axis?: 'left' | 'right'
+  color_role?: 'primary' | 'cost' | 'profit' | 'warning' | 'risk'
 }
 
 export interface RelationshipChart {
@@ -464,6 +475,9 @@ export interface RelationshipChart {
   title: string
   help: string | null
   category_key: string
+  orientation?: 'horizontal' | 'vertical'
+  stacked?: boolean
+  note?: string | null
   series: RelationshipChartSeries[]
   data: Array<Record<string, string | number | null>>
 }
