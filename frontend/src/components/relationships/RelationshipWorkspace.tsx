@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Layers, Loader2, Link2, RefreshCw } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
-import { ApiError } from '../../lib/api'
+import { ApiError, apiPost } from '../../lib/api'
 import { joinScope } from '../../lib/multiSheet'
 import {
   fetchRelationshipCatalog,
@@ -11,6 +11,7 @@ import {
   type RelationshipRequestParams,
 } from '../../lib/relationshipDashboard'
 import type {
+  AnalysisJoin,
   CatalogRelationship,
   RelationshipCandidate,
   RelationshipCatalog,
@@ -35,6 +36,28 @@ function matchingCatalogId(
       relation.right_keys.join('|') === join.right_keys.join('|'),
   )
   return match?.id ?? null
+}
+
+function manualCatalogRelationship(
+  join: AnalysisJoin,
+  validation?: RelationshipCandidate,
+): CatalogRelationship {
+  return {
+    ...join,
+    id: `manual~${join.left_sheet}~${join.right_sheet}~${join.left_keys.join('+')}~${join.right_keys.join('+')}`,
+    template: 'generic',
+    label: `${join.left_sheet} ↔ ${join.right_sheet}`,
+    purpose: 'manual',
+    coverage_left: validation?.coverage_left ?? 0,
+    coverage_right: validation?.coverage_right ?? 0,
+    overlap: validation?.overlap ?? 0,
+    cardinality: validation?.cardinality ?? 'muchos_a_uno',
+    safe: validation?.safe ?? true,
+    recommended: false,
+    source: 'manual',
+    currency_compatible: validation?.currency_compatible ?? true,
+    reason: validation?.reason ?? null,
+  }
 }
 
 function WorkspaceState({ icon: Icon, title, detail, action }: {
@@ -63,6 +86,7 @@ export default function RelationshipWorkspace() {
     sheetSessions,
     analysisScope,
     period,
+    restoreState,
     setAnalysisScope,
     setMonthsAvailable,
   } = useDataset()
@@ -98,6 +122,7 @@ export default function RelationshipWorkspace() {
 
   const manifestKey = sheetManifest ? JSON.stringify(sheetManifest) : ''
   const scopeRef = useRef(analysisScope)
+  const persistChainRef = useRef<Promise<unknown>>(Promise.resolve())
   scopeRef.current = analysisScope
 
   // ── Cargar el catálogo ─────────────────────────────────────────────────────
@@ -110,8 +135,29 @@ export default function RelationshipWorkspace() {
       .then((result) => {
         if (controller.signal.aborted) return
         setCatalog(result)
-        const activeId = matchingCatalogId(scopeRef.current, result.relationships)
-        setSelected((current) => current ?? pickRecommended(result.relationships, activeId))
+        const activeScope = scopeRef.current
+        const activeId = matchingCatalogId(activeScope, result.relationships)
+        const activeAutomatic = result.relationships.find((relation) => relation.id === activeId)
+        const restoredManual = activeScope?.mode === 'join' && !activeAutomatic
+          ? manualCatalogRelationship(activeScope.join)
+          : null
+        setSelected((current) => {
+          const retainedAutomatic = result.relationships.find(
+            (relation) => relation.id === current?.id,
+          )
+          if (retainedAutomatic) return retainedAutomatic
+          if (
+            current?.source === 'manual' &&
+            activeScope?.mode === 'join' &&
+            current.left_sheet === activeScope.join.left_sheet &&
+            current.right_sheet === activeScope.join.right_sheet &&
+            current.left_keys.join('|') === activeScope.join.left_keys.join('|') &&
+            current.right_keys.join('|') === activeScope.join.right_keys.join('|')
+          ) {
+            return current
+          }
+          return activeAutomatic ?? restoredManual ?? pickRecommended(result.relationships)
+        })
       })
       .catch((err) => {
         if (controller.signal.aborted) return
@@ -140,6 +186,39 @@ export default function RelationshipWorkspace() {
 
   // ── Cargar el dashboard de la relación activa ──────────────────────────────
   const selectedId = selected?.id ?? null
+  useEffect(() => {
+    if (!selected) return
+    const scope = joinScope({
+      left_sheet: selected.left_sheet,
+      right_sheet: selected.right_sheet,
+      left_keys: selected.left_keys,
+      right_keys: selected.right_keys,
+      type: 'left',
+    })
+    setAnalysisScope(scope)
+    if (!datasetId) return
+
+    const form = new FormData()
+    form.append('dataset_id', datasetId)
+    form.append(
+      'restore_state',
+      JSON.stringify({
+        ...restoreState,
+        active_sheet: selected.left_sheet,
+        analysis_scope: scope,
+      }),
+    )
+    persistChainRef.current = persistChainRef.current
+      .catch(() => undefined)
+      .then(() => apiPost<Record<string, unknown>>('/restore/state', form, {
+        timeoutMs: 15_000,
+      }))
+      .catch(() => undefined)
+    // La selección es la unidad de persistencia. restoreState cambia después de
+    // setAnalysisScope y no debe provocar una segunda escritura de la misma relación.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, datasetId])
+
   useEffect(() => {
     if (!params || !selected) {
       setDashboard(null)
@@ -171,24 +250,11 @@ export default function RelationshipWorkspace() {
     return response.manual ?? null
   }
 
-  const useDraft = (draft: ManualJoinDraft) => {
-    const manual: CatalogRelationship = {
-      ...draft,
-      type: 'left',
-      id: `manual~${draft.left_sheet}~${draft.right_sheet}~${draft.left_keys.join('+')}~${draft.right_keys.join('+')}`,
-      template: 'generic',
-      label: `${draft.left_sheet} ↔ ${draft.right_sheet}`,
-      purpose: 'manual',
-      coverage_left: 1,
-      coverage_right: 1,
-      overlap: 1,
-      cardinality: 'muchos_a_uno',
-      safe: true,
-      recommended: false,
-      source: 'manual',
-      currency_compatible: true,
-      reason: null,
-    }
+  const useDraft = (draft: ManualJoinDraft, validation: RelationshipCandidate) => {
+    const manual = manualCatalogRelationship(
+      { ...draft, type: 'left' },
+      validation,
+    )
     setBuilderOpen(false)
     selectRelation(manual)
   }
@@ -213,7 +279,12 @@ export default function RelationshipWorkspace() {
     )
   }
 
-  const relationships = catalog?.relationships ?? []
+  const automaticRelationships = catalog?.relationships ?? []
+  const relationships = !selected || selected.source !== 'manual'
+    ? automaticRelationships
+    : automaticRelationships.some((relation) => relation.id === selected.id)
+      ? automaticRelationships
+      : [selected, ...automaticRelationships]
   const showBuilder = builderOpen && (
     <RelationshipBuilder
       sheets={cleanedSheets}

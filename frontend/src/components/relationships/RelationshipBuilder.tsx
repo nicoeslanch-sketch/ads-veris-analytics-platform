@@ -16,7 +16,7 @@ interface RelationshipBuilderProps {
   columnsBySheet: Record<string, string[]>
   onClose: () => void
   onValidate: (draft: ManualJoinDraft) => Promise<RelationshipCandidate | null>
-  onUse: (draft: ManualJoinDraft) => void
+  onUse: (draft: ManualJoinDraft, validation: RelationshipCandidate) => void
 }
 
 /** Panel para crear una conexión personalizada. No activa la relación sin
@@ -187,11 +187,15 @@ export default function RelationshipBuilder({
                   <div><dt className="inline font-semibold">Cobertura der.:</dt> {formatKpiValue(result.coverage_right * 100, 'percent')}</div>
                   <div><dt className="inline font-semibold">Solapamiento:</dt> {formatKpiValue(result.overlap * 100, 'percent')}</div>
                   <div><dt className="inline font-semibold">Cardinalidad:</dt> {result.cardinality.replace(/_/g, ' ')}</div>
+                  <div><dt className="inline font-semibold">Filas actuales:</dt> {formatKpiValue(result.left_rows ?? 0, 'integer')}</div>
+                  <div><dt className="inline font-semibold">Filas proyectadas:</dt> {formatKpiValue(result.projected_rows ?? 0, 'integer')}</div>
+                  <div><dt className="inline font-semibold">Claves duplicadas der.:</dt> {formatKpiValue(result.right_duplicate_keys ?? 0, 'integer')}</div>
+                  <div><dt className="inline font-semibold">Sin correspondencia:</dt> {formatKpiValue(result.unmatched_rows ?? 0, 'integer')}</div>
                 </dl>
                 {result.safe && (
                   <button
                     type="button"
-                    onClick={() => onUse(draft())}
+                    onClick={() => onUse(draft(), result)}
                     className="mt-3 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white"
                   >
                     Usar esta conexión

@@ -29,7 +29,7 @@ export default function RelationshipKpis({ kpis, currency }: RelationshipKpisPro
             style={{ background: `linear-gradient(135deg, ${accent}0d, #ffffff 60%)` }}
           >
             <div className="flex items-center gap-1.5">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-navy/50">
+              <p className="text-[11px] font-semibold uppercase text-navy/50">
                 {kpi.label}
               </p>
               {kpi.help && (

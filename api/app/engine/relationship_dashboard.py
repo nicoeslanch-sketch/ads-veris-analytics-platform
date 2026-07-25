@@ -404,8 +404,18 @@ class _DashboardContext:
     # ── ventas base (compartido) ─────────────────────────────────────────────
     def _sales_totals(self) -> dict[str, float | int | None]:
         mask = self.mask
-        ingresos = float(self.amount[mask].sum()) if self.amount_col else None
-        unidades = float(self.quantity[mask].sum()) if self.quantity_col else None
+        amount_values = self.amount[mask]
+        quantity_values = self.quantity[mask]
+        ingresos = (
+            float(amount_values.sum())
+            if self.amount_col and amount_values.notna().any()
+            else None
+        )
+        unidades = (
+            float(quantity_values.sum())
+            if self.quantity_col and quantity_values.notna().any()
+            else None
+        )
         registros = int(mask.sum())
         productos = None
         if self.product_key:
@@ -422,6 +432,8 @@ class _DashboardContext:
         if self.cost_col is None:
             return {"costo": None, "utilidad": None, "margen": None}
         paired = self.mask & self.amount.notna() & self.cost.notna()
+        if not paired.any():
+            return {"costo": None, "utilidad": None, "margen": None}
         ingreso_par = float(self.amount[paired].sum())
         costo_par = float(self.cost[paired].sum())
         utilidad = ingreso_par - costo_par
@@ -453,9 +465,9 @@ class _DashboardContext:
         agg = base.groupby("clave").agg(
             nombre=("nombre", "first"),
             categoria=("categoria", "first"),
-            ingresos=("ingresos", "sum"),
-            unidades=("unidades", "sum"),
-            costo=("costo", "sum"),
+            ingresos=("ingresos", lambda values: values.sum(min_count=1)),
+            unidades=("unidades", lambda values: values.sum(min_count=1)),
+            costo=("costo", lambda values: values.sum(min_count=1)),
         )
         agg = agg.sort_values("ingresos", ascending=False)
         columns = [

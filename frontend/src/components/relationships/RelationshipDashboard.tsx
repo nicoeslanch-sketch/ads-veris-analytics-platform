@@ -62,10 +62,18 @@ export default function RelationshipDashboardView({ dashboard }: RelationshipDas
               Clave: {relation.left_keys.join(' + ')} ↔ {relation.right_keys.join(' + ')}
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-lg border border-green/30 bg-green/[0.07] px-3 py-2">
-            <ShieldCheck className="h-4 w-4 text-green" aria-hidden />
+          <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+            dashboard.available
+              ? 'border-green/30 bg-green/[0.07]'
+              : 'border-coral/30 bg-coral/[0.07]'
+          }`}>
+            {dashboard.available
+              ? <ShieldCheck className="h-4 w-4 text-green" aria-hidden />
+              : <AlertTriangle className="h-4 w-4 text-coral" aria-hidden />}
             <div>
-              <p className="text-[11px] font-semibold text-navy">Conexión segura</p>
+              <p className="text-[11px] font-semibold text-navy">
+                {dashboard.available ? 'Conexión segura' : 'Conexión no disponible'}
+              </p>
               <p className={`text-[11px] font-medium ${coverageTone}`}>
                 {formatKpiValue(quality.coverage_pct, 'percent', currency)} de correspondencia
               </p>

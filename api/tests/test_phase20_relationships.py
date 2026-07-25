@@ -164,6 +164,10 @@ def test_duplicate_right_key_is_blocked():
     stats = relation_stats(left, ["K"], right, ["K"])
     assert stats.safe is False
     assert "duplicad" in (stats.reason or "").lower()
+    assert stats.left_rows == 3
+    assert stats.projected_rows == 4
+    assert stats.right_duplicate_keys == 1
+    assert stats.unmatched_rows == 0
 
 
 def test_join_that_multiplies_rows_is_blocked():
@@ -247,6 +251,25 @@ def test_missing_cost_is_not_zero():
     assert kpis["costo"]["value"] == pytest.approx(400.0)
     assert kpis["cobertura"]["value"] == pytest.approx(50.0)
     assert any(alert["id"] == "costos_faltantes" for alert in dashboard["alerts"])
+    rows = {row["nombre"]: row for row in dashboard["table"]["rows"]}
+    assert rows["Nueve"]["utilidad"] is None
+    assert rows["Nueve"]["margen"] is None
+
+
+def test_all_missing_costs_are_unavailable_instead_of_zero():
+    productos = _productos()
+    productos["Costo_Unitario"] = None
+    dashboard = build_relationship_dashboard(
+        {"Ventas": _ventas(), "Productos": productos},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["costo"]["value"] is None
+    assert kpis["costo"]["available"] is False
+    assert kpis["utilidad"]["value"] is None
+    assert kpis["margen"]["value"] is None
 
 
 def test_inventory_dashboard_does_not_duplicate_stock():

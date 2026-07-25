@@ -79,4 +79,28 @@ test('Fase 20: botonera de 4 modos y workspace de relaciones', async ({ page }, 
   await expect(page.getByRole('button', { name: /Crear conexión personalizada/ })).toBeVisible()
   // El dashboard de la relación recomendada se calcula solo (Ventas ↔ Productos).
   await expect(page.getByText('Conexión segura')).toBeVisible({ timeout: 120_000 })
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true)
+  await page.screenshot({
+    path: testInfo.outputPath('relaciones-escritorio.png'),
+    fullPage: true,
+  })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('button', { name: 'Relación manual' })).toBeVisible()
+  await expect(page.getByText('Selecciona una conexión')).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true)
+  await page.screenshot({
+    path: testInfo.outputPath('relaciones-movil.png'),
+    fullPage: true,
+  })
+  const mobileDashboard = page.getByText('Conexión segura', { exact: true })
+  await mobileDashboard.scrollIntoViewIfNeeded()
+  await expect(mobileDashboard).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('relaciones-movil-dashboard.png'),
+  })
 })

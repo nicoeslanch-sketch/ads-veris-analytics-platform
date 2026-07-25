@@ -182,6 +182,10 @@ class RelationStats:
     cardinality: str
     safe: bool
     reason: str | None
+    left_rows: int = 0
+    projected_rows: int = 0
+    right_duplicate_keys: int = 0
+    unmatched_rows: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -193,6 +197,10 @@ class RelationStats:
             "cardinality": self.cardinality,
             "safe": self.safe,
             "reason": self.reason,
+            "left_rows": self.left_rows,
+            "projected_rows": self.projected_rows,
+            "right_duplicate_keys": self.right_duplicate_keys,
+            "unmatched_rows": self.unmatched_rows,
         }
 
 
@@ -228,6 +236,13 @@ def _relation_stats_from_series(
     coverage_right = len(right_valid) / max(right_rows, 1)
     left_unique_values = set(left_valid.tolist())
     right_unique_values = set(right_valid.tolist())
+    right_counts = right_valid.value_counts()
+    projected_rows = int(
+        left_rows - len(left_valid)
+        + left_valid.map(right_counts).fillna(1).clip(lower=1).sum()
+    )
+    right_duplicate_keys = int((right_counts > 1).sum())
+    unmatched_rows = int((~left_valid.isin(right_unique_values)).sum())
     overlap = (
         len(left_unique_values & right_unique_values) / max(len(left_unique_values), 1)
         if left_unique_values
@@ -262,6 +277,10 @@ def _relation_stats_from_series(
         cardinality,
         safe,
         reason,
+        left_rows,
+        projected_rows,
+        right_duplicate_keys,
+        unmatched_rows,
     )
 
 

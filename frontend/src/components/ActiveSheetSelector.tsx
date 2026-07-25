@@ -11,6 +11,7 @@ import {
   shouldAutoBuildBusinessScope,
 } from '../lib/multiSheet'
 import type { AnalysisScope, RelationshipCandidate, RelationshipResult } from '../lib/types'
+import { usePlan } from '../lib/usePlan'
 import AnalysisModeSwitcher from './summary/AnalysisModeSwitcher'
 
 type Mode = AnalysisScope['mode']
@@ -37,6 +38,8 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
     setMetrics,
     setSheet,
   } = useDataset()
+  const { plan } = usePlan()
+  const advanced = plan === 'analista' || plan === 'gold'
   const cleanedSheets = useMemo(
     () => availableSheets.filter(
       (name) => selectedSheets.includes(name) && Boolean(sheetSessions[name]?.cleaning),
@@ -448,7 +451,7 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
             </div>
           ) : candidates.length > 0 ? (
             <div className="space-y-3">
-              {candidates.slice(0, 1).map((candidate) => (
+              {candidates.slice(0, advanced ? 5 : 1).map((candidate) => (
                 <div key={`${candidate.left_sheet}-${candidate.right_sheet}-${candidate.left_keys.join('|')}`} className="flex flex-wrap items-center gap-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-semibold text-navy">

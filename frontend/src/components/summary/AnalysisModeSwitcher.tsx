@@ -49,7 +49,7 @@ export default function AnalysisModeSwitcher({
             title={disabledReason || undefined}
             onClick={() => onSelect(value)}
             className={[
-              'inline-flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors',
+              'inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition-colors sm:min-h-0 sm:px-3',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60 focus-visible:ring-offset-1',
               'disabled:cursor-not-allowed disabled:opacity-45',
               active
@@ -58,7 +58,7 @@ export default function AnalysisModeSwitcher({
             ].join(' ')}
           >
             <Icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-teal' : ''}`} aria-hidden />
-            <span className="truncate">{label}</span>
+            <span className="text-center leading-tight sm:whitespace-nowrap">{label}</span>
             {active && (
               <span className="ml-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-teal" aria-hidden />
             )}

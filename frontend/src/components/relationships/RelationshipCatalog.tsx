@@ -37,7 +37,8 @@ export default function RelationshipCatalog({
       <div>
         <h3 className="text-sm font-semibold text-navy">Selecciona una conexión</h3>
         <p className="mt-0.5 text-[11px] text-navy/55">
-          {relationships.length} conexión(es) segura(s) detectada(s).
+          {relationships.filter((relation) => relation.source === 'automatic').length}{' '}
+          conexión(es) segura(s) detectada(s).
         </p>
       </div>
 
@@ -90,8 +91,14 @@ export default function RelationshipCatalog({
                   </span>
                   <span>·</span>
                   <span>{templateLabel(relation.template)}</span>
-                  <span>·</span>
-                  <span>{Math.round(relation.overlap * 100)}% cruce</span>
+                  {relation.source === 'automatic' || relation.overlap > 0 ? (
+                    <>
+                      <span>·</span>
+                      <span>{Math.round(relation.overlap * 100)}% cruce</span>
+                    </>
+                  ) : (
+                    <span>· Guardada</span>
+                  )}
                 </div>
               </button>
             </li>

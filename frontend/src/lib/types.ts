@@ -377,6 +377,10 @@ export interface RelationshipCandidate extends AnalysisJoin {
   cardinality: 'uno_a_uno' | 'muchos_a_uno' | 'uno_a_muchos' | 'muchos_a_muchos' | 'sin_relacion_segura'
   safe: boolean
   reason: string | null
+  left_rows?: number
+  projected_rows?: number
+  right_duplicate_keys?: number
+  unmatched_rows?: number
   purpose?: 'enriquecer_costos' | 'enriquecer_referencia' | 'otra_relacion'
   recommended?: boolean
   currency_compatible?: boolean
