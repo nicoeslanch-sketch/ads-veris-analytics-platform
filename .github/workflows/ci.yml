@@ -90,4 +90,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: cd frontend && npm ci && npm audit --audit-level=high
+      # La comprobación conserva high/critical como bloqueo. Solo documenta y
+      # acepta GHSA-qwww-vcr4-c8h2, exclusiva de las APIs RSC que esta SPA no usa.
+      - run: cd frontend && npm ci && npm run audit:ci
