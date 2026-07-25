@@ -8,7 +8,6 @@ import {
   Coins,
   Info,
   LayoutDashboard,
-  Loader2,
   Percent,
   Receipt,
   TrendingUp,
@@ -38,8 +37,9 @@ import RelationshipWorkspace from '../components/relationships/RelationshipWorks
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
+import AnalysisLoadingPanel from '../components/AnalysisLoadingPanel'
 import { useAuth } from '../auth/AuthContext'
-import { fullRangePeriod, useDataset } from '../data/DatasetContext'
+import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
@@ -226,7 +226,7 @@ function ChartTooltip({
 export default function Resumen() {
   const { user } = useAuth()
   const location = useLocation()
-  const { file, datasetId, storagePath, cleaning, metrics: contextMetrics, uploadedAt, period, setPeriod, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, sheetManifest, analysisScope, eliminarDuplicados } = useDataset()
+  const { file, datasetId, storagePath, cleaning, metrics: contextMetrics, uploadedAt, period, setMonthsAvailable, setMetrics: setContextMetrics, mappingOverride, sheet, sheetManifest, analysisScope, eliminarDuplicados } = useDataset()
   // Fase 14: la demo ficticia entrega métricas congeladas del bundle — jamás
   // escribe en el DatasetContext ni llama al backend.
   const demo = useDemo()
@@ -247,6 +247,16 @@ export default function Resumen() {
   const lastFetchKey = useRef<string | null>(null)
   const lastDatasetKey = useRef<string | null>(null)
   const latestRequest = useRef(0)
+  const requestAbortRef = useRef<AbortController | null>(null)
+
+  const cancelMetrics = () => {
+    requestAbortRef.current?.abort()
+    requestAbortRef.current = null
+    latestRequest.current += 1
+    lastFetchKey.current = null
+    setLoading(false)
+    setError('La carga fue cancelada. Puedes reintentar cuando quieras.')
+  }
 
   const firstName =
     ((user?.user_metadata?.full_name as string | undefined) ?? '').trim().split(' ')[0] || null
@@ -316,7 +326,11 @@ export default function Resumen() {
       setLoading(false)
       return
     }
+    requestAbortRef.current?.abort()
     const controller = new AbortController()
+    requestAbortRef.current = controller
+    const timingStarted = performance.now()
+    console.info('[ADS Veris timing] metrics:start', { page: 'resumen', sheet: sheet ?? null })
     const requestId = latestRequest.current + 1
     latestRequest.current = requestId
     setLoading(true)
@@ -344,7 +358,12 @@ export default function Resumen() {
     if (period.to) fields.date_to = period.to
     requestMetrics(
       key,
-      () => apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields)),
+      (signal) => apiPost<MetricsResult>(
+        '/metrics',
+        buildDatasetForm(file, storagePath, fields),
+        { signal, timeoutMs: 120_000 },
+      ),
+      controller.signal,
     )
       .then((result) => {
         if (latestRequest.current !== requestId || controller.signal.aborted) return
@@ -355,13 +374,10 @@ export default function Resumen() {
         if (!period.from && !period.to) setContextMetrics(result)
         const months = result.periodo.meses_disponibles
         setMonthsAvailable(months)
-        // Al entrar por primera vez, mostrar el rango completo del dataset
-        // (Bug #2: antes se fijaba en un solo mes y el dashboard escondía
-        // datos reales del archivo sin ningún aviso).
-        if (!defaultPeriodSet.current && months.length > 1 && !period.from) {
-          defaultPeriodSet.current = true
-          setPeriod(fullRangePeriod(months))
-        }
+        // `from/to` vacíos ya representan todo el periodo. Antes se convertía
+        // ese mismo rango en fechas explícitas y se lanzaba un segundo cálculo
+        // idéntico inmediatamente después de la primera carga.
+        if (!defaultPeriodSet.current && !period.from) defaultPeriodSet.current = true
       })
       .catch((err) => {
         if (latestRequest.current !== requestId || controller.signal.aborted) return
@@ -371,6 +387,12 @@ export default function Resumen() {
         setError(err instanceof ApiError ? err.message : 'No se pudieron calcular las métricas.')
       })
       .finally(() => {
+        console.info('[ADS Veris timing] metrics:end', {
+          page: 'resumen',
+          sheet: sheet ?? null,
+          durationMs: Math.round(performance.now() - timingStarted),
+        })
+        if (requestAbortRef.current === controller) requestAbortRef.current = null
         if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
       })
     return () => {
@@ -379,7 +401,7 @@ export default function Resumen() {
       // queda "ya pedida" con la petición abortada, la página no carga jamás.
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
-  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable, setPeriod])
+  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable])
 
   if (!ready && !demo.active) {
     return (
@@ -604,9 +626,11 @@ export default function Resumen() {
       )}
 
       {loading && !metrics ? (
-        <div className="flex items-center gap-3 py-20 text-sm text-navy/60">
-          <Loader2 className="h-5 w-5 animate-spin text-teal" /> Calculando indicadores...
-        </div>
+        <AnalysisLoadingPanel
+          operation={`Calculando indicadores${sheet ? ` de ${sheet}` : ''}`}
+          detail="Reutilizamos la limpieza y las relaciones ya procesadas. Puedes cancelar sin perder el archivo."
+          onCancel={cancelMetrics}
+        />
       ) : contentKind === 'mixed_currency' ? (
         /* El bloqueo antecede a todos los perfiles adaptativos. Un catálogo o
            campaña mixta conserva conteos seguros en el contrato, pero no debe

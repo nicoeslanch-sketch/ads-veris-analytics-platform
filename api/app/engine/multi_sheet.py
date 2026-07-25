@@ -649,8 +649,10 @@ def join_related_frames(
     right_cost_column = rename.get(right_cost_original, right_cost_original) if right_cost_original else None
     quantity_column = left_mapping.get("cantidad")
     amount_column = left_mapping.get("monto")
+    existing_cost_column = left_mapping.get("costo")
     if (
-        right_cost_column
+        not (existing_cost_column and existing_cost_column in merged.columns)
+        and right_cost_column
         and right_cost_column in merged.columns
         and is_unit_cost_column(right_cost_original)
         and quantity_column
@@ -704,7 +706,10 @@ def join_related_frames(
     for role, before in before_totals.items():
         after = after_totals.get(role, 0.0)
         if not math.isclose(before, after, rel_tol=1e-9, abs_tol=1e-6):
-            raise ValueError(f"La relacion alteraria el total de {role}.")
+            raise ValueError(
+                f"La relación {left_name} → {right_name} alteraría el total "
+                f"de {role}: original {before:.2f}, resultante {after:.2f}."
+            )
     left_keys_values = _key_series(left, left_keys)
     right_key_values = set(_key_series(right, right_keys).dropna().tolist())
     unmatched = int((left_keys_values.notna() & ~left_keys_values.isin(right_key_values)).sum())

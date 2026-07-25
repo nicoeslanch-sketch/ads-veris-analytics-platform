@@ -25,6 +25,7 @@ import copy
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import threading
@@ -46,6 +47,8 @@ from fastapi import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from .. import quota
 from ..auth import AuthenticatedUser, get_current_user
@@ -281,11 +284,19 @@ def _analysis_cache_store(key: tuple, value: dict) -> dict:
 
 
 def _analysis_cache_compute(key: tuple, producer) -> dict:
+    started = time.monotonic()
+    deadline = started + 120
+    cache_kind = str(key[0]) if key else "analysis"
     while True:
         with _ANALYSIS_CACHE_LOCK:
             cached = _ANALYSIS_CACHE.get(key)
             if cached is not None:
                 _ANALYSIS_CACHE.move_to_end(key)
+                logger.info(
+                    "analysis_cache_hit kind=%s duration_ms=%d",
+                    cache_kind,
+                    round((time.monotonic() - started) * 1000),
+                )
                 return copy.deepcopy(cached)
             event = _ANALYSIS_INFLIGHT.get(key)
             if event is None:
@@ -296,10 +307,30 @@ def _analysis_cache_compute(key: tuple, producer) -> dict:
                 owns_work = False
         if owns_work:
             break
-        event.wait(timeout=180)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not event.wait(timeout=remaining):
+            logger.warning(
+                "analysis_cache_wait_timeout kind=%s duration_ms=%d",
+                cache_kind,
+                round((time.monotonic() - started) * 1000),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "El análisis anterior no terminó dentro de 120 segundos. "
+                    "Puedes reintentar; no se iniciará un trabajo duplicado."
+                ),
+            )
 
     try:
-        return _analysis_cache_store(key, producer())
+        logger.info("analysis_cache_compute_start kind=%s", cache_kind)
+        result = _analysis_cache_store(key, producer())
+        logger.info(
+            "analysis_cache_compute_done kind=%s duration_ms=%d",
+            cache_kind,
+            round((time.monotonic() - started) * 1000),
+        )
+        return result
     finally:
         with _ANALYSIS_CACHE_LOCK:
             finished = _ANALYSIS_INFLIGHT.pop(key, None)

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { hasVerifiedMonetaryIntegrity, type AnalysisRow } from './history'
+import {
+  ACTIVITY_RETENTION_DAYS,
+  RECENT_ACTIVITY_LIMIT,
+  activityRetentionCutoff,
+  hasVerifiedMonetaryIntegrity,
+  type AnalysisRow,
+} from './history'
 
 function analysis(config: AnalysisRow['config']): AnalysisRow {
   return {
@@ -36,5 +42,18 @@ describe('integridad monetaria de análisis guardados', () => {
         }),
       ),
     ).toBe(true)
+  })
+})
+
+describe('retención de actividad reciente', () => {
+  it('calcula un corte estable de 30 días', () => {
+    expect(activityRetentionCutoff(new Date('2026-07-25T12:00:00.000Z'))).toBe(
+      '2026-06-25T12:00:00.000Z',
+    )
+    expect(ACTIVITY_RETENTION_DAYS).toBe(30)
+  })
+
+  it('mantiene compacta la lista visible', () => {
+    expect(RECENT_ACTIVITY_LIMIT).toBe(20)
   })
 })

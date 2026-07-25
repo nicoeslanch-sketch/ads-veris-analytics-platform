@@ -1,17 +1,14 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { HTMLAttributes, ReactNode } from 'react'
 
-interface CardProps {
+interface CardProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   children: ReactNode
-  className?: string
-  /** Estilos inline (ej: tinte suave con el color del indicador — Fase 8). */
-  style?: CSSProperties
 }
 
-export default function Card({ children, className = '', style }: CardProps) {
+export default function Card({ children, className = '', ...props }: CardProps) {
   return (
     <div
       className={`rounded-xl border border-navy/10 bg-white p-4 shadow-sm sm:p-6 ${className}`}
-      style={style}
+      {...props}
     >
       {children}
     </div>

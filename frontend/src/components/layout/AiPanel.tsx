@@ -152,10 +152,12 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         }
         m = await requestMetrics(
           metricsKey,
-          () => apiPost<MetricsResult>(
+          (signal) => apiPost<MetricsResult>(
             '/metrics',
             buildDatasetForm(fileObj, storagePathArg, fields),
+            { signal, timeoutMs: 120_000 },
           ),
+          controller.signal,
         )
         if (!isCurrent()) return
         setActiveCurrency(m.moneda)

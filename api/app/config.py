@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     storage_max_files_gold: int = 50
     storage_retention_days: int = 60
     storage_keep_last: int = 5
+    # La bitácora operacional es útil para retomar trabajo reciente, pero no
+    # debe crecer indefinidamente ni saturar Historial.
+    activity_retention_days: int = 30
 
     # SOLO desarrollo local sin Supabase: acepta requests sin JWT.
     # Jamás activar en producción.

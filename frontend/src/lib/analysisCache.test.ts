@@ -88,4 +88,33 @@ describe('caché de análisis', () => {
     await pending
     expect(getCachedMetrics(key)).toBeNull()
   })
+
+  it('cancela una carga huérfana, pero no una que todavía comparte otra vista', async () => {
+    vi.useFakeTimers()
+    clearAnalysisCaches()
+    const key = metricsCacheKey({
+      dataset: 'actual',
+      sheet: 'Compras',
+      eliminarDuplicados: false,
+    })
+    const resumen = new AbortController()
+    const explorar = new AbortController()
+    const sharedSignals: AbortSignal[] = []
+    const producer = vi.fn((signal: AbortSignal) => {
+      sharedSignals.push(signal)
+      return new Promise<MetricsResult>(() => undefined)
+    })
+
+    requestMetrics(key, producer, resumen.signal)
+    requestMetrics(key, producer, explorar.signal)
+    resumen.abort()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(sharedSignals[0]?.aborted).toBe(false)
+
+    explorar.abort()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(sharedSignals[0]?.aborted).toBe(true)
+    expect(producer).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
 })

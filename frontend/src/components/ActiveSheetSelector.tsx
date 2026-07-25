@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, Link2, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useDataset } from '../data/DatasetContext'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
 import { cacheRelationships, getCachedRelationships } from '../lib/analysisCache'
@@ -23,6 +23,7 @@ interface ActiveSheetSelectorProps {
 }
 
 export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelectorProps = {}) {
+  const location = useLocation()
   const {
     file,
     datasetId,
@@ -34,6 +35,7 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
     sheetManifest,
     analysisScope,
     metrics,
+    cleaning,
     setAnalysisScope,
     setMetrics,
     setSheet,
@@ -41,10 +43,16 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
   const { plan } = usePlan()
   const advanced = plan === 'analista' || plan === 'gold'
   const cleanedSheets = useMemo(
-    () => availableSheets.filter(
-      (name) => selectedSheets.includes(name) && Boolean(sheetSessions[name]?.cleaning),
-    ),
-    [availableSheets, selectedSheets, sheetSessions],
+    () => {
+      if (availableSheets.length === 0 && cleaning) return ['Archivo único']
+      return availableSheets.filter(
+        (name) => selectedSheets.includes(name) && Boolean(
+          sheetSessions[name]?.cleaning
+          || (availableSheets.length === 1 && cleaning && name === sheet),
+        ),
+      )
+    },
+    [availableSheets, cleaning, selectedSheets, sheet, sheetSessions],
   )
   const compatibleSheets = useMemo(() => {
     return compatibleAppendSheets(
@@ -52,10 +60,20 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
       Object.fromEntries(cleanedSheets.map((name) => [name, sheetSessions[name]?.cleaning])),
     )
   }, [cleanedSheets, sheetSessions])
-  const pendingSelectedCount = selectedSheets.filter(
-    (name) => !sheetSessions[name]?.cleaning,
-  ).length
-  const [mode, setMode] = useState<Mode>(analysisScope?.mode ?? 'single')
+  const pendingSelectedCount = availableSheets.length === 0 && cleaning
+    ? 0
+    : selectedSheets.filter((name) => !(
+        sheetSessions[name]?.cleaning
+        || (availableSheets.length === 1 && cleaning && name === sheet)
+      )).length
+  const requestedMode = (
+    new URLSearchParams(location.search).get('mode')
+    ?? (location.state as { analysisMode?: unknown } | null)?.analysisMode
+  )
+  const initialMode: Mode = requestedMode === 'join'
+    ? 'join'
+    : analysisScope?.mode ?? 'single'
+  const [mode, setMode] = useState<Mode>(initialMode)
   const [appendSheets, setAppendSheets] = useState<string[]>(
     analysisScope?.mode === 'append'
       ? analysisScope.sheets
@@ -70,12 +88,17 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
   const manualModeSelected = useRef(false)
 
   useEffect(() => {
+    if (requestedMode === 'join') {
+      manualModeSelected.current = true
+      setMode('join')
+      return
+    }
     if (analysisScope) {
       setMode(analysisScope.mode)
       return
     }
     if (sheet) setMode('single')
-  }, [analysisScope, sheet])
+  }, [analysisScope, requestedMode, sheet])
 
   // Mantiene informada a la página del modo activo (para el workspace de join).
   useEffect(() => {
@@ -137,7 +160,14 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisScope, cleanedSheets, compatibleSheets, datasetId, detecting, file, pendingSelectedCount, selectedSheets, sheetManifest, storagePath])
 
-  if (!file || cleanedSheets.length <= 1) return null
+  // Antes se ocultaba con una sola hoja limpia. Durante una limpieza
+  // multihoja eso obligaba a refrescar para que el contexto restaurado
+  // mostrara finalmente "Datos que estás analizando".
+  if (!file || cleanedSheets.length === 0) return null
+
+  const activeCleanedSheet = sheet && cleanedSheets.includes(sheet)
+    ? sheet
+    : cleanedSheets[0]
 
   const chooseSingle = (name: string) => {
     setSheet(name)
@@ -301,19 +331,35 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
     : {}
 
   return (
-    <section className="-mt-5 mb-6 border-b border-navy/10 pb-4" aria-label="Datos que estas analizando">
-      <div className="flex flex-wrap items-center gap-2">
-        <Link2 className="h-4 w-4 text-teal" />
-        <h2 className="text-xs font-semibold text-navy/75">Datos que estas analizando</h2>
-        <AnalysisModeSwitcher
-          mode={mode}
-          onSelect={selectMode}
-          disabledModes={disabledModes}
-          busy={detecting}
-        />
-        <Link to="/estandarizacion" className="ml-auto text-xs font-semibold text-teal hover:underline">
-          Administrar hojas
-        </Link>
+    <section
+      className="-mt-5 mb-6 rounded-2xl border border-navy/10 bg-white p-3 shadow-[0_12px_35px_rgba(13,43,66,0.08)] sm:p-4"
+      aria-label="Datos que estas analizando"
+    >
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-teal/10">
+            <Link2 className="h-4 w-4 text-teal" />
+          </span>
+          <h2 className="text-xs font-semibold text-navy/75">Datos que estas analizando</h2>
+          {selectedSheets.length <= 1 && (
+            <Link
+              to="/estandarizacion"
+              className="ml-auto inline-flex min-h-11 items-center justify-center rounded-xl border border-orange-200 bg-orange-50 px-4 text-xs font-semibold text-orange-700 hover:bg-orange-100"
+            >
+              Administrar hojas
+            </Link>
+          )}
+        </div>
+        {selectedSheets.length > 1 && (
+          <div className="min-w-0 overflow-x-auto pb-1 [scrollbar-width:thin]">
+            <AnalysisModeSwitcher
+              mode={mode}
+              onSelect={selectMode}
+              disabledModes={disabledModes}
+              busy={detecting}
+            />
+          </div>
+        )}
       </div>
 
       {pendingSelectedCount > 0 && (
@@ -324,16 +370,27 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
       )}
 
       {mode === 'single' && (
-        <label className="mt-3 flex flex-wrap items-center gap-2 text-xs text-navy/60">
-          Hoja
-          <select
-            value={analysisScope?.mode === 'single' ? analysisScope.active_sheet : (sheet ?? cleanedSheets[0])}
-            onChange={(event) => chooseSingle(event.target.value)}
-            className="rounded-md border border-navy/20 bg-white px-2.5 py-1.5 font-semibold text-navy outline-none focus:border-teal"
-          >
-            {cleanedSheets.map((name) => <option key={name} value={name}>{name}</option>)}
-          </select>
-        </label>
+        cleanedSheets.length === 1 ? (
+          <p className="mt-3 text-xs text-navy/60">
+            Hoja activa: <strong className="font-semibold text-navy">{activeCleanedSheet}</strong>
+          </p>
+        ) : (
+          <label className="mt-3 flex flex-wrap items-center gap-2 text-xs text-navy/60">
+            Hoja
+            <select
+              value={
+                analysisScope?.mode === 'single' &&
+                cleanedSheets.includes(analysisScope.active_sheet)
+                  ? analysisScope.active_sheet
+                  : activeCleanedSheet
+              }
+              onChange={(event) => chooseSingle(event.target.value)}
+              className="rounded-md border border-navy/20 bg-white px-2.5 py-1.5 font-semibold text-navy outline-none focus:border-teal"
+            >
+              {cleanedSheets.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+        )
       )}
 
       {mode === 'append' && (

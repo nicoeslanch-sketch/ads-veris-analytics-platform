@@ -427,9 +427,9 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await expect(page.getByText('Evolución del negocio')).toBeVisible()
   await expect(page.getByText('Utilidad y margen mensual')).toBeVisible()
   await expect(page.getByText('Estado de la información')).toHaveCount(0)
-  await page.getByRole('link', { name: 'Ver detalle' }).click()
-  await expect(page.getByText('Calidad del análisis relacionado')).toBeVisible({ timeout: 90_000 })
-  await expect(page.getByText(/Los hallazgos se muestran para revisión/)).toBeVisible()
+  await page.getByRole('link', { name: 'Ver alertas' }).click()
+  await expect(page.getByRole('heading', { name: 'Alertas', exact: true })).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText('Evidencia', { exact: true }).first()).toBeVisible()
   await page.getByRole('link', { name: /Resumen/ }).first().click()
   await expect(page.getByRole('heading', { name: 'Indicadores disponibles' })).toBeVisible()
   const flow = page.getByTestId('business-summary-flow')
@@ -445,7 +445,7 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
 
   await page.getByRole('link', { name: /Explorar datos/ }).first().click()
   await expect(page.getByText('Explorar · entender causas')).toBeVisible({ timeout: 90_000 })
-  await expect(page.getByText('Qué requiere tu atención')).toBeVisible()
+  await expect(page.getByText('Qué requiere tu atención')).toHaveCount(0)
   await expect(page.getByText('Calidad de las relaciones')).toBeVisible()
   await page.setViewportSize({ width: 390, height: 844 })
   const mobileOverflow = await page.evaluate(() => ({

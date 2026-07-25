@@ -92,7 +92,12 @@ export function useSessionMetrics(): {
     }
     requestMetrics(
       key,
-      () => apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields)),
+      (signal) => apiPost<MetricsResult>(
+        '/metrics',
+        buildDatasetForm(file, storagePath, fields),
+        { signal, timeoutMs: 120_000 },
+      ),
+      controller.signal,
     )
       .then((result) => {
         if (latestRequest.current !== requestId || controller.signal.aborted) return

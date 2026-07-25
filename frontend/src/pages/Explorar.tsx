@@ -48,6 +48,7 @@ import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
+import AnalysisLoadingPanel from '../components/AnalysisLoadingPanel'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
@@ -384,6 +385,16 @@ export default function Explorar() {
   const [retryTick, setRetryTick] = useState(0)
   const lastFetchKey = useRef<string | null>(null)
   const latestRequest = useRef(0)
+  const requestAbortRef = useRef<AbortController | null>(null)
+
+  const cancelMetrics = () => {
+    requestAbortRef.current?.abort()
+    requestAbortRef.current = null
+    latestRequest.current += 1
+    lastFetchKey.current = null
+    setLoading(false)
+    setError('La carga fue cancelada. Puedes reintentar cuando quieras.')
+  }
 
   const [reco, setReco] = useState<{ recomendacion: string; plan: string[] } | null>(null)
   const [recoLoading, setRecoLoading] = useState(false)
@@ -450,7 +461,11 @@ export default function Explorar() {
         if (lastFetchKey.current === key) lastFetchKey.current = null
       }
     }
+    requestAbortRef.current?.abort()
     const controller = new AbortController()
+    requestAbortRef.current = controller
+    const timingStarted = performance.now()
+    console.info('[ADS Veris timing] metrics:start', { page: 'explorar', sheet: sheet ?? null })
     const requestId = latestRequest.current + 1
     latestRequest.current = requestId
     setLoading(true)
@@ -478,7 +493,12 @@ export default function Explorar() {
     if (rango.to) fields.date_to = rango.to
     requestMetrics(
       key,
-      () => apiPost<MetricsResult>('/metrics', buildDatasetForm(file, storagePath, fields)),
+      (signal) => apiPost<MetricsResult>(
+        '/metrics',
+        buildDatasetForm(file, storagePath, fields),
+        { signal, timeoutMs: 120_000 },
+      ),
+      controller.signal,
     )
       .then((result) => {
         if (latestRequest.current !== requestId || controller.signal.aborted) return
@@ -496,6 +516,12 @@ export default function Explorar() {
         setError(err instanceof ApiError ? err.message : 'No se pudo calcular el análisis.')
       })
       .finally(() => {
+        console.info('[ADS Veris timing] metrics:end', {
+          page: 'explorar',
+          sheet: sheet ?? null,
+          durationMs: Math.round(performance.now() - timingStarted),
+        })
+        if (requestAbortRef.current === controller) requestAbortRef.current = null
         if (latestRequest.current === requestId && !controller.signal.aborted) setLoading(false)
       })
     return () => {
@@ -550,6 +576,23 @@ export default function Explorar() {
           {/* Fase 14: conocer la plataforma sin datos propios */}
           <DemoEmptyActions />
         </EmptyState>
+      </>
+    )
+  }
+
+  if (loading && !metrics) {
+    return (
+      <>
+        <PageHeader
+          title="Explorar datos"
+          subtitle="Preparando el análisis sin volver a limpiar el archivo."
+        />
+        <ActiveSheetSelector />
+        <AnalysisLoadingPanel
+          operation={`Preparando el análisis${sheet ? ` de ${sheet}` : ''}`}
+          detail="La carga comparte la misma caché de Resumen y se cancela si cambias a otra hoja."
+          onCancel={cancelMetrics}
+        />
       </>
     )
   }
