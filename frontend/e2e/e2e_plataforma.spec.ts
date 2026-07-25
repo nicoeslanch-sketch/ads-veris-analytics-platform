@@ -8,6 +8,7 @@ const demoCsv = resolve(here, '../../api/demo/demo_empresa_ficticia.csv')
 test('demo ficticia navega sin escrituras y vuelve al estado vacío', async ({ page }) => {
   await page.goto('/')
 
+  await expect(page.getByText('Aún no hay datos para mostrar')).toBeVisible({ timeout: 60_000 })
   const demoButton = page.getByRole('button', { name: 'Ver demo ficticia' })
   await expect(demoButton).toBeVisible()
   await expect(page.getByRole('button', { name: /Probar demo gratuita/ })).toHaveCount(0)

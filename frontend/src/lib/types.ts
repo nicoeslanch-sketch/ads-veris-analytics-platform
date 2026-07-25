@@ -707,6 +707,20 @@ export interface BusinessAnalysis {
   }
   calidad: {
     costos: Record<string, number | string | null>
+    costos_detalle?: {
+      hoja: string | null
+      negativos: Array<{
+        hoja: string | null
+        fila: number
+        valor: number
+        clave: string | null
+      }>
+    }
+    documentos?: Array<{
+      id: string
+      tipo: 'conflicto' | 'idéntico' | 'solo_observación'
+      ubicaciones: Array<{ hoja: string; fila: number }>
+    }>
     integridad_referencial: Array<{
       relacion: string
       filas: number
@@ -715,6 +729,7 @@ export interface BusinessAnalysis {
       sin_clave: number
       cobertura_pct: number
       ejemplos: string[]
+      ubicaciones?: Array<{ hoja: string; fila: number; clave: string }>
     }>
     controles_formula: Array<{
       hoja: string

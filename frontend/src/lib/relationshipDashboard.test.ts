@@ -8,6 +8,7 @@ import {
   relationshipMatchesQuery,
   sortRelationships,
   templateLabel,
+  usableRelationships,
 } from './relationshipDashboard'
 import { ANALYSIS_MODES, internalModeForLabel } from './analysisModes'
 import type { CatalogRelationship } from './types'
@@ -91,6 +92,16 @@ describe('relationshipMatchesQuery / filterRelationships', () => {
   })
   it('query vacía devuelve todo', () => {
     expect(filterRelationships(list, '  ')).toHaveLength(2)
+  })
+})
+
+describe('usableRelationships', () => {
+  it('oculta conexiones inseguras o sin correspondencia real', () => {
+    expect(usableRelationships([
+      relation({ id: 'ok', safe: true, overlap: 0.82 }),
+      relation({ id: 'zero', safe: true, overlap: 0 }),
+      relation({ id: 'unsafe', safe: false, overlap: 0.95 }),
+    ]).map((item) => item.id)).toEqual(['ok'])
   })
 })
 

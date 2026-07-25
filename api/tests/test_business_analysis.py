@@ -155,6 +155,50 @@ def test_document_duplicates_split_into_identical_conflict_and_observation_only(
     assert alcance["documentos_conflictivos"] == 1
     assert alcance["documentos_identicos"] == 1
     assert alcance["documentos_solo_observacion_distinta"] == 1
+    details = result["calidad"]["documentos"]
+    assert {item["id"]: item["tipo"] for item in details} == {
+        "D1": "idéntico",
+        "D2": "solo_observación",
+        "D3": "conflicto",
+    }
+    assert details[0]["ubicaciones"][0] == {"hoja": "Ventas", "fila": 2}
+
+
+def test_business_quality_reports_negative_cost_sheet_and_row_without_modifying_it():
+    costs = pd.DataFrame(
+        [
+            {"SKU Producto": "A", "Costo Unitario": "-40"},
+            {"SKU Producto": "B", "Costo Unitario": "70"},
+        ]
+    )
+    costs.attrs["adsveris_source_rows"] = [7, 8]
+    frames = {
+        "Ventas": pd.DataFrame(
+            [{"Fecha": "01/01/2026", "SKU Producto": "A", "Cantidad": "1", "Monto": "100"}]
+        ),
+        "Costos_Productos": costs,
+    }
+    mapping = {
+        "Ventas": {
+            "fecha": "Fecha",
+            "monto": "Monto",
+            "cantidad": "Cantidad",
+            "producto": "SKU Producto",
+        }
+    }
+
+    result = analyze_business_workbook(frames, mapping, {})
+
+    assert result is not None
+    assert result["calidad"]["costos"]["negativos"] == 1
+    assert result["calidad"]["costos_detalle"]["negativos"] == [
+        {
+            "hoja": "Costos_Productos",
+            "fila": 7,
+            "valor": -40.0,
+            "clave": "A",
+        }
+    ]
 
 
 def test_current_catalogue_fills_history_gaps_without_certifying_the_estimate():

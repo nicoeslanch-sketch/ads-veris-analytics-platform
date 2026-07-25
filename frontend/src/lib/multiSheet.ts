@@ -12,6 +12,19 @@ const MEDIUM_CONFIDENCE = 0.75
 
 type SheetSelectionMode = 'all' | 'custom'
 
+/** Normaliza selecciones guardadas por versiones anteriores. En modo "all",
+ * una lista vacía significaba implícitamente todas las hojas. */
+export function normalizedRestoredSelection(
+  availableSheets: string[],
+  selectedSheets: string[] | undefined,
+  mode: SheetSelectionMode,
+): string[] {
+  if (mode === 'all' || !selectedSheets?.length) return [...availableSheets]
+  return selectedSheets.filter(
+    (name, index) => availableSheets.includes(name) && selectedSheets.indexOf(name) === index,
+  )
+}
+
 export interface SheetSelectionRestoreState {
   active_sheet: string | null
   available_sheets: string[]

@@ -113,6 +113,14 @@ export function filterRelationships(
   return relationships.filter((relation) => relationshipMatchesQuery(relation, query))
 }
 
+/** Solo ofrece cruces validados y con correspondencia real. Una relación
+ * restaurada con 0% nunca debe aparecer como seleccionable. */
+export function usableRelationships(
+  relationships: readonly CatalogRelationship[],
+): CatalogRelationship[] {
+  return relationships.filter((relation) => relation.safe && relation.overlap > 0)
+}
+
 // ── Estado de riesgo de cobertura (Parte 8) ──────────────────────────────────
 export type CoverageState = 'critico' | 'alto' | 'medio' | 'sano' | 'sin_datos'
 
@@ -174,11 +182,39 @@ export interface RelationshipRequestParams {
   manifest: SheetManifest
 }
 
+const catalogCache = new Map<string, RelationshipCatalog>()
+const dashboardCache = new Map<string, RelationshipDashboard>()
+const MAX_RELATION_CACHE_ENTRIES = 30
+
+export function clearRelationshipDashboardCaches() {
+  catalogCache.clear()
+  dashboardCache.clear()
+}
+
+function requestIdentity(params: RelationshipRequestParams): string {
+  const source = params.datasetId
+    ?? params.storagePath
+    ?? `${params.file?.name ?? ''}:${params.file?.size ?? 0}:${params.file?.lastModified ?? 0}`
+  return `${source}|${JSON.stringify(params.manifest)}`
+}
+
+function remember<T>(cache: Map<string, T>, key: string, value: T): T {
+  cache.set(key, value)
+  if (cache.size > MAX_RELATION_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value
+    if (oldest) cache.delete(oldest)
+  }
+  return value
+}
+
 export async function fetchRelationshipCatalog(
   params: RelationshipRequestParams,
   signal?: AbortSignal,
 ): Promise<RelationshipCatalog> {
-  return apiPost<RelationshipCatalog>(
+  const key = requestIdentity(params)
+  const cached = catalogCache.get(key)
+  if (cached) return cached
+  const result = await apiPost<RelationshipCatalog>(
     '/sheets/relationship-catalog',
     buildDatasetForm(params.file as File, params.storagePath, {
       manifest: JSON.stringify(params.manifest),
@@ -186,6 +222,7 @@ export async function fetchRelationshipCatalog(
     }),
     { signal },
   )
+  return remember(catalogCache, key, result)
 }
 
 export async function fetchRelationshipDashboard(
@@ -201,7 +238,10 @@ export async function fetchRelationshipDashboard(
     right_keys: relationship.right_keys,
     type: 'left' as const,
   }
-  return apiPost<RelationshipDashboard>(
+  const key = `${requestIdentity(params)}|${JSON.stringify(join)}|${period.from ?? ''}|${period.to ?? ''}`
+  const cached = dashboardCache.get(key)
+  if (cached) return cached
+  const result = await apiPost<RelationshipDashboard>(
     '/sheets/relationship-dashboard',
     buildDatasetForm(params.file as File, params.storagePath, {
       manifest: JSON.stringify(params.manifest),
@@ -212,6 +252,7 @@ export async function fetchRelationshipDashboard(
     }),
     { signal },
   )
+  return remember(dashboardCache, key, result)
 }
 
 /** Valida una relación manual reutilizando el endpoint existente. Devuelve la

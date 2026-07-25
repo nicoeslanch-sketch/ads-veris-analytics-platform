@@ -277,29 +277,19 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await expect(page.getByText(/Evolución de Ingresos|Ingresos por mes/)).toBeVisible({ timeout: 90_000 })
     const compactFlow = page.getByTestId('summary-compact-flow')
     await expect(compactFlow).toBeVisible()
-    // El layout dejó de usar CSS `columns` (masonry) y pasó a
-    // `grid-template-columns: repeat(auto-fit, minmax(300px, 1fr))` para que
-    // el ancho REAL disponible defina las columnas y no queden huecos a la
-    // derecha (ver comentario en Resumen.tsx). Se verifica el resultado —
-    // varias tarjetas usando el ancho disponible en paralelo — no la técnica
-    // CSS específica.
+    // El flujo en columnas conserva la altura natural de cada tarjeta. Una
+    // agrupación larga no estira la dona o la proyección de la columna vecina.
     const compactLayout = await compactFlow.evaluate((element) => {
       const children = Array.from(element.children) as HTMLElement[]
-      const columnTracks = getComputedStyle(element)
-        .gridTemplateColumns.split(' ')
-        .filter(Boolean).length
-      const rowTops = new Set(children.map((child) => child.getBoundingClientRect().top))
       return {
-        columnTracks,
+        columnCount: Number.parseInt(getComputedStyle(element).columnCount, 10),
         cardCount: children.length,
-        rowCount: rowTops.size,
+        distinctHeights: new Set(children.map((child) => Math.round(child.getBoundingClientRect().height))).size,
       }
     })
-    expect(compactLayout.columnTracks).toBeGreaterThanOrEqual(2)
+    expect(compactLayout.columnCount).toBeGreaterThanOrEqual(2)
     expect(compactLayout.cardCount).toBeGreaterThan(1)
-    // Con >=2 columnas, N tarjetas ocupan menos filas que tarjetas — nunca
-    // colapsan en una sola columna (el bug que este layout reemplazó).
-    expect(compactLayout.rowCount).toBeLessThan(compactLayout.cardCount)
+    expect(compactLayout.distinctHeights).toBeGreaterThan(1)
 
     await page.getByRole('button', { name: /Visión del negocio/ }).click()
     await expect(page.getByText('Ventas + costos activo')).toBeVisible({ timeout: 90_000 })
@@ -432,11 +422,15 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await expect(page.getByText('Problemas detectados')).toBeVisible({ timeout: 90_000 })
   await page.getByRole('button', { name: 'Limpiar datos', exact: true }).click()
   await expect(page.getByText('10 limpias', { exact: true })).toBeVisible({ timeout: 90_000 })
-
   await page.setViewportSize({ width: 1600, height: 1000 })
   await page.getByRole('link', { name: /Resumen/ }).first().click()
-  await expect(page.getByText('Estado de la información')).toBeVisible({ timeout: 90_000 })
   await expect(page.getByText('Evolución del negocio')).toBeVisible()
+  await expect(page.getByText('Utilidad y margen mensual')).toBeVisible()
+  await expect(page.getByText('Estado de la información')).toHaveCount(0)
+  await page.getByRole('link', { name: 'Ver detalle' }).click()
+  await expect(page.getByText('Calidad del análisis relacionado')).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText(/Los hallazgos se muestran para revisión/)).toBeVisible()
+  await page.getByRole('link', { name: /Resumen/ }).first().click()
   await expect(page.getByRole('heading', { name: 'Indicadores disponibles' })).toBeVisible()
   const flow = page.getByTestId('business-summary-flow')
   await expect(flow).toBeVisible()

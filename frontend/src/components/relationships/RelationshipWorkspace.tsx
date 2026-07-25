@@ -7,6 +7,7 @@ import {
   fetchRelationshipCatalog,
   fetchRelationshipDashboard,
   pickRecommended,
+  usableRelationships,
   validateManualRelationship,
   type RelationshipRequestParams,
 } from '../../lib/relationshipDashboard'
@@ -52,7 +53,7 @@ function manualCatalogRelationship(
     coverage_right: validation?.coverage_right ?? 0,
     overlap: validation?.overlap ?? 0,
     cardinality: validation?.cardinality ?? 'muchos_a_uno',
-    safe: validation?.safe ?? true,
+    safe: validation?.safe ?? false,
     recommended: false,
     source: 'manual',
     currency_compatible: validation?.currency_compatible ?? true,
@@ -132,15 +133,29 @@ export default function RelationshipWorkspace() {
     setCatalogLoading(true)
     setCatalogError(null)
     fetchRelationshipCatalog(params, controller.signal)
-      .then((result) => {
+      .then(async (result) => {
         if (controller.signal.aborted) return
         setCatalog(result)
         const activeScope = scopeRef.current
         const activeId = matchingCatalogId(activeScope, result.relationships)
         const activeAutomatic = result.relationships.find((relation) => relation.id === activeId)
-        const restoredManual = activeScope?.mode === 'join' && !activeAutomatic
-          ? manualCatalogRelationship(activeScope.join)
-          : null
+        let restoredManual: CatalogRelationship | null = null
+        if (activeScope?.mode === 'join' && !activeAutomatic) {
+          try {
+            const validation = await validateManualRelationship(
+              params,
+              activeScope.join,
+              controller.signal,
+            )
+            if (validation.manual?.safe && validation.manual.overlap > 0) {
+              restoredManual = manualCatalogRelationship(activeScope.join, validation.manual)
+            }
+          } catch {
+            // Una relación manual antigua o inválida no bloquea el catálogo:
+            // se vuelve a la mejor conexión automática disponible.
+          }
+        }
+        if (controller.signal.aborted) return
         setSelected((current) => {
           const retainedAutomatic = result.relationships.find(
             (relation) => relation.id === current?.id,
@@ -172,6 +187,7 @@ export default function RelationshipWorkspace() {
 
   // ── Al elegir una relación, actualizar el alcance (persistente) ────────────
   const selectRelation = (relation: CatalogRelationship) => {
+    if (!relation.safe || relation.overlap <= 0) return
     setSelected(relation)
     setAnalysisScope(
       joinScope({
@@ -279,10 +295,12 @@ export default function RelationshipWorkspace() {
     )
   }
 
-  const automaticRelationships = catalog?.relationships ?? []
+  const automaticRelationships = usableRelationships(catalog?.relationships ?? [])
   const relationships = !selected || selected.source !== 'manual'
     ? automaticRelationships
-    : automaticRelationships.some((relation) => relation.id === selected.id)
+    : !selected.safe || selected.overlap <= 0
+      ? automaticRelationships
+      : automaticRelationships.some((relation) => relation.id === selected.id)
       ? automaticRelationships
       : [selected, ...automaticRelationships]
   const showBuilder = builderOpen && (

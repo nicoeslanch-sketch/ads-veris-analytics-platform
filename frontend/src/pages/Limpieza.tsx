@@ -30,6 +30,7 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import { PlanUpsell } from '../components/ui/PlanGate'
+import { BusinessQualityPanel } from '../components/BusinessAnalysisPanel'
 import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
@@ -160,6 +161,7 @@ export default function Limpieza() {
     uploadedAt,
     standardization,
     cleaning,
+    metrics,
     setCleaning,
     mappingOverride,
     setMappingOverride,
@@ -1137,6 +1139,12 @@ export default function Limpieza() {
           </div>
         </Card>
       </div>
+
+      {metrics?.analisis_negocio && (
+        <div className="mt-6">
+          <BusinessQualityPanel analysis={metrics.analisis_negocio} />
+        </div>
+      )}
 
       {/* Pasos de limpieza — barra horizontal compacta (Fase 8: sin columna
           lateral alargada; el ancho completo queda para los datos) */}

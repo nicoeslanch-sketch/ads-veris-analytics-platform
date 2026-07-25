@@ -70,8 +70,12 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
   const manualModeSelected = useRef(false)
 
   useEffect(() => {
-    if (analysisScope) setMode(analysisScope.mode)
-  }, [analysisScope])
+    if (analysisScope) {
+      setMode(analysisScope.mode)
+      return
+    }
+    if (sheet) setMode('single')
+  }, [analysisScope, sheet])
 
   // Mantiene informada a la página del modo activo (para el workspace de join).
   useEffect(() => {

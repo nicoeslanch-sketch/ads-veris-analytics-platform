@@ -113,11 +113,37 @@ def _append_sales(frames: dict[str, pd.DataFrame], names: list[str]) -> pd.DataF
         part = frames[name].copy()
         canonical &= bool(part.attrs.get("adsveris_numeric_canonical"))
         part["_hoja_origen"] = name
+        source_rows = list(part.attrs.get("adsveris_source_rows", []))
+        part["_fila_origen"] = (
+            source_rows
+            if len(source_rows) == len(part)
+            else list(range(2, len(part) + 2))
+        )
         parts.append(part)
     combined = pd.concat(parts, ignore_index=True, sort=False) if parts else pd.DataFrame()
     if canonical:
         combined.attrs["adsveris_numeric_canonical"] = True
     return combined
+
+
+def _source_row_number(
+    frame: pd.DataFrame,
+    index: Any,
+    row: pd.Series,
+) -> int:
+    raw_value = row.get("_fila_origen")
+    if raw_value is not None and not pd.isna(raw_value):
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError):
+            pass
+    try:
+        position = frame.index.get_loc(index)
+        if isinstance(position, int):
+            return position + 2
+    except (KeyError, TypeError):
+        pass
+    return 2
 
 
 def _unique_reference(
@@ -168,6 +194,14 @@ def _relation_quality(
     orphan = informed & ~source_keys.isin(reference_keys)
     missing = ~informed
     valid = informed & ~orphan
+    locations = []
+    for index in source.index[orphan][:8]:
+        row = source.loc[index]
+        locations.append({
+            "hoja": str(row.get("_hoja_origen", label.split(" → ")[0])),
+            "fila": _source_row_number(source, index, row),
+            "clave": str(row.get(source_column, "")),
+        })
     return {
         "relacion": label,
         "filas": int(len(source)),
@@ -176,6 +210,7 @@ def _relation_quality(
         "sin_clave": int(missing.sum()),
         "cobertura_pct": round(float(valid.sum()) / max(len(source), 1) * 100, 1),
         "ejemplos": sorted({str(value) for value in source.loc[orphan, source_column].head(8)}),
+        "ubicaciones": locations,
     }
 
 
@@ -637,12 +672,12 @@ def analyze_business_workbook(
     if document_key and duplicate_groups:
         compare_columns = [
             column for column in sales.columns
-            if column not in {document_key, "_hoja_origen"}
+            if column not in {document_key, "_hoja_origen", "_fila_origen"}
             and "observa" not in normalized_header(column)
         ]
         all_columns = [
             column for column in sales.columns
-            if column not in {document_key, "_hoja_origen"}
+            if column not in {document_key, "_hoja_origen", "_fila_origen"}
         ]
         for key, group in sales.loc[duplicated_document].groupby(document_keys[duplicated_document]):
             key_str = str(key)
@@ -655,6 +690,31 @@ def analyze_business_workbook(
     conflict_groups = len(conflicting_document_keys)
     identical_groups = len(identical_document_keys)
     observation_only_groups = len(observation_only_document_keys)
+    document_issue_examples = []
+    for key, group in sales.loc[duplicated_document].groupby(
+        document_keys[duplicated_document], sort=False
+    ):
+        key_str = str(key)
+        issue_type = (
+            "conflicto"
+            if key_str in conflicting_document_keys
+            else "idéntico"
+            if key_str in identical_document_keys
+            else "solo_observación"
+        )
+        document_issue_examples.append({
+            "id": str(group.iloc[0][document_key]) if document_key else key_str,
+            "tipo": issue_type,
+            "ubicaciones": [
+                {
+                    "hoja": str(row.get("_hoja_origen", "Ventas")),
+                    "fila": _source_row_number(sales, index, row),
+                }
+                for index, row in group.head(8).iterrows()
+            ],
+        })
+        if len(document_issue_examples) >= 12:
+            break
     duplicate_extra = document_keys.notna() & document_keys.duplicated(keep="first")
     conflicting_document = document_keys.isin(conflicting_document_keys)
     # Exact copies contribute once. Reused IDs with conflicting payload stay
@@ -1083,6 +1143,17 @@ def analyze_business_workbook(
 
     cost_values = numeric_series(current_costs, unit_cost_col) if current_costs is not None else pd.Series(dtype=float)
     upper = _cost_outlier_limit(cost_values)
+    negative_cost_locations = []
+    if current_costs is not None:
+        source_rows = list(current_costs.attrs.get("adsveris_source_rows", []))
+        for index in cost_values.index[cost_values < 0][:12]:
+            position = current_costs.index.get_loc(index)
+            negative_cost_locations.append({
+                "hoja": current_cost_name,
+                "fila": int(source_rows[position]) if len(source_rows) == len(current_costs) else int(position) + 2,
+                "valor": round(float(cost_values.loc[index]), 2),
+                "clave": str(current_costs.loc[index, cost_key]) if cost_key else None,
+            })
     cost_quality = {
         **cost_reference_quality,
         **cost_method,
@@ -1495,6 +1566,11 @@ def analyze_business_workbook(
         "sensibilidad": sensitivity,
         "calidad": {
             "costos": cost_quality,
+            "costos_detalle": {
+                "hoja": current_cost_name,
+                "negativos": negative_cost_locations,
+            },
+            "documentos": document_issue_examples,
             "integridad_referencial": integrity,
             "controles_formula": formula_controls,
             "filas_inconsistentes_formula": formula_issues,

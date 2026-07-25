@@ -6,7 +6,6 @@ import {
   ArrowUpRight,
   BarChart3,
   Coins,
-  HeartPulse,
   Info,
   LayoutDashboard,
   Loader2,
@@ -33,7 +32,6 @@ import {
 } from 'recharts'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
-import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
@@ -418,16 +416,6 @@ export default function Resumen() {
   const hasCosts = Boolean(kpis?.ganancia_neta)
   const splitFinancialScale = hasCosts && shouldSplitFinancialScale(evolution)
   const margin = kpis?.margen_utilidad_pct?.valor ?? null
-  const health =
-    margin === null
-      ? null
-      : margin >= 25
-        ? { text: 'Excelente', tone: 'green' as const }
-        : margin >= 10
-          ? { text: 'Buena', tone: 'green' as const }
-          : margin >= 0
-            ? { text: 'Regular', tone: 'gold' as const }
-            : { text: 'Crítica', tone: 'coral' as const }
 
   // Fase 12b §13: el margen mensual viene del backend con el MISMO denominador
   // pareado que el KPI global — derivarlo aquí como utilidad/ingresos volvía a
@@ -561,9 +549,6 @@ export default function Resumen() {
   // Solo en una hoja de ventas (sin costos relacionados) las columnas de costo,
   // utilidad y margen salen todas "—": no aportan y las ocultamos.
   const categoriaConCostos = (metrics?.por_categoria ?? []).some((row) => row.costo != null)
-  // Sin esas 3 columnas la tabla queda con huecos: una barra de participación
-  // que se estira llena el ancho con algo útil.
-  const maxCategoria = Math.max(...(metrics?.por_categoria ?? []).map((row) => row.ingresos), 1)
 
   return (
     <>
@@ -812,14 +797,12 @@ export default function Resumen() {
                       <th className="whitespace-nowrap pb-2 pr-4 text-right">Ingresos</th>
                       {/* Fase 14b: participación BRUTA — distribución real que suma 100% */}
                       <th className="whitespace-nowrap pb-2 pr-4 text-right">% Ventas brutas</th>
-                      {categoriaConCostos ? (
+                      {categoriaConCostos && (
                         <>
                           <th className="whitespace-nowrap pb-2 pr-4 text-right">Costo asociado</th>
                           <th className="whitespace-nowrap pb-2 pr-4 text-right">Utilidad</th>
                           <th className="pb-2">Margen</th>
                         </>
-                      ) : (
-                        <th className="w-full pb-2" aria-label="Participación" />
                       )}
                     </tr>
                   </thead>
@@ -840,42 +823,12 @@ export default function Resumen() {
                               {row.utilidad != null ? formatCLP(row.utilidad) : '—'}
                             </td>
                             <td className="py-2.5">
-                              {row.margen_pct !== undefined && row.margen_pct !== null ? (
-                                <span className="flex items-center gap-2">
-                                  <span className="text-navy/75">{formatNumber(row.margen_pct)}%</span>
-                                  <span className="h-1.5 w-16 overflow-hidden rounded-full bg-navy/10">
-                                    <span
-                                      className="block h-full rounded-full"
-                                      style={{
-                                        width: `${Math.min(Math.max(row.margen_pct, 0), 100)}%`,
-                                        background:
-                                          row.margen_pct >= 30
-                                            ? CHART.utilidad
-                                            : row.margen_pct >= 15
-                                              ? CHART.gastos
-                                              : CHART.alerta,
-                                      }}
-                                    />
-                                  </span>
-                                </span>
-                              ) : (
-                                '—'
-                              )}
+                              {row.margen_pct !== undefined && row.margen_pct !== null
+                                ? `${formatNumber(row.margen_pct)}%`
+                                : '—'}
                             </td>
                           </>
-                        ) : (
-                          <td className="w-full py-2.5 pl-2">
-                            <span className="block h-1.5 w-full overflow-hidden rounded-full bg-navy/10">
-                              <span
-                                className="block h-full rounded-full"
-                                style={{
-                                  width: `${(row.ingresos / maxCategoria) * 100}%`,
-                                  background: CHART.ingresos,
-                                }}
-                              />
-                            </span>
-                          </td>
-                        )}
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>
@@ -885,21 +838,17 @@ export default function Resumen() {
               )}
             </div>
 
-            {/* `@container`: las columnas responden al ANCHO REAL de este bloque
-                y no al de la ventana, así el panel de IA abierto no lo colapsa.
-                Con un número de columnas CONOCIDO (2 en @2xl, 3 en @5xl) la
-                última card se estira para no dejar celdas vacías en la última
-                fila. El rango de 2 columnas se acota con @max-5xl: si no, su
-                regla `odd` se filtraría al modo de 3 y estiraría de más. */}
+            {/* Cada tarjeta conserva su altura natural. Una agrupación larga
+                no estira las tarjetas vecinas ni deja huecos bajo una dona. */}
             <div className="order-5 @container xl:order-last xl:col-span-2">
               <div
                 data-testid="summary-compact-flow"
-                className="grid grid-cols-1 gap-6 @2xl:grid-cols-2 @5xl:grid-cols-3 @2xl:@max-5xl:[&>*:last-child:nth-child(odd)]:col-span-2 @5xl:[&>*:last-child:nth-child(3n+1)]:col-span-3 @5xl:[&>*:last-child:nth-child(3n+2)]:col-span-2"
+                className="columns-1 gap-6 @2xl:columns-2 @5xl:columns-3"
               >
                   {canal.length > 0 && (
-                  <Card className="flex h-full min-w-0 flex-col">
+                  <Card className="mb-6 min-w-0 break-inside-avoid">
                     <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
-                    <div className="mt-2 flex flex-1 flex-col items-center justify-center gap-3">
+                    <div className="mt-2 flex flex-col items-center justify-center gap-3">
                       <div className="relative h-44 w-44 shrink-0">
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
@@ -951,11 +900,11 @@ export default function Resumen() {
                   )}
 
                   {topProducts.length > 0 && (
-                  <Card className="flex h-full min-w-0 flex-col">
+                  <Card className="mb-6 min-w-0 break-inside-avoid">
                     <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
                     {/* flex-1 + reparto uniforme: los productos ocupan el alto
                         sobrante en vez de dejar un hueco al pie de la card. */}
-                    <ul className="mt-4 flex flex-1 flex-col justify-around gap-3">
+                    <ul className="mt-4 flex flex-col gap-3">
                       {topProducts.map((product) => (
                         <li key={product.nombre}>
                           <div className="flex items-center justify-between gap-2 text-sm">
@@ -982,7 +931,7 @@ export default function Resumen() {
                   </Card>
                   )}
 
-                  <Card className="flex h-full min-w-0 flex-col">
+                  <Card className="mb-6 min-w-0 break-inside-avoid">
                     {/* Fase 12b §20: es una EXTRAPOLACIÓN del promedio observado, no
                         una predicción — el copy no debe prometer más que el método. */}
                     <h2 className="text-base font-semibold text-navy">
@@ -998,7 +947,7 @@ export default function Resumen() {
                           {formatNumber(metrics.proyeccion.crecimiento_pct)}%
                         </p>
                         <p className="text-xs text-navy/50">mensual promedio</p>
-                        <div className="mt-3 flex-1" style={{ minHeight: 96 }}>
+                        <div className="mt-3 h-28">
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart
                               data={[
@@ -1038,7 +987,7 @@ export default function Resumen() {
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
-                        <p className="mt-auto pt-3 text-[11px] text-navy/45">
+                        <p className="pt-3 text-[11px] text-navy/45">
                           Extrapolación del crecimiento promedio de {evolution.length} mes(es) de
                           historia — no considera estacionalidad ni meses incompletos. Línea
                           punteada = extrapolación.
@@ -1083,36 +1032,6 @@ export default function Resumen() {
               </p>
               </Card>
 
-              <Card className="order-4">
-              <h2 className="text-base font-semibold text-navy">Estado Financiero</h2>
-              <ul className="mt-4 divide-y divide-navy/5 text-sm">
-                {['Activos Totales', 'Pasivos Totales', 'Patrimonio', 'Capital de Trabajo'].map(
-                  (label) => (
-                    <li key={label} className="flex items-center justify-between py-2.5">
-                      <span className="text-navy/70">{label}</span>
-                      <span className="font-semibold text-navy/35">—</span>
-                    </li>
-                  ),
-                )}
-              </ul>
-              {health && (
-                <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-navy/10 bg-work px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <HeartPulse className="h-4.5 w-4.5 text-teal" />
-                    <div>
-                      <p className="text-sm font-semibold text-navy">Salud Financiera</p>
-                      <p className="text-[11px] text-navy/50">
-                        Según el margen del periodo — referencia general; depende del rubro
-                      </p>
-                    </div>
-                  </div>
-                  <Badge tone={health.tone}>{health.text}</Badge>
-                </div>
-              )}
-              <p className="mt-3 text-[11px] leading-relaxed text-navy/45">
-                Activos, pasivos y patrimonio se habilitan al conectar tus datos de balance.
-              </p>
-              </Card>
             </div>
           </div>
 
@@ -1243,7 +1162,7 @@ function FlexibleGroupCard({
   const total = rows.reduce((sum, row) => sum + row.ingresos, 0)
   const hasNegative = rows.some((row) => row.ingresos < 0)
   return (
-    <Card className="@container flex h-full min-w-0 flex-col" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
+    <Card className="@container mb-6 min-w-0 break-inside-avoid" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
       <div className="flex items-center gap-2">
         <span className="h-3 w-3 rounded-full" style={{ background: chartColor }} />
         <h2 className="text-base font-semibold text-navy">Ventas por {agrupacion.columna}</h2>
@@ -1273,7 +1192,7 @@ function FlexibleGroupCard({
            ancha (cuando ocupa la fila completa) → dona a la izquierda y
            leyenda en DOS columnas que llenan el ancho, en vez de una dona
            chica al centro con los montos pegados a los bordes. */
-        <div className="mt-4 flex flex-1 flex-col items-center justify-center gap-4 @2xl:flex-row @2xl:gap-8">
+        <div className="mt-4 flex flex-col items-center justify-center gap-4 @2xl:flex-row @2xl:gap-8">
           <div className="relative h-40 w-40 shrink-0 @2xl:h-48 @2xl:w-48">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -1311,7 +1230,7 @@ function FlexibleGroupCard({
         /* flex-1: el gráfico ABSORBE el alto sobrante de la card en vez de
            quedarse chico y dejar un hueco antes de la nota. El minHeight
            conserva el piso necesario para que las barras se lean. */
-        <div className="mt-4 flex-1" style={{ minHeight: Math.max(rows.length * 34 + 44, 150) }}>
+        <div className="mt-4" style={{ height: Math.max(rows.length * 34 + 44, 150) }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} horizontal={false} />
@@ -1329,7 +1248,7 @@ function FlexibleGroupCard({
       {hasNegative && (
         /* Explica por qué una barra puede ir a la izquierda del cero — p. ej. una
            Nota de Crédito, que resta ventas en vez de sumarlas. */
-        <p className="mt-auto flex items-start gap-1.5 pt-3 text-[11px] leading-relaxed text-navy/50">
+        <p className="flex items-start gap-1.5 pt-3 text-[11px] leading-relaxed text-navy/50">
           <Info className="mt-0.5 h-3 w-3 shrink-0 text-coral" />
           <span>
             Los valores en <span className="font-semibold text-coral">coral (negativos)</span> restan ingresos:

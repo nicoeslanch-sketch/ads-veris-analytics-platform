@@ -144,6 +144,100 @@ function certificationBlockers(analysis: BusinessAnalysis): CertificationBlocker
   return blockers
 }
 
+function blockerLocations(analysis: BusinessAnalysis, key: string): string[] {
+  if (key === 'duplicados' || key === 'conflictos') {
+    return (analysis.calidad.documentos ?? [])
+      .filter((item) => key !== 'conflictos' || item.tipo === 'conflicto')
+      .slice(0, 6)
+      .map((item) => (
+        `ID ${item.id}: ${item.ubicaciones.map((place) => `${place.hoja}, fila ${place.fila}`).join(' · ')}`
+      ))
+  }
+  if (key === 'costos_negativos') {
+    return (analysis.calidad.costos_detalle?.negativos ?? [])
+      .slice(0, 8)
+      .map((item) => (
+        `${item.hoja ?? 'Hoja de costos'}, fila ${item.fila}: ${formatCLP(item.valor)}${
+          item.clave ? ` · clave ${item.clave}` : ''
+        }`
+      ))
+  }
+  if (key === 'formula') {
+    return analysis.calidad.controles_formula
+      .filter((control) => control.filas_inconsistentes > 0)
+      .slice(0, 8)
+      .map((control) => (
+        `${control.hoja}, ${control.control}: filas ${control.filas_ejemplo.join(', ')}`
+      ))
+  }
+  if (key === 'referencias') {
+    return analysis.calidad.integridad_referencial
+      .filter((relation) => relation.huerfanas > 0 || relation.sin_clave > 0)
+      .slice(0, 8)
+      .map((relation) => {
+        const locations = (relation.ubicaciones ?? [])
+          .slice(0, 4)
+          .map((place) => `${place.hoja}, fila ${place.fila}`)
+          .join(' · ')
+        return `${relation.relacion}: ${formatNumber(relation.huerfanas)} huérfanas${
+          locations ? ` · ${locations}` : ` · ejemplos ${relation.ejemplos.join(', ')}`
+        }`
+      })
+  }
+  return []
+}
+
+/** Diagnóstico del análisis cruzado. Vive en Limpieza porque orienta la
+ * revisión de datos; Resumen queda reservado para indicadores del negocio. */
+export function BusinessQualityPanel({ analysis }: { analysis: BusinessAnalysis }) {
+  const certification = certificationMeta(analysis.estado_certificacion)
+  const blockers = certificationBlockers(analysis)
+  return (
+    <section className={`rounded-lg border px-4 py-4 ${certification.classes}`}>
+      <div className="flex items-start gap-3">
+        {analysis.estado_certificacion === 'certified' ? (
+          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green" />
+        ) : (
+          <AlertTriangle className={`mt-0.5 h-5 w-5 shrink-0 ${analysis.estado_certificacion === 'blocked' ? 'text-coral' : 'text-gold'}`} />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold text-navy">Calidad del análisis relacionado</h2>
+            <Badge tone={certification.tone}>{certification.label}</Badge>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-navy/65">
+            {certification.note} Confianza técnica: {formatNumber(analysis.confianza_pct)}%.
+            Los hallazgos se muestran para revisión; no se borran ni corrigen automáticamente.
+          </p>
+        </div>
+      </div>
+      {blockers.length > 0 && (
+        <ul className="mt-4 grid gap-3 lg:grid-cols-2">
+          {blockers.map((blocker) => {
+            const locations = blockerLocations(analysis, blocker.key)
+            return (
+              <li key={blocker.key} className="rounded-lg border border-navy/10 bg-white/80 p-3">
+                <p className="text-xs font-semibold text-navy">{blocker.label}</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-navy/60">{blocker.detail}</p>
+                {locations.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-[11px] font-semibold text-teal">
+                      Ver hojas y filas de ejemplo
+                    </summary>
+                    <ul className="mt-2 space-y-1 text-[11px] text-navy/65">
+                      {locations.map((location) => <li key={location}>{location}</li>)}
+                    </ul>
+                  </details>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function BusinessTooltip({
   active,
   payload,
@@ -174,7 +268,6 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
   const result = analysis.estado_resultados
   const operation = analysis.operacion
   const usesEstimatedCosts = result.costo_venta_estimado_catalogo > 0
-  const certification = certificationMeta(analysis.estado_certificacion)
   const cards = [
     {
       label: analysis.alcance.documentos_repetidos > 0 ? 'Ventas verificables' : 'Ventas observadas',
@@ -209,8 +302,8 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
       label: 'Resultado operacional',
       value: money(result.resultado_operacional),
       detail: result.margen_operacional_pct == null
-        ? 'sin base suficiente'
-        : `${percent(result.margen_operacional_pct)} sobre venta comparable`,
+        ? 'sin ventas, costos y gastos comparables suficientes'
+        : `ventas − costo de venta − gastos operacionales · margen ${percent(result.margen_operacional_pct)}`,
       icon: Wallet,
       color: CHART.alerta,
     },
@@ -234,69 +327,19 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
     },
   ]
   const availableRatios = analysis.ratios.filter((ratio) => ratio.estado !== 'unavailable')
-  const blockers = certificationBlockers(analysis)
+  const monthlyProfitability = analysis.evolucion
+    .filter((row) => row.utilidad_bruta != null)
+    .map((row) => ({
+      ...row,
+      margen_pct:
+        row.ventas > 0 && row.utilidad_bruta != null
+          ? (row.utilidad_bruta / row.ventas) * 100
+          : null,
+    }))
+  const qualityIssueCount = certificationBlockers(analysis).length
 
   return (
     <div className="space-y-6">
-      <section className={`rounded-lg border px-4 py-3 ${certification.classes}`}>
-        <div className="flex flex-wrap items-center gap-3">
-          {analysis.estado_certificacion === 'certified' ? (
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-green" />
-          ) : (
-            <AlertTriangle className={`h-5 w-5 shrink-0 ${analysis.estado_certificacion === 'blocked' ? 'text-coral' : 'text-gold'}`} />
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-semibold text-navy">Estado de la información</p>
-              <Badge tone={certification.tone}>{certification.label}</Badge>
-            </div>
-            <p className="mt-0.5 text-xs text-navy/65">
-              {certification.note} Confianza técnica: {formatNumber(analysis.confianza_pct)}%.
-            </p>
-          </div>
-          {analysis.estado_certificacion !== 'certified' && (
-            <Link
-              to="/limpieza?revision=1"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-navy/15 bg-white px-3 py-2 text-xs font-semibold text-navy hover:border-teal/50"
-            >
-              Revisar calidad <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          )}
-        </div>
-
-        {blockers.length > 0 && (
-          /* Desglose accionable: cada motivo que baja la confianza, con el lugar
-             exacto para resolverlo. La plataforma no inventa datos, pero sí guía. */
-          <div className="mt-3 border-t border-navy/10 pt-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-navy/45">
-              Qué baja la confianza y cómo resolverlo
-            </p>
-            <ul className="mt-2 space-y-2">
-              {blockers.map((blocker) => (
-                <li
-                  key={blocker.key}
-                  className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg bg-white/70 px-3 py-2"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-navy">{blocker.label}</p>
-                    <p className="mt-0.5 text-[11px] leading-relaxed text-navy/60">{blocker.detail}</p>
-                  </div>
-                  {blocker.cta && (
-                    <Link
-                      to={blocker.cta.to}
-                      state={blocker.cta.state}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-navy/15 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-navy hover:border-teal/50"
-                    >
-                      {blocker.cta.label} <ArrowRight className="h-3 w-3" />
-                    </Link>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </section>
-
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {cards.map(({ label, value, detail, icon: Icon, color }) => (
           <Card
@@ -316,12 +359,27 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         ))}
       </section>
 
+      {qualityIssueCount > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold/30 bg-gold/[0.07] px-4 py-3">
+          <p className="text-xs leading-relaxed text-navy/70">
+            Hay {formatNumber(qualityIssueCount)} tipo(s) de hallazgo pendiente(s) de revisión.
+            El detalle con hojas y filas está en Limpieza de datos.
+          </p>
+          <Link
+            to="/limpieza?revision=1"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal hover:text-navy"
+          >
+            Ver detalle <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+      )}
+
       <div data-testid="business-summary-flow" className="columns-1 gap-6 xl:columns-2">
         {analysis.evolucion.length > 0 && (
           <Card className="mb-6 break-inside-avoid">
             <h2 className="text-base font-semibold text-navy">Evolución del negocio</h2>
             <p className="mt-1 text-xs text-navy/55">
-              Ventas, costo relacionado y resultado operacional por mes. Los vacíos no se convierten en cero.
+              Resultado operacional = ventas − costo de venta relacionado − gastos operacionales del periodo. Los vacíos no se convierten en cero.
             </p>
             <div className="mt-4 h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -407,31 +465,38 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         </Card>
 
         <Card className="mb-6 break-inside-avoid">
-          <h2 className="text-base font-semibold text-navy">Base usada para los resultados</h2>
-          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-            <ScopeItem label="Hojas de ventas" value={formatNumber(analysis.alcance.hojas_ventas.length)} />
-            <ScopeItem label="Filas físicas" value={formatNumber(analysis.alcance.filas_ventas_fisicas)} />
-            <ScopeItem label="Filas analizadas" value={formatNumber(analysis.alcance.filas_indicadores)} />
-            <ScopeItem label="Anuladas" value={formatNumber(analysis.alcance.filas_anuladas)} />
-            <ScopeItem label="Totales estructurales" value={formatNumber(analysis.alcance.filas_totales_estructurales)} />
-            <ScopeItem label="Documentos repetidos" value={formatNumber(analysis.alcance.documentos_repetidos)} />
-          </dl>
-          <p className="mt-4 rounded-lg bg-navy/[0.04] px-3 py-2 text-[11px] leading-relaxed text-navy/55">
-            Costos: {analysis.alcance.hoja_historial_costos ?? analysis.alcance.hoja_costos ?? 'sin tabla utilizable'}.
-            Las filas de total y anuladas se conservan en el archivo, pero no inflan los indicadores.
-            {usesEstimatedCosts && ` ${formatNumber(result.cobertura_costos_historica_pct)}% tiene costo histórico; el resto relacionado usa el catálogo actual como estimación visible.`}
+          <h2 className="text-base font-semibold text-navy">Utilidad y margen mensual</h2>
+          <p className="mt-1 text-xs text-navy/55">
+            Compara cuánto quedó después del costo de venta y qué porcentaje representa sobre las ventas relacionadas.
           </p>
+          {monthlyProfitability.length > 0 ? (
+            <div className="mt-4 h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={monthlyProfitability} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                  <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+                  <XAxis dataKey="mes" tickFormatter={formatMonthShort} tick={{ fill: AXIS_INK, fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="money" tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 10 }} width={64} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="margin" orientation="right" tickFormatter={(value) => `${formatNumber(value)}%`} tick={{ fill: AXIS_INK, fontSize: 10 }} width={42} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    formatter={(value, name) => (
+                      name === 'Margen bruto'
+                        ? `${formatNumber(Number(value))}%`
+                        : formatCLP(Number(value))
+                    )}
+                    labelFormatter={(label) => formatMonthShort(String(label))}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <ReferenceLine yAxisId="money" y={0} stroke={AXIS_INK} strokeOpacity={0.45} />
+                  <Bar yAxisId="money" dataKey="utilidad_bruta" name="Utilidad bruta" fill={CHART.utilidad} radius={[4, 4, 0, 0]} maxBarSize={36} />
+                  <Line yAxisId="margin" type="monotone" dataKey="margen_pct" name="Margen bruto" stroke={CHART.flujo} strokeWidth={2.5} dot={{ r: 3 }} connectNulls={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-navy/55">No hay costos relacionados suficientes para calcular utilidad mensual.</p>
+          )}
         </Card>
       </div>
-    </div>
-  )
-}
-
-function ScopeItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[11px] text-navy/50">{label}</dt>
-      <dd className="mt-0.5 font-semibold text-navy">{value}</dd>
     </div>
   )
 }

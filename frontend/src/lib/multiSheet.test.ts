@@ -7,6 +7,7 @@ import {
   cleaningScopeState,
   compatibleAppendSheets,
   joinScope,
+  normalizedRestoredSelection,
   sheetPreparationAction,
   sheetSelectionCountLabel,
   sheetStatusLabel,
@@ -36,6 +37,23 @@ const match = (rol: string, rolMotor: string | null, confidence = 1): Dictionary
   palabra_clave: rol,
   metodo: 'exacto',
   confianza: confidence,
+})
+
+describe('restauración de selección de hojas', () => {
+  it('interpreta una selección vacía en modo todas como todas las hojas', () => {
+    expect(normalizedRestoredSelection(['Enero', 'Febrero'], [], 'all')).toEqual([
+      'Enero',
+      'Febrero',
+    ])
+  })
+
+  it('conserva solo hojas válidas en una selección personalizada', () => {
+    expect(normalizedRestoredSelection(
+      ['Enero', 'Febrero'],
+      ['Febrero', 'Eliminada', 'Febrero'],
+      'custom',
+    )).toEqual(['Febrero'])
+  })
 })
 
 describe('mapeo simple del plan Basico', () => {

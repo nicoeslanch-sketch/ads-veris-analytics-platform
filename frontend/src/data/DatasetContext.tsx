@@ -10,7 +10,8 @@ import {
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { clearAnalysisCaches } from '../lib/analysisCache'
-import { analysisScopesEqual } from '../lib/multiSheet'
+import { analysisScopesEqual, normalizedRestoredSelection } from '../lib/multiSheet'
+import { clearRelationshipDashboardCaches } from '../lib/relationshipDashboard'
 import type {
   AnalysisScope,
   CleanResult,
@@ -347,6 +348,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const setUploaded = useCallback(
     (newFile: File, newDatasetId: string | null, newStoragePath: string | null) => {
       clearAnalysisCaches()
+      clearRelationshipDashboardCaches()
       activeFileRef.current = newFile
       advanceDatasetRevision()
       setFile(newFile)
@@ -400,6 +402,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       options.expectedRevision !== datasetRevisionRef.current
     ) return false
     clearAnalysisCaches()
+    clearRelationshipDashboardCaches()
     const inferredActiveSheet =
       restoredCleaning?.carga?.hoja_usada ??
       restoredStandardization.carga?.hoja_usada ??
@@ -431,9 +434,20 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMappingOverrideState(activeSession?.mappingOverride ?? restoredMapping)
     setSheetState(activeSheet)
     setEliminarDuplicados(activeSession?.eliminarDuplicados ?? restoredEliminarDuplicados)
-    setAvailableSheets(options?.availableSheets ?? sheets)
+    const restoredAvailableSheets = options?.availableSheets ?? sheets
+    const restoredSelection = normalizedRestoredSelection(
+      restoredAvailableSheets,
+      options?.selectedSheets,
+      options?.selectionMode ?? 'all',
+    )
+    setAvailableSheets(restoredAvailableSheets)
     setSheetSessions(sessions)
-    setSelectedSheetsState(options?.selectedSheets ?? (options?.availableSheets ?? sheets))
+    // Snapshots anteriores a selection_mode podían traer selected_sheets=[].
+    // En modo "all" eso significa todas las hojas, no ninguna. Normalizarlo
+    // evita que la botonera desaparezca hasta refrescar la página.
+    setSelectedSheetsState(
+      restoredSelection.length > 0 ? restoredSelection : restoredAvailableSheets,
+    )
     setSheetErrors(options?.sheetErrors ?? {})
     setAnalysisScopeState(options?.analysisScope ?? (
       activeSheet ? { mode: 'single', sheets: [activeSheet], active_sheet: activeSheet } : null
@@ -445,6 +459,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
 
   const reset = useCallback(() => {
     clearAnalysisCaches()
+    clearRelationshipDashboardCaches()
     activeFileRef.current = null
     advanceDatasetRevision()
     setFile(null)

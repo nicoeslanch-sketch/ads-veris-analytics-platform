@@ -242,14 +242,17 @@ def fetch_latest_restore_record(
         "user_id": f"eq.{user_id}",
         "storage_path": "not.is.null",
         "status": "neq.error",
-        "order": "created_at.desc",
+        # "Último trabajo" es el dataset modificado más recientemente, no
+        # necesariamente el último que se creó. Volver a limpiar o cambiar el
+        # alcance de un archivo anterior actualiza datasets.updated_at.
+        "order": "updated_at.desc,created_at.desc",
         "limit": "1",
     }
     response = _get(
         "datasets",
         {
             **base_params,
-            "select": "id,name,source,storage_path,status,created_at,restore_snapshot",
+            "select": "id,name,source,storage_path,status,created_at,updated_at,restore_snapshot",
         },
         settings,
     )
@@ -259,7 +262,7 @@ def fetch_latest_restore_record(
             "datasets",
             {
                 **base_params,
-                "select": "id,name,source,storage_path,status,created_at",
+                "select": "id,name,source,storage_path,status,created_at,updated_at",
             },
             settings,
         )

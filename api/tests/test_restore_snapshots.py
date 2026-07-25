@@ -15,12 +15,47 @@ from app.restore_cache import (
     RESTORE_SNAPSHOT_VERSION,
     RestoreSnapshotUnavailable,
     build_restore_snapshot,
+    fetch_latest_restore_record,
     store_restore_snapshot,
     valid_restore_snapshot,
 )
 
 
 SOURCE_SHA = "d" * 64
+
+
+def test_latest_restore_record_orders_by_last_worked_dataset(monkeypatch):
+    from app import restore_cache
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return [{
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name": "ventas.xlsx",
+                "storage_path": "user/ventas.xlsx",
+            }]
+
+    def fake_get(table, params, settings):
+        captured.update(params)
+        return Response()
+
+    monkeypatch.setattr(restore_cache, "_get", fake_get)
+    settings = Settings(
+        supabase_url="https://example.supabase.co",
+        supabase_service_role_key="secret",
+    )
+
+    record = fetch_latest_restore_record("user-1", settings)
+
+    assert record is not None
+    assert captured["order"] == "updated_at.desc,created_at.desc"
+    assert "updated_at" in captured["select"]
 
 
 def test_cleaning_result_is_not_lost_when_guarded_snapshot_cannot_be_saved(
