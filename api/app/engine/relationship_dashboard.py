@@ -477,12 +477,20 @@ class _DashboardContext:
                 self.derived_cost.get("filas_costo_no_positivo", 0) or 0
             )
             extreme = int(self.derived_cost.get("filas_costo_extremo", 0) or 0)
-            invalid_cost_rows = non_positive + extreme
-            if invalid_cost_rows:
-                formatted_invalid = f"{invalid_cost_rows:,}".replace(",", ".")
+            if non_positive:
+                formatted_non_positive = f"{non_positive:,}".replace(",", ".")
                 warnings.append(
-                    f"{formatted_invalid} costos unitarios del maestro quedaron fuera "
-                    "del cálculo porque eran cero, negativos o extremos."
+                    f"{formatted_non_positive} costo(s) unitario(s) del maestro quedaron "
+                    "fuera del cálculo porque eran cero o negativos."
+                )
+            if extreme:
+                # No se excluyen del cálculo (son datos reales), solo se marcan
+                # para revisión -- distinto de los no positivos, que sí se excluyen.
+                formatted_extreme = f"{extreme:,}".replace(",", ".")
+                warnings.append(
+                    f"{formatted_extreme} costo(s) unitario(s) del maestro son extremos "
+                    "(fuera del rango típico) pero se mantienen en el cálculo; "
+                    "revísalos antes de certificar el resultado."
                 )
         return {
             "rows_before": int(self.provenance.get("rows_before", len(self.merged))),

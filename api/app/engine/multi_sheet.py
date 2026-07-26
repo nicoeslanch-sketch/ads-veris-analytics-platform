@@ -55,7 +55,16 @@ def is_unit_cost_column(column: str | None) -> bool:
 
 
 def _valid_unit_costs(values: pd.Series) -> tuple[pd.Series, dict[str, Any]]:
-    """Conserva costos unitarios plausibles sin reemplazar inválidos por cero."""
+    """Conserva costos unitarios plausibles sin reemplazar inválidos por cero.
+
+    Un costo unitario fuera del rango típico (IQR) NUNCA se descarta del
+    cálculo -- es un dato real (ej. un producto premium en un catálogo de
+    productos económicos), y excluirlo dejaba esa venta sin costo/utilidad
+    en vez de usar su valor real. Solo se cuenta aparte ("filas_costo_extremo")
+    para que quien certifique el resultado sepa qué filas conviene revisar.
+    Un costo no positivo (cero o negativo) sigue siendo un dato inválido y
+    se excluye -- eso no cambia.
+    """
 
     numeric = pd.to_numeric(values, errors="coerce").astype(float)
     positive = numeric[numeric > 0]
@@ -67,14 +76,11 @@ def _valid_unit_costs(values: pd.Series) -> tuple[pd.Series, dict[str, Any]]:
         if math.isfinite(iqr):
             limit = q3 + 5 * iqr
     valid = numeric > 0
-    if limit is not None:
-        valid &= numeric <= limit
+    extreme = valid & (numeric > limit) if limit is not None else pd.Series(False, index=numeric.index)
     return numeric.where(valid), {
         "limite_costo_unitario": limit,
         "filas_costo_no_positivo": int((numeric.notna() & (numeric <= 0)).sum()),
-        "filas_costo_extremo": int(
-            (numeric.notna() & (numeric > limit)).sum()
-        ) if limit is not None else 0,
+        "filas_costo_extremo": int(extreme.sum()),
     }
 
 

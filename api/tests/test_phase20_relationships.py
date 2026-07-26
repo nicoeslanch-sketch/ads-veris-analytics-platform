@@ -422,7 +422,13 @@ def test_product_detail_margin_uses_only_income_with_paired_cost():
     ) == pytest.approx(kpis["utilidad"]["value"])
 
 
-def test_extreme_unit_cost_is_excluded_instead_of_inventing_a_loss():
+def test_extreme_unit_cost_stays_in_the_total_but_is_flagged_for_review():
+    """Regresión QA: un costo unitario atípico (ej. un error de captura o un
+    ítem realmente premium) es un dato REAL del maestro -- excluirlo del
+    cálculo dejaba esa venta "sin costo" en vez de usar su valor real, y
+    escondía el impacto en vez de mostrarlo. Ahora se incluye siempre en el
+    total y solo se marca aparte (cobertura 100%, no 95.2%) para que quien
+    certifique el resultado sepa qué fila conviene revisar."""
     product_ids = [f"P{i:02d}" for i in range(21)]
     ventas = pd.DataFrame(
         {
@@ -447,10 +453,13 @@ def test_extreme_unit_cost_is_excluded_instead_of_inventing_a_loss():
         _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
     )
     kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
-    assert kpis["costo"]["value"] == pytest.approx(8000.0)
-    assert kpis["cobertura"]["value"] == pytest.approx(95.2)
+    # 20 × 400 + 1 × 20.000.000: el costo atípico se suma, no se descarta.
+    assert kpis["costo"]["value"] == pytest.approx(20_008_000.0)
+    assert kpis["cobertura"]["value"] == pytest.approx(100.0)
     assert "estimado" in kpis["costo"]["label"].lower()
     assert any("extremo" in warning for warning in dashboard["quality"]["warnings"])
+    # El aviso debe reflejar que el dato se mantiene, no que se excluyó.
+    assert any("se mantienen en el cálculo" in warning for warning in dashboard["quality"]["warnings"])
 
 
 def test_sales_relationship_uses_declared_period_when_no_filter_is_selected():
