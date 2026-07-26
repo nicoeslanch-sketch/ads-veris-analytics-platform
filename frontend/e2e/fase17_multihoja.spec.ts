@@ -277,16 +277,19 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await expect(page.getByText(/Evolución de Ingresos|Ingresos por mes/)).toBeVisible({ timeout: 90_000 })
     const compactFlow = page.getByTestId('summary-compact-flow')
     await expect(compactFlow).toBeVisible()
-    // El flujo en columnas conserva la altura natural de cada tarjeta. Una
-    // agrupación larga no estira la dona o la proyección de la columna vecina.
+    // La grilla conserva el orden de lectura y la altura natural de cada
+    // tarjeta, sin huecos ni reordenamientos entre columnas.
     const compactLayout = await compactFlow.evaluate((element) => {
       const children = Array.from(element.children) as HTMLElement[]
+      const style = getComputedStyle(element)
       return {
-        columnCount: Number.parseInt(getComputedStyle(element).columnCount, 10),
+        display: style.display,
+        columnCount: style.gridTemplateColumns.split(' ').filter(Boolean).length,
         cardCount: children.length,
         distinctHeights: new Set(children.map((child) => Math.round(child.getBoundingClientRect().height))).size,
       }
     })
+    expect(compactLayout.display).toBe('grid')
     expect(compactLayout.columnCount).toBeGreaterThanOrEqual(2)
     expect(compactLayout.cardCount).toBeGreaterThan(1)
     expect(compactLayout.distinctHeights).toBeGreaterThan(1)
@@ -438,11 +441,15 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   const flow = page.getByTestId('business-summary-flow')
   await expect(flow).toBeVisible()
   const layout = await flow.evaluate((element) => ({
-    columns: getComputedStyle(element).columnCount,
+    display: getComputedStyle(element).display,
+    columns: getComputedStyle(element).gridTemplateColumns
+      .split(' ')
+      .filter(Boolean).length,
     width: element.scrollWidth,
     clientWidth: element.clientWidth,
   }))
-  expect(layout.columns).toBe('2')
+  expect(layout.display).toBe('grid')
+  expect(layout.columns).toBe(2)
   expect(layout.width).toBeLessThanOrEqual(layout.clientWidth + 1)
   await page.screenshot({ path: testInfo.outputPath('resumen-empresarial-desktop.png'), fullPage: true })
 

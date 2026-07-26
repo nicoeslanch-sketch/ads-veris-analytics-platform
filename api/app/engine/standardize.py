@@ -110,7 +110,11 @@ def missing_mask(series: pd.Series) -> pd.Series:
 
 def physical_missing_mask(series: pd.Series) -> pd.Series:
     """Celdas realmente vacías; no incluye placeholders ni tokens como N/A."""
-    return series.astype(str).str.strip().eq("")
+    # Dependiendo de la ruta de lectura, una celda vacía puede llegar como
+    # ``NaN``/``None`` (pandas) o como cadena vacía (normalización del motor).
+    # Ambas son ausencias físicas; los textos literales "N/A", "null", etc.
+    # siguen tratándose aparte como placeholders semánticos.
+    return series.isna() | series.astype(str).str.strip().eq("")
 
 
 def is_semantic_placeholder(value: str, role: str | None) -> bool:

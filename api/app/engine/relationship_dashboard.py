@@ -23,7 +23,14 @@ from typing import Any
 
 import pandas as pd
 
-from .business import _dates, _status_mask, _text_key
+from .business import (
+    _applicable_unit_cost,
+    _dates,
+    _declared_sales_period,
+    _sheet_kind,
+    _status_mask,
+    _text_key,
+)
 from .mapping import resolve_mapping
 from .metrics import CurrencyDetection
 from .multi_sheet import join_related_frames, relation_stats
@@ -214,6 +221,11 @@ def build_relationship_dashboard(
     template, label, purpose = classify_relationship_template(
         left_name, left, left_mapping, right_name, right, right_mapping
     )
+    if purpose.startswith("ventas_") and date_from is None and date_to is None:
+        declared_from, declared_to = _declared_sales_period(frames)
+        if declared_from is not None and declared_to is not None:
+            date_from = declared_from.date().isoformat()
+            date_to = declared_to.date().isoformat()
     relation_meta = {
         **relationship,
         "template": template,
@@ -230,6 +242,78 @@ def build_relationship_dashboard(
     join_right = right
     if template == "sales_inventory":
         join_right = collapse_inventory_snapshots(right, keys=list(right_keys))
+
+    if _sheet_kind(right_name, right) == "historial_costos" and purpose == "ventas_costos":
+        product_key = (
+            left_mapping.get("producto")
+            or find_column(left.columns, "sku", "producto")
+            or find_column(left.columns, "id", "producto")
+        )
+        date_column = left_mapping.get("fecha") or find_column(left.columns, "fecha")
+        quantity_column = left_mapping.get("cantidad") or find_column(
+            left.columns, "cantidad"
+        )
+        unit_cost, cost_source, _ = _applicable_unit_cost(
+            left,
+            product_key,
+            _dates(left, date_column),
+            None,
+            None,
+            None,
+            right,
+        )
+        quantity = numeric_series(left, quantity_column)
+        historical_cost = (quantity * unit_cost).where(
+            quantity.notna() & unit_cost.notna() & cost_source.eq("historial_asof")
+        )
+        merged = left.copy()
+        cost_column = "Costo_Venta_Historico"
+        suffix = 2
+        while cost_column in merged.columns:
+            cost_column = f"Costo_Venta_Historico_{suffix}"
+            suffix += 1
+        merged[cost_column] = historical_cost
+        merged_mapping = dict(left_mapping)
+        merged_mapping["costo"] = cost_column
+        matched_rows = int(historical_cost.notna().sum())
+        provenance = {
+            "mode": "asof",
+            "left_sheet": left_name,
+            "right_sheet": right_name,
+            "rows_before": len(left),
+            "rows_after": len(left),
+            "filas_sin_correspondencia": int(len(left) - matched_rows),
+            "coverage": round(matched_rows / max(len(left), 1), 4),
+            "join_strategy": "vigencia_por_fecha",
+        }
+        relation_meta.update(
+            {
+                "cardinality": "muchos_a_uno_temporal",
+                "coverage_left": provenance["coverage"],
+                "coverage_right": 1.0,
+                "overlap": provenance["coverage"],
+                "safe": True,
+            }
+        )
+        context = _DashboardContext(
+            left_name=left_name,
+            right_name=right_name,
+            left_keys=list(left_keys),
+            right_keys=list(right_keys),
+            merged=merged,
+            merged_mapping=merged_mapping,
+            right=right,
+            right_mapping=right_mapping,
+            provenance=provenance,
+            relation=relation_meta,
+            template=template,
+            currency=currency,
+            date_from=date_from,
+            date_to=date_to,
+            derived_cost=None,
+            append_sheets=append_sheets,
+        )
+        return context.build()
 
     stats = relation_stats(left, list(left_keys), join_right, list(right_keys))
     relation_meta["cardinality"] = stats.cardinality
@@ -388,6 +472,18 @@ class _DashboardContext:
                 f"{unmatched:,} filas de {left_label} no encontraron correspondencia "
                 f"en {self.right_name}.".replace(",", ".")
             )
+        if self.derived_cost:
+            non_positive = int(
+                self.derived_cost.get("filas_costo_no_positivo", 0) or 0
+            )
+            extreme = int(self.derived_cost.get("filas_costo_extremo", 0) or 0)
+            invalid_cost_rows = non_positive + extreme
+            if invalid_cost_rows:
+                formatted_invalid = f"{invalid_cost_rows:,}".replace(",", ".")
+                warnings.append(
+                    f"{formatted_invalid} costos unitarios del maestro quedaron fuera "
+                    "del cálculo porque eran cero, negativos o extremos."
+                )
         return {
             "rows_before": int(self.provenance.get("rows_before", len(self.merged))),
             "rows_after": rows_after,
@@ -516,8 +612,10 @@ class _DashboardContext:
         if self.category_col:
             columns.insert(1, {"key": "categoria", "label": "Categoría", "format": "text"})
         if with_margin and self.cost_col:
-            columns.append({"key": "utilidad", "label": "Utilidad", "format": "currency"})
-            columns.append({"key": "margen", "label": "Margen", "format": "percent"})
+            utility_label = "Utilidad estimada" if self.derived_cost else "Utilidad"
+            margin_label = "Margen estimado" if self.derived_cost else "Margen"
+            columns.append({"key": "utilidad", "label": utility_label, "format": "currency"})
+            columns.append({"key": "margen", "label": margin_label, "format": "percent"})
         rows: list[dict[str, Any]] = []
         for clave, row in agg.head(TABLE_LIMIT).iterrows():
             nombre = row["nombre"] if pd.notna(row["nombre"]) else str(clave)
@@ -537,7 +635,7 @@ class _DashboardContext:
                 )
                 entry["utilidad"] = _clean_number(utilidad)
                 entry["margen"] = (
-                    _clean_number(utilidad / row["ingresos"])
+                    _clean_number(utilidad / row["ingresos"] * 100)
                     if utilidad is not None and row["ingresos"]
                     else None
                 )
@@ -638,14 +736,24 @@ class _DashboardContext:
         profit = self._product_profit()
         rentables = int((profit["margen"] > 0).sum()) if not profit.empty else None
         riesgo = int((profit["margen"] <= 0).sum()) if not profit.empty else None
+        estimated = bool(self.derived_cost)
         kpis = [
             _kpi("ventas", "Ventas netas", _clean_number(totals["ingresos"]), "currency"),
-            _kpi("costo", "Costo de venta", _clean_number(margin["costo"]), "currency"),
-            _kpi("utilidad", "Utilidad bruta", _clean_number(margin["utilidad"]), "currency",
+            _kpi(
+                "costo",
+                "Costo de venta estimado" if estimated else "Costo de venta",
+                _clean_number(margin["costo"]),
+                "currency",
+                help_text="Cantidad vendida × costo unitario válido del maestro actual."
+                if estimated else None,
+            ),
+            _kpi("utilidad", "Utilidad bruta estimada" if estimated else "Utilidad bruta",
+                 _clean_number(margin["utilidad"]), "currency",
                  tone="positive" if (margin["utilidad"] or 0) >= 0 else "risk"),
-            _kpi("margen", "Margen bruto",
+            _kpi("margen", "Margen bruto estimado" if estimated else "Margen bruto",
                  _clean_number(margin["margen"] * 100) if margin["margen"] is not None else None,
-                 "percent", help_text="Utilidad bruta / ingresos pareados."),
+                 "percent", help_text="Utilidad bruta / ingresos pareados; usa el costo unitario actual."
+                 if estimated else "Utilidad bruta / ingresos pareados."),
             _kpi("cobertura", "Cobertura de costos", _clean_number(coverage), "percent",
                  help_text=f"{with_cost} de {total} ventas del periodo tienen costo."),
             _kpi("rentables", "Productos rentables", rentables, "integer", tone="positive"),
@@ -694,8 +802,10 @@ class _DashboardContext:
             "id": "utilidad_producto",
             "kind": "bar",
             "orientation": "horizontal",
-            "title": "Top productos por utilidad bruta",
-            "help": "Utilidad bruta (ingreso − costo pareado) por producto.",
+            "title": "Top productos por utilidad bruta estimada"
+            if self.derived_cost else "Top productos por utilidad bruta",
+            "help": "Utilidad bruta estimada (ingreso − costo unitario actual × cantidad) por producto."
+            if self.derived_cost else "Utilidad bruta (ingreso − costo pareado) por producto.",
             "category_key": "producto",
             "series": [{"key": "utilidad", "label": "Utilidad", "format": "currency"}],
             "data": data,
@@ -724,8 +834,10 @@ class _DashboardContext:
         return {
             "id": "margen_categoria",
             "kind": "combo",
-            "title": "Ventas, costos y margen por categoría",
-            "help": "Compara ventas y costos pareados; la línea usa el eje derecho para el margen.",
+            "title": "Ventas, costos y margen estimado por categoría"
+            if self.derived_cost else "Ventas, costos y margen por categoría",
+            "help": "Compara ventas y costos estimados con el maestro actual; la línea usa el eje derecho para el margen."
+            if self.derived_cost else "Compara ventas y costos pareados; la línea usa el eje derecho para el margen.",
             "category_key": "categoria",
             "series": [
                 {
@@ -753,7 +865,7 @@ class _DashboardContext:
                     "color_role": "profit",
                 },
             ],
-            "note": "El margen se calcula solo sobre ventas con costo válido; las ventas sin costo no se tratan como costo cero.",
+            "note": "El margen se calcula solo sobre ventas con costo válido; las ventas sin costo o con costo inválido no se tratan como costo cero.",
             "data": [
                 {
                     "categoria": str(index),
@@ -867,6 +979,9 @@ class _DashboardContext:
                     else pd.to_datetime(text)
                 )
                 frame = frame[frame["_fecha"].isna() | frame["_fecha"].le(end)]
+            valid_snapshots = frame["_fecha"].dropna()
+            if not valid_snapshots.empty:
+                frame = frame.loc[frame["_fecha"].eq(valid_snapshots.max())]
             frame = frame.sort_values("_fecha")
         frame = frame.dropna(subset=["_clave"])
         latest = frame.groupby(["_clave", "_sucursal"], dropna=False).tail(1)

@@ -380,7 +380,7 @@ export interface RelationshipCandidate extends AnalysisJoin {
   overlap: number
   unique_left: number
   unique_right: number
-  cardinality: 'uno_a_uno' | 'muchos_a_uno' | 'uno_a_muchos' | 'muchos_a_muchos' | 'sin_relacion_segura'
+  cardinality: 'uno_a_uno' | 'muchos_a_uno' | 'muchos_a_uno_temporal' | 'uno_a_muchos' | 'muchos_a_muchos' | 'sin_relacion_segura'
   safe: boolean
   reason: string | null
   left_rows?: number
@@ -423,6 +423,7 @@ export interface CatalogRelationship extends AnalysisJoin {
   id: string
   /** Hojas transaccionales compatibles que se apilan antes de relacionar. */
   append_sheets?: string[]
+  join_strategy?: 'vigencia_por_fecha'
   template: RelationshipTemplate
   label: string
   purpose: string
@@ -656,6 +657,9 @@ export interface BusinessAnalysis {
     filas_totales_estructurales: number
     filas_anuladas: number
     filas_indicadores: number
+    periodo_declarado?: { desde: string | null; hasta: string | null } | null
+    filas_fecha_invalida?: number
+    filas_fuera_periodo_declarado?: number
     documentos_repetidos: number
     filas_adicionales_documento: number
     documentos_conflictivos: number
@@ -666,14 +670,23 @@ export interface BusinessAnalysis {
     ventas_pareadas: number
     costo_venta_conocido: number
     costo_venta_estimado_catalogo: number
+    costo_venta_con_relleno_estimado?: number
+    ventas_pareadas_estimadas?: number
+    utilidad_bruta_estimada?: number | null
+    margen_bruto_estimado_pct?: number | null
     utilidad_bruta: number | null
     margen_bruto_pct: number | null
     gastos_operacionales: number | null
     gastos_operacionales_periodo: number | null
+    base_gastos_operacionales?: 'monto_neto' | 'monto_gasto' | 'total_gasto' | null
+    iva_gastos_excluido?: number | null
     filas_gastos: number
     resultado_operacional: number | null
     margen_operacional_pct: number | null
+    depreciacion_amortizacion?: number | null
+    ebitda?: number | null
     cobertura_costos_pct: number
+    cobertura_costos_estimada_pct?: number
     cobertura_costos_historica_pct: number
     cobertura_costos_certificable_pct: number
     ventas_certificables_pareadas: number
@@ -688,13 +701,26 @@ export interface BusinessAnalysis {
     cobranza_sobre_documentos_pct: number | null
     documentos_sobrepagados: number
     pagos_duplicados_excluidos: number
+    cobranzas_huerfanas?: number
+    cuentas_por_cobrar?: number | null
+    cuentas_vencidas?: number | null
+    dso_dias?: number | null
+    mora_promedio_dias?: number | null
     valor_inventario: number | null
+    stock_inventario?: number | null
+    inventario_bajo_minimo?: number | null
+    fecha_corte_inventario?: string | null
     compras_efectivas: number | null
+    fletes_compra?: number | null
     gastos_fijos: number | null
     gastos_variables: number | null
     gasto_fijo_mensual_promedio: number | null
     punto_equilibrio_ventas: number | null
     rotacion_inventario_aprox: number | null
+    inversion_marketing?: number | null
+    ctr_marketing_pct?: number | null
+    conversion_marketing_pct?: number | null
+    costo_por_conversion?: number | null
   }
   evolucion: Array<{
     mes: string
@@ -720,6 +746,8 @@ export interface BusinessAnalysis {
     cumplimiento_pct: number | null
     meta_margen_pct: number | null
     meta_nuevos_clientes: number | null
+    metas_cumplidas?: number | null
+    metas_evaluadas?: number | null
     por_mes: Array<{
       mes: string
       meta_venta: number
@@ -925,6 +953,9 @@ export interface MetricsResult {
     clics: number
     ctr_pct: number | null
     cpc: number | null
+    conversiones?: number
+    tasa_conversion_pct?: number | null
+    costo_por_conversion?: number | null
     plataformas: Array<{ nombre: string; registros: number }>
     estados: Array<{ nombre: string; registros: number }>
     /** Fase 18: métricas por plataforma para graficar. */
@@ -941,6 +972,8 @@ export interface MetricsResult {
   }
   analisis_inventario?: {
     registros: number
+    registros_fuente?: number
+    fecha_corte?: string | null
     productos: number
     stock_total: number
     stock_minimo_total: number
@@ -980,6 +1013,7 @@ export interface MetricsResult {
       | 'gastos'
       | 'cobranzas'
       | 'historial_costos'
+      | 'auxiliar'
       | null
     distribuciones?: Array<{
       columna: string

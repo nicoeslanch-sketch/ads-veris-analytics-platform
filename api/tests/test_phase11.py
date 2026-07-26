@@ -124,6 +124,14 @@ def test_resolve_mapping_fusiona_override_parcial():
     assert resolved.get("categoria") == "tipo"
 
 
+def test_resolve_mapping_prefers_net_amount_over_gross_total():
+    columns = ["Cantidad", "Precio_Unitario", "Monto_Neto", "IVA", "Total"]
+
+    resolved = resolve_mapping(columns, None)
+
+    assert resolved.get("monto") == "Monto_Neto"
+
+
 def test_metrics_con_mapping_parcial_conserva_ingresos(client, auth_headers):
     """Antes de la Fase 11, enviar un mapping con UN rol reemplazaba el mapeo
     completo: el dashboard quedaba en $0 tras corregir una sola columna."""

@@ -79,6 +79,64 @@ ENGINE_ROLES: tuple[str, ...] = tuple(role for role, _ in ROLE_KEYWORDS)
 _METHOD_RANK = {"exacto": 4, "contencion": 3, "prefijo": 2, "fuzzy": 1, "ia": 1}
 
 
+def _semantic_role_rank(role: str, column: str) -> int:
+    """Prefer business totals over taxes, unit prices and gross references.
+
+    The dictionary match remains useful for vocabulary coverage, but a generic
+    ``Total`` must not beat ``Monto_Neto`` merely because it matched exactly.
+    The score is deliberately context-free so it also improves purchases,
+    expenses and other transaction sheets without depending on exact names.
+    """
+
+    compact = norm_key(column)
+    if role == "monto":
+        if any(
+            marker in compact
+            for marker in (
+                "preciounitario",
+                "valorunitario",
+                "costounitario",
+                "costoporclic",
+                "ticketpromedio",
+            )
+        ):
+            return -200
+        if any(
+            marker in compact
+            for marker in (
+                "montoneto",
+                "ventaneta",
+                "totalneto",
+                "importeneto",
+                "netamount",
+                "netsales",
+                "netrevenue",
+            )
+        ):
+            return 200
+        if any(
+            marker in compact
+            for marker in (
+                "montogasto",
+                "montopagado",
+                "montopago",
+                "montodocumento",
+                "metaventa",
+                "inversion",
+            )
+        ):
+            return 150
+        if "iva" in compact or compact in {"impuesto", "tax"}:
+            return -150
+        if "total" in compact:
+            return 80
+        if any(marker in compact for marker in ("monto", "importe", "ingreso", "venta")):
+            return 120
+        if any(marker in compact for marker in ("preciolista", "valorinventario")):
+            return 20
+    return 0
+
+
 def _legacy_semantically_compatible(role: str, normalized_column: str) -> bool:
     """Evita que la red legacy contradiga un encabezado semanticamente claro.
 
@@ -152,7 +210,12 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
                 or not _legacy_semantically_compatible(role, str(col))
             ):
                 continue
-            rank = (_METHOD_RANK.get(match.metodo, 0), match.prioridad, -index)
+            rank = (
+                _semantic_role_rank(role, str(col)),
+                _METHOD_RANK.get(match.metodo, 0),
+                match.prioridad,
+                -index,
+            )
             if best is None or rank > best[0]:
                 best = (rank, col)
         if best:

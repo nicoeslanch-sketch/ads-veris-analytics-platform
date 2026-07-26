@@ -86,6 +86,173 @@ def test_business_analysis_excludes_totals_and_cancelled_rows_and_uses_asof_cost
     assert "Parametros" not in result["alcance"]["hojas_utilizadas"]
 
 
+def test_business_analysis_detects_total_footer_with_native_null_cells():
+    frames = {
+        "Ventas_2026": pd.DataFrame(
+            [
+                {
+                    "Fecha Venta": "01/01/2026",
+                    "ID Venta": "V1",
+                    "Monto Venta": 200,
+                    "Estado": "Vigente",
+                },
+                {
+                    "Fecha Venta": pd.NA,
+                    "ID Venta": "TOTAL",
+                    "Monto Venta": 200,
+                    "Estado": pd.NA,
+                },
+            ]
+        )
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    assert result["alcance"]["filas_totales_estructurales"] == 1
+    assert result["estado_resultados"]["ventas_observadas"] == 200
+
+
+def test_operating_expenses_use_net_amount_and_exclude_invalid_dates():
+    frames = {
+        "Ventas_2026": pd.DataFrame(
+            [
+                {
+                    "Fecha Venta": "01/01/2026",
+                    "ID Documento": "D1",
+                    "SKU Producto": "A",
+                    "Cantidad": "1",
+                    "Monto Venta": "200",
+                    "Estado": "Vigente",
+                },
+                {
+                    "Fecha Venta": "31/02/2026",
+                    "ID Documento": "D2",
+                    "SKU Producto": "A",
+                    "Cantidad": "1",
+                    "Monto Venta": "100",
+                    "Estado": "Vigente",
+                },
+            ]
+        ),
+        "Costos_Productos": pd.DataFrame(
+            [{"SKU Producto": "A", "Costo Unitario": "40"}]
+        ),
+        "Gastos_Operacionales": pd.DataFrame(
+            [
+                {
+                    "Fecha Gasto": "15/01/2026",
+                    "Monto Neto": "50",
+                    "IVA": "9.5",
+                    "Total Gasto": "59.5",
+                    "Tipo Gasto": "Fijo",
+                    "Estado": "Pagado",
+                },
+                {
+                    "Fecha Gasto": "31/02/2026",
+                    "Monto Neto": "100",
+                    "IVA": "19",
+                    "Total Gasto": "119",
+                    "Tipo Gasto": "Fijo",
+                    "Estado": "Pagado",
+                },
+            ]
+        ),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    statement = result["estado_resultados"]
+    # Both sales remain in the global observed result, including the sale whose
+    # date needs correction. The invalid-dated expense cannot be assigned to a
+    # month and therefore stays out of the operating result.
+    assert statement["utilidad_bruta"] == 220
+    assert statement["gastos_operacionales"] == 50
+    assert statement["base_gastos_operacionales"] == "monto_neto"
+    assert statement["iva_gastos_excluido"] == 9.5
+    assert statement["filas_gastos"] == 1
+    assert statement["resultado_operacional"] == 170
+
+
+def test_declared_sales_period_excludes_invalid_and_out_of_period_rows():
+    frames = {
+        "Parametros": pd.DataFrame(
+            [
+                {
+                    "Parámetro": "Periodo ventas",
+                    "Valor": "01-01-2026 a 30-06-2026",
+                }
+            ]
+        ),
+        "Ventas_2026": pd.DataFrame(
+            [
+                {
+                    "Fecha Venta": "15/06/2026",
+                    "ID Documento": "D1",
+                    "SKU Producto": "A",
+                    "Cantidad": "1",
+                    "Monto Venta": "200",
+                    "Estado": "Vigente",
+                },
+                {
+                    "Fecha Venta": "15/08/2026",
+                    "ID Documento": "D2",
+                    "SKU Producto": "A",
+                    "Cantidad": "1",
+                    "Monto Venta": "300",
+                    "Estado": "Vigente",
+                },
+                {
+                    "Fecha Venta": "31/02/2026",
+                    "ID Documento": "D3",
+                    "SKU Producto": "A",
+                    "Cantidad": "1",
+                    "Monto Venta": "400",
+                    "Estado": "Vigente",
+                },
+            ]
+        ),
+        "Costos_Productos": pd.DataFrame(
+            [{"SKU Producto": "A", "Costo Unitario": "40"}]
+        ),
+        "Gastos_Operacionales": pd.DataFrame(
+            [
+                {
+                    "Fecha Gasto": "20/06/2026",
+                    "Monto Neto": "50",
+                    "IVA": "9.5",
+                    "Total Gasto": "59.5",
+                    "Estado": "Pagado",
+                },
+                {
+                    "Fecha Gasto": "20/08/2026",
+                    "Monto Neto": "70",
+                    "IVA": "13.3",
+                    "Total Gasto": "83.3",
+                    "Estado": "Pagado",
+                },
+            ]
+        ),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    assert result["alcance"]["periodo_declarado"] == {
+        "desde": "2026-01-01",
+        "hasta": "2026-06-30",
+    }
+    # La fila sin fecha permanece en el total global, pero no se asigna a un
+    # mes ni a un costo por vigencia. La fila válida fuera del periodo sí sale.
+    assert result["alcance"]["filas_indicadores"] == 2
+    assert result["alcance"]["filas_fecha_invalida"] == 1
+    assert result["alcance"]["filas_fuera_periodo_declarado"] == 1
+    assert result["estado_resultados"]["ventas_observadas"] == 600
+    assert result["estado_resultados"]["gastos_operacionales"] == 50
+    assert [row["mes"] for row in result["evolucion"]] == ["2026-06"]
+
+
 def test_products_sheet_without_costo_in_its_name_is_still_used_as_cost_source():
     """Regresión QA: una PyME chica suele tener un solo "Productos" con ID,
     categoria y Costo_Unitario en la misma hoja, sin nombrarla "Costos_...".
@@ -327,8 +494,10 @@ def test_current_catalogue_fills_history_gaps_without_certifying_the_estimate():
     result = analyze_business_workbook(frames, _sales_mapping(), {})
 
     assert result is not None
-    assert result["estado_resultados"]["cobertura_costos_pct"] == 100
-    assert result["estado_resultados"]["costo_venta_conocido"] == 100
+    assert result["estado_resultados"]["cobertura_costos_pct"] == 0
+    assert result["estado_resultados"]["cobertura_costos_estimada_pct"] == 100
+    assert result["estado_resultados"]["costo_venta_conocido"] == 0
+    assert result["estado_resultados"]["costo_venta_estimado_catalogo"] == 100
     assert result["estado_resultados"]["cobertura_costos_certificable_pct"] == 0
     assert result["estado_resultados"]["utilidad_certificable"] is None
     assert result["calidad"]["costos"]["filas_costo_actual_estimado"] == 1
@@ -360,7 +529,9 @@ def test_certifiable_sales_keep_one_exact_copy_and_exclude_conflicting_ids():
 
     assert result is not None
     assert result["estado_resultados"]["ventas_observadas"] == 450
-    assert result["estado_resultados"]["ventas_certificables"] == 100
+    # Los hallazgos no eliminan filas en silencio: toda corrección requiere una
+    # acción confirmada en Limpieza.
+    assert result["estado_resultados"]["ventas_certificables"] == 450
     assert result["alcance"]["documentos_repetidos"] == 2
     assert result["alcance"]["filas_adicionales_documento"] == 2
     assert result["alcance"]["documentos_conflictivos"] == 1

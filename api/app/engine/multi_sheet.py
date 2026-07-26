@@ -54,6 +54,30 @@ def is_unit_cost_column(column: str | None) -> bool:
     )
 
 
+def _valid_unit_costs(values: pd.Series) -> tuple[pd.Series, dict[str, Any]]:
+    """Conserva costos unitarios plausibles sin reemplazar inválidos por cero."""
+
+    numeric = pd.to_numeric(values, errors="coerce").astype(float)
+    positive = numeric[numeric > 0]
+    limit: float | None = None
+    if len(positive) >= 20:
+        q1 = float(positive.quantile(0.25))
+        q3 = float(positive.quantile(0.75))
+        iqr = q3 - q1
+        if math.isfinite(iqr):
+            limit = q3 + 5 * iqr
+    valid = numeric > 0
+    if limit is not None:
+        valid &= numeric <= limit
+    return numeric.where(valid), {
+        "limite_costo_unitario": limit,
+        "filas_costo_no_positivo": int((numeric.notna() & (numeric <= 0)).sum()),
+        "filas_costo_extremo": int(
+            (numeric.notna() & (numeric > limit)).sum()
+        ) if limit is not None else 0,
+    }
+
+
 def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> dict:
     """Contrato compacto, estricto y serializable del alcance compartido."""
     if not raw:
@@ -296,6 +320,27 @@ def _relation_stats_from_series(
 
 
 def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str, str]]:
+    def identifier_domain(column: str) -> str | None:
+        compact = norm_key(column)
+        aliases = {
+            "producto": ("producto", "product", "sku", "articulo", "item"),
+            "cliente": ("cliente", "customer", "comprador"),
+            "trabajador": (
+                "vendedor",
+                "trabajador",
+                "empleado",
+                "ejecutivo",
+                "seller",
+            ),
+            "sucursal": ("sucursal", "tienda", "local", "branch"),
+            "proveedor": ("proveedor", "supplier", "vendor"),
+            "documento": ("documento", "factura", "boleta", "invoice", "folio"),
+        }
+        for domain, markers in aliases.items():
+            if any(marker in compact for marker in markers):
+                return domain
+        return None
+
     right_by_norm = {norm_key(str(column)): str(column) for column in right.columns}
     pairs: list[tuple[str, str]] = []
     left_extended = detect_columns_extended([str(column) for column in left.columns])
@@ -317,9 +362,38 @@ def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str,
             pairs.append((left_name, right_name))
             continue
         if not left_match or left_match.grupo != "identificador":
-            continue
+            left_domain = identifier_domain(left_name)
+            if not looks_identifier or not left_domain:
+                continue
+        else:
+            left_domain = identifier_domain(left_name)
+        if left_domain:
+            domain_candidate = next(
+                (
+                    str(candidate)
+                    for candidate in right.columns
+                    if identifier_domain(str(candidate)) == left_domain
+                    and norm_key(str(candidate)).startswith(
+                        ("id", "codigo", "sku", "rut", "folio", "uuid", "clave")
+                    )
+                ),
+                None,
+            )
+            if domain_candidate:
+                pairs.append((left_name, domain_candidate))
+                continue
         for candidate, right_match in right_extended.items():
-            if right_match.grupo == "identificador" and right_match.rol == left_match.rol:
+            same_dictionary_role = bool(
+                left_match
+                and right_match.grupo == "identificador"
+                and right_match.rol == left_match.rol
+            )
+            same_business_domain = bool(
+                left_domain
+                and identifier_domain(candidate) == left_domain
+                and right_match.grupo == "identificador"
+            )
+            if same_dictionary_role or same_business_domain:
                 pairs.append((left_name, candidate))
                 break
     return pairs
@@ -627,6 +701,21 @@ def join_related_frames(
         if column in left.columns:
             rename[column] = f"{column}_{right_name}"
     right_subset = right_subset.rename(columns=rename)
+    right_cost_original = right_mapping.get("costo")
+    right_cost_column = (
+        rename.get(right_cost_original, right_cost_original)
+        if right_cost_original else None
+    )
+    cost_quality: dict[str, Any] = {}
+    if (
+        right_cost_column
+        and right_cost_column in right_subset.columns
+        and is_unit_cost_column(right_cost_original)
+    ):
+        sanitized_cost, cost_quality = _valid_unit_costs(
+            _numeric_values(right_subset, right_cost_column)
+        )
+        right_subset[right_cost_column] = sanitized_cost
     merged = left.merge(
         right_subset,
         how="left",
@@ -645,8 +734,6 @@ def join_related_frames(
     if redundant_right_keys:
         merged = merged.drop(columns=redundant_right_keys)
     derived_cost: dict[str, Any] | None = None
-    right_cost_original = right_mapping.get("costo")
-    right_cost_column = rename.get(right_cost_original, right_cost_original) if right_cost_original else None
     quantity_column = left_mapping.get("cantidad")
     amount_column = left_mapping.get("monto")
     existing_cost_column = left_mapping.get("costo")
@@ -699,6 +786,7 @@ def join_related_frames(
             "filas_con_costo": int(paired.sum()),
             "filas_con_utilidad": int(paired_amount.sum()),
             "cobertura_costos_pct": round(float(paired.mean() * 100), 2) if len(merged) else 0.0,
+            **cost_quality,
         }
     after_totals = _metric_totals(merged, left_mapping)
     if len(merged) != len(left):
