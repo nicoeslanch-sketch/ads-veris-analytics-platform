@@ -24,6 +24,7 @@ from app.engine.standardize import column_date_profile, parse_date, standardize_
 from app.routes.pipeline import _clean_download_book_sync
 from app.routes.pipeline import _analysis_export_type_columns
 from app.routes.pipeline import _cache_key
+from app.routes.pipeline import _metrics_multi_from_processed
 from app.routes.pipeline import _relationships_sync
 from app.routes.pipeline import _write_clean_sheet
 
@@ -209,6 +210,83 @@ def test_append_join_accepts_one_sales_sheet_and_one_catalog():
     assert joined["Utilidad_Bruta"].sum() == 400
     assert mapping["costo"] == "Costo_Venta"
     assert provenance["join"]["filas_sin_correspondencia"] == 0
+
+
+def test_business_view_does_not_materialize_a_duplicate_cost_master():
+    """La vista empresarial audita el maestro; no multiplica ni bloquea ventas."""
+
+    frames = {
+        "Ventas": pd.DataFrame(
+            {
+                "Fecha": ["01/01/2026", "02/01/2026"],
+                "ID_Documento": ["D1", "D2"],
+                "ID_Producto": ["A", "B"],
+                "Cantidad": [1, 1],
+                "Monto_Neto": [100, 200],
+            }
+        ),
+        "Productos": pd.DataFrame(
+            {
+                "ID_Producto": ["A", "A", "B"],
+                "Costo_Unitario": [40, 60, 80],
+            }
+        ),
+    }
+    mappings = {
+        "Ventas": {
+            "fecha": "Fecha",
+            "monto": "Monto_Neto",
+            "cantidad": "Cantidad",
+            "producto": "ID_Producto",
+        },
+        "Productos": {
+            "producto": "ID_Producto",
+            "costo": "Costo_Unitario",
+        },
+    }
+    results = {
+        name: {
+            "resumen": {"calidad_despues": 100},
+            "problemas": {},
+            "correcciones": {},
+            "avisos": [],
+        }
+        for name in frames
+    }
+    scope = {
+        "mode": "append_join",
+        "sheets": ["Ventas", "Productos"],
+        "append_sheets": ["Ventas"],
+        "active_sheet": "Ventas",
+        "join": {
+            "left_sheet": "Ventas",
+            "right_sheet": "Productos",
+            "left_keys": ["ID_Producto"],
+            "right_keys": ["ID_Producto"],
+            "type": "left",
+        },
+    }
+
+    metrics = _metrics_multi_from_processed(
+        "libro.xlsx",
+        frames,
+        mappings,
+        results,
+        scope,
+        None,
+        None,
+    )
+
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 300
+    assert metrics["analysis_provenance"]["rows"] == 2
+    assert (
+        metrics["analysis_provenance"]["join"][
+            "materializada_en_resumen_generico"
+        ]
+        is False
+    )
+    assert metrics["analisis_negocio"]["estado_resultados"]["ventas_observadas"] == 300
+    assert metrics["analisis_negocio"]["calidad"]["costos"]["conflictivas"] == 1
 
 
 def test_join_scope_preserves_relationship_id_without_changing_mode():

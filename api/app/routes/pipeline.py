@@ -83,6 +83,7 @@ from ..engine.metrics import (
     is_transaction_profile,
 )
 from ..engine.multi_sheet import (
+    append_compatible_frames,
     build_analysis_frame,
     detect_relationships,
     is_unit_cost_column,
@@ -2743,7 +2744,34 @@ def _metrics_multi_from_processed(
     business_view = analysis_scope["mode"] == "append_join"
     _validate_scope_currencies(analysis_scope, mappings, results, business_filters)
     try:
-        frame, mapping, provenance = build_analysis_frame(frames, mappings, analysis_scope)
+        if business_view:
+            # La visión empresarial calcula costos y utilidad desde las hojas
+            # originales mediante relaciones controladas (incluido historial
+            # as-of). No necesita materializar previamente Ventas → Productos.
+            # Esa unión genérica puede rechazar correctamente un maestro con
+            # claves repetidas, pero no debe bloquear todo el análisis ni
+            # reemplazar costos históricos por el catálogo actual.
+            append_names = analysis_scope["append_sheets"]
+            append_frames = {name: frames[name] for name in append_names}
+            frame, mapping, append_provenance = append_compatible_frames(
+                append_frames,
+                mappings,
+                allow_single=True,
+            )
+            provenance = {
+                "mode": "append_join",
+                "append": append_provenance,
+                "join": {
+                    **analysis_scope["join"],
+                    "materializada_en_resumen_generico": False,
+                    "motivo": "La rentabilidad se calcula desde las hojas originales sin multiplicar ventas.",
+                },
+                "rows": len(frame),
+            }
+        else:
+            frame, mapping, provenance = build_analysis_frame(
+                frames, mappings, analysis_scope
+            )
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     hint_sheet = (
