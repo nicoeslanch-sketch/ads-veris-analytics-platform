@@ -2745,29 +2745,33 @@ def _metrics_multi_from_processed(
     _validate_scope_currencies(analysis_scope, mappings, results, business_filters)
     try:
         if business_view:
-            # La visión empresarial calcula costos y utilidad desde las hojas
-            # originales mediante relaciones controladas (incluido historial
-            # as-of). No necesita materializar previamente Ventas → Productos.
-            # Esa unión genérica puede rechazar correctamente un maestro con
-            # claves repetidas, pero no debe bloquear todo el análisis ni
-            # reemplazar costos históricos por el catálogo actual.
-            append_names = analysis_scope["append_sheets"]
-            append_frames = {name: frames[name] for name in append_names}
-            frame, mapping, append_provenance = append_compatible_frames(
-                append_frames,
-                mappings,
-                allow_single=True,
-            )
-            provenance = {
-                "mode": "append_join",
-                "append": append_provenance,
-                "join": {
-                    **analysis_scope["join"],
-                    "materializada_en_resumen_generico": False,
-                    "motivo": "La rentabilidad se calcula desde las hojas originales sin multiplicar ventas.",
-                },
-                "rows": len(frame),
-            }
+            # Mantener las tarjetas genéricas de costo cuando el maestro admite
+            # una relación many-to-one segura. Si la relación es ambigua, la
+            # vista empresarial sigue calculando desde las hojas originales
+            # (incluido el historial as-of) y no multiplica ni bloquea ventas.
+            try:
+                frame, mapping, provenance = build_analysis_frame(
+                    frames, mappings, analysis_scope
+                )
+                provenance["join"]["materializada_en_resumen_generico"] = True
+            except ValueError as join_error:
+                append_names = analysis_scope["append_sheets"]
+                append_frames = {name: frames[name] for name in append_names}
+                frame, mapping, append_provenance = append_compatible_frames(
+                    append_frames,
+                    mappings,
+                    allow_single=True,
+                )
+                provenance = {
+                    "mode": "append_join",
+                    "append": append_provenance,
+                    "join": {
+                        **analysis_scope["join"],
+                        "materializada_en_resumen_generico": False,
+                        "motivo": str(join_error),
+                    },
+                    "rows": len(frame),
+                }
         else:
             frame, mapping, provenance = build_analysis_frame(
                 frames, mappings, analysis_scope

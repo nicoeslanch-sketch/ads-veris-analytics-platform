@@ -212,6 +212,66 @@ def test_append_join_accepts_one_sales_sheet_and_one_catalog():
     assert provenance["join"]["filas_sin_correspondencia"] == 0
 
 
+def test_business_view_materializes_a_safe_cost_master_for_generic_cards():
+    frames = {
+        "Ventas": pd.DataFrame(
+            {
+                "Fecha": ["01/01/2026", "02/01/2026"],
+                "ID_Producto": ["A", "B"],
+                "Cantidad": [2, 1],
+                "Monto": [500, 300],
+            }
+        ),
+        "Productos": pd.DataFrame(
+            {"ID_Producto": ["A", "B"], "Costo_Unitario": [100, 200]}
+        ),
+    }
+    mappings = {
+        "Ventas": {
+            "fecha": "Fecha",
+            "producto": "ID_Producto",
+            "cantidad": "Cantidad",
+            "monto": "Monto",
+        },
+        "Productos": {"producto": "ID_Producto", "costo": "Costo_Unitario"},
+    }
+    results = {
+        name: {
+            "resumen": {"calidad_despues": 100},
+            "problemas": {},
+            "correcciones": {},
+            "avisos": [],
+        }
+        for name in frames
+    }
+    scope = {
+        "mode": "append_join",
+        "sheets": ["Ventas", "Productos"],
+        "append_sheets": ["Ventas"],
+        "active_sheet": "Ventas",
+        "join": {
+            "left_sheet": "Ventas",
+            "right_sheet": "Productos",
+            "left_keys": ["ID_Producto"],
+            "right_keys": ["ID_Producto"],
+            "type": "left",
+        },
+    }
+
+    metrics = _metrics_multi_from_processed(
+        "libro.xlsx", frames, mappings, results, scope, None, None
+    )
+
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 800
+    assert metrics["kpis"]["gastos_totales"]["valor"] == 400
+    assert (
+        metrics["analysis_provenance"]["join"][
+            "materializada_en_resumen_generico"
+        ]
+        is True
+    )
+
+
 def test_business_view_does_not_materialize_a_duplicate_cost_master():
     """La vista empresarial audita el maestro; no multiplica ni bloquea ventas."""
 
