@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowRight,
+  Bell,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
@@ -30,7 +31,7 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import { PlanUpsell } from '../components/ui/PlanGate'
-import { BusinessQualityPanel } from '../components/BusinessAnalysisPanel'
+import { useAuth } from '../auth/AuthContext'
 import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
@@ -39,6 +40,11 @@ import { saveCleaningJob, saveColumnMapping } from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
 import { useCapability, usePlan } from '../lib/usePlan'
+import {
+  buildBusinessAlerts,
+  loadAlertRules,
+  loadAlertStatuses,
+} from '../lib/businessAlerts'
 import {
   basicMappingQuestions,
   cleaningScopeState,
@@ -151,6 +157,7 @@ function QualityRing({ quality }: { quality: number }) {
 }
 
 export default function Limpieza() {
+  const { user } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const demo = useDemo()
@@ -218,6 +225,15 @@ export default function Limpieza() {
     | null
   const automaticMapping = standardization?.mapeo ?? {}
   const effectiveMapping = applyMappingOverrides(automaticMapping, mappingOverride)
+  const pendingAlerts = useMemo(() => {
+    if (!metrics) return []
+    const statuses = loadAlertStatuses(user?.id ?? null, datasetId)
+    return buildBusinessAlerts(metrics, loadAlertRules(user?.id ?? null))
+      .filter((alert) => (
+        (statuses[alert.id] ?? 'pendiente') === 'pendiente'
+        && (!sheet || alert.sheet === sheet)
+      ))
+  }, [datasetId, metrics, sheet, user?.id])
   const availableColumns =
     (cleaning ?? detection)?.preview.columnas ?? standardization?.preview.columnas ?? []
   const extendedMapping = standardization?.mapeo_extendido ?? {}
@@ -994,6 +1010,22 @@ export default function Limpieza() {
           subtitle="Revisa, ajusta y limpia tus datos para que estén listos para el análisis."
         />
         <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+          <Link
+            to={`/alertas${sheet ? `?sheet=${encodeURIComponent(sheet)}` : ''}`}
+            title={pendingAlerts.length > 0
+              ? `Ver las alertas relacionadas con ${sheet ?? 'el dataset actual'}`
+              : 'No hay alertas pendientes para el análisis actual'}
+            aria-disabled={pendingAlerts.length === 0}
+            className={[
+              'inline-flex w-full items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors sm:w-auto',
+              pendingAlerts.length > 0
+                ? 'border-gold/40 bg-gold/10 text-navy hover:bg-gold/20'
+                : 'pointer-events-none border-navy/10 bg-navy/[0.03] text-navy/35',
+            ].join(' ')}
+          >
+            <Bell className="h-4 w-4" />
+            {pendingAlerts.length > 0 ? `Ver alertas (${pendingAlerts.length})` : 'Sin alertas'}
+          </Link>
           {/* Fase 11 §6.2: salida explícita para estandarizar OTRO documento */}
           <Link
             to="/estandarizacion"
@@ -1139,12 +1171,6 @@ export default function Limpieza() {
           </div>
         </Card>
       </div>
-
-      {metrics?.analisis_negocio && (
-        <div className="mt-6">
-          <BusinessQualityPanel analysis={metrics.analisis_negocio} />
-        </div>
-      )}
 
       {/* Pasos de limpieza — barra horizontal compacta (Fase 8: sin columna
           lateral alargada; el ancho completo queda para los datos) */}

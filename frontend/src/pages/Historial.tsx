@@ -32,6 +32,8 @@ import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { apiDelete, apiPost, buildDatasetForm, ApiError } from '../lib/api'
 import {
+  ACTIVITY_RETENTION_DAYS,
+  RECENT_ACTIVITY_LIMIT,
   deleteAnalysis,
   fetchActivity,
   fetchAnalyses,
@@ -514,7 +516,10 @@ export default function Historial() {
           {/* Actividad */}
           <Card className="h-fit min-w-0 max-w-full overflow-hidden lg:overflow-visible">
             <h2 className="text-base font-semibold text-navy">Actividad reciente</h2>
-            <ul className="mt-4 space-y-4">
+            <p className="mt-0.5 text-xs text-navy/50">
+              Últimos {ACTIVITY_RETENTION_DAYS} días · hasta {RECENT_ACTIVITY_LIMIT} movimientos.
+            </p>
+            <ul className="mt-4 max-h-[34rem] space-y-4 overflow-y-auto pr-1">
               {(activity ?? []).map((item) => {
                 const meta = ACTIVITY_META[item.activity_type]
                 const description = sanitizeActivityDescription(item.description)

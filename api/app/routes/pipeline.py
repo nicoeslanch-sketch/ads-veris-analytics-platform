@@ -25,6 +25,7 @@ import copy
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import threading
@@ -46,6 +47,8 @@ from fastapi import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from .. import quota
 from ..auth import AuthenticatedUser, get_current_user
@@ -281,11 +284,19 @@ def _analysis_cache_store(key: tuple, value: dict) -> dict:
 
 
 def _analysis_cache_compute(key: tuple, producer) -> dict:
+    started = time.monotonic()
+    deadline = started + 120
+    cache_kind = str(key[0]) if key else "analysis"
     while True:
         with _ANALYSIS_CACHE_LOCK:
             cached = _ANALYSIS_CACHE.get(key)
             if cached is not None:
                 _ANALYSIS_CACHE.move_to_end(key)
+                logger.info(
+                    "analysis_cache_hit kind=%s duration_ms=%d",
+                    cache_kind,
+                    round((time.monotonic() - started) * 1000),
+                )
                 return copy.deepcopy(cached)
             event = _ANALYSIS_INFLIGHT.get(key)
             if event is None:
@@ -296,10 +307,30 @@ def _analysis_cache_compute(key: tuple, producer) -> dict:
                 owns_work = False
         if owns_work:
             break
-        event.wait(timeout=180)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not event.wait(timeout=remaining):
+            logger.warning(
+                "analysis_cache_wait_timeout kind=%s duration_ms=%d",
+                cache_kind,
+                round((time.monotonic() - started) * 1000),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "El análisis anterior no terminó dentro de 120 segundos. "
+                    "Puedes reintentar; no se iniciará un trabajo duplicado."
+                ),
+            )
 
     try:
-        return _analysis_cache_store(key, producer())
+        logger.info("analysis_cache_compute_start kind=%s", cache_kind)
+        result = _analysis_cache_store(key, producer())
+        logger.info(
+            "analysis_cache_compute_done kind=%s duration_ms=%d",
+            cache_kind,
+            round((time.monotonic() - started) * 1000),
+        )
+        return result
     finally:
         with _ANALYSIS_CACHE_LOCK:
             finished = _ANALYSIS_INFLIGHT.pop(key, None)
@@ -550,6 +581,9 @@ _VALID_MAPPING_ROLES = {
     "fecha", "cliente", "producto", "categoria", "monto", "costo",
     "cantidad", "canal", "sucursal", "vendedor",
 }
+_VALID_BUSINESS_FILTERS = {
+    "sucursal", "canal", "vendedor", "categoria", "producto", "moneda",
+}
 
 
 def _validate_rules(rules: dict) -> dict:
@@ -584,6 +618,39 @@ def _validate_mapping(mapping: dict | None) -> dict | None:
                 detail=f"El mapeo del rol '{role}' debe ser el nombre de una columna (texto).",
             )
     return mapping
+
+
+def _validate_business_filters(filters: dict | None) -> dict[str, str]:
+    if not filters:
+        return {}
+    if not isinstance(filters, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Los filtros empresariales deben enviarse como un objeto.",
+        )
+    if len(filters) > len(_VALID_BUSINESS_FILTERS):
+        raise HTTPException(status_code=422, detail="Hay demasiados filtros empresariales.")
+    cleaned: dict[str, str] = {}
+    for key, value in filters.items():
+        if key not in _VALID_BUSINESS_FILTERS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Filtro empresarial desconocido: '{key}'.",
+            )
+        if not isinstance(value, str):
+            raise HTTPException(
+                status_code=422,
+                detail=f"El filtro '{key}' debe ser texto.",
+            )
+        selected = value.strip()
+        if len(selected) > 200:
+            raise HTTPException(
+                status_code=422,
+                detail=f"El valor del filtro '{key}' es demasiado largo.",
+            )
+        if selected:
+            cleaned[key] = selected
+    return cleaned
 
 
 def _validate_scope(scope: dict | None) -> dict | None:
@@ -812,6 +879,7 @@ def _validate_scope_currencies(
     analysis_scope: dict,
     mappings: dict[str, dict[str, str]],
     results: dict[str, dict],
+    business_filters: dict[str, str] | None = None,
 ) -> None:
     """Impide combinar indicadores monetarios de monedas incompatibles."""
     currencies: set[str] = set()
@@ -827,6 +895,9 @@ def _validate_scope_currencies(
                 status_code=422,
                 detail="Hay monedas incompatibles dentro de una de las hojas seleccionadas.",
             )
+        selected_currency = (business_filters or {}).get("moneda")
+        if selected_currency and currency.dominante != selected_currency:
+            continue
         currencies.add(currency.dominante)
     if len(currencies) > 1:
         raise HTTPException(
@@ -2667,9 +2738,10 @@ def _metrics_multi_from_processed(
     analysis_scope: dict,
     date_from: str | None,
     date_to: str | None,
+    business_filters: dict[str, str] | None = None,
 ) -> dict:
     business_view = analysis_scope["mode"] == "append_join"
-    _validate_scope_currencies(analysis_scope, mappings, results)
+    _validate_scope_currencies(analysis_scope, mappings, results, business_filters)
     try:
         frame, mapping, provenance = build_analysis_frame(frames, mappings, analysis_scope)
     except (KeyError, ValueError) as exc:
@@ -2724,6 +2796,7 @@ def _metrics_multi_from_processed(
             results,
             date_from=date_from,
             date_to=date_to,
+            filters=business_filters,
         )
         if business is not None:
             computed["analisis_negocio"] = business
@@ -2738,6 +2811,7 @@ def _metrics_multi_sync(
     date_from: str | None,
     date_to: str | None,
     cache_dataset_id: str | None = None,
+    business_filters: dict[str, str] | None = None,
 ) -> dict:
     business_view = analysis_scope["mode"] == "append_join"
     frames, mappings, results = _processed_manifest_frames(
@@ -2755,6 +2829,7 @@ def _metrics_multi_sync(
         analysis_scope,
         date_from,
         date_to,
+        business_filters,
     )
 
 
@@ -2767,6 +2842,7 @@ def _metrics_multi_cached_sync(
     date_to: str | None,
     cache_dataset_id: str | None,
     user_id: str,
+    business_filters: dict[str, str] | None = None,
 ) -> dict:
     key = _analysis_cache_key(
         "metrics_multi",
@@ -2778,6 +2854,7 @@ def _metrics_multi_cached_sync(
         analysis_scope,
         date_from,
         date_to,
+        business_filters,
     )
     return _analysis_cache_compute(
         key,
@@ -2789,6 +2866,7 @@ def _metrics_multi_cached_sync(
             date_from,
             date_to,
             cache_dataset_id,
+            business_filters,
         ),
     )
 
@@ -4542,6 +4620,7 @@ async def metrics(
     sheet: str | None = Form(None),
     manifest: str | None = Form(None),
     analysis_scope: str | None = Form(None),
+    business_filters: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -4557,6 +4636,11 @@ async def metrics(
             raise HTTPException(status_code=422, detail="Las metricas multihoja requieren analysis_scope.")
         available = [entry["nombre"] for entry in sheet_manifest["hojas"]]
         parsed_analysis_scope = _parse_analysis_scope(analysis_scope, available)
+        parsed_business_filters = _validate_business_filters(
+            _parse_json_field(business_filters, "business_filters")
+            if business_filters
+            else None
+        )
         return await run_in_threadpool(
             _metrics_multi_cached_sync,
             filename,
@@ -4567,6 +4651,7 @@ async def metrics(
             date_to,
             dataset_id,
             user.id,
+            parsed_business_filters,
         )
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))

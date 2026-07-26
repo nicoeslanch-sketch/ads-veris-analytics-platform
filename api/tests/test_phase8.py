@@ -171,12 +171,16 @@ def test_retention_poda_excedente_y_antiguos(monkeypatch):
     monkeypatch.setattr(
         retention_module, "_unlink_datasets", lambda uid, names, s: None
     )
+    monkeypatch.setattr(
+        retention_module, "_prune_activity", lambda uid, s: 2
+    )
 
     result = retention_module._retention_sync("user-1", settings)
     assert result["eliminados"] == 3
     assert deleted[0] == ["f3.csv", "f4.csv", "f5.csv"]
     assert result["conservados"] == 3
     assert result["limite"] == 4
+    assert result["actividad_eliminada"] == 2
 
 
 def test_retention_keep_last_es_intocable(monkeypatch):
@@ -204,10 +208,46 @@ def test_retention_keep_last_es_intocable(monkeypatch):
         lambda uid, names, s: (_ for _ in ()).throw(AssertionError("no debe borrar")),
     )
     monkeypatch.setattr(retention_module, "_unlink_datasets", lambda uid, names, s: None)
+    monkeypatch.setattr(retention_module, "_prune_activity", lambda uid, s: 0)
 
     result = retention_module._retention_sync("user-1", settings)
     assert result["eliminados"] == 0
     assert result["conservados"] == 3
+
+
+def test_retention_poda_solo_actividad_antigua_del_usuario(monkeypatch):
+    """La poda REST queda acotada por usuario y por la fecha configurada."""
+    from app.config import Settings
+    from app.routes import retention as retention_module
+
+    settings = Settings(
+        supabase_url="https://proyecto-test.supabase.co",
+        supabase_service_role_key="service-key",
+        activity_retention_days=30,
+    )
+    captured: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [{"id": "old-1"}, {"id": "old-2"}]
+
+    def fake_request(method, url, **kwargs):
+        captured.update({"method": method, "url": url, **kwargs})
+        return FakeResponse()
+
+    monkeypatch.setattr(retention_module.httpx, "request", fake_request)
+
+    deleted = retention_module._prune_activity("user-1", settings)
+
+    assert deleted == 2
+    assert captured["method"] == "DELETE"
+    assert captured["url"].endswith("/rest/v1/activity_log")
+    assert captured["params"]["user_id"] == "eq.user-1"
+    assert captured["params"]["created_at"].startswith("lt.")
+    assert captured["headers"]["Prefer"] == "return=representation"
 
 
 # ── Motor: robustez extra Fase 8 (§5.14) ─────────────────────────────────────

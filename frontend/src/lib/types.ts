@@ -629,8 +629,22 @@ export interface BusinessRatio {
   requiere: string[]
 }
 
+export type BusinessFilterKey =
+  | 'sucursal'
+  | 'canal'
+  | 'vendedor'
+  | 'categoria'
+  | 'producto'
+  | 'moneda'
+
+export type BusinessFilters = Partial<Record<BusinessFilterKey, string>>
+
 export interface BusinessAnalysis {
   version: number
+  filtros?: {
+    disponibles: Partial<Record<BusinessFilterKey, string[]>>
+    aplicados: BusinessFilters
+  }
   estado_certificacion: 'certified' | 'partial' | 'blocked'
   confianza_pct: number
   alcance: {
@@ -638,6 +652,7 @@ export interface BusinessAnalysis {
     hoja_costos: string | null
     hoja_historial_costos: string | null
     hojas_utilizadas: string[]
+    filas_ventas_sin_filtros?: number
     filas_ventas_fisicas: number
     filas_totales_estructurales: number
     filas_anuladas: number

@@ -32,6 +32,7 @@ from .multi_sheet import (
     MAX_RELATION_KEYS,
     _candidate_pairs,
     is_unit_cost_column,
+    join_related_frames,
     relation_stats,
 )
 from .quality import find_column
@@ -622,6 +623,22 @@ def detect_relationship_catalog(
             **({"join_strategy": "vigencia_por_fecha"} if temporal_history else {}),
         }
         if safe:
+            # Una conexión puede tener cardinalidad segura y aun así violar
+            # una invariancia financiera (filas, ventas, cantidades o costos).
+            # La probamos antes de publicarla: el selector manual solo muestra
+            # conexiones que realmente pueden ejecutarse con este archivo.
+            try:
+                join_related_frames(
+                    {left_name: left, right_name: right_eval},
+                    {
+                        left_name: resolved[left_name],
+                        right_name: resolved[right_name],
+                    },
+                    entry,
+                )
+            except (KeyError, TypeError, ValueError):
+                discarded += 1
+                continue
             relationships.append(entry)
         elif had_candidates:
             discarded += 1

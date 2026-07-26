@@ -5,7 +5,6 @@ import {
   Calculator,
   CheckCircle2,
   CircleDollarSign,
-  CircleHelp,
   Link2,
   Package,
   Receipt,
@@ -284,6 +283,34 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
   const operatingExpenseLabel = result.base_gastos_operacionales === 'monto_neto'
     ? 'gastos operacionales netos (IVA separado)'
     : 'gastos operacionales'
+  const latest = analysis.evolucion[analysis.evolucion.length - 1]
+  const previous = analysis.evolucion[analysis.evolucion.length - 2]
+  const compare = (current: number | null | undefined, prior: number | null | undefined) => {
+    if (current == null || prior == null) return 'Sin periodo anterior comparable'
+    const nominal = current - prior
+    const variation = prior === 0 ? null : (nominal / Math.abs(prior)) * 100
+    return `${nominal >= 0 ? '↑' : '↓'} ${money(Math.abs(nominal))}${
+      variation == null ? '' : ` · ${formatNumber(Math.abs(variation))}%`
+    } vs mes anterior`
+  }
+  const compareMargin = (
+    currentProfit: number | null | undefined,
+    currentSales: number | null | undefined,
+    previousProfit: number | null | undefined,
+    previousSales: number | null | undefined,
+  ) => {
+    if (
+      currentProfit == null || currentSales == null || currentSales === 0
+      || previousProfit == null || previousSales == null || previousSales === 0
+    ) return 'Sin periodo anterior comparable'
+    const delta = (currentProfit / currentSales - previousProfit / previousSales) * 100
+    return `${delta >= 0 ? '↑' : '↓'} ${formatNumber(Math.abs(delta))} pp vs mes anterior`
+  }
+  const certification = analysis.estado_certificacion === 'certified'
+    ? 'Certificado'
+    : analysis.estado_certificacion === 'partial'
+      ? 'Parcial'
+      : 'No certificado'
   const cards = [
     {
       label: 'Ventas netas observadas',
@@ -293,15 +320,30 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         : `${formatNumber(analysis.alcance.filas_indicadores)} filas incluidas`,
       icon: CircleDollarSign,
       color: CHART.ingresos,
+      comparison: compare(latest?.ventas, previous?.ventas),
+      state: certification,
+    },
+    {
+      label: 'Costo de ventas histórico',
+      value: money(result.costo_venta_conocido),
+      detail: usesEstimatedCosts
+        ? `${percent(result.cobertura_costos_historica_pct)} con vigencia; el catálogo actual se informa aparte`
+        : `${percent(result.cobertura_costos_pct)} de cobertura histórica`,
+      icon: Receipt,
+      color: CHART.gastos,
+      comparison: compare(latest?.costo, previous?.costo),
+      state: result.cobertura_costos_historica_pct >= 99.5 ? certification : 'Parcial',
     },
     {
       label: 'Utilidad bruta histórica',
       value: money(result.utilidad_bruta),
       detail: usesEstimatedCosts
         ? `${percent(result.cobertura_costos_historica_pct)} con vigencia; el relleno actual se informa aparte`
-        : `${percent(result.cobertura_costos_pct)} de cobertura`,
+        : 'ventas pareadas − costo de ventas histórico',
       icon: TrendingUp,
       color: CHART.utilidad,
+      comparison: compare(latest?.utilidad_bruta, previous?.utilidad_bruta),
+      state: provisionalProfitability ? 'Parcial' : certification,
     },
     {
       label: provisionalProfitability ? 'Margen bruto · base histórica' : 'Margen bruto',
@@ -309,15 +351,35 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
       detail: 'solo ventas con costo relacionado',
       icon: Scale,
       color: CHART.flujo,
+      comparison: compareMargin(
+        latest?.utilidad_bruta,
+        latest?.ventas,
+        previous?.utilidad_bruta,
+        previous?.ventas,
+      ),
+      state: provisionalProfitability ? 'Parcial' : certification,
     },
     {
-      label: 'Resultado operacional',
+      label: 'Gastos operativos',
+      value: money(result.gastos_operacionales_periodo ?? result.gastos_operacionales),
+      detail: result.filas_gastos > 0
+        ? `${formatNumber(result.filas_gastos)} registros comparables`
+        : 'Conecta una hoja de gastos operacionales',
+      icon: Wallet,
+      color: CATEGORICAL[2],
+      comparison: compare(latest?.gastos_operacionales, previous?.gastos_operacionales),
+      state: result.gastos_operacionales == null ? 'Dato faltante' : certification,
+    },
+    {
+      label: 'Utilidad operacional',
       value: money(result.resultado_operacional),
       detail: result.margen_operacional_pct == null
         ? 'sin ventas, costos y gastos comparables suficientes'
         : `ventas − costo de venta − ${operatingExpenseLabel} · margen ${percent(result.margen_operacional_pct)}`,
       icon: Wallet,
       color: CHART.alerta,
+      comparison: compare(latest?.resultado_operacional, previous?.resultado_operacional),
+      state: result.resultado_operacional == null ? 'Dato faltante' : certification,
     },
     {
       label: 'Cuentas por cobrar',
@@ -327,6 +389,10 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         : `${money(operation.cuentas_vencidas)} vencido · DSO ${operation.dso_dias == null ? '—' : `${formatNumber(operation.dso_dias)} días`}`,
       icon: Receipt,
       color: CHART.gastos,
+      comparison: operation.mora_promedio_dias == null
+        ? 'Sin antigüedad de mora comparable'
+        : `${formatNumber(operation.mora_promedio_dias)} días de mora promedio`,
+      state: operation.cuentas_por_cobrar == null ? 'Dato faltante' : certification,
     },
     {
       label: 'Inventario valorizado',
@@ -338,6 +404,10 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         : `${formatNumber(operation.rotacion_inventario_aprox)}x · corte ${operation.fecha_corte_inventario ?? 'disponible'}`,
       icon: Package,
       color: CATEGORICAL[3],
+      comparison: operation.inventario_bajo_minimo == null
+        ? 'Sin mínimo de inventario comparable'
+        : `${formatNumber(operation.inventario_bajo_minimo)} registros bajo mínimo`,
+      state: operation.valor_inventario == null ? 'Dato faltante' : certification,
     },
     ...(result.ebitda != null
       ? [{
@@ -346,6 +416,8 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           detail: `resultado operacional + ${money(result.depreciacion_amortizacion)} de depreciación/amortización`,
           icon: Wallet,
           color: CATEGORICAL[4],
+          comparison: 'Calculado sólo con partidas presentes en el libro',
+          state: certification,
         }]
       : []),
     ...(analysis.metas.metas_evaluadas
@@ -355,6 +427,10 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           detail: 'comparadas por mes y sucursal',
           icon: Target,
           color: CATEGORICAL[5],
+          comparison: analysis.metas.cumplimiento_pct == null
+            ? 'Sin cumplimiento global comparable'
+            : `${percent(analysis.metas.cumplimiento_pct)} de la meta de ventas`,
+          state: certification,
         }]
       : []),
   ]
@@ -369,11 +445,39 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           : null,
     }))
   const qualityIssueCount = certificationBlockers(analysis).length
+  const contributionRows = [
+    ...(analysis.agrupaciones.productos ?? []),
+    ...(analysis.agrupaciones.categorias ?? []),
+    ...(analysis.agrupaciones.sucursales ?? []),
+  ].filter((row) => row.utilidad != null)
+  const sortedContributions = contributionRows
+    .sort((left, right) => (right.utilidad ?? 0) - (left.utilidad ?? 0))
+  const topContribution = sortedContributions[0]
+  const latestSalesChange = latest && previous && previous.ventas !== 0
+    ? ((latest.ventas - previous.ventas) / Math.abs(previous.ventas)) * 100
+    : null
+  const conclusions = [
+    latestSalesChange == null
+      ? 'No existe un periodo anterior completo para medir crecimiento.'
+      : `Las ventas del último mes ${latestSalesChange >= 0 ? 'crecieron' : 'cayeron'} ${formatNumber(Math.abs(latestSalesChange))}% frente al mes anterior.`,
+    result.utilidad_bruta == null
+      ? 'No se puede explicar el cambio en utilidad hasta completar la relación de costos.'
+      : `La utilidad bruta conocida es ${money(result.utilidad_bruta)} con margen de ${percent(result.margen_bruto_pct)}.`,
+    topContribution
+      ? `${topContribution.nombre} es el mayor aporte identificable a la utilidad conocida (${money(topContribution.utilidad)}).`
+      : 'No hay una dimensión con costo pareado suficiente para atribuir la utilidad.',
+    qualityIssueCount > 0
+      ? `${formatNumber(qualityIssueCount)} alerta(s) pueden afectar la certificación de los indicadores.`
+      : 'No hay bloqueos de certificación pendientes en este análisis.',
+    result.cobertura_costos_certificable_pct < 95
+      ? `La principal oportunidad es elevar la cobertura de costos desde ${percent(result.cobertura_costos_certificable_pct)}.`
+      : 'La cobertura de costos permite comparar la rentabilidad con una base amplia.',
+  ]
 
   return (
     <div className="space-y-6">
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map(({ label, value, detail, icon: Icon, color }) => (
+        {cards.map(({ label, value, detail, icon: Icon, color, comparison, state }) => (
           <Card
             key={label}
             className="!p-4"
@@ -387,6 +491,17 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
             </div>
             <p className="mt-3 break-words text-xl font-bold leading-tight text-navy">{value}</p>
             <p className="mt-1 text-[11px] leading-relaxed text-navy/50">{detail}</p>
+            <p className="mt-2 text-[10px] font-medium text-navy/55">{comparison}</p>
+            <span className={[
+              'mt-2 inline-flex rounded-full px-2 py-0.5 text-[9px] font-semibold',
+              state === 'Certificado'
+                ? 'bg-green/10 text-green'
+                : state === 'Dato faltante' || state === 'No certificado'
+                  ? 'bg-coral/10 text-coral'
+                  : 'bg-gold/15 text-amber-700',
+            ].join(' ')}>
+              {state}
+            </span>
           </Card>
         ))}
       </section>
@@ -394,21 +509,20 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
       {qualityIssueCount > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold/30 bg-gold/[0.07] px-4 py-3">
           <p className="text-xs leading-relaxed text-navy/70">
-            Hay {formatNumber(qualityIssueCount)} tipo(s) de hallazgo pendiente(s) de revisión.
-            El detalle con hojas y filas está en Limpieza de datos.
+            Hay {formatNumber(qualityIssueCount)} alerta(s) que podrían afectar algunos indicadores.
           </p>
           <Link
-            to="/limpieza?revision=1"
+            to="/alertas"
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal hover:text-navy"
           >
-            Ver detalle <ArrowRight className="h-3.5 w-3.5" />
+            Ver alertas <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
       )}
 
       <div data-testid="business-summary-flow" className="grid items-start gap-6 xl:grid-cols-2">
         {analysis.evolucion.length > 0 && (
-          <Card className="min-w-0 xl:col-span-2">
+          <Card id="business-trend" className="min-w-0 xl:col-span-2">
             <h2 className="text-base font-semibold text-navy">Evolución del negocio</h2>
             <p className="mt-1 text-xs text-navy/55">
               Resultado operacional = ventas − costo de venta relacionado − {operatingExpenseLabel} del periodo. Los gastos sin fecha válida quedan fuera del cálculo y los vacíos no se convierten en cero.
@@ -432,7 +546,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           </Card>
         )}
 
-        <Card className="min-w-0">
+        <Card id="business-profitability" className="min-w-0">
           <div className="flex items-center gap-2">
             <Target className="h-4.5 w-4.5 text-gold" />
             <h2 className="text-base font-semibold text-navy">Metas y punto de equilibrio</h2>
@@ -529,6 +643,37 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           )}
         </Card>
       </div>
+      <Card id="business-conclusions">
+        <h2 className="text-base font-semibold text-navy">Conclusiones del periodo</h2>
+        <p className="mt-1 text-xs text-navy/55">
+          Resultados deterministas sobre la información disponible; los datos parciales se indican expresamente.
+        </p>
+        <ol className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {conclusions.map((conclusion, index) => (
+            <li key={conclusion} className="rounded-lg border border-navy/10 bg-navy/[0.025] p-3">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-teal">
+                Conclusión {index + 1}
+              </span>
+              <p className="mt-1 text-xs leading-relaxed text-navy/70">{conclusion}</p>
+              {index < 3 ? (
+                <a
+                  href={index === 0 ? '#business-trend' : '#business-profitability'}
+                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
+                >
+                  Abrir gráfico
+                </a>
+              ) : (
+                <Link
+                  to="/alertas"
+                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
+                >
+                  Abrir detalle
+                </Link>
+              )}
+            </li>
+          ))}
+        </ol>
+      </Card>
     </div>
   )
 }
@@ -582,43 +727,6 @@ function DiagnosticAnalysis({ analysis }: { analysis: BusinessAnalysis }) {
         <p className="mt-1 text-sm text-navy/70">
           Aquí no repetimos el tablero: explicamos qué limita el resultado, dónde se concentra y qué decisión revisar primero.
         </p>
-      </section>
-
-      <section>
-        <div className="flex items-center gap-2">
-          <CircleHelp className="h-5 w-5 text-gold" />
-          <h2 className="text-lg font-semibold text-navy">Qué requiere tu atención</h2>
-        </div>
-        {analysis.decisiones.length > 0 ? (
-          <div className="mt-4 grid items-start gap-4 lg:grid-cols-2">
-            {analysis.decisiones.map((decision) => {
-              const high = decision.severidad === 'alta'
-              return (
-                <article
-                  key={decision.titulo}
-                  className={`rounded-lg border p-4 ${high ? 'border-coral/30 bg-coral/[0.055]' : 'border-gold/30 bg-gold/[0.06]'}`}
-                >
-                  <div className="flex items-start gap-3">
-                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${high ? 'bg-coral/10 text-coral' : 'bg-gold/15 text-gold'}`}>
-                      <AlertTriangle className="h-4 w-4" />
-                    </span>
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-semibold text-navy">{decision.titulo}</h3>
-                        <Badge tone={high ? 'coral' : 'gold'}>{decision.severidad}</Badge>
-                      </div>
-                      <p className="mt-2 text-xs leading-relaxed text-navy/65"><strong>Evidencia:</strong> {decision.evidencia}</p>
-                      <p className="mt-2 text-xs leading-relaxed text-navy/80"><strong>Acción:</strong> {decision.accion}</p>
-                      <p className="mt-2 text-[10px] text-navy/40">Confianza de la señal: {formatNumber(decision.confianza * 100)}%</p>
-                    </div>
-                  </div>
-                </article>
-              )
-            })}
-          </div>
-        ) : (
-          <p className="mt-3 text-sm text-navy/55">No se detectaron decisiones urgentes con la información disponible.</p>
-        )}
       </section>
 
       <div className="grid items-start gap-6 xl:grid-cols-2">

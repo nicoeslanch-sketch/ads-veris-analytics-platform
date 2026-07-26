@@ -9,6 +9,7 @@ import openpyxl
 import pandas as pd
 import pytest
 
+from app.engine import multi_sheet as multi_sheet_engine
 from app.engine.audit import build_audit_dataframe
 from app.engine.export import safe_export_dataframe
 from app.engine.loader import load_dataframe_with_report, load_dataframes_with_reports
@@ -630,6 +631,79 @@ def test_total_cost_reference_is_not_multiplied_or_recommended_as_unit_cost():
     assert provenance["costo_derivado"] is None
     assert relation["purpose"] == "enriquecer_referencia"
     assert relation["recommended"] is False
+
+
+def test_join_keeps_existing_transaction_cost_instead_of_replacing_it():
+    purchases = pd.DataFrame(
+        {
+            "SKU": ["A", "B"],
+            "Cantidad": [2, 3],
+            "Neto_Compra": [500, 900],
+            "Costo_Compra": [420, 780],
+        }
+    )
+    products = pd.DataFrame(
+        {"SKU": ["A", "B"], "Costo_Unitario": [100, 200], "Categoria": ["X", "Y"]}
+    )
+    mappings = {
+        "Compras": {
+            "producto": "SKU",
+            "cantidad": "Cantidad",
+            "monto": "Neto_Compra",
+            "costo": "Costo_Compra",
+        },
+        "Costos_Productos": {
+            "producto": "SKU",
+            "costo": "Costo_Unitario",
+            "categoria": "Categoria",
+        },
+    }
+
+    merged, mapping, provenance = join_related_frames(
+        {"Compras": purchases, "Costos_Productos": products},
+        mappings,
+        {
+            "left_sheet": "Compras",
+            "right_sheet": "Costos_Productos",
+            "left_keys": ["SKU"],
+            "right_keys": ["SKU"],
+            "type": "left",
+        },
+    )
+
+    assert len(merged) == len(purchases)
+    assert merged["Neto_Compra"].sum() == purchases["Neto_Compra"].sum()
+    assert merged["Costo_Compra"].sum() == purchases["Costo_Compra"].sum()
+    assert mapping["costo"] == "Costo_Compra"
+    assert "Costo_Venta" not in merged.columns
+    assert provenance["costo_derivado"] is None
+
+
+def test_join_invariance_error_identifies_relation_and_both_totals(monkeypatch):
+    left = pd.DataFrame({"SKU": ["A"], "Monto": [100]})
+    right = pd.DataFrame({"SKU": ["A"], "Categoria": ["X"]})
+    totals = iter(({"monto": 100.0}, {"monto": 90.0}))
+    monkeypatch.setattr(
+        multi_sheet_engine,
+        "_metric_totals",
+        lambda _frame, _mapping: next(totals),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Ventas → Productos.*monto.*original 100\.00, resultante 90\.00",
+    ):
+        join_related_frames(
+            {"Ventas": left, "Productos": right},
+            {"Ventas": {"monto": "Monto"}},
+            {
+                "left_sheet": "Ventas",
+                "right_sheet": "Productos",
+                "left_keys": ["SKU"],
+                "right_keys": ["SKU"],
+                "type": "left",
+            },
+        )
 
 
 def test_transaction_with_amount_and_price_list_is_not_hidden_as_catalog():

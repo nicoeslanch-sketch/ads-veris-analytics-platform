@@ -22,3 +22,8 @@ body,
 body {
   @apply bg-work font-sans text-navy antialiased;
 }
+@keyframes loading-slide {
+  0% { transform: translateX(-120%); }
+  50% { transform: translateX(200%); }
+  100% { transform: translateX(420%); }
+}

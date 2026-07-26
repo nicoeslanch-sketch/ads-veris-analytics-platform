@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Calendar, Check, ChevronDown, LogOut, Menu, Settings, User } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
-import { ALL_PERIOD, monthPeriod, useDataset } from '../../data/DatasetContext'
+import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../../data/DatasetContext'
 import { formatMonthShort } from '../../lib/charts'
 
 /** Rango por defecto: el mes actual, formateado es-CL (ej. "01 jun 2026 - 30 jun 2026"). */
@@ -13,6 +13,40 @@ function currentMonthRange(): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric' })
   return `${fmt(start)} - ${fmt(end)}`
+}
+
+function rangePeriod(label: string, months: string[]): Period {
+  const sorted = [...months].sort()
+  const first = sorted[0]
+  const last = sorted[sorted.length - 1]
+  const [year, month] = last.split('-').map(Number)
+  const lastDay = new Date(year, month, 0).getDate()
+  return {
+    from: `${first}-01`,
+    to: `${last}-${String(lastDay).padStart(2, '0')}`,
+    label,
+  }
+}
+
+function groupedPeriods(months: string[]) {
+  const years = new Map<string, string[]>()
+  const quarters = new Map<string, string[]>()
+  months.forEach((month) => {
+    const [year, monthNumber] = month.split('-').map(Number)
+    const quarter = Math.ceil(monthNumber / 3)
+    const yearKey = String(year)
+    const quarterKey = `${year}-T${quarter}`
+    years.set(yearKey, [...(years.get(yearKey) ?? []), month])
+    quarters.set(quarterKey, [...(quarters.get(quarterKey) ?? []), month])
+  })
+  return {
+    years: [...years.entries()]
+      .sort(([left], [right]) => right.localeCompare(left))
+      .map(([label, values]) => rangePeriod(label, values)),
+    quarters: [...quarters.entries()]
+      .sort(([left], [right]) => right.localeCompare(left))
+      .map(([label, values]) => rangePeriod(label, values)),
+  }
 }
 
 export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {}) {
@@ -50,6 +84,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
         ? formatMonthShort(period.from.slice(0, 7))
         : 'Todo'
       : 'Periodo'
+  const periodGroups = groupedPeriods(monthsAvailable)
 
   const handleLogout = async () => {
     await logout()
@@ -97,26 +132,39 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
         </button>
 
         {periodOpen && (
-          <div className="absolute right-0 top-12 z-20 w-56 overflow-hidden rounded-xl border border-navy/10 bg-white text-navy shadow-lg">
-            {[ALL_PERIOD, ...monthsAvailable.map(monthPeriod)].map((option, index) => {
-              const monthKey = index === 0 ? null : monthsAvailable[index - 1]
-              const selected = option.label === period.label
-              return (
-                <button
-                  key={option.label}
-                  onClick={() => {
-                    setPeriod(option)
-                    setPeriodOpen(false)
-                  }}
-                  className={`flex w-full items-center justify-between px-4 py-2.5 text-sm hover:bg-navy/5 ${
-                    selected ? 'font-semibold text-teal' : ''
-                  }`}
-                >
-                  {monthKey ? formatMonthShort(monthKey) : option.label}
-                  {selected && <Check className="h-4 w-4" />}
-                </button>
-              )
-            })}
+          <div className="absolute right-0 top-12 z-20 max-h-[70vh] w-64 overflow-y-auto rounded-xl border border-navy/10 bg-white text-navy shadow-lg">
+            {[
+              { title: 'Periodo', options: [ALL_PERIOD] },
+              { title: 'Año', options: periodGroups.years },
+              { title: 'Trimestre', options: periodGroups.quarters },
+              { title: 'Mes', options: [...monthsAvailable].reverse().map(monthPeriod) },
+            ].map((group) => (
+              <div key={group.title} className="border-b border-navy/5 py-1 last:border-b-0">
+                <p className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-navy/35">
+                  {group.title}
+                </p>
+                {group.options.map((option) => {
+                  const selected = option.from === period.from && option.to === period.to
+                  return (
+                    <button
+                      key={`${group.title}-${option.label}`}
+                      onClick={() => {
+                        setPeriod(option)
+                        setPeriodOpen(false)
+                      }}
+                      className={`flex w-full items-center justify-between px-4 py-2.5 text-sm hover:bg-navy/5 ${
+                        selected ? 'font-semibold text-teal' : ''
+                      }`}
+                    >
+                      {group.title === 'Mes' && option.from
+                        ? formatMonthShort(option.from.slice(0, 7))
+                        : option.label}
+                      {selected && <Check className="h-4 w-4" />}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
           </div>
         )}
       </div>

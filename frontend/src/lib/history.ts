@@ -13,6 +13,16 @@ import {
 
 const BUCKET = 'datasets'
 
+export const ACTIVITY_RETENTION_DAYS = 30
+export const RECENT_ACTIVITY_LIMIT = 20
+
+export function activityRetentionCutoff(now = new Date()): string {
+  const millisecondsPerDay = 24 * 60 * 60 * 1000
+  return new Date(
+    now.getTime() - ACTIVITY_RETENTION_DAYS * millisecondsPerDay,
+  ).toISOString()
+}
+
 export type ActivityType =
   | 'carga'
   | 'estandarizacion'
@@ -100,11 +110,14 @@ async function hasSession(): Promise<boolean> {
  * migración faltante, red) de un historial legítimamente vacío. */
 export type FetchOutcome<T> = T[] | null | 'error'
 
-export async function fetchActivity(limit = 60): Promise<FetchOutcome<ActivityRow>> {
+export async function fetchActivity(
+  limit = RECENT_ACTIVITY_LIMIT,
+): Promise<FetchOutcome<ActivityRow>> {
   if (!supabase || !(await hasSession())) return null
   const { data, error } = await supabase
     .from('activity_log')
     .select('id, activity_type, description, dataset_id, created_at')
+    .gte('created_at', activityRetentionCutoff())
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) {

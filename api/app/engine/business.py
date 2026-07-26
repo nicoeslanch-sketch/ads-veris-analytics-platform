@@ -23,6 +23,15 @@ from .quality import (
 )
 from .standardize import map_unique, parse_date, physical_missing_mask
 
+BUSINESS_FILTER_KEYS = (
+    "sucursal",
+    "canal",
+    "vendedor",
+    "categoria",
+    "producto",
+    "moneda",
+)
+
 
 def _text_key(value: object) -> str | None:
     if pd.isna(value):
@@ -434,6 +443,124 @@ def _reference_values(
     return _keys(source[source_key]).map(lookup)
 
 
+def _business_filter_dimensions(
+    sales: pd.DataFrame,
+    frames: dict[str, pd.DataFrame],
+    kinds: dict[str, list[str]],
+    mapping: dict[str, str],
+    results: dict[str, dict],
+) -> dict[str, pd.Series]:
+    """Valores legibles usados tanto por los filtros como por agrupaciones.
+
+    Los nombres de producto, sucursal y vendedor se resuelven mediante
+    lookups many-to-one seguros. Si un maestro tiene claves conflictivas,
+    _reference_values rehúsa usar esas claves y conserva el identificador.
+    """
+
+    dimensions: dict[str, pd.Series] = {}
+    products = frames.get((kinds.get("productos") or [None])[0]) if kinds.get("productos") else None
+    branches = frames.get((kinds.get("sucursales") or [None])[0]) if kinds.get("sucursales") else None
+    sellers = frames.get((kinds.get("vendedores") or [None])[0]) if kinds.get("vendedores") else None
+
+    product_key = (
+        find_column(sales.columns, "sku", "producto")
+        or find_column(sales.columns, "id", "producto")
+        or mapping.get("producto")
+    )
+    product_ref_key = (
+        find_column(products.columns, "sku", "producto")
+        or find_column(products.columns, "id", "producto")
+        if products is not None
+        else None
+    )
+    product_name = (
+        find_column(products.columns, "nombre", "producto")
+        or find_column(products.columns, "descripcion", "producto")
+        or find_column(
+            products.columns,
+            "producto",
+            excluded=("id", "sku", "codigo", "código", "categoria"),
+        )
+        if products is not None
+        else None
+    )
+    category = find_column(products.columns, "categoria") if products is not None else None
+    if product_key and product_key in sales.columns:
+        dimensions["producto"] = _reference_values(
+            sales, product_key, products, product_ref_key, product_name
+        ).fillna(sales[product_key])
+        dimensions["categoria"] = _reference_values(
+            sales, product_key, products, product_ref_key, category
+        )
+    else:
+        direct_product = mapping.get("producto")
+        direct_category = mapping.get("categoria") or find_column(sales.columns, "categoria")
+        if direct_product and direct_product in sales.columns:
+            dimensions["producto"] = sales[direct_product]
+        if direct_category and direct_category in sales.columns:
+            dimensions["categoria"] = sales[direct_category]
+
+    channel = mapping.get("canal") or find_column(sales.columns, "canal")
+    if channel and channel in sales.columns:
+        dimensions["canal"] = sales[channel]
+
+    branch_key = mapping.get("sucursal") or find_column(sales.columns, "id", "sucursal")
+    branch_ref_key = (
+        find_column(branches.columns, "id", "sucursal") if branches is not None else None
+    )
+    branch_name = (
+        find_column(branches.columns, "nombre", "sucursal")
+        or find_column(branches.columns, "sucursal", excluded=("id",))
+        if branches is not None
+        else None
+    )
+    if branch_key and branch_key in sales.columns:
+        dimensions["sucursal"] = _reference_values(
+            sales, branch_key, branches, branch_ref_key, branch_name
+        ).fillna(sales[branch_key])
+
+    seller_key = mapping.get("vendedor") or find_column(sales.columns, "id", "vendedor")
+    seller_ref_key = (
+        find_column(sellers.columns, "id", "vendedor") if sellers is not None else None
+    )
+    seller_name = (
+        find_column(sellers.columns, "nombre", "vendedor")
+        or find_column(sellers.columns, "vendedor", excluded=("id",))
+        if sellers is not None
+        else None
+    )
+    if seller_key and seller_key in sales.columns:
+        dimensions["vendedor"] = _reference_values(
+            sales, seller_key, sellers, seller_ref_key, seller_name
+        ).fillna(sales[seller_key])
+
+    currency_by_sheet: dict[str, str] = {}
+    for name in kinds.get("ventas", []):
+        detection = results.get(name, {}).get("_moneda")
+        dominant = getattr(detection, "dominante", None)
+        if dominant and not getattr(detection, "mixta", False):
+            currency_by_sheet[name] = str(dominant)
+    if currency_by_sheet and "_hoja_origen" in sales.columns:
+        dimensions["moneda"] = sales["_hoja_origen"].map(currency_by_sheet)
+    return dimensions
+
+
+def _filter_options(dimensions: dict[str, pd.Series]) -> dict[str, list[str]]:
+    options: dict[str, list[str]] = {}
+    for key in BUSINESS_FILTER_KEYS:
+        series = dimensions.get(key)
+        if series is None:
+            continue
+        values = {
+            str(value).strip()
+            for value in series.dropna()
+            if str(value).strip()
+        }
+        if values:
+            options[key] = sorted(values, key=lambda value: strip_accents_lower(value))
+    return options
+
+
 def _cost_outlier_limit(values: pd.Series) -> float | None:
     positive = values[values > 0].dropna()
     if len(positive) < 20:
@@ -748,6 +875,7 @@ def analyze_business_workbook(
     *,
     date_from: str | None = None,
     date_to: str | None = None,
+    filters: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Build an executive and diagnostic view without mixing table grains."""
 
@@ -775,6 +903,25 @@ def analyze_business_workbook(
         for role, column in mappings.get(name, {}).items():
             if column in sales.columns and role not in mapping:
                 mapping[role] = column
+    dimensions = _business_filter_dimensions(sales, frames, kinds, mapping, results)
+    available_filters = _filter_options(dimensions)
+    applied_filters = {
+        key: str(value).strip()
+        for key, value in (filters or {}).items()
+        if key in BUSINESS_FILTER_KEYS and str(value).strip()
+    }
+    dimensional_filter_applied = any(key != "moneda" for key in applied_filters)
+    unfiltered_sales_rows = len(sales)
+    if applied_filters:
+        filter_mask = pd.Series(True, index=sales.index)
+        for key, selected in applied_filters.items():
+            dimension = dimensions.get(key)
+            if dimension is None:
+                filter_mask &= False
+                continue
+            filter_mask &= _keys(dimension).eq(_text_key(selected))
+        sales = sales.loc[filter_mask].copy()
+
     date_col = mapping.get("fecha") or _event_date_column(sales.columns, "venta")
     amount_col = _net_amount_column(sales.columns, domain="venta") or mapping.get("monto")
     quantity_col = mapping.get("cantidad") or find_column(sales.columns, "cantidad")
@@ -1050,7 +1197,7 @@ def analyze_business_workbook(
     expense_mask = pd.Series(dtype=bool)
     expense_values = pd.Series(dtype=float)
     expense_frame = frames.get((kinds.get("gastos") or [None])[0]) if kinds.get("gastos") else None
-    if expense_frame is not None:
+    if expense_frame is not None and not dimensional_filter_applied:
         expense_date_col = _event_date_column(expense_frame.columns, "gasto")
         expense_status = find_column(expense_frame.columns, "estado")
         expense_mask = ~_status_mask(expense_frame, expense_status, r"\b(?:anulad|cancelad)\w*")
@@ -1146,7 +1293,7 @@ def analyze_business_workbook(
     inventory_below_minimum = None
     inventory_snapshot_date = None
     inventory_cut = None
-    if inventory_frame is not None:
+    if inventory_frame is not None and not dimensional_filter_applied:
         inventory_dates = _dates(
             inventory_frame, _event_date_column(inventory_frame.columns, "snapshot")
         )
@@ -1214,7 +1361,7 @@ def analyze_business_workbook(
     purchase_frame = frames.get((kinds.get("compras") or [None])[0]) if kinds.get("compras") else None
     purchases_total = None
     purchase_freight = None
-    if purchase_frame is not None:
+    if purchase_frame is not None and not dimensional_filter_applied:
         purchase_mask = ~_status_mask(
             purchase_frame,
             find_column(purchase_frame.columns, "estado"),
@@ -1263,7 +1410,7 @@ def analyze_business_workbook(
     dso_days = None
     overdue_days = None
     orphan_collection_rows = 0
-    if collections_frame is not None:
+    if collections_frame is not None and not dimensional_filter_applied:
         # Exact duplicate payment rows are preserved in the source but cannot
         # be summed twice in a certifiable collection diagnostic.
         collection_rows = collections_frame.drop_duplicates().reset_index(drop=True)
@@ -1404,7 +1551,7 @@ def analyze_business_workbook(
     month_frame["ingresos_pareados"] = amount.where(paired)
     monthly = month_frame.dropna(subset=["mes"]).groupby("mes").sum(numeric_only=True)
     expense_monthly: dict[str, float] = {}
-    if expense_frame is not None:
+    if expense_frame is not None and not dimensional_filter_applied:
         expense_dates = _dates(expense_frame, find_column(expense_frame.columns, "fecha", "gasto"))
         exp = pd.DataFrame(
             {
@@ -1461,6 +1608,11 @@ def analyze_business_workbook(
     product_name_ref = (
         find_column(products_frame.columns, "nombre", "producto")
         or find_column(products_frame.columns, "descripcion", "producto")
+        or find_column(
+            products_frame.columns,
+            "producto",
+            excluded=("id", "sku", "codigo", "código", "categoria"),
+        )
         if products_frame is not None
         else None
     )
@@ -1686,7 +1838,7 @@ def analyze_business_workbook(
         "por_mes": [],
         "nota": "No hay una hoja de metas comparable.",
     }
-    if goals_frame is not None:
+    if goals_frame is not None and not dimensional_filter_applied:
         goal_date_col = _event_date_column(goals_frame.columns)
         goal_amount_col = find_column(goals_frame.columns, "meta", "venta")
         goal_margin_col = find_column(goals_frame.columns, "meta", "margen")
@@ -2051,6 +2203,10 @@ def analyze_business_workbook(
 
     return {
         "version": 1,
+        "filtros": {
+            "disponibles": available_filters,
+            "aplicados": applied_filters,
+        },
         "estado_certificacion": certification,
         "confianza_pct": round(confidence, 1),
         "alcance": {
@@ -2058,6 +2214,7 @@ def analyze_business_workbook(
             "hoja_costos": current_cost_name,
             "hoja_historial_costos": cost_history_name,
             "hojas_utilizadas": sorted(used_sheets),
+            "filas_ventas_sin_filtros": int(unfiltered_sales_rows),
             "filas_ventas_fisicas": int(len(sales)),
             "filas_totales_estructurales": int(structural.sum()),
             "filas_anuladas": int(cancelled.sum()),

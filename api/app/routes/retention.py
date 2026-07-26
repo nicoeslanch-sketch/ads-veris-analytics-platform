@@ -16,7 +16,7 @@ de fallar con 404 al retomar). Así el Storage no crece sin control y la
 plataforma se mantiene rápida y barata de operar.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -137,7 +137,34 @@ def _unlink_datasets(user_id: str, names: list[str], settings: Settings) -> None
             print(f"[retencion] No se pudo desvincular el dataset ({exc.__class__.__name__}).")
 
 
+def _prune_activity(user_id: str, settings: Settings) -> int:
+    """Elimina únicamente actividad antigua del usuario autenticado."""
+    retention_days = max(1, settings.activity_retention_days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    rest = f"{settings.supabase_url.rstrip('/')}/rest/v1/activity_log"
+    response = httpx.request(
+        "DELETE",
+        rest,
+        params={
+            "user_id": f"eq.{user_id}",
+            "created_at": f"lt.{cutoff.isoformat()}",
+        },
+        headers={**_headers(settings), "Prefer": "return=representation"},
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    deleted = response.json()
+    return len(deleted) if isinstance(deleted, list) else 0
+
+
 def _retention_sync(user_id: str, settings: Settings) -> dict:
+    activity_deleted = 0
+    try:
+        activity_deleted = _prune_activity(user_id, settings)
+    except httpx.HTTPError as exc:
+        # Una incidencia en activity_log no debe impedir la poda de Storage.
+        print(f"[retencion] No se pudo podar actividad ({exc.__class__.__name__}).")
+
     plan, is_admin = get_profile_flags(user_id, settings)
     limit = max_files_for(plan, is_admin, settings)
     keep_last = settings.storage_keep_last
@@ -165,6 +192,7 @@ def _retention_sync(user_id: str, settings: Settings) -> dict:
         "conservados": len(files) - len(to_delete),
         "limite": limit,
         "plan": plan,
+        "actividad_eliminada": activity_deleted,
     }
 
 
@@ -175,10 +203,23 @@ async def apply_retention(
 ) -> dict:
     """Poda los archivos guardados del usuario según su plan (ver docstring)."""
     if not _configured(settings):
-        return {"eliminados": 0, "conservados": 0, "limite": 0, "plan": "basico"}
+        return {
+            "eliminados": 0,
+            "conservados": 0,
+            "limite": 0,
+            "plan": "basico",
+            "actividad_eliminada": 0,
+        }
     try:
         return await run_in_threadpool(_retention_sync, user.id, settings)
     except httpx.HTTPError as exc:
         # La retención jamás debe romper el flujo de carga del usuario.
         print(f"[retencion] Falló la poda de Storage ({exc.__class__.__name__}).")
-        return {"eliminados": 0, "conservados": 0, "limite": 0, "plan": "basico", "error": True}
+        return {
+            "eliminados": 0,
+            "conservados": 0,
+            "limite": 0,
+            "plan": "basico",
+            "actividad_eliminada": 0,
+            "error": True,
+        }

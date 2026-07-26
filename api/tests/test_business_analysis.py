@@ -1,8 +1,11 @@
 """Regression tests for the safe multi-sheet business model."""
 
 import pandas as pd
+import pytest
+from fastapi import HTTPException
 
 from app.engine.business import analyze_business_workbook, classify_business_sheets
+from app.routes.pipeline import _validate_business_filters
 
 
 def _sales_mapping() -> dict[str, dict[str, str]]:
@@ -288,6 +291,98 @@ def test_products_sheet_without_costo_in_its_name_is_still_used_as_cost_source()
     # 2×40 + 1×70
     assert result["estado_resultados"]["costo_venta_conocido"] == 150
     assert result["estado_resultados"]["utilidad_bruta"] == 200
+
+
+def test_business_filters_recalculate_sales_cost_and_groups_without_allocating_expenses():
+    frames = {
+        "Ventas_2026": pd.DataFrame(
+            [
+                {
+                    "Fecha Venta": "01/01/2026", "ID Documento": "D1",
+                    "SKU Producto": "A", "Cantidad": "1", "Monto Venta": "100",
+                    "ID Sucursal": "S1", "ID Vendedor": "V1",
+                    "Canal": "Online", "Estado": "Completada",
+                },
+                {
+                    "Fecha Venta": "02/01/2026", "ID Documento": "D2",
+                    "SKU Producto": "B", "Cantidad": "2", "Monto Venta": "300",
+                    "ID Sucursal": "S2", "ID Vendedor": "V2",
+                    "Canal": "Tienda", "Estado": "Completada",
+                },
+            ]
+        ),
+        "Productos": pd.DataFrame(
+            [
+                {"SKU Producto": "A", "Producto": "Arroz", "Categoria": "Alimentos"},
+                {"SKU Producto": "B", "Producto": "Mouse", "Categoria": "Tecnología"},
+            ]
+        ),
+        "Costos_Productos": pd.DataFrame(
+            [
+                {"SKU Producto": "A", "Costo Unitario": "40"},
+                {"SKU Producto": "B", "Costo Unitario": "60"},
+            ]
+        ),
+        "Sucursales": pd.DataFrame(
+            [
+                {"ID Sucursal": "S1", "Nombre Sucursal": "Centro", "Comuna": "Santiago"},
+                {"ID Sucursal": "S2", "Nombre Sucursal": "Norte", "Comuna": "Renca"},
+            ]
+        ),
+        "Vendedores": pd.DataFrame(
+            [
+                {"ID Vendedor": "V1", "Nombre Vendedor": "Ana"},
+                {"ID Vendedor": "V2", "Nombre Vendedor": "Luis"},
+            ]
+        ),
+        "Gastos_Operacionales": pd.DataFrame(
+            [{"Fecha Gasto": "02/01/2026", "Monto Neto": "50", "Tipo Gasto": "Fijo"}]
+        ),
+    }
+    mappings = {
+        "Ventas_2026": {
+            "fecha": "Fecha Venta", "monto": "Monto Venta",
+            "cantidad": "Cantidad", "producto": "SKU Producto",
+            "sucursal": "ID Sucursal", "vendedor": "ID Vendedor", "canal": "Canal",
+        }
+    }
+
+    full = analyze_business_workbook(frames, mappings, {})
+    filtered = analyze_business_workbook(
+        frames,
+        mappings,
+        {},
+        filters={"sucursal": "Centro", "categoria": "Alimentos", "vendedor": "Ana"},
+    )
+
+    assert full is not None and filtered is not None
+    assert full["filtros"]["disponibles"]["sucursal"] == ["Centro", "Norte"]
+    assert full["filtros"]["disponibles"]["categoria"] == ["Alimentos", "Tecnología"]
+    assert full["filtros"]["disponibles"]["producto"] == ["Arroz", "Mouse"]
+    assert filtered["filtros"]["aplicados"] == {
+        "sucursal": "Centro", "categoria": "Alimentos", "vendedor": "Ana",
+    }
+    assert filtered["alcance"]["filas_ventas_sin_filtros"] == 2
+    assert filtered["alcance"]["filas_ventas_fisicas"] == 1
+    assert filtered["estado_resultados"]["ventas_observadas"] == 100
+    assert filtered["estado_resultados"]["costo_venta_conocido"] == 40
+    assert filtered["estado_resultados"]["utilidad_bruta"] == 60
+    # El gasto no trae sucursal/categoría/vendedor y no se distribuye a ojo.
+    assert filtered["estado_resultados"]["gastos_operacionales"] is None
+    assert filtered["estado_resultados"]["resultado_operacional"] is None
+    assert [row["nombre"] for row in filtered["agrupaciones"]["productos"]] == ["Arroz"]
+
+
+def test_business_filter_payload_is_bounded_and_rejects_unknown_dimensions():
+    assert _validate_business_filters({"sucursal": " Centro ", "canal": ""}) == {
+        "sucursal": "Centro",
+    }
+    with pytest.raises(HTTPException) as invalid_shape:
+        _validate_business_filters(["Centro"])  # type: ignore[arg-type]
+    assert invalid_shape.value.status_code == 422
+    with pytest.raises(HTTPException) as unknown:
+        _validate_business_filters({"cuenta_bancaria": "Principal"})
+    assert unknown.value.status_code == 422
 
 
 def test_document_duplicates_split_into_identical_conflict_and_observation_only():

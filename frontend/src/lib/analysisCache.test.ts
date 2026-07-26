@@ -75,6 +75,25 @@ describe('caché de análisis', () => {
     expect(getCachedMetrics(key)).toBe(resolved)
   })
 
+  it('separa la caché cuando cambian los filtros empresariales', () => {
+    const base = {
+      dataset: 'dataset-1',
+      eliminarDuplicados: false,
+      revision: 3,
+      analysisScope: { mode: 'business', sheets: ['Ventas', 'Productos'] },
+    }
+    const centro = metricsCacheKey({
+      ...base,
+      businessFilters: { sucursal: 'Centro' },
+    })
+    const norte = metricsCacheKey({
+      ...base,
+      businessFilters: { sucursal: 'Norte' },
+    })
+
+    expect(centro).not.toBe(norte)
+  })
+
   it('una petición de una sesión cerrada no repuebla la caché', async () => {
     clearAnalysisCaches()
     const key = metricsCacheKey({ dataset: 'anterior', eliminarDuplicados: false })
@@ -87,5 +106,34 @@ describe('caché de análisis', () => {
     resolve(metricsFixture())
     await pending
     expect(getCachedMetrics(key)).toBeNull()
+  })
+
+  it('cancela una carga huérfana, pero no una que todavía comparte otra vista', async () => {
+    vi.useFakeTimers()
+    clearAnalysisCaches()
+    const key = metricsCacheKey({
+      dataset: 'actual',
+      sheet: 'Compras',
+      eliminarDuplicados: false,
+    })
+    const resumen = new AbortController()
+    const explorar = new AbortController()
+    const sharedSignals: AbortSignal[] = []
+    const producer = vi.fn((signal: AbortSignal) => {
+      sharedSignals.push(signal)
+      return new Promise<MetricsResult>(() => undefined)
+    })
+
+    requestMetrics(key, producer, resumen.signal)
+    requestMetrics(key, producer, explorar.signal)
+    resumen.abort()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(sharedSignals[0]?.aborted).toBe(false)
+
+    explorar.abort()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(sharedSignals[0]?.aborted).toBe(true)
+    expect(producer).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
   })
 })

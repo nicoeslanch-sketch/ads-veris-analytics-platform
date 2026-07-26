@@ -215,14 +215,19 @@ export async function fetchRelationshipCatalog(
   const key = requestIdentity(params)
   const cached = catalogCache.get(key)
   if (cached) return cached
+  const started = performance.now()
   const result = await apiPost<RelationshipCatalog>(
     '/sheets/relationship-catalog',
     buildDatasetForm(params.file as File, params.storagePath, {
       manifest: JSON.stringify(params.manifest),
       ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
     }),
-    { signal },
+    { signal, timeoutMs: 60_000 },
   )
+  console.info('[ADS Veris timing] relationship-catalog', {
+    durationMs: Math.round(performance.now() - started),
+    count: result.relationships.length,
+  })
   return remember(catalogCache, key, result)
 }
 
@@ -245,6 +250,7 @@ export async function fetchRelationshipDashboard(
   const key = `${requestIdentity(params)}|${JSON.stringify(join)}|${period.from ?? ''}|${period.to ?? ''}`
   const cached = dashboardCache.get(key)
   if (cached) return cached
+  const started = performance.now()
   const result = await apiPost<RelationshipDashboard>(
     '/sheets/relationship-dashboard',
     buildDatasetForm(params.file as File, params.storagePath, {
@@ -254,8 +260,12 @@ export async function fetchRelationshipDashboard(
       ...(period.from ? { date_from: period.from } : {}),
       ...(period.to ? { date_to: period.to } : {}),
     }),
-    { signal },
+    { signal, timeoutMs: 90_000 },
   )
+  console.info('[ADS Veris timing] relationship-dashboard', {
+    durationMs: Math.round(performance.now() - started),
+    relationship: relationship.id,
+  })
   return remember(dashboardCache, key, result)
 }
 
@@ -273,6 +283,6 @@ export async function validateManualRelationship(
       relationship: JSON.stringify({ ...join, type: 'left' }),
       ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
     }),
-    { signal },
+    { signal, timeoutMs: 60_000 },
   )
 }

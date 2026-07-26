@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   Home,
@@ -17,6 +17,12 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
+import { useAuth } from '../../auth/AuthContext'
+import {
+  buildBusinessAlerts,
+  loadAlertRules,
+  loadAlertStatuses,
+} from '../../lib/businessAlerts'
 import { usePlan } from '../../lib/usePlan'
 import HelpModal from './HelpModal'
 import ContactLinks from './ContactLinks'
@@ -44,9 +50,28 @@ const navItems: NavItem[] = [
 const adminItem: NavItem = { to: '/admin', label: 'Administrar cuentas', icon: ShieldCheck }
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
-  const { file, cleaning, restoring } = useDataset()
+  const { user } = useAuth()
+  const { file, cleaning, restoring, metrics, datasetId, uploadedAt } = useDataset()
   const { isAdmin } = usePlan()
   const [helpOpen, setHelpOpen] = useState(false)
+  const [alertRevision, setAlertRevision] = useState(0)
+
+  useEffect(() => {
+    const refresh = () => setAlertRevision((current) => current + 1)
+    window.addEventListener('ads-veris-alerts-updated', refresh)
+    return () => window.removeEventListener('ads-veris-alerts-updated', refresh)
+  }, [])
+
+  const pendingAlerts = useMemo(() => {
+    if (!metrics) return []
+    const statuses = loadAlertStatuses(user?.id ?? null, datasetId)
+    const rules = loadAlertRules(user?.id ?? null)
+    return buildBusinessAlerts(metrics, rules)
+      .filter((alert) => (statuses[alert.id] ?? 'pendiente') === 'pendiente')
+  // `alertRevision` fuerza la relectura de estados persistidos.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertRevision, datasetId, metrics, uploadedAt, user?.id])
+  const hasHighAlert = pendingAlerts.some((alert) => alert.severity === 'alta')
 
   const items = isAdmin ? [...navItems, adminItem] : navItems
 
@@ -77,7 +102,19 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}
                 }
               >
                 <Icon className={`h-4.5 w-4.5 shrink-0 ${to === '/admin' ? 'text-gold' : ''}`} />
-                {label}
+                <span className="min-w-0 flex-1">{label}</span>
+                {to === '/alertas' && pendingAlerts.length > 0 && (
+                  <span
+                    title={`Tienes ${pendingAlerts.length} alertas pendientes`}
+                    aria-label={`Tienes ${pendingAlerts.length} alertas pendientes`}
+                    className={[
+                      'ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white',
+                      hasHighAlert ? 'bg-coral' : 'bg-gold text-navy',
+                    ].join(' ')}
+                  >
+                    {pendingAlerts.length > 99 ? '99+' : pendingAlerts.length}
+                  </span>
+                )}
               </NavLink>
             </li>
           ))}

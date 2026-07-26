@@ -14,6 +14,7 @@ import { analysisScopesEqual, normalizedRestoredSelection } from '../lib/multiSh
 import { clearRelationshipDashboardCaches } from '../lib/relationshipDashboard'
 import type {
   AnalysisScope,
+  BusinessFilters,
   CleanResult,
   MetricsResult,
   SheetManifest,
@@ -129,6 +130,7 @@ interface DatasetState {
   selectedSheets: string[]
   sheetErrors: Record<string, string>
   analysisScope: AnalysisScope | null
+  businessFilters: BusinessFilters
   sheetManifest: SheetManifest | null
   combineSheets: boolean
   selectionMode: 'all' | 'custom'
@@ -176,6 +178,7 @@ interface DatasetState {
   setSelectionMode: (value: 'all' | 'custom') => void
   setSelectedSheets: (sheets: string[]) => void
   setAnalysisScope: (scope: AnalysisScope | null) => void
+  setBusinessFilters: (filters: BusinessFilters) => void
   setSheetStatus: (
     sheet: string,
     status: SheetProcessingStatus,
@@ -204,6 +207,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [selectedSheets, setSelectedSheetsState] = useState<string[]>([])
   const [sheetErrors, setSheetErrors] = useState<Record<string, string>>({})
   const [analysisScope, setAnalysisScopeState] = useState<AnalysisScope | null>(null)
+  const [businessFilters, setBusinessFilters] = useState<BusinessFilters>({})
   const [combineSheets, setCombineSheets] = useState(false)
   const [selectionMode, setSelectionMode] = useState<'all' | 'custom'>('all')
   const [restoring, setRestoring] = useState(false)
@@ -226,6 +230,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
+    setBusinessFilters({})
     setMappingOverrideState(session?.mappingOverride ?? null)
     setEliminarDuplicados(session?.eliminarDuplicados ?? false)
   }, [sheetSessions])
@@ -287,6 +292,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setCleaningState(result)
       setMonthsAvailable([])
       setPeriod(ALL_PERIOD)
+      setBusinessFilters({})
       setEliminarDuplicados(removeDuplicates)
     }
     if (activeSheet) {
@@ -313,6 +319,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
+    setBusinessFilters({})
     if (sheet) {
       setSheetSessions((previous) => ({
         ...previous,
@@ -368,6 +375,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setSelectedSheetsState([])
       setSheetErrors({})
       setAnalysisScopeState(null)
+      setBusinessFilters({})
       setCombineSheets(false)
       setSelectionMode('all')
     },
@@ -430,6 +438,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMetricsState(restoredMetrics)
     setUploadedAt(new Date())
     setPeriod(ALL_PERIOD)
+    setBusinessFilters({})
     setMonthsAvailable(restoredMetrics?.periodo.meses_disponibles ?? [])
     setMappingOverrideState(activeSession?.mappingOverride ?? restoredMapping)
     setSheetState(activeSheet)
@@ -452,6 +461,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setAnalysisScopeState(options?.analysisScope ?? (
       activeSheet ? { mode: 'single', sheets: [activeSheet], active_sheet: activeSheet } : null
     ))
+    setBusinessFilters({})
     setCombineSheets(Boolean(options?.combineSheets))
     setSelectionMode(options?.selectionMode ?? 'all')
     return true
@@ -479,6 +489,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setSelectedSheetsState([])
     setSheetErrors({})
     setAnalysisScopeState(null)
+    setBusinessFilters({})
     setCombineSheets(false)
     setSelectionMode('all')
   }, [advanceDatasetRevision])
@@ -555,6 +566,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMetricsState(null)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
+    setBusinessFilters({})
   }, [analysisScope])
 
   const sheetManifest = useMemo<SheetManifest | null>(() => {
@@ -612,6 +624,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       selectedSheets,
       sheetErrors,
       analysisScope,
+      businessFilters,
       sheetManifest,
       combineSheets,
       selectionMode,
@@ -634,6 +647,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setSelectionMode,
       setSelectedSheets,
       setAnalysisScope,
+      setBusinessFilters,
       setSheetStatus,
       reset,
     }),
@@ -655,6 +669,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       selectedSheets,
       sheetErrors,
       analysisScope,
+      businessFilters,
       sheetManifest,
       combineSheets,
       selectionMode,

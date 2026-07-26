@@ -47,6 +47,8 @@ test('pipeline real estandariza, limpia y habilita dashboard', async ({ page }) 
   await cleanButton.click()
 
   await page.getByRole('link', { name: /Resumen/ }).first().click()
+  await expect(page.getByText('Datos que estas analizando')).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByText(/Hoja activa:/)).toBeVisible()
   await expect(page.getByText('Evolución de Ingresos')).toBeVisible({ timeout: 90_000 })
 
   await page.getByRole('link', { name: /Explorar datos/ }).first().click()
