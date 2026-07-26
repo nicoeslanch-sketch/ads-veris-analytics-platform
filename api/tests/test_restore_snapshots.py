@@ -240,7 +240,8 @@ def test_restore_stale_devuelve_limpieza_sin_metricas_y_sin_descargar(monkeypatc
     assert body["source"] == "snapshot_stale"
     assert body["refresh_required"] is True
     assert body["cleaning"] is not None
-    assert body["metrics"] is None
+    assert body["metrics"] is not None
+    assert body["metrics_stale"] is True
 
 
 def test_refresh_recalcula_el_snapshot_guardado_con_una_revision_nueva(monkeypatch):
@@ -1009,7 +1010,8 @@ def test_restore_recalculado_conserva_seleccion_multihoja(monkeypatch):
 
     assert body["source"] == "snapshot_stale"
     assert body["refresh_required"] is True
-    assert body["metrics"] is None
+    assert body["metrics"] is not None
+    assert body["metrics_stale"] is True
     assert body["selected_sheets"] == ["Ventas", "Costos"]
     assert body["excluded_sheets"] == ["LEEME"]
     assert body["selection_mode"] == "custom"

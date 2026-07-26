@@ -1561,6 +1561,18 @@ def analyze_business_workbook(
         )
         exp.loc[expense_dates.isna(), "mes"] = None
         expense_monthly = exp.dropna(subset=["mes"]).groupby("mes")["valor"].sum().to_dict()
+    valid_timeline_dates = sales_dates.where(timeline_mask).dropna()
+    coverage_by_month: dict[str, int] = {}
+    if not valid_timeline_dates.empty:
+        coverage_frame = pd.DataFrame({
+            "mes": valid_timeline_dates.dt.to_period("M").astype(str),
+            "dia": valid_timeline_dates.dt.day,
+        })
+        coverage_by_month = {
+            str(month): int(day)
+            for month, day in coverage_frame.groupby("mes")["dia"].max().items()
+        }
+
     monthly_rows: list[dict[str, Any]] = []
     for month, row in monthly.sort_index().iterrows():
         month_sales = float(row["ingresos"])
@@ -1568,6 +1580,8 @@ def analyze_business_workbook(
         month_paired_sales = float(row["ingresos_pareados"])
         month_profit = month_paired_sales - month_cost if month_paired_sales or month_cost else None
         month_expense = float(expense_monthly.get(str(month), 0.0)) if expense_frame is not None else None
+        period = pd.Period(str(month), freq="M")
+        coverage_day = int(coverage_by_month.get(str(month), period.days_in_month))
         monthly_rows.append(
             {
                 "mes": str(month),
@@ -1578,8 +1592,32 @@ def analyze_business_workbook(
                 "resultado_operacional": round(month_profit - month_expense, 2)
                 if month_profit is not None and month_expense is not None
                 else None,
+                "parcial": False,
+                "cobertura_hasta_dia": coverage_day,
+                "dias_del_mes": int(period.days_in_month),
             }
         )
+    if monthly_rows:
+        latest_month = monthly_rows[-1]
+        latest_month["parcial"] = bool(
+            latest_month["cobertura_hasta_dia"] < latest_month["dias_del_mes"]
+        )
+        if latest_month["parcial"] and len(monthly_rows) >= 2:
+            previous_month = monthly_rows[-2]
+            current_days = max(int(latest_month["cobertura_hasta_dia"]), 1)
+            previous_days = max(int(previous_month["dias_del_mes"]), 1)
+            current_daily = float(latest_month["ventas"]) / current_days
+            previous_daily = float(previous_month["ventas"]) / previous_days
+            latest_month["ritmo_diario_ventas"] = round(current_daily, 2)
+            latest_month["ritmo_diario_mes_anterior"] = round(previous_daily, 2)
+            latest_month["variacion_ritmo_pct"] = (
+                round((current_daily - previous_daily) / abs(previous_daily) * 100, 2)
+                if previous_daily
+                else None
+            )
+            latest_month["proyeccion_ritmo_mes_completo"] = round(
+                current_daily * int(latest_month["dias_del_mes"]), 2
+            )
 
     products_frame = frames.get((kinds.get("productos") or [None])[0]) if kinds.get("productos") else None
     clients_frame = frames.get((kinds.get("clientes") or [None])[0]) if kinds.get("clientes") else None
@@ -1587,7 +1625,12 @@ def analyze_business_workbook(
     sellers_frame = frames.get((kinds.get("vendedores") or [None])[0]) if kinds.get("vendedores") else None
     suppliers_frame = frames.get((kinds.get("proveedores") or [None])[0]) if kinds.get("proveedores") else None
 
-    product_ref_key = find_column(products_frame.columns, "sku", "producto") if products_frame is not None else None
+    product_ref_key = (
+        find_column(products_frame.columns, "sku", "producto")
+        or find_column(products_frame.columns, "id", "producto")
+        if products_frame is not None
+        else None
+    )
     client_ref_key = find_column(clients_frame.columns, "id", "cliente") if clients_frame is not None else None
     branch_ref_key = find_column(branches_frame.columns, "id", "sucursal") if branches_frame is not None else None
     seller_ref_key = (

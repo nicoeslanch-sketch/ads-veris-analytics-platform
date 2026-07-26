@@ -684,3 +684,64 @@ def test_inventory_is_not_misclassified_as_sales_and_unsupported_ratios_stay_una
         "roa": "unavailable",
         "ebitda": "unavailable",
     }
+
+
+def test_business_analysis_enriches_category_by_id_and_marks_partial_month_pace():
+    frames = {
+        "Ventas_2025": pd.DataFrame(
+            [
+                {
+                    "Fecha": "30/11/2025",
+                    "ID Documento": "D1",
+                    "ID_Producto": "P1",
+                    "Cantidad": 1,
+                    "Monto": 3000,
+                    "Estado": "Vigente",
+                },
+                {
+                    "Fecha": "18/12/2025",
+                    "ID Documento": "D2",
+                    "ID_Producto": "P1",
+                    "Cantidad": 1,
+                    "Monto": 1800,
+                    "Estado": "Vigente",
+                },
+            ]
+        ),
+        "Productos": pd.DataFrame(
+            [{
+                "ID_Producto": "P1",
+                "Nombre_Producto": "Producto Uno",
+                "Categoria": "Aseo Industrial",
+            }]
+        ),
+        "Historial_Costos": pd.DataFrame(
+            [{
+                "ID_Producto": "P1",
+                "Fecha_Desde": "01/01/2025",
+                "Fecha_Hasta": "31/12/2025",
+                "Costo_Unitario": 500,
+            }]
+        ),
+    }
+    mappings = {
+        "Ventas_2025": {
+            "fecha": "Fecha",
+            "monto": "Monto",
+            "cantidad": "Cantidad",
+            "producto": "ID_Producto",
+        }
+    }
+
+    result = analyze_business_workbook(frames, mappings, {})
+
+    assert result is not None
+    assert result["agrupaciones"]["categorias"][0]["nombre"] == "Aseo Industrial"
+    assert result["agrupaciones"]["productos"][0]["nombre"] == "Producto Uno"
+    december = result["evolucion"][-1]
+    assert december["parcial"] is True
+    assert december["cobertura_hasta_dia"] == 18
+    assert december["dias_del_mes"] == 31
+    # Noviembre: 3.000 / 30 = 100 por día; diciembre: 1.800 / 18 = 100.
+    assert december["variacion_ritmo_pct"] == pytest.approx(0.0)
+    assert december["proyeccion_ritmo_mes_completo"] == pytest.approx(3100.0)

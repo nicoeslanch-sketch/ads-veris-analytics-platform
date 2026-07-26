@@ -283,8 +283,21 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
   const operatingExpenseLabel = result.base_gastos_operacionales === 'monto_neto'
     ? 'gastos operacionales netos (IVA separado)'
     : 'gastos operacionales'
-  const latest = analysis.evolucion[analysis.evolucion.length - 1]
-  const previous = analysis.evolucion[analysis.evolucion.length - 2]
+  // Un mes parcial nunca se compara por total contra un mes completo. Las
+  // tarjetas usan los dos últimos meses completos y el parcial se explica por
+  // ritmo diario, con su proyección claramente etiquetada como estimación.
+  const completeEvolution = analysis.evolucion.filter((row) => !row.parcial)
+  const latest = completeEvolution[completeEvolution.length - 1]
+  const previous = completeEvolution[completeEvolution.length - 2]
+  const partialMonth = [...analysis.evolucion].reverse().find((row) => row.parcial)
+  const partialSalesComparison = (
+    partialMonth?.variacion_ritmo_pct != null
+    && partialMonth.ritmo_diario_ventas != null
+  )
+    ? `Mes parcial (${partialMonth.cobertura_hasta_dia}/${partialMonth.dias_del_mes} días): ritmo diario ${
+        partialMonth.variacion_ritmo_pct >= 0 ? '↑' : '↓'
+      } ${formatNumber(Math.abs(partialMonth.variacion_ritmo_pct))}%`
+    : null
   const compare = (current: number | null | undefined, prior: number | null | undefined) => {
     if (current == null || prior == null) return 'Sin periodo anterior comparable'
     const nominal = current - prior
@@ -320,7 +333,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         : `${formatNumber(analysis.alcance.filas_indicadores)} filas incluidas`,
       icon: CircleDollarSign,
       color: CHART.ingresos,
-      comparison: compare(latest?.ventas, previous?.ventas),
+      comparison: partialSalesComparison ?? compare(latest?.ventas, previous?.ventas),
       state: certification,
     },
     {
@@ -445,21 +458,41 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           : null,
     }))
   const qualityIssueCount = certificationBlockers(analysis).length
+  const usableContributions = (
+    rows: BusinessAnalysis['agrupaciones'][string] = [],
+  ) => rows.filter((row) => (
+    row.utilidad != null
+    && row.nombre.trim().toLocaleLowerCase('es-CL') !== 'sin clasificar'
+    && (row.participacion_pct ?? 0) < 99.95
+  ))
+  // Para una conclusión ejecutiva se prioriza categoría, luego producto y
+  // sucursal. Mezclar las tres listas podía elegir un grupo artificial o
+  // repetir el total completo como “Sin clasificar”.
   const contributionRows = [
-    ...(analysis.agrupaciones.productos ?? []),
-    ...(analysis.agrupaciones.categorias ?? []),
-    ...(analysis.agrupaciones.sucursales ?? []),
-  ].filter((row) => row.utilidad != null)
-  const sortedContributions = contributionRows
-    .sort((left, right) => (right.utilidad ?? 0) - (left.utilidad ?? 0))
-  const topContribution = sortedContributions[0]
+    usableContributions(analysis.agrupaciones.categorias),
+    usableContributions(analysis.agrupaciones.productos),
+    usableContributions(analysis.agrupaciones.sucursales),
+  ].find((rows) => rows.length > 0) ?? []
+  const topContribution = [...contributionRows]
+    .sort((left, right) => (right.utilidad ?? 0) - (left.utilidad ?? 0))[0]
   const latestSalesChange = latest && previous && previous.ventas !== 0
     ? ((latest.ventas - previous.ventas) / Math.abs(previous.ventas)) * 100
     : null
+  const partialConclusion = partialMonth?.variacion_ritmo_pct != null
+    ? `${formatMonthShort(partialMonth.mes)} está parcial (${partialMonth.cobertura_hasta_dia} de ${partialMonth.dias_del_mes} días): el ritmo diario ${
+        partialMonth.variacion_ritmo_pct >= 0 ? 'creció' : 'cayó'
+      } ${formatNumber(Math.abs(partialMonth.variacion_ritmo_pct))}% frente al mes completo anterior${
+        partialMonth.proyeccion_ritmo_mes_completo != null
+          ? `; al mismo ritmo cerraría cerca de ${money(partialMonth.proyeccion_ritmo_mes_completo)} (estimación)`
+          : ''
+      }.`
+    : null
   const conclusions = [
-    latestSalesChange == null
-      ? 'No existe un periodo anterior completo para medir crecimiento.'
-      : `Las ventas del último mes ${latestSalesChange >= 0 ? 'crecieron' : 'cayeron'} ${formatNumber(Math.abs(latestSalesChange))}% frente al mes anterior.`,
+    partialConclusion ?? (
+      latestSalesChange == null
+        ? 'No existe un periodo anterior completo para medir crecimiento.'
+        : `Las ventas del último mes completo ${latestSalesChange >= 0 ? 'crecieron' : 'cayeron'} ${formatNumber(Math.abs(latestSalesChange))}% frente al mes completo anterior.`
+    ),
     result.utilidad_bruta == null
       ? 'No se puede explicar el cambio en utilidad hasta completar la relación de costos.'
       : `La utilidad bruta conocida es ${money(result.utilidad_bruta)} con margen de ${percent(result.margen_bruto_pct)}.`,

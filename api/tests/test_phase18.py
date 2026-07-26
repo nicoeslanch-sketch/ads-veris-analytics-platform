@@ -220,6 +220,18 @@ def test_descuentos_flexibles_separan_valores_fuera_de_rango():
     assert grouping["fuera_de_rango"] == {"filas": 2, "monto_asociado": 1500.0}
 
 
+def test_estandarizacion_no_oculta_descuentos_apenas_sobre_cien_por_ciento():
+    source = pd.DataFrame({
+        "Descuento_Pct": ["0,10", "10", "10%", "1,05", "1,30", "-0,05"],
+    })
+
+    standardized, _ = standardize_dataframe(source)
+    parsed = pd.to_numeric(standardized["Descuento_Pct"], errors="coerce")
+
+    assert parsed.tolist() == pytest.approx([0.10, 0.10, 0.10, 1.05, 1.30, -0.05])
+    assert int(((parsed < 0) | (parsed > 1)).sum()) == 3
+
+
 # ── Observaciones con cobertura de negocio ───────────────────────────────────
 
 def test_observaciones_incluyen_duplicados_conservados_y_ambiguos(export_book):

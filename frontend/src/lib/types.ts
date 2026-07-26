@@ -495,6 +495,8 @@ export interface RelationshipTable {
   columns: RelationshipTableColumn[]
   rows: Array<Record<string, string | number | null>>
   total_rows: number
+  matched_rows?: number | null
+  unmatched_rows?: number | null
 }
 
 export interface RelationshipInsightImpact {
@@ -729,6 +731,13 @@ export interface BusinessAnalysis {
     utilidad_bruta: number | null
     gastos_operacionales: number | null
     resultado_operacional: number | null
+    parcial?: boolean
+    cobertura_hasta_dia?: number
+    dias_del_mes?: number
+    ritmo_diario_ventas?: number
+    ritmo_diario_mes_anterior?: number
+    variacion_ritmo_pct?: number | null
+    proyeccion_ritmo_mes_completo?: number
     meta_venta?: number
     cumplimiento_meta_pct?: number | null
   }>
@@ -1084,4 +1093,5 @@ export interface RestoreLatestResult {
   source: 'snapshot' | 'snapshot_stale' | 'refreshed' | 'computed' | 'empty'
   refresh_required?: boolean
   refresh_sheets?: string[]
+  metrics_stale?: boolean
 }

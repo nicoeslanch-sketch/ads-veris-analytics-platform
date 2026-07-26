@@ -383,6 +383,45 @@ def test_missing_cost_is_not_zero():
     assert rows["Nueve"]["margen"] is None
 
 
+def test_product_detail_margin_uses_only_income_with_paired_cost():
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": ["V1", "V2"],
+            "Fecha": ["2025-01-01", "2025-01-02"],
+            "ID_Producto": ["P1", "P1"],
+            # La segunda línea no permite derivar costo, pero conserva ingreso.
+            "Cantidad": [1, None],
+            "Monto_Venta": [1000, 1000],
+        }
+    )
+    productos = pd.DataFrame(
+        {
+            "ID_Producto": ["P1"],
+            "Nombre_Producto": ["Producto parcial"],
+            "Costo_Unitario": [400],
+        }
+    )
+
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Productos": productos},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    row = dashboard["table"]["rows"][0]
+    assert kpis["utilidad"]["value"] == pytest.approx(600.0)
+    assert row["ingresos"] == pytest.approx(2000.0)
+    assert row["ingresos_pareados"] == pytest.approx(1000.0)
+    assert row["cobertura"] == pytest.approx(50.0)
+    assert row["utilidad"] == pytest.approx(600.0)
+    assert row["margen"] == pytest.approx(60.0)
+    assert sum(
+        item["utilidad"] or 0 for item in dashboard["table"]["rows"]
+    ) == pytest.approx(kpis["utilidad"]["value"])
+
+
 def test_extreme_unit_cost_is_excluded_instead_of_inventing_a_loss():
     product_ids = [f"P{i:02d}" for i in range(21)]
     ventas = pd.DataFrame(

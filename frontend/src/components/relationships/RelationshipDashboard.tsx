@@ -121,7 +121,17 @@ export default function RelationshipDashboardView({ dashboard }: RelationshipDas
                   <div className="mb-3 flex items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold text-navy">{dashboard.table.title}</h3>
                     <span className="text-[11px] text-navy/50">
-                      {dashboard.table.rows.length} de {dashboard.table.total_rows}
+                      {dashboard.table.matched_rows != null ? (
+                        <>
+                          {dashboard.table.rows.length} visibles ·{' '}
+                          {dashboard.table.matched_rows} con costo
+                          {dashboard.table.unmatched_rows
+                            ? ` · ${dashboard.table.unmatched_rows} sin correspondencia`
+                            : ''}
+                        </>
+                      ) : (
+                        <>{dashboard.table.rows.length} de {dashboard.table.total_rows}</>
+                      )}
                     </span>
                   </div>
                   <div className="max-h-[28rem] overflow-auto">

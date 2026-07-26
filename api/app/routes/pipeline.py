@@ -3406,6 +3406,23 @@ def _restore_response(
                     )
                 except ValueError:
                     public_scope = None
+        if public_scope is None:
+            # Snapshots anteriores a restore_state v3 podían guardar el
+            # alcance únicamente dentro de las métricas. Reutilizarlo evita
+            # redetectar todas las relaciones al retomar desde Historial.
+            metrics_scope = (
+                snapshot.get("metrics", {}).get("analysis_scope")
+                if isinstance(snapshot.get("metrics"), dict)
+                else None
+            )
+            if isinstance(metrics_scope, dict):
+                try:
+                    public_scope = validate_analysis_scope(
+                        metrics_scope,
+                        restore_state.get("available_sheets", []),
+                    )
+                except ValueError:
+                    public_scope = None
         response.update(
             {
                 "active_sheet": restore_state.get("active_sheet"),
@@ -3609,6 +3626,7 @@ def _response_from_snapshot_bundle(
     source: str,
     *,
     include_metrics: bool = True,
+    refresh_required: bool = False,
 ) -> dict | None:
     if not valid_by_key:
         return None
@@ -3638,8 +3656,9 @@ def _response_from_snapshot_bundle(
         sheet_sessions=sessions,
         restore_state={**state, "active_sheet": active_sheet},
     )
-    if not include_metrics:
+    if refresh_required or not include_metrics:
         response["refresh_required"] = True
+        response["metrics_stale"] = bool(include_metrics)
         response["refresh_sheets"] = [
             snapshot.get("sheet")
             for snapshot in valid_by_key.values()
@@ -3685,8 +3704,9 @@ def _restore_record_sync(user_id: str, record: dict) -> dict:
 
         # Un cambio de motor no obliga al usuario a esperar todo el pipeline.
         # El snapshot anterior solo se muestra si archivo, revisión, reglas,
-        # mapeo y hoja siguen íntegros. Las métricas se ocultan hasta que el
-        # cliente complete /restore/refresh con el motor actual.
+        # mapeo y hoja siguen íntegros. Las métricas anteriores se entregan
+        # como vista provisional para no bloquear el dashboard; el cliente
+        # completa /restore/refresh con el motor actual en segundo plano.
         stale = _valid_bundle_snapshots(
             state,
             bundle["sheets"],
@@ -3697,7 +3717,8 @@ def _restore_record_sync(user_id: str, record: dict) -> dict:
             state,
             stale,
             "snapshot_stale",
-            include_metrics=False,
+            include_metrics=True,
+            refresh_required=True,
         )
         if response is not None:
             return response
@@ -3787,10 +3808,14 @@ def _restore_dataset_sync(user_id: str, dataset_id: str) -> dict:
     return _restore_record_sync(user_id, record)
 
 
-def _refresh_restore_sync(user_id: str) -> dict:
+def _refresh_restore_sync(user_id: str, dataset_id: str | None = None) -> dict:
     """Rebuild every persisted sheet with one source download and workbook read."""
 
-    record = fetch_latest_restore_record(user_id)
+    record = (
+        fetch_restore_record(dataset_id, user_id)
+        if dataset_id is not None
+        else fetch_latest_restore_record(user_id)
+    )
     if record is None:
         return {"dataset": None, "source": "empty"}
     state = fetch_restore_state_metadata(record["id"], user_id)
@@ -4145,6 +4170,7 @@ async def restore_dataset(
 
 @router.post("/restore/refresh")
 async def refresh_latest_restore(
+    dataset_id: UUID | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -4153,7 +4179,11 @@ async def refresh_latest_restore(
     await run_in_threadpool(
         require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
     )
-    return await run_in_threadpool(_refresh_restore_sync, user.id)
+    return await run_in_threadpool(
+        _refresh_restore_sync,
+        user.id,
+        str(dataset_id) if dataset_id is not None else None,
+    )
 
 
 @router.post("/restore/state")

@@ -1186,9 +1186,13 @@ def standardize_dataframe(
                 )
                 # En una columna semantica, 20%, 20 y 0.2 representan 20%.
                 # Un 150 se convierte en 1.5 y sigue marcado fuera de rango.
+                # En columnas porcentuales, 10 y 10% significan 10%, pero
+                # valores apenas sobre 1 (p. ej. 1,05 en Descuento_Pct) son
+                # ambiguos y pueden representar 105%. No los reducimos en
+                # silencio: se conservan y el control 0–100% los señala.
                 if number is not None and (
                     "%" in str(value)
-                    or (percentage_column and abs(number) > 1)
+                    or (percentage_column and abs(number) > 2)
                 ):
                     number = round(number / 100, 12)
                 return str(value).strip() if number is None else format_number(number)

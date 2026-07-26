@@ -596,12 +596,18 @@ class _DashboardContext:
         ).dropna(subset=["clave"])
         if base.empty:
             return None
+        base["pareada"] = base["ingresos"].notna() & base["costo"].notna()
+        base["ingreso_pareado"] = base["ingresos"].where(base["pareada"])
+        base["costo_pareado"] = base["costo"].where(base["pareada"])
         agg = base.groupby("clave").agg(
             nombre=("nombre", "first"),
             categoria=("categoria", "first"),
             ingresos=("ingresos", lambda values: values.sum(min_count=1)),
             unidades=("unidades", lambda values: values.sum(min_count=1)),
-            costo=("costo", lambda values: values.sum(min_count=1)),
+            ingreso_pareado=("ingreso_pareado", lambda values: values.sum(min_count=1)),
+            costo_pareado=("costo_pareado", lambda values: values.sum(min_count=1)),
+            filas=("pareada", "size"),
+            filas_pareadas=("pareada", "sum"),
         )
         agg = agg.sort_values("ingresos", ascending=False)
         columns = [
@@ -614,6 +620,10 @@ class _DashboardContext:
         if with_margin and self.cost_col:
             utility_label = "Utilidad estimada" if self.derived_cost else "Utilidad"
             margin_label = "Margen estimado" if self.derived_cost else "Margen"
+            columns.append(
+                {"key": "ingresos_pareados", "label": "Ingresos con costo", "format": "currency"}
+            )
+            columns.append({"key": "cobertura", "label": "Cobertura", "format": "percent"})
             columns.append({"key": "utilidad", "label": utility_label, "format": "currency"})
             columns.append({"key": "margen", "label": margin_label, "format": "percent"})
         rows: list[dict[str, Any]] = []
@@ -629,23 +639,40 @@ class _DashboardContext:
                     str(row["categoria"]) if pd.notna(row["categoria"]) else "Sin categoría"
                 )
             if with_margin and self.cost_col:
-                costo = row["costo"]
+                ingreso_pareado = row["ingreso_pareado"]
+                costo = row["costo_pareado"]
                 utilidad = (
-                    row["ingresos"] - costo if pd.notna(costo) else None
+                    ingreso_pareado - costo
+                    if pd.notna(ingreso_pareado) and pd.notna(costo)
+                    else None
+                )
+                entry["ingresos_pareados"] = _clean_number(ingreso_pareado)
+                entry["cobertura"] = _clean_number(
+                    row["filas_pareadas"] / row["filas"] * 100 if row["filas"] else None
                 )
                 entry["utilidad"] = _clean_number(utilidad)
                 entry["margen"] = (
-                    _clean_number(utilidad / row["ingresos"] * 100)
-                    if utilidad is not None and row["ingresos"]
+                    _clean_number(utilidad / ingreso_pareado * 100)
+                    if utilidad is not None and ingreso_pareado
                     else None
                 )
             rows.append(entry)
         return {
             "id": "productos",
-            "title": "Detalle de productos",
+            "title": (
+                "Rentabilidad por producto con costo pareado"
+                if with_margin and self.cost_col
+                else "Detalle de productos"
+            ),
             "columns": columns,
             "rows": rows,
             "total_rows": int(len(agg)),
+            "matched_rows": int((agg["filas_pareadas"] > 0).sum())
+            if with_margin and self.cost_col
+            else None,
+            "unmatched_rows": int((agg["filas_pareadas"] == 0).sum())
+            if with_margin and self.cost_col
+            else None,
         }
 
     def _revenue_by_category_chart(self) -> dict[str, Any] | None:

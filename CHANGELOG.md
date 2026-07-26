@@ -2,6 +2,25 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 
+## [0.24.2] - 2026-07-26 - Rentabilidad pareada y restauración no bloqueante
+
+- La rentabilidad por producto usa ingresos y costos de las mismas filas
+  pareadas. Las ventas sin costo conservan su ingreso y cobertura, pero nunca
+  vuelven a entrar como costo cero ni inflan utilidad o margen.
+- La Visión del negocio recupera nombres y categorías desde maestros cuya
+  clave es `ID_Producto`, y evita presentar `Sin clasificar` como si fuera el
+  mayor aporte cuando equivale al total.
+- El último mes parcial se identifica por su día de cobertura. Las tarjetas y
+  conclusiones dejan de compararlo por total contra un mes completo y muestran
+  ritmo diario y una proyección explícitamente estimada.
+- Descuentos ambiguos apenas superiores a 1 se conservan para revisión en vez
+  de convertirse silenciosamente en porcentajes válidos.
+- Historial muestra el snapshot anterior de inmediato cuando cambia el motor y
+  actualiza el documento elegido una vez en segundo plano. El alcance guardado
+  se reutiliza para evitar una nueva búsqueda visible de relaciones.
+- El gráfico mensual de una hoja individual usa una altura compacta y ya no se
+  estira para igualar una tarjeta lateral más alta. No se agrega migración.
+
 ## [Fase 20] - 2026-07-24 - Botonera del Resumen y workspace de relaciones
 
 - La sección "Datos que estás analizando" del Resumen se rediseñó como un
