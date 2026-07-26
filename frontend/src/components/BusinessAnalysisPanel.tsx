@@ -476,7 +476,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-4">
         {cards.map(({ label, value, detail, icon: Icon, color, comparison, state }) => (
           <Card
             key={label}
@@ -648,7 +648,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         <p className="mt-1 text-xs text-navy/55">
           Resultados deterministas sobre la información disponible; los datos parciales se indican expresamente.
         </p>
-        <ol className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <ol className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
           {conclusions.map((conclusion, index) => (
             <li key={conclusion} className="rounded-lg border border-navy/10 bg-navy/[0.025] p-3">
               <span className="text-[10px] font-bold uppercase tracking-wide text-teal">

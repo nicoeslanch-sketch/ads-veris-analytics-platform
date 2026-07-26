@@ -332,7 +332,7 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
 
   return (
     <section
-      className="-mt-5 mb-6 rounded-2xl border border-navy/10 bg-white p-3 shadow-[0_12px_35px_rgba(13,43,66,0.08)] sm:p-4"
+      className="@container -mt-5 mb-6 rounded-2xl border border-navy/10 bg-white p-3 shadow-[0_12px_35px_rgba(13,43,66,0.08)] sm:p-4"
       aria-label="Datos que estas analizando"
     >
       <div className="flex flex-col gap-3">
@@ -351,7 +351,7 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
           )}
         </div>
         {selectedSheets.length > 1 && (
-          <div className="min-w-0 overflow-x-auto pb-1 [scrollbar-width:thin]">
+          <div className="min-w-0">
             <AnalysisModeSwitcher
               mode={mode}
               onSelect={selectMode}

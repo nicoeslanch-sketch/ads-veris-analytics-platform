@@ -40,7 +40,7 @@ export default function AnalysisModeSwitcher({
     <div
       role="group"
       aria-label="Modo de análisis"
-      className="flex min-w-max items-stretch gap-2"
+      className="grid w-full min-w-0 grid-cols-1 items-stretch gap-2 @md:grid-cols-2 @4xl:grid-cols-3 @6xl:grid-cols-5"
     >
       {ANALYSIS_MODES.map(({ mode: value, label }) => {
         const Icon = MODE_ICON[value]
@@ -57,7 +57,7 @@ export default function AnalysisModeSwitcher({
             title={disabledReason || undefined}
             onClick={() => onSelect(value)}
             className={[
-              'group relative inline-flex min-h-12 min-w-[9.5rem] items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm transition-all duration-200',
+              'group relative inline-flex min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm transition-all duration-200',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60 focus-visible:ring-offset-1',
               'disabled:cursor-not-allowed disabled:opacity-45',
               active
@@ -78,7 +78,7 @@ export default function AnalysisModeSwitcher({
       })}
       <Link
         to="/estandarizacion"
-        className="inline-flex min-h-12 min-w-[9.5rem] items-center justify-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-700 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-orange-100 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-1"
+        className="inline-flex min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-700 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-orange-100 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-1"
       >
         <Settings2 className="h-4 w-4 shrink-0" aria-hidden />
         <span className="whitespace-nowrap">Administrar hojas</span>
