@@ -556,6 +556,9 @@ def detect_non_sales_profile(
     def has_compact(*markers: str) -> bool:
         return any(any(marker in name for marker in markers) for name in compact)
 
+    if len(normalized) <= 3 and "columna" in compact and has_compact("rut"):
+        return "auxiliar"
+
     # Orden deliberado: una compra y un gasto también traen proveedor; una
     # cobranza también trae cliente. Primero se detecta el hecho operacional.
     if (
@@ -569,8 +572,8 @@ def detect_non_sales_profile(
     ):
         return "gastos"
     if (
-        has_compact("idpago", "fechapago", "montopago")
-        and has_compact("estadopago", "mediopago", "documento")
+        has_compact("idpago", "idcobranza", "fechapago", "montopago", "montopagado")
+        and has_compact("estadopago", "estadocobranza", "documento")
     ):
         return "cobranzas"
     if has_compact("metaventa", "metamargen", "metanuevosclientes") or (
@@ -585,7 +588,11 @@ def detect_non_sales_profile(
         )
     ):
         return "inventario"
-    if has_compact("mesvigencia") and roles.get("costo") and roles.get("producto"):
+    if (
+        has_compact("mesvigencia", "fechadesde", "vigenciadesde", "effectivefrom")
+        and roles.get("costo")
+        and roles.get("producto")
+    ):
         return "historial_costos"
     if (
         has_compact("idproveedor")
@@ -593,7 +600,9 @@ def detect_non_sales_profile(
         and not has_compact("idcompra", "idgasto")
     ):
         return "proveedores"
-    if has_compact("idvendedor") and has_compact("cargo", "comision"):
+    if has_compact("idvendedor", "idtrabajador", "idempleado") and has_compact(
+        "cargo", "comision", "sueldo", "salario"
+    ):
         return "trabajadores"
     if has_compact("idcliente") and not has_compact(
         "idventa", "idpago", "fechaventa", "montoventa", "tipomovimiento"
@@ -1717,14 +1726,19 @@ def compute_metrics(
         investment_column = _column_containing("inversion")
         impressions_column = _column_containing("impresion")
         clicks_column = _column_containing("clic")
-        platform_column = _column_containing("plataforma")
+        conversions_column = _column_containing("conversion")
+        # Algunos libros describen el medio como Canal_Campana en vez de
+        # Plataforma. Ambos representan la dimensión útil para el gráfico.
+        platform_column = _column_containing("plataforma") or _column_containing("canal")
         status_column = _column_containing("estado")
         investment = _numeric_series(df, investment_column)
         impressions = _numeric_series(df, impressions_column)
         clicks = _numeric_series(df, clicks_column)
+        conversions = _numeric_series(df, conversions_column)
         total_investment = float(investment.dropna().sum())
         total_impressions = float(impressions.dropna().sum())
         total_clicks = float(clicks.dropna().sum())
+        total_conversions = float(conversions.dropna().sum())
         _non_sales_contract("campanas_marketing", "campanas")
         # Fase 18: métricas POR PLATAFORMA para graficar (inversión, clics,
         # CTR y CPC por plataforma) y control de negocio clics > impresiones.
@@ -1760,6 +1774,17 @@ def compute_metrics(
             "clics": round(total_clicks, 2),
             "ctr_pct": round(total_clicks / total_impressions * 100, 2) if total_impressions else None,
             "cpc": round(total_investment / total_clicks, 2) if total_clicks else None,
+            "conversiones": round(total_conversions, 2),
+            "tasa_conversion_pct": round(
+                total_conversions / total_clicks * 100, 2
+            )
+            if total_clicks
+            else None,
+            "costo_por_conversion": round(
+                total_investment / total_conversions, 2
+            )
+            if total_conversions
+            else None,
             "plataformas": _value_counts(platform_column),
             "estados": _value_counts(status_column),
             "por_plataforma": por_plataforma,
@@ -1786,12 +1811,25 @@ def compute_metrics(
         reference_cost_column = _column_containing("costo", "unitario")
         committed_column = _column_containing("unidades", "comprometidas")
         difference_column = _column_containing("diferencia", "conteo")
-        stock = _numeric_series(df, stock_column)
-        minimum = _numeric_series(df, minimum_column)
-        inventory_value = _numeric_series(df, inventory_value_column)
-        reference_cost = _numeric_series(df, reference_cost_column)
-        committed = _numeric_series(df, committed_column)
-        differences = _numeric_series(df, difference_column)
+        snapshot_column = (
+            roles.get("fecha")
+            or _column_containing("fecha", "snapshot")
+            or updated_column
+        )
+        inventory_scope = df
+        latest_snapshot = None
+        if snapshot_column:
+            snapshot_dates = map_unique(df[snapshot_column], parse_date)
+            if snapshot_dates.notna().any():
+                latest_snapshot = snapshot_dates.dropna().max()
+                inventory_scope = df.loc[snapshot_dates.eq(latest_snapshot)].copy()
+                inventory_scope.attrs.update(df.attrs)
+        stock = _numeric_series(inventory_scope, stock_column)
+        minimum = _numeric_series(inventory_scope, minimum_column)
+        inventory_value = _numeric_series(inventory_scope, inventory_value_column)
+        reference_cost = _numeric_series(inventory_scope, reference_cost_column)
+        committed = _numeric_series(inventory_scope, committed_column)
+        differences = _numeric_series(inventory_scope, difference_column)
         paired_stock = stock.notna() & minimum.notna()
         _non_sales_contract("inventario", "registros_inventario")
         # Fase 18: stock POR SUCURSAL para graficar dónde está la existencia y
@@ -1801,7 +1839,7 @@ def compute_metrics(
         sucursal_column = roles.get("sucursal")
         if sucursal_column:
             inv_frame = pd.DataFrame({
-                "sucursal": df[sucursal_column].astype(str).str.strip(),
+                "sucursal": inventory_scope[sucursal_column].astype(str).str.strip(),
                 "stock": stock,
                 "bajo": (paired_stock & (stock < minimum)),
                 "negativo": stock < 0,
@@ -1817,8 +1855,18 @@ def compute_metrics(
                 })
             por_sucursal.sort(key=lambda item: item["stock"], reverse=True)
         result["analisis_inventario"] = {
-            "registros": int(len(df)),
-            "productos": int(df[roles["producto"]].loc[~physical_missing_mask(df[roles["producto"]])].nunique()),
+            "registros": int(len(inventory_scope)),
+            "registros_fuente": int(len(df)),
+            "productos": int(
+                inventory_scope[roles["producto"]]
+                .loc[~physical_missing_mask(inventory_scope[roles["producto"]])]
+                .nunique()
+            ),
+            "fecha_corte": (
+                latest_snapshot.strftime("%Y-%m-%d")
+                if latest_snapshot is not None and pd.notna(latest_snapshot)
+                else None
+            ),
             "stock_total": round(float(stock.dropna().sum()), 2),
             "stock_minimo_total": round(float(minimum.dropna().sum()), 2),
             "valor_inventario": (
@@ -1843,8 +1891,22 @@ def compute_metrics(
             ),
             "bajo_minimo": int((paired_stock & (stock < minimum)).sum()),
             "stocks_negativos": stocks_negativos,
-            "cobertura_stock_pct": round(float(stock.notna().mean() * 100), 1) if len(df) else 0.0,
-            "sucursales": _value_counts(roles.get("sucursal")),
+            "cobertura_stock_pct": round(float(stock.notna().mean() * 100), 1)
+            if len(inventory_scope)
+            else 0.0,
+            "sucursales": (
+                [
+                    {"nombre": str(name), "registros": int(count)}
+                    for name, count in inventory_scope[roles["sucursal"]]
+                    .astype(str)
+                    .str.strip()
+                    .value_counts()
+                    .head(12)
+                    .items()
+                ]
+                if roles.get("sucursal")
+                else []
+            ),
             "por_sucursal": por_sucursal,
             "columna_actualizacion": updated_column,
         }
@@ -1909,6 +1971,8 @@ def compute_metrics(
         def _numeric_format(name: str) -> tuple[str, str]:
             if _is_percentage_column(name):
                 return "porcentaje", "promedio"
+            if "ticket" in name and "promedio" in name:
+                return "moneda", "promedio"
             if any(token in name for token in ("costo unitario", "costo ultima compra", "precio lista", "comision")):
                 return "moneda" if "comision" not in name else "porcentaje", "promedio"
             if "dias" in name:
@@ -2031,6 +2095,7 @@ def compute_metrics(
             "clientes": "maestra de clientes",
             "sucursales": "maestra de sucursales",
             "trabajadores": "equipo de trabajo",
+            "auxiliar": "hoja auxiliar de instrucciones",
         }
         label = profile_labels.get(subtype or "", "perfil estructural")
         warnings = [

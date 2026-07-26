@@ -83,6 +83,33 @@ def test_business_analysis_excludes_totals_and_cancelled_rows_and_uses_asof_cost
     assert "Parametros" not in result["alcance"]["hojas_utilizadas"]
 
 
+def test_business_analysis_detects_total_footer_with_native_null_cells():
+    frames = {
+        "Ventas_2026": pd.DataFrame(
+            [
+                {
+                    "Fecha Venta": "01/01/2026",
+                    "ID Venta": "V1",
+                    "Monto Venta": 200,
+                    "Estado": "Vigente",
+                },
+                {
+                    "Fecha Venta": pd.NA,
+                    "ID Venta": "TOTAL",
+                    "Monto Venta": 200,
+                    "Estado": pd.NA,
+                },
+            ]
+        )
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    assert result["alcance"]["filas_totales_estructurales"] == 1
+    assert result["estado_resultados"]["ventas_observadas"] == 200
+
+
 def test_operating_expenses_use_net_amount_and_exclude_invalid_dates():
     frames = {
         "Ventas_2026": pd.DataFrame(
@@ -213,10 +240,12 @@ def test_declared_sales_period_excludes_invalid_and_out_of_period_rows():
         "desde": "2026-01-01",
         "hasta": "2026-06-30",
     }
-    assert result["alcance"]["filas_indicadores"] == 1
+    # La fila sin fecha permanece en el total global, pero no se asigna a un
+    # mes ni a un costo por vigencia. La fila válida fuera del periodo sí sale.
+    assert result["alcance"]["filas_indicadores"] == 2
     assert result["alcance"]["filas_fecha_invalida"] == 1
     assert result["alcance"]["filas_fuera_periodo_declarado"] == 1
-    assert result["estado_resultados"]["ventas_observadas"] == 200
+    assert result["estado_resultados"]["ventas_observadas"] == 600
     assert result["estado_resultados"]["gastos_operacionales"] == 50
     assert [row["mes"] for row in result["evolucion"]] == ["2026-06"]
 
@@ -370,8 +399,10 @@ def test_current_catalogue_fills_history_gaps_without_certifying_the_estimate():
     result = analyze_business_workbook(frames, _sales_mapping(), {})
 
     assert result is not None
-    assert result["estado_resultados"]["cobertura_costos_pct"] == 100
-    assert result["estado_resultados"]["costo_venta_conocido"] == 100
+    assert result["estado_resultados"]["cobertura_costos_pct"] == 0
+    assert result["estado_resultados"]["cobertura_costos_estimada_pct"] == 100
+    assert result["estado_resultados"]["costo_venta_conocido"] == 0
+    assert result["estado_resultados"]["costo_venta_estimado_catalogo"] == 100
     assert result["estado_resultados"]["cobertura_costos_certificable_pct"] == 0
     assert result["estado_resultados"]["utilidad_certificable"] is None
     assert result["calidad"]["costos"]["filas_costo_actual_estimado"] == 1
@@ -403,7 +434,9 @@ def test_certifiable_sales_keep_one_exact_copy_and_exclude_conflicting_ids():
 
     assert result is not None
     assert result["estado_resultados"]["ventas_observadas"] == 450
-    assert result["estado_resultados"]["ventas_certificables"] == 100
+    # Los hallazgos no eliminan filas en silencio: toda corrección requiere una
+    # acción confirmada en Limpieza.
+    assert result["estado_resultados"]["ventas_certificables"] == 450
     assert result["alcance"]["documentos_repetidos"] == 2
     assert result["alcance"]["filas_adicionales_documento"] == 2
     assert result["alcance"]["documentos_conflictivos"] == 1

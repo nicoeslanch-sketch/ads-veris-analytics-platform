@@ -196,11 +196,13 @@ def test_catalog_adds_all_sales_periods_to_costs_without_replacing_individual_vi
     assert consolidated[0]["label"] == "Todas las ventas ↔ Productos"
     assert consolidated[0]["append_sheets"] == ["Ventas_2025", "Ventas_2026"]
     assert consolidated[0]["recommended"] is True
+    # Cuando hay varios periodos equivalentes se ofrece una sola conexión
+    # consolidada; así el workspace no repite dashboards semestrales.
     assert sum(
         item["left_sheet"].startswith("Ventas_")
         and not item.get("append_sheets")
         for item in catalog["relationships"]
-    ) == 2
+    ) == 0
 
 
 def test_catalog_recognizes_neutral_month_names_as_sales_by_structure():

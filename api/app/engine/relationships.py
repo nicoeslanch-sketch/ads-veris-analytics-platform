@@ -99,6 +99,12 @@ def collapse_inventory_snapshots(
     work = frame.copy()
     if date_col and date_col in work.columns:
         work["__snapshot_order"] = _dates(work, date_col)
+        valid_dates = work["__snapshot_order"].dropna()
+        if not valid_dates.empty:
+            # A snapshot is a coherent cut of the whole inventory. Mixing the
+            # latest row per SKU can carry stale branches from older cuts and
+            # inflate stock. Prefer the latest global cut, then deduplicate keys.
+            work = work.loc[work["__snapshot_order"].eq(valid_dates.max())]
         work = work.sort_values("__snapshot_order", kind="stable")
     grouped = work.groupby(
         [work[key].map(_text_key) for key in valid_keys], dropna=False, sort=False
@@ -214,7 +220,7 @@ def classify_relationship_template(
     if left_sales and _has_derived_unit_cost(right_mapping, left_mapping):
         return build("sales_costs", "ventas_costos", f"{left_name} ↔ {right_name}")
     # Ventas contra una maestra genérica de producto.
-    if left_sales and left_mapping.get("producto"):
+    if left_sales and right_kind == "productos" and left_mapping.get("producto"):
         return build("products_sales", "productos_ventas", f"{right_name} ↔ {left_name}")
     return build("generic", "relacion_generica", label)
 
@@ -259,27 +265,98 @@ def _consolidated_sales_relationships(
         sort=False,
     )
     consolidated: list[dict[str, Any]] = []
+    supported_right_kinds = {
+        "costos",
+        "productos",
+        "clientes",
+        "vendedores",
+        "sucursales",
+        "inventario",
+        "cobranzas",
+        "historial_costos",
+    }
     for right_name, right in frames.items():
         if right_name in sales_names:
             continue
         right_kind = _sheet_kind(right_name, right)
         right_mapping = resolved[right_name]
-        if (
-            right_kind not in {"costos", "productos"}
-            or not is_unit_cost_column(right_mapping.get("costo"))
-        ):
+        if right_kind not in supported_right_kinds:
             continue
+        combined_mapping = resolve_mapping(
+            [str(column) for column in combined.columns],
+            resolved[sales_names[0]],
+        )
+        if right_kind == "historial_costos":
+            left_key = (
+                find_column(combined.columns, "sku", "producto")
+                or find_column(combined.columns, "id", "producto")
+            )
+            right_key = (
+                find_column(right.columns, "sku", "producto")
+                or find_column(right.columns, "id", "producto")
+            )
+            if not left_key or not right_key:
+                continue
+            left_values = {
+                _text_key(value) for value in combined[left_key] if _text_key(value)
+            }
+            right_values = {
+                _text_key(value) for value in right[right_key] if _text_key(value)
+            }
+            overlap = (
+                len(left_values & right_values) / max(len(left_values), 1)
+            )
+            consolidated.append(
+                {
+                    "id": relationship_id(
+                        "todas-las-ventas", right_name, [left_key], [right_key]
+                    ),
+                    "left_sheet": sales_names[0],
+                    "append_sheets": sales_names,
+                    "right_sheet": right_name,
+                    "left_keys": [left_key],
+                    "right_keys": [right_key],
+                    "type": "left",
+                    "template": "sales_costs",
+                    "label": f"Todas las ventas ↔ {right_name}",
+                    "purpose": "ventas_costos",
+                    "coverage_left": round(overlap, 4),
+                    "coverage_right": 1.0,
+                    "overlap": round(overlap, 4),
+                    "cardinality": "muchos_a_uno_temporal",
+                    "safe": True,
+                    "recommended": False,
+                    "source": "automatic",
+                    "currency_compatible": True,
+                    "reason": None,
+                    "join_strategy": "vigencia_por_fecha",
+                }
+            )
+            continue
+        right_eval = (
+            collapse_inventory_snapshots(right, mapping=right_mapping)
+            if right_kind == "inventario"
+            else right
+        )
         best, _ = _best_relationship_for_pair(
             sales_names[0],
             combined,
             right_name,
-            right,
+            right_eval,
         )
         if not best or not best["safe"]:
             continue
+        template, label, purpose = classify_relationship_template(
+            sales_names[0],
+            combined,
+            combined_mapping,
+            right_name,
+            right,
+            right_mapping,
+        )
         currency_ok = all(
             _currency_compatible(
-                "ventas_costos", sale_name, right_name, results
+                purpose, sale_name, right_name, results
             )[0]
             for sale_name in sales_names
         )
@@ -299,9 +376,9 @@ def _consolidated_sales_relationships(
                 "left_keys": best["left_keys"],
                 "right_keys": best["right_keys"],
                 "type": "left",
-                "template": "sales_costs",
+                "template": template,
                 "label": f"Todas las ventas ↔ {right_name}",
-                "purpose": "ventas_costos",
+                "purpose": purpose,
                 "coverage_left": best["coverage_left"],
                 "coverage_right": best["coverage_right"],
                 "overlap": best["overlap"],
@@ -419,31 +496,91 @@ def detect_relationship_catalog(
         name: resolve_mapping([str(column) for column in frame.columns], mappings.get(name))
         for name, frame in frames.items()
     }
-    profiles = {
-        name: is_transaction_profile(frames[name].columns, resolved[name])
-        for name in frames
+    kinds = {name: _sheet_kind(name, frames[name]) for name in frames}
+    sales_names = [name for name, kind in kinds.items() if kind == "ventas"]
+
+    supported_orientations = {
+        ("ventas", "productos"),
+        ("ventas", "costos"),
+        ("ventas", "historial_costos"),
+        ("ventas", "clientes"),
+        ("ventas", "vendedores"),
+        ("ventas", "sucursales"),
+        ("ventas", "inventario"),
+        ("ventas", "cobranzas"),
+        ("productos", "proveedores"),
+        ("compras", "productos"),
+        ("compras", "proveedores"),
+        ("inventario", "productos"),
+        ("gastos", "sucursales"),
+        ("clientes", "vendedores"),
+        ("vendedores", "sucursales"),
+        ("metas", "sucursales"),
+        ("campanas", "sucursales"),
     }
+
+    def orient_pair(first: str, second: str) -> tuple[str, str] | None:
+        if (kinds[first], kinds[second]) in supported_orientations:
+            return first, second
+        if (kinds[second], kinds[first]) in supported_orientations:
+            return second, first
+        return None
 
     relationships: list[dict[str, Any]] = []
     discarded = 0
     for first, second in itertools.combinations(frames, 2):
-        first_tx = profiles[first]
-        second_tx = profiles[second]
-        # Dos hojas transaccionales compatibles se apilan con "append", no se
-        # relacionan. Dos maestras sin hechos no producen un dashboard útil.
-        if first_tx == second_tx:
+        oriented = orient_pair(first, second)
+        if oriented is None:
+            if _unsupported_generic_pair(first, frames[first], second, frames[second]):
+                discarded += 1
             continue
-        left_name, right_name = (first, second) if first_tx else (second, first)
+        left_name, right_name = oriented
+        # When periods are split across several sales sheets, only the
+        # consolidated relationship is presented. This avoids duplicated
+        # dashboards that disagree simply because each one sees half a year.
+        if kinds[left_name] == "ventas" and len(sales_names) > 1:
+            continue
         left = frames[left_name]
         right = frames[right_name]
+        temporal_history = kinds[right_name] == "historial_costos"
         # Un inventario con varios snapshots por producto se colapsa al último
         # antes de evaluar: así la relación con ventas es segura (muchos_a_uno).
         right_eval = right
         if _sheet_kind(right_name, right) == "inventario":
             right_eval = collapse_inventory_snapshots(right, mapping=resolved[right_name])
-        best, had_candidates = _best_relationship_for_pair(
-            left_name, left, right_name, right_eval
-        )
+        if temporal_history:
+            left_key = (
+                find_column(left.columns, "sku", "producto")
+                or find_column(left.columns, "id", "producto")
+            )
+            right_key = (
+                find_column(right.columns, "sku", "producto")
+                or find_column(right.columns, "id", "producto")
+            )
+            if not left_key or not right_key:
+                continue
+            left_values = {
+                _text_key(value) for value in left[left_key] if _text_key(value)
+            }
+            right_values = {
+                _text_key(value) for value in right[right_key] if _text_key(value)
+            }
+            coverage = len(left_values & right_values) / max(len(left_values), 1)
+            best = {
+                "left_keys": [left_key],
+                "right_keys": [right_key],
+                "coverage_left": round(coverage, 4),
+                "coverage_right": 1.0,
+                "overlap": round(coverage, 4),
+                "cardinality": "muchos_a_uno_temporal",
+                "safe": True,
+                "reason": None,
+            }
+            had_candidates = True
+        else:
+            best, had_candidates = _best_relationship_for_pair(
+                left_name, left, right_name, right_eval
+            )
         if best is None:
             continue
         template, label, purpose = classify_relationship_template(
@@ -482,6 +619,7 @@ def detect_relationship_catalog(
             "source": "automatic",
             "currency_compatible": currency_ok,
             "reason": reason,
+            **({"join_strategy": "vigencia_por_fecha"} if temporal_history else {}),
         }
         if safe:
             relationships.append(entry)

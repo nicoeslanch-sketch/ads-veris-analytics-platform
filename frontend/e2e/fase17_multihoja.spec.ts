@@ -435,11 +435,15 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   const flow = page.getByTestId('business-summary-flow')
   await expect(flow).toBeVisible()
   const layout = await flow.evaluate((element) => ({
-    columns: getComputedStyle(element).columnCount,
+    display: getComputedStyle(element).display,
+    columns: getComputedStyle(element).gridTemplateColumns
+      .split(' ')
+      .filter(Boolean).length,
     width: element.scrollWidth,
     clientWidth: element.clientWidth,
   }))
-  expect(layout.columns).toBe('2')
+  expect(layout.display).toBe('grid')
+  expect(layout.columns).toBe(2)
   expect(layout.width).toBeLessThanOrEqual(layout.clientWidth + 1)
   await page.screenshot({ path: testInfo.outputPath('resumen-empresarial-desktop.png'), fullPage: true })
 

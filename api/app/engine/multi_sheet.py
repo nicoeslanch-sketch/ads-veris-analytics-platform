@@ -320,6 +320,27 @@ def _relation_stats_from_series(
 
 
 def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str, str]]:
+    def identifier_domain(column: str) -> str | None:
+        compact = norm_key(column)
+        aliases = {
+            "producto": ("producto", "product", "sku", "articulo", "item"),
+            "cliente": ("cliente", "customer", "comprador"),
+            "trabajador": (
+                "vendedor",
+                "trabajador",
+                "empleado",
+                "ejecutivo",
+                "seller",
+            ),
+            "sucursal": ("sucursal", "tienda", "local", "branch"),
+            "proveedor": ("proveedor", "supplier", "vendor"),
+            "documento": ("documento", "factura", "boleta", "invoice", "folio"),
+        }
+        for domain, markers in aliases.items():
+            if any(marker in compact for marker in markers):
+                return domain
+        return None
+
     right_by_norm = {norm_key(str(column)): str(column) for column in right.columns}
     pairs: list[tuple[str, str]] = []
     left_extended = detect_columns_extended([str(column) for column in left.columns])
@@ -341,9 +362,38 @@ def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str,
             pairs.append((left_name, right_name))
             continue
         if not left_match or left_match.grupo != "identificador":
-            continue
+            left_domain = identifier_domain(left_name)
+            if not looks_identifier or not left_domain:
+                continue
+        else:
+            left_domain = identifier_domain(left_name)
+        if left_domain:
+            domain_candidate = next(
+                (
+                    str(candidate)
+                    for candidate in right.columns
+                    if identifier_domain(str(candidate)) == left_domain
+                    and norm_key(str(candidate)).startswith(
+                        ("id", "codigo", "sku", "rut", "folio", "uuid", "clave")
+                    )
+                ),
+                None,
+            )
+            if domain_candidate:
+                pairs.append((left_name, domain_candidate))
+                continue
         for candidate, right_match in right_extended.items():
-            if right_match.grupo == "identificador" and right_match.rol == left_match.rol:
+            same_dictionary_role = bool(
+                left_match
+                and right_match.grupo == "identificador"
+                and right_match.rol == left_match.rol
+            )
+            same_business_domain = bool(
+                left_domain
+                and identifier_domain(candidate) == left_domain
+                and right_match.grupo == "identificador"
+            )
+            if same_dictionary_role or same_business_domain:
                 pairs.append((left_name, candidate))
                 break
     return pairs

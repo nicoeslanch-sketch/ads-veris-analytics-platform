@@ -141,6 +141,10 @@ const GENERIC_TITLES: Record<string, { titulo: string; nota: string }> = {
     titulo: 'Evolución de costos',
     nota: 'Resume costos unitarios por vigencia y fuente; no suma costos unitarios como gasto del negocio.',
   },
+  auxiliar: {
+    titulo: 'Instrucciones del libro',
+    nota: 'Esta hoja es auxiliar: se muestra como referencia y nunca alimenta ventas, clientes ni indicadores.',
+  },
 }
 
 export default function AdaptiveProfileSummary({
@@ -162,6 +166,15 @@ export default function AdaptiveProfileSummary({
       ['Clics', formatNumber(campaign.clics)],
       ['CTR', campaign.ctr_pct == null ? '—' : `${formatNumber(campaign.ctr_pct)}%`],
       ['CPC', campaign.cpc == null ? '—' : formatCLP(campaign.cpc)],
+      ...(campaign.conversiones != null
+        ? [['Conversiones', formatNumber(campaign.conversiones)]]
+        : []),
+      ...(campaign.tasa_conversion_pct != null
+        ? [['Tasa de conversión', `${formatNumber(campaign.tasa_conversion_pct)}%`]]
+        : []),
+      ...(campaign.costo_por_conversion != null
+        ? [['Costo por conversión', formatCLP(campaign.costo_por_conversion)]]
+        : []),
     ]
     const platforms = (campaign.por_plataforma ?? []).map((item) => ({
       ...item,
@@ -253,12 +266,15 @@ export default function AdaptiveProfileSummary({
   }
   if (inventory) {
     const cards: string[][] = [
-      ['Registros', formatNumber(inventory.registros)],
+      ['Registros del último corte', formatNumber(inventory.registros)],
       ['Productos', formatNumber(inventory.productos)],
       ['Stock total', formatNumber(inventory.stock_total)],
       ['Stock mínimo', formatNumber(inventory.stock_minimo_total)],
       ['Bajo mínimo', formatNumber(inventory.bajo_minimo)],
       ['Cobertura', `${formatNumber(inventory.cobertura_stock_pct)}%`],
+      ...(inventory.fecha_corte
+        ? [['Fecha de corte', inventory.fecha_corte]]
+        : []),
       ...(inventory.valor_inventario != null
         ? [['Valor de inventario', formatCLP(inventory.valor_inventario)]]
         : []),

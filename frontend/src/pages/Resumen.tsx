@@ -838,15 +838,15 @@ export default function Resumen() {
               )}
             </div>
 
-            {/* Cada tarjeta conserva su altura natural. Una agrupación larga
-                no estira las tarjetas vecinas ni deja huecos bajo una dona. */}
+            {/* Grilla en orden de lectura: evita que CSS multi-column reordene
+                tarjetas o deje grandes huecos cuando faltan secciones. */}
             <div className="order-5 @container xl:order-last xl:col-span-2">
               <div
                 data-testid="summary-compact-flow"
-                className="columns-1 gap-6 @2xl:columns-2 @5xl:columns-3"
+                className="grid items-start gap-6 @2xl:grid-cols-2 @5xl:grid-cols-3"
               >
                   {canal.length > 0 && (
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
                     <div className="mt-2 flex flex-col items-center justify-center gap-3">
                       <div className="relative h-44 w-44 shrink-0">
@@ -900,7 +900,7 @@ export default function Resumen() {
                   )}
 
                   {topProducts.length > 0 && (
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
                     {/* flex-1 + reparto uniforme: los productos ocupan el alto
                         sobrante en vez de dejar un hueco al pie de la card. */}
@@ -931,7 +931,7 @@ export default function Resumen() {
                   </Card>
                   )}
 
-                  <Card className="mb-6 min-w-0 break-inside-avoid">
+                  <Card className="min-w-0">
                     {/* Fase 12b §20: es una EXTRAPOLACIÓN del promedio observado, no
                         una predicción — el copy no debe prometer más que el método. */}
                     <h2 className="text-base font-semibold text-navy">
@@ -1162,7 +1162,7 @@ function FlexibleGroupCard({
   const total = rows.reduce((sum, row) => sum + row.ingresos, 0)
   const hasNegative = rows.some((row) => row.ingresos < 0)
   return (
-    <Card className="@container mb-6 min-w-0 break-inside-avoid" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
+    <Card className="@container min-w-0" style={{ background: `linear-gradient(145deg, ${chartColor}0b, #ffffff 42%)` }}>
       <div className="flex items-center gap-2">
         <span className="h-3 w-3 rounded-full" style={{ background: chartColor }} />
         <h2 className="text-base font-semibold text-navy">Ventas por {agrupacion.columna}</h2>

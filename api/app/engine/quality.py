@@ -68,7 +68,13 @@ def structural_total_mask(
     if len(candidates) == 0:
         return mask
 
-    candidate_frame = frame.loc[candidates]
+    # Columnas internas de trazabilidad se agregan después de leer el Excel y
+    # siempre vienen completas; no deben hacer que un pie TOTAL parezca una
+    # transacción densa.
+    business_columns = [
+        column for column in frame.columns if not str(column).startswith("_")
+    ]
+    candidate_frame = frame.loc[candidates, business_columns]
     empty_share = candidate_frame.apply(physical_missing_mask).mean(axis=1)
     confirmed = empty_share >= 0.35
     if date_column and date_column in frame.columns:

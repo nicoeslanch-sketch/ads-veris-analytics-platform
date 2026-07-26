@@ -127,7 +127,69 @@ def _sheet_kind(name: str, frame: pd.DataFrame) -> str:
         return "sucursales"
     if "vendedor" in sheet or "id vendedor" in headers:
         return "vendedores"
+    if (
+        "trabajador" in sheet
+        or "empleado" in sheet
+        or "id trabajador" in headers
+        or ("cargo" in headers and ("comision" in headers or "sueldo" in headers))
+    ):
+        return "vendedores"
+    if "campan" in sheet or (
+        "impresiones" in headers and "clics" in headers and "inversion" in headers
+    ):
+        return "campanas"
+    if "instruccion" in sheet or (
+        len(frame.columns) <= 3 and "columna" in headers and "rut" in headers
+    ):
+        return "auxiliar"
     return "otra"
+
+
+def _first_column(
+    columns: Any,
+    candidates: tuple[tuple[str, ...], ...],
+    *,
+    excluded: tuple[str, ...] = (),
+) -> str | None:
+    """Find the first semantically preferred header from a synonym list."""
+
+    for required in candidates:
+        match = find_column(columns, *required, excluded=excluded)
+        if match:
+            return match
+    return None
+
+
+def _net_amount_column(columns: Any, *, domain: str | None = None) -> str | None:
+    candidates: list[tuple[str, ...]] = [
+        ("monto", "neto"),
+        ("venta", "neta"),
+        ("importe", "neto"),
+        ("total", "neto"),
+        ("net", "amount"),
+        ("net", "sales"),
+    ]
+    if domain:
+        candidates.extend(
+            [
+                ("monto", domain),
+                ("total", domain),
+            ]
+        )
+    candidates.extend([("monto",), ("importe",), ("total",)])
+    return _first_column(
+        columns,
+        tuple(candidates),
+        excluded=("iva", "impuesto", "unitario", "ticket", "promedio"),
+    )
+
+
+def _event_date_column(columns: Any, domain: str | None = None) -> str | None:
+    candidates: list[tuple[str, ...]] = []
+    if domain:
+        candidates.extend([("fecha", domain), (domain, "fecha")])
+    candidates.extend([("fecha",), ("periodo",), ("mes",)])
+    return _first_column(columns, tuple(candidates))
 
 
 def classify_business_sheets(frames: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
@@ -410,12 +472,25 @@ def _applicable_unit_cost(
         }
 
     history_key = (
-        find_column(cost_history.columns, "sku", "producto")
+        (
+            find_column(cost_history.columns, "sku", "producto")
+            or find_column(cost_history.columns, "id", "producto")
+            or find_column(cost_history.columns, "producto")
+        )
         if cost_history is not None
         else None
     )
     history_date = (
-        find_column(cost_history.columns, "vigencia")
+        _first_column(
+            cost_history.columns,
+            (
+                ("fecha", "desde"),
+                ("vigencia", "desde"),
+                ("fecha", "inicio"),
+                ("effective", "from"),
+                ("vigencia",),
+            ),
+        )
         if cost_history is not None
         else None
     )
@@ -529,12 +604,16 @@ def _formula_controls(frames: dict[str, pd.DataFrame], kinds: dict[str, list[str
 
     for name in kinds.get("ventas", []):
         frame = frames[name]
-        amount_col = find_column(frame.columns, "monto", "venta")
+        amount_col = _net_amount_column(frame.columns, domain="venta")
         quantity_col = find_column(frame.columns, "cantidad")
         price_col = find_column(frame.columns, "precio", "unitario")
         discount_col = find_column(frame.columns, "descuento")
         tax_col = find_column(frame.columns, "iva")
-        total_col = find_column(frame.columns, "total", "documento")
+        total_col = _first_column(
+            frame.columns,
+            (("total", "documento"), ("total",)),
+            excluded=("subtotal", "neto"),
+        )
         amount = numeric_series(frame, amount_col)
         quantity = numeric_series(frame, quantity_col)
         price = numeric_series(frame, price_col)
@@ -547,7 +626,6 @@ def _formula_controls(frames: dict[str, pd.DataFrame], kinds: dict[str, list[str
                 amount,
                 expected_amount,
                 source_rows=source_rows,
-                eligible=discount.between(0, 1),
                 relative_tolerance=0.02,
                 absolute_tolerance=50,
             ).to_dict()}
@@ -602,16 +680,21 @@ def _formula_controls(frames: dict[str, pd.DataFrame], kinds: dict[str, list[str
 
     for name in kinds.get("compras", []):
         frame = frames[name]
-        quantity = numeric_series(frame, find_column(frame.columns, "cantidad", "comprada"))
+        quantity = numeric_series(
+            frame,
+            _first_column(frame.columns, (("cantidad", "comprada"), ("cantidad",))),
+        )
         unit_cost = numeric_series(frame, find_column(frame.columns, "costo", "unitario"))
         discount = numeric_series(frame, find_column(frame.columns, "descuento")).fillna(0)
-        freight = numeric_series(frame, find_column(frame.columns, "flete")).fillna(0)
-        net = numeric_series(frame, find_column(frame.columns, "monto", "neto"))
+        net = numeric_series(frame, _net_amount_column(frame.columns, domain="compra"))
         tax = numeric_series(frame, find_column(frame.columns, "iva"))
-        total = numeric_series(frame, find_column(frame.columns, "total", "compra"))
+        total = numeric_series(
+            frame,
+            _first_column(frame.columns, (("total", "compra"), ("total",))),
+        )
         source_rows = list(frame.attrs.get("adsveris_source_rows", []))
         controls.append({"hoja": name, **formula_mismatch(
-            "neto_compra", net, quantity * unit_cost * (1 - discount) + freight,
+            "neto_compra", net, quantity * unit_cost * (1 - discount),
             source_rows=source_rows, eligible=discount.between(0, 1),
         ).to_dict()})
         controls.append({"hoja": name, **formula_mismatch(
@@ -621,9 +704,15 @@ def _formula_controls(frames: dict[str, pd.DataFrame], kinds: dict[str, list[str
 
     for name in kinds.get("gastos", []):
         frame = frames[name]
-        net = numeric_series(frame, find_column(frame.columns, "monto", "neto"))
+        net = numeric_series(frame, _net_amount_column(frame.columns, domain="gasto"))
         tax = numeric_series(frame, find_column(frame.columns, "iva"))
-        total = numeric_series(frame, find_column(frame.columns, "total", "gasto"))
+        total_column = _first_column(
+            frame.columns,
+            (("total", "gasto"), ("total",)),
+        )
+        if total_column is None or not tax.notna().any():
+            continue
+        total = numeric_series(frame, total_column)
         controls.append({"hoja": name, **formula_mismatch(
             "total_gasto", total, net + tax,
             source_rows=list(frame.attrs.get("adsveris_source_rows", [])),
@@ -686,17 +775,38 @@ def analyze_business_workbook(
         for role, column in mappings.get(name, {}).items():
             if column in sales.columns and role not in mapping:
                 mapping[role] = column
-    date_col = mapping.get("fecha") or find_column(sales.columns, "fecha", "venta")
-    amount_col = mapping.get("monto") or find_column(sales.columns, "monto", "venta")
+    date_col = mapping.get("fecha") or _event_date_column(sales.columns, "venta")
+    amount_col = _net_amount_column(sales.columns, domain="venta") or mapping.get("monto")
     quantity_col = mapping.get("cantidad") or find_column(sales.columns, "cantidad")
     product_key = find_column(sales.columns, "sku", "producto") or find_column(sales.columns, "id", "producto")
     document_key = find_column(sales.columns, "id", "documento")
+    record_key = _first_column(
+        sales.columns,
+        (
+            ("id", "venta"),
+            ("id", "transaccion"),
+            ("id", "movimiento"),
+            ("id", "linea"),
+        ),
+        excluded=("documento",),
+    )
     status_col = find_column(sales.columns, "estado")
     sales_dates = _dates(sales, date_col)
     structural = structural_total_mask(sales, date_col)
     cancelled = _status_mask(sales, status_col, r"\b(?:anulad|cancelad|void)\w*")
+    base_indicator_mask = ~structural & ~cancelled
     period_mask = analysis_period_mask(sales_dates)
-    indicator_mask = ~structural & ~cancelled & period_mask
+    if date_from or date_to:
+        indicator_mask = base_indicator_mask & period_mask
+    else:
+        # Sin un filtro solicitado, una venta sin fecha sigue perteneciendo al
+        # total global. Solo se excluye de series temporales y cruces as-of.
+        indicator_mask = base_indicator_mask.copy()
+        if declared_period_from is not None:
+            indicator_mask &= sales_dates.isna() | sales_dates.ge(declared_period_from)
+        if declared_period_to is not None:
+            indicator_mask &= sales_dates.isna() | sales_dates.le(declared_period_to)
+    timeline_mask = base_indicator_mask & sales_dates.notna() & period_mask
     outside_declared_period = pd.Series(False, index=sales.index)
     if declared_period_from is not None:
         outside_declared_period |= sales_dates.lt(declared_period_from)
@@ -707,32 +817,73 @@ def analyze_business_workbook(
 
     amount = numeric_series(sales, amount_col)
     quantity = numeric_series(sales, quantity_col)
-    document_keys = _keys(sales[document_key]) if document_key else pd.Series(None, index=sales.index)
-    duplicated_document = document_keys.notna() & document_keys.duplicated(keep=False)
-    duplicate_groups = int(document_keys[duplicated_document].nunique())
+    document_keys = (
+        _keys(sales[document_key])
+        if document_key
+        else pd.Series(None, index=sales.index, dtype=object)
+    )
+    # Un documento puede contener muchas líneas. Por eso ID_Documento jamás se
+    # trata por sí solo como duplicado: se revisa el ID único de transacción o,
+    # cuando no existe/repite, la identidad documento + producto.
+    record_keys = (
+        _keys(sales[record_key])
+        if record_key
+        else pd.Series(None, index=sales.index, dtype=object)
+    )
+    repeated_record = record_keys.notna() & record_keys.duplicated(keep=False)
+    product_keys = (
+        _keys(sales[product_key])
+        if product_key
+        else pd.Series(None, index=sales.index, dtype=object)
+    )
+    line_keys = (
+        document_keys.fillna("") + "\u241f" + product_keys.fillna("")
+        if product_key
+        else document_keys
+    )
+    repeated_line = document_keys.notna() & line_keys.duplicated(keep=False)
+    duplicated_document = repeated_record | repeated_line
+    duplicate_identity = record_keys.where(repeated_record, line_keys)
+    duplicate_groups = int(duplicate_identity[duplicated_document].nunique())
     duplicate_extra_rows = int(duplicated_document.sum() - duplicate_groups)
-    # Un ID repetido cae en exactamente una de tres categorías: conflicto real
-    # de negocio (difiere en una columna que no es Observación), duplicado
-    # idéntico (fila igual en todas las columnas) o solo difiere en una
-    # columna Observación.* (no es conflicto, pero tampoco copia exacta).
+    # Una línea repetida cae en conflicto material, copia idéntica o diferencia
+    # limitada a observaciones. El ID técnico de la venta no forma parte de la
+    # comparación porque dos cargas de la misma línea pueden generar IDs nuevos.
     conflicting_document_keys: set[str] = set()
     identical_document_keys: set[str] = set()
     observation_only_document_keys: set[str] = set()
-    if document_key and duplicate_groups:
+    if duplicate_groups:
         compare_columns = [
             column for column in sales.columns
-            if column not in {document_key, "_hoja_origen", "_fila_origen"}
+            if column not in {record_key, "_hoja_origen", "_fila_origen"}
             and "observa" not in normalized_header(column)
         ]
         all_columns = [
             column for column in sales.columns
-            if column not in {document_key, "_hoja_origen", "_fila_origen"}
+            if column not in {record_key, "_hoja_origen", "_fila_origen"}
         ]
-        for key, group in sales.loc[duplicated_document].groupby(document_keys[duplicated_document]):
+
+        def normalized_duplicate_frame(
+            group: pd.DataFrame, columns: list[str]
+        ) -> pd.DataFrame:
+            comparable = pd.DataFrame(index=group.index)
+            for column in columns:
+                header = normalized_header(column)
+                if "fecha" in header or "periodo" in header:
+                    comparable[column] = _dates(group, column).astype(str)
+                else:
+                    comparable[column] = group[column].map(
+                        lambda value: None if pd.isna(value) else str(value).strip()
+                    )
+            return comparable
+
+        for key, group in sales.loc[duplicated_document].groupby(
+            duplicate_identity[duplicated_document]
+        ):
             key_str = str(key)
-            if len(group[compare_columns].drop_duplicates()) > 1:
+            if len(normalized_duplicate_frame(group, compare_columns).drop_duplicates()) > 1:
                 conflicting_document_keys.add(key_str)
-            elif len(group[all_columns].drop_duplicates()) > 1:
+            elif len(normalized_duplicate_frame(group, all_columns).drop_duplicates()) > 1:
                 observation_only_document_keys.add(key_str)
             else:
                 identical_document_keys.add(key_str)
@@ -741,7 +892,7 @@ def analyze_business_workbook(
     observation_only_groups = len(observation_only_document_keys)
     document_issue_examples = []
     for key, group in sales.loc[duplicated_document].groupby(
-        document_keys[duplicated_document], sort=False
+        duplicate_identity[duplicated_document], sort=False
     ):
         key_str = str(key)
         issue_type = (
@@ -764,11 +915,9 @@ def analyze_business_workbook(
         })
         if len(document_issue_examples) >= 12:
             break
-    duplicate_extra = document_keys.notna() & document_keys.duplicated(keep="first")
-    conflicting_document = document_keys.isin(conflicting_document_keys)
-    # Exact copies contribute once. Reused IDs with conflicting payload stay
-    # entirely outside certifiable figures until a person resolves them.
-    certified_mask = indicator_mask & ~duplicate_extra & ~conflicting_document
+    # Los hallazgos no alteran cifras silenciosamente. Las filas se conservan
+    # hasta que el usuario confirme una acción de limpieza.
+    certified_mask = indicator_mask.copy()
 
     current_cost_name = (kinds.get("costos") or [None])[0]
     if not current_cost_name:
@@ -813,16 +962,28 @@ def analyze_business_workbook(
         unit_cost_col,
         cost_history,
     )
-    cost_of_sales = (quantity * unit_cost).where(quantity.notna() & unit_cost.notna())
-    paired = indicator_mask & amount.notna() & cost_of_sales.notna()
+    all_cost_of_sales = (quantity * unit_cost).where(
+        quantity.notna() & unit_cost.notna()
+    )
     historical_cost = cost_source.eq("historial_asof")
     estimated_current_cost = cost_source.eq("catalogo_actual_estimado")
     current_catalogue_only = cost_method.get("metodo") == "catalogo_actual"
-    certifiable_cost = historical_cost | (
+    official_cost_source = historical_cost | (
         current_catalogue_only & cost_source.eq("catalogo_actual")
     )
+    # If a history sheet exists, current catalogue fallbacks remain an explicit
+    # estimate. They improve scenario analysis but never replace the historical
+    # cost in the official gross profit.
+    cost_of_sales = all_cost_of_sales.where(official_cost_source)
+    estimated_cost_of_sales = all_cost_of_sales.where(
+        official_cost_source | estimated_current_cost
+    )
+    paired = indicator_mask & amount.notna() & cost_of_sales.notna()
+    estimated_paired = (
+        indicator_mask & amount.notna() & estimated_cost_of_sales.notna()
+    )
     certified_paired = (
-        certified_mask & amount.notna() & cost_of_sales.notna() & certifiable_cost
+        certified_mask & amount.notna() & cost_of_sales.notna()
     )
 
     observed_sales = float(amount[indicator_mask].dropna().sum())
@@ -831,6 +992,18 @@ def analyze_business_workbook(
     paired_cost = float(cost_of_sales[paired].sum())
     gross_profit = paired_sales - paired_cost if paired.any() else None
     gross_margin = gross_profit / paired_sales * 100 if gross_profit is not None and paired_sales else None
+    estimated_paired_sales = float(amount[estimated_paired].sum())
+    estimated_total_cost = float(estimated_cost_of_sales[estimated_paired].sum())
+    estimated_gross_profit = (
+        estimated_paired_sales - estimated_total_cost
+        if estimated_paired.any()
+        else None
+    )
+    estimated_gross_margin = (
+        estimated_gross_profit / estimated_paired_sales * 100
+        if estimated_gross_profit is not None and estimated_paired_sales
+        else None
+    )
     certified_paired_sales = float(amount[certified_paired].sum())
     certified_cost = float(cost_of_sales[certified_paired].sum())
     certified_profit = certified_paired_sales - certified_cost if certified_paired.any() else None
@@ -840,6 +1013,12 @@ def analyze_business_workbook(
         else None
     )
     cost_coverage = round(int(paired.sum()) / max(int((indicator_mask & amount.notna()).sum()), 1) * 100, 1)
+    estimated_cost_coverage = round(
+        int(estimated_paired.sum())
+        / max(int((indicator_mask & amount.notna()).sum()), 1)
+        * 100,
+        1,
+    )
     historical_cost_coverage = round(
         int((indicator_mask & amount.notna() & cost_of_sales.notna() & historical_cost).sum())
         / max(int((indicator_mask & amount.notna()).sum()), 1)
@@ -867,11 +1046,12 @@ def analyze_business_workbook(
     variable_expenses = None
     expense_value_basis = None
     expense_tax_excluded = None
+    depreciation_expense = None
     expense_mask = pd.Series(dtype=bool)
     expense_values = pd.Series(dtype=float)
     expense_frame = frames.get((kinds.get("gastos") or [None])[0]) if kinds.get("gastos") else None
     if expense_frame is not None:
-        expense_date_col = find_column(expense_frame.columns, "fecha", "gasto")
+        expense_date_col = _event_date_column(expense_frame.columns, "gasto")
         expense_status = find_column(expense_frame.columns, "estado")
         expense_mask = ~_status_mask(expense_frame, expense_status, r"\b(?:anulad|cancelad)\w*")
         expense_dates = _dates(expense_frame, expense_date_col)
@@ -879,10 +1059,20 @@ def analyze_business_workbook(
         # It stays visible in quality controls, but not in period P&L metrics.
         expense_mask &= expense_dates.notna()
         expense_mask &= analysis_period_mask(expense_dates)
-        expense_net_col = find_column(expense_frame.columns, "monto", "neto")
-        expense_total_col = find_column(expense_frame.columns, "total", "gasto")
-        expense_value_col = expense_net_col or expense_total_col
-        expense_value_basis = "monto_neto" if expense_net_col else "total_gasto"
+        expense_net_col = _first_column(
+            expense_frame.columns,
+            (("monto", "neto"), ("importe", "neto")),
+        )
+        expense_value_col = expense_net_col or _net_amount_column(
+            expense_frame.columns, domain="gasto"
+        )
+        expense_value_basis = (
+            "monto_neto"
+            if expense_net_col
+            else "monto_gasto"
+            if expense_value_col and "monto" in normalized_header(expense_value_col)
+            else "total_gasto"
+        )
         expense_values = numeric_series(
             expense_frame,
             expense_value_col,
@@ -908,14 +1098,29 @@ def analyze_business_workbook(
             )
             fixed_expenses = float(expense_values[fixed_mask].dropna().sum())
             variable_expenses = float(expense_values[variable_mask].dropna().sum())
+        depreciation_mask = pd.Series(False, index=expense_frame.index)
+        for expense_label_col in expense_frame.columns:
+            header = normalized_header(expense_label_col)
+            if any(token in header for token in ("categoria", "subcategoria", "descripcion", "glosa")):
+                depreciation_mask |= (
+                    expense_frame[expense_label_col]
+                    .astype(str)
+                    .map(strip_accents_lower)
+                    .str.contains(r"depreci|amortiz", regex=True, na=False)
+                )
+        depreciation_expense = float(
+            expense_values[comparable_expense_mask & depreciation_mask]
+            .dropna()
+            .sum()
+        )
     operating_result = (
         gross_profit - expenses_total
         if gross_profit is not None and expenses_total is not None
         else None
     )
     operating_margin = (
-        operating_result / paired_sales * 100
-        if operating_result is not None and paired_sales
+        operating_result / observed_sales * 100
+        if operating_result is not None and observed_sales
         else None
     )
     # Full operating expenses cannot be subtracted from a partial revenue/cost
@@ -930,21 +1135,85 @@ def analyze_business_workbook(
         else None
     )
     certified_operating_margin = (
-        certified_operating_result / certified_paired_sales * 100
-        if certified_operating_result is not None and certified_paired_sales
+        certified_operating_result / certified_sales * 100
+        if certified_operating_result is not None and certified_sales
         else None
     )
 
     inventory_frame = frames.get((kinds.get("inventario") or [None])[0]) if kinds.get("inventario") else None
     inventory_value = None
+    inventory_stock = None
+    inventory_below_minimum = None
+    inventory_snapshot_date = None
+    inventory_cut = None
     if inventory_frame is not None:
-        inventory_values = numeric_series(
-            inventory_frame, find_column(inventory_frame.columns, "valor", "inventario")
+        inventory_dates = _dates(
+            inventory_frame, _event_date_column(inventory_frame.columns, "snapshot")
         )
-        inventory_value = float(inventory_values.dropna().sum()) if inventory_values.notna().any() else None
+        latest_date = inventory_dates.dropna().max() if inventory_dates.notna().any() else None
+        inventory_cut = (
+            inventory_frame.loc[inventory_dates.eq(latest_date)].copy()
+            if latest_date is not None and pd.notna(latest_date)
+            else inventory_frame.copy()
+        )
+        inventory_cut.attrs.update(inventory_frame.attrs)
+        inventory_snapshot_date = (
+            latest_date.date().isoformat()
+            if latest_date is not None and pd.notna(latest_date)
+            else None
+        )
+        inventory_values = numeric_series(
+            inventory_cut, find_column(inventory_cut.columns, "valor", "inventario")
+        )
+        stock_col = _first_column(
+            inventory_cut.columns,
+            (
+                ("stock", "unidades"),
+                ("stock", "disponible"),
+                ("stock", "fisico"),
+                ("stock", "sistema"),
+                ("stock",),
+            ),
+            excluded=("minimo",),
+        )
+        stock_values = numeric_series(inventory_cut, stock_col)
+        minimum_values = numeric_series(
+            inventory_cut, find_column(inventory_cut.columns, "stock", "minimo")
+        )
+        inventory_stock = (
+            float(stock_values.dropna().sum()) if stock_values.notna().any() else None
+        )
+        comparable_stock = stock_values.notna() & minimum_values.notna()
+        inventory_below_minimum = int(
+            (comparable_stock & (stock_values < minimum_values)).sum()
+        )
+        if inventory_values.notna().any():
+            inventory_value = float(inventory_values.dropna().sum())
+        elif stock_values.notna().any() and cost_key and unit_cost_col:
+            inventory_product_key = (
+                find_column(inventory_cut.columns, "sku", "producto")
+                or find_column(inventory_cut.columns, "id", "producto")
+            )
+            if inventory_product_key and not safe_costs.empty:
+                cost_lookup = dict(
+                    zip(
+                        safe_costs["_key"],
+                        numeric_series(safe_costs, unit_cost_col),
+                        strict=False,
+                    )
+                )
+                inventory_unit_cost = _keys(
+                    inventory_cut[inventory_product_key]
+                ).map(cost_lookup)
+                valued = stock_values.notna() & inventory_unit_cost.notna()
+                if valued.any():
+                    inventory_value = float(
+                        (stock_values[valued] * inventory_unit_cost[valued]).sum()
+                    )
 
     purchase_frame = frames.get((kinds.get("compras") or [None])[0]) if kinds.get("compras") else None
     purchases_total = None
+    purchase_freight = None
     if purchase_frame is not None:
         purchase_mask = ~_status_mask(
             purchase_frame,
@@ -952,66 +1221,184 @@ def analyze_business_workbook(
             r"\b(?:anulad|cancelad)\w*",
         )
         purchase_mask &= analysis_period_mask(
-            _dates(purchase_frame, find_column(purchase_frame.columns, "fecha", "compra")),
+            _dates(purchase_frame, _event_date_column(purchase_frame.columns, "compra")),
         )
         purchases = numeric_series(
-            purchase_frame, find_column(purchase_frame.columns, "total", "compra")
+            purchase_frame, _net_amount_column(purchase_frame.columns, domain="compra")
         )
         purchases_total = float(purchases[purchase_mask].dropna().sum())
+        freight_col = find_column(purchase_frame.columns, "flete")
+        if freight_col:
+            freight_frame = pd.DataFrame(
+                {
+                    "flete": numeric_series(purchase_frame, freight_col).where(purchase_mask),
+                    "documento": (
+                        _keys(
+                            purchase_frame[
+                                _first_column(
+                                    purchase_frame.columns,
+                                    (("id", "documento", "compra"), ("id", "compra")),
+                                )
+                            ]
+                        )
+                        if _first_column(
+                            purchase_frame.columns,
+                            (("id", "documento", "compra"), ("id", "compra")),
+                        )
+                        else pd.Series(None, index=purchase_frame.index)
+                    ),
+                }
+            ).dropna(subset=["flete"])
+            if freight_frame["documento"].notna().any():
+                freight_frame = freight_frame.drop_duplicates("documento")
+            purchase_freight = float(freight_frame["flete"].sum())
 
     collections_frame = frames.get((kinds.get("cobranzas") or [None])[0]) if kinds.get("cobranzas") else None
     collected_total = None
     overpaid_documents = 0
     collection_coverage = None
     collection_duplicates_excluded = 0
+    accounts_receivable = None
+    overdue_receivable = None
+    dso_days = None
+    overdue_days = None
+    orphan_collection_rows = 0
     if collections_frame is not None:
         # Exact duplicate payment rows are preserved in the source but cannot
         # be summed twice in a certifiable collection diagnostic.
         collection_rows = collections_frame.drop_duplicates().reset_index(drop=True)
         collection_duplicates_excluded = len(collections_frame) - len(collection_rows)
         collection_rows.attrs.update(collections_frame.attrs)
-        payment_status = find_column(collection_rows.columns, "estado", "pago")
-        payment_date = find_column(collection_rows.columns, "fecha", "pago")
-        applied = _status_mask(collection_rows, payment_status, r"aplicad")
-        applied &= analysis_period_mask(
-            _dates(collection_rows, payment_date)
+        payment_status = _first_column(
+            collection_rows.columns,
+            (("estado", "pago"), ("estado", "cobranza"), ("estado",)),
         )
+        payment_date = _event_date_column(collection_rows.columns, "pago")
         payment_amount = numeric_series(
-            collection_rows, find_column(collection_rows.columns, "monto", "pago")
+            collection_rows,
+            _first_column(
+                collection_rows.columns,
+                (("monto", "pagado"), ("monto", "pago"), ("importe", "pagado")),
+            ),
+        )
+        paid_status = _status_mask(
+            collection_rows, payment_status, r"\b(?:pagad|aplicad|cobrad)\w*"
+        )
+        applied = (paid_status | payment_amount.gt(0)) & analysis_period_mask(
+            _dates(collection_rows, payment_date)
         )
         collected_total = float(payment_amount[applied].dropna().sum())
         payment_document = find_column(collection_rows.columns, "id", "documento")
-        sales_total_col = find_column(sales.columns, "total", "documento")
-        if payment_document and document_key and sales_total_col:
-            payments = pd.DataFrame(
-                {"key": _keys(collection_rows[payment_document]), "pago": payment_amount.where(applied)}
-            ).dropna(subset=["key", "pago"]).groupby("key")["pago"].sum()
-            unique_sales = sales.loc[certified_mask].copy()
-            totals = numeric_series(unique_sales, sales_total_col)
-            documents = pd.DataFrame(
-                {"key": _keys(unique_sales[document_key]), "total": totals}
-            ).dropna(subset=["key", "total"]).drop_duplicates("key")
-            documents["pago"] = documents["key"].map(payments).fillna(0)
-            # Notas de credito y otros documentos negativos no son cuentas por
-            # cobrar. Compararlos con pagos positivos generaba cientos de falsos
-            # "sobrepagados" y distorsionaba la cobertura de cobranza.
-            receivables = documents.loc[documents["total"] > 0].copy()
-            overpaid_documents = int(
-                (receivables["pago"] > receivables["total"] * 1.005 + 2).sum()
-            )
-            document_total = float(receivables["total"].sum())
-            collection_coverage = (
-                min(float(receivables["pago"].sum()) / document_total * 100, 999.9)
-                if document_total
-                else None
-            )
+        document_amount = numeric_series(
+            collection_rows,
+            _first_column(
+                collection_rows.columns,
+                (("monto", "documento"), ("total", "documento"), ("monto",)),
+            ),
+        )
+        collection_keys = (
+            _keys(collection_rows[payment_document])
+            if payment_document
+            else pd.Series(None, index=collection_rows.index)
+        )
+        valid_sales_documents = set(
+            document_keys[indicator_mask & document_keys.notna()]
+        )
+        matched_document = (
+            collection_keys.isin(valid_sales_documents)
+            if valid_sales_documents
+            else collection_keys.notna()
+        )
+        orphan_collection_rows = int(
+            (collection_keys.notna() & ~matched_document).sum()
+        )
+        positive_documents = matched_document & document_amount.gt(0)
+        overpaid_documents = int(
+            (
+                positive_documents
+                & payment_amount.gt(document_amount * 1.005 + 2)
+            ).sum()
+        )
+        document_total = float(document_amount[positive_documents].sum())
+        collection_coverage = (
+            min(float(payment_amount[positive_documents].fillna(0).sum()) / document_total * 100, 999.9)
+            if document_total
+            else None
+        )
+        status_values = (
+            collection_rows[payment_status].astype(str).map(strip_accents_lower)
+            if payment_status
+            else pd.Series("", index=collection_rows.index)
+        )
+        open_mask = positive_documents & ~status_values.str.contains(
+            r"\b(?:pagad|aplicad|cobrad)\w*", regex=True, na=False
+        )
+        overdue_mask = positive_documents & status_values.str.contains(
+            r"\b(?:vencid|moros|atrasad)\w*", regex=True, na=False
+        )
+        accounts_receivable = float(document_amount[open_mask].sum())
+        overdue_receivable = float(document_amount[overdue_mask].sum())
+        issue_date = _dates(
+            collection_rows,
+            _event_date_column(collection_rows.columns, "emision"),
+        )
+        paid_dates = _dates(collection_rows, payment_date)
+        collection_days = (paid_dates - issue_date).dt.days
+        realized = positive_documents & paid_status & collection_days.ge(0)
+        dso_days = (
+            float(collection_days[realized].mean()) if realized.any() else None
+        )
+        arrears = numeric_series(
+            collection_rows, find_column(collection_rows.columns, "dias", "mora")
+        )
+        overdue_days = (
+            float(arrears[overdue_mask].mean()) if overdue_mask.any() else None
+        )
+
+    campaign_frame = frames.get((kinds.get("campanas") or [None])[0]) if kinds.get("campanas") else None
+    marketing_investment = None
+    marketing_ctr = None
+    marketing_conversion_rate = None
+    marketing_cost_per_conversion = None
+    if campaign_frame is not None:
+        investment = numeric_series(
+            campaign_frame, find_column(campaign_frame.columns, "inversion")
+        )
+        impressions = numeric_series(
+            campaign_frame, find_column(campaign_frame.columns, "impresion")
+        )
+        clicks = numeric_series(
+            campaign_frame, find_column(campaign_frame.columns, "clic")
+        )
+        conversions = numeric_series(
+            campaign_frame, find_column(campaign_frame.columns, "conversion")
+        )
+        investment_total = float(investment.dropna().sum())
+        impression_total = float(impressions.dropna().sum())
+        clicks_total = float(clicks.dropna().sum())
+        conversions_total = float(conversions.dropna().sum())
+        marketing_investment = investment_total
+        marketing_ctr = (
+            clicks_total / impression_total * 100 if impression_total else None
+        )
+        marketing_conversion_rate = (
+            conversions_total / clicks_total * 100 if clicks_total else None
+        )
+        marketing_cost_per_conversion = (
+            investment_total / conversions_total if conversions_total else None
+        )
 
     month_frame = pd.DataFrame(
         {
-            "mes": sales_dates.dt.to_period("M").astype(str).where(indicator_mask),
-            "ingresos": amount.where(indicator_mask),
-            "costo": cost_of_sales.where(indicator_mask),
+            "mes": sales_dates.dt.to_period("M").astype(str).where(timeline_mask),
+            "ingresos": amount.where(timeline_mask),
+            "costo": cost_of_sales.where(timeline_mask),
         }
+    )
+    ebitda = (
+        operating_result + depreciation_expense
+        if operating_result is not None and depreciation_expense is not None
+        else None
     )
     month_frame.loc[sales_dates.isna(), "mes"] = None
     month_frame["ingresos_pareados"] = amount.where(paired)
@@ -1056,7 +1443,12 @@ def analyze_business_workbook(
     product_ref_key = find_column(products_frame.columns, "sku", "producto") if products_frame is not None else None
     client_ref_key = find_column(clients_frame.columns, "id", "cliente") if clients_frame is not None else None
     branch_ref_key = find_column(branches_frame.columns, "id", "sucursal") if branches_frame is not None else None
-    seller_ref_key = find_column(sellers_frame.columns, "id", "vendedor") if sellers_frame is not None else None
+    seller_ref_key = (
+        find_column(sellers_frame.columns, "id", "vendedor")
+        or find_column(sellers_frame.columns, "id", "trabajador")
+        if sellers_frame is not None
+        else None
+    )
 
     product_col = mapping.get("producto") or find_column(
         sales.columns, "producto", excluded=("sku", "id")
@@ -1093,6 +1485,7 @@ def analyze_business_workbook(
     )
     seller_name_ref = (
         find_column(sellers_frame.columns, "nombre", "vendedor")
+        or find_column(sellers_frame.columns, "nombre", "trabajador")
         or find_column(sellers_frame.columns, "vendedor", excluded=("id",))
         if sellers_frame is not None
         else None
@@ -1185,6 +1578,43 @@ def analyze_business_workbook(
     sales_product_name = _name_column(sales, product_key)
     products_product_name = _name_column(products_frame, product_ref_key)
 
+    historical_integrity = None
+    if cost_history is not None:
+        historical_informed = indicator_mask & product_keys.notna()
+        historical_valid = historical_informed & historical_cost
+        historical_missing = historical_informed & ~historical_cost
+        historical_integrity = {
+            "relacion": "Ventas → Historial de costos (vigencia)",
+            "filas": int(historical_informed.sum()),
+            "validas": int(historical_valid.sum()),
+            "huerfanas": int(historical_missing.sum()),
+            "sin_clave": int((indicator_mask & product_keys.isna()).sum()),
+            "cobertura_pct": round(
+                int(historical_valid.sum())
+                / max(int(historical_informed.sum()), 1)
+                * 100,
+                1,
+            ),
+            "ejemplos": sorted(
+                {
+                    str(value)
+                    for value in sales.loc[historical_missing, product_key].head(8)
+                }
+            )
+            if product_key
+            else [],
+            "metodo": "vigencia_por_fecha",
+        }
+    goals_frame_for_relation = (
+        frames.get((kinds.get("metas") or [None])[0])
+        if kinds.get("metas")
+        else None
+    )
+    campaign_frame_for_relation = (
+        frames.get((kinds.get("campanas") or [None])[0])
+        if kinds.get("campanas")
+        else None
+    )
     integrity = [
         _relation_quality(sales.loc[~structural], product_key, products_frame, product_ref_key, "Ventas → Productos"),
         _attribute_consistency(
@@ -1196,11 +1626,16 @@ def analyze_business_workbook(
         _relation_quality(sales.loc[~structural], client_col, clients_frame, client_ref_key, "Ventas → Clientes"),
         _relation_quality(sales.loc[~structural], branch_col, branches_frame, branch_ref_key, "Ventas → Sucursales"),
         _relation_quality(sales.loc[~structural], seller_col, sellers_frame, seller_ref_key, "Ventas → Vendedores"),
+        historical_integrity,
         _relation_quality(products_frame, find_column(products_frame.columns, "id", "proveedor") if products_frame is not None else None, suppliers_frame, find_column(suppliers_frame.columns, "id", "proveedor") if suppliers_frame is not None else None, "Productos → Proveedores"),
         _relation_quality(purchase_frame, find_column(purchase_frame.columns, "sku", "producto") if purchase_frame is not None else None, products_frame, product_ref_key, "Compras → Productos"),
         _relation_quality(purchase_frame, find_column(purchase_frame.columns, "id", "proveedor") if purchase_frame is not None else None, suppliers_frame, find_column(suppliers_frame.columns, "id", "proveedor") if suppliers_frame is not None else None, "Compras → Proveedores"),
         _relation_quality(collections_frame, find_column(collections_frame.columns, "id", "documento") if collections_frame is not None else None, sales.loc[~structural], document_key, "Cobranzas → Ventas"),
+        _relation_quality(inventory_cut, find_column(inventory_cut.columns, "id", "producto") if inventory_cut is not None else None, products_frame, product_ref_key, "Inventario → Productos"),
+        _relation_quality(clients_frame, find_column(clients_frame.columns, "id", "vendedor") if clients_frame is not None else None, sellers_frame, seller_ref_key, "Clientes → Vendedores"),
         _relation_quality(sellers_frame, find_column(sellers_frame.columns, "id", "sucursal") if sellers_frame is not None else None, branches_frame, find_column(branches_frame.columns, "id", "sucursal") if branches_frame is not None else None, "Vendedores → Sucursales"),
+        _relation_quality(goals_frame_for_relation, find_column(goals_frame_for_relation.columns, "id", "sucursal") if goals_frame_for_relation is not None else None, branches_frame, branch_ref_key, "Metas → Sucursales"),
+        _relation_quality(campaign_frame_for_relation, find_column(campaign_frame_for_relation.columns, "id", "sucursal") if campaign_frame_for_relation is not None else None, branches_frame, branch_ref_key, "Campañas → Sucursales"),
     ]
     integrity = [item for item in integrity if item is not None]
 
@@ -1246,16 +1681,17 @@ def analyze_business_workbook(
         "cumplimiento_pct": None,
         "meta_margen_pct": None,
         "meta_nuevos_clientes": None,
+        "metas_cumplidas": None,
+        "metas_evaluadas": None,
         "por_mes": [],
         "nota": "No hay una hoja de metas comparable.",
     }
     if goals_frame is not None:
-        goal_date_col = find_column(goals_frame.columns, "mes") or find_column(
-            goals_frame.columns, "fecha"
-        )
+        goal_date_col = _event_date_column(goals_frame.columns)
         goal_amount_col = find_column(goals_frame.columns, "meta", "venta")
         goal_margin_col = find_column(goals_frame.columns, "meta", "margen")
         goal_clients_col = find_column(goals_frame.columns, "meta", "nuevo", "cliente")
+        goal_branch_col = find_column(goals_frame.columns, "id", "sucursal")
         goal_dates = _dates(goals_frame, goal_date_col)
         goal_period = analysis_period_mask(goal_dates)
         goal_amount = numeric_series(goals_frame, goal_amount_col)
@@ -1264,25 +1700,49 @@ def analyze_business_workbook(
         comparable_goals = goal_period & goal_dates.notna() & goal_amount.notna()
         if comparable_goals.any():
             goal_month = goal_dates.dt.to_period("M").astype(str)
-            target_by_month = (
-                pd.DataFrame(
-                    {"mes": goal_month.where(comparable_goals), "meta": goal_amount}
-                )
-                .dropna(subset=["mes", "meta"])
-                .groupby("mes")["meta"]
-                .sum()
+            use_branch_goals = bool(
+                goal_branch_col
+                and branch_col
+                and goal_branch_col in goals_frame.columns
+                and branch_col in sales.columns
             )
-            actual_by_month = (
-                pd.DataFrame(
-                    {
-                        "mes": sales_dates.dt.to_period("M").astype(str),
-                        "venta": amount.where(indicator_mask),
-                    }
-                )
-                .loc[lambda value: value["mes"].isin(target_by_month.index)]
-                .groupby("mes")["venta"]
-                .sum()
+            target_detail = pd.DataFrame(
+                {
+                    "mes": goal_month.where(comparable_goals),
+                    "sucursal": (
+                        _keys(goals_frame[goal_branch_col])
+                        if use_branch_goals and goal_branch_col
+                        else "todas"
+                    ),
+                    "meta": goal_amount,
+                }
+            ).dropna(subset=["mes", "meta"])
+            actual_detail = pd.DataFrame(
+                {
+                    "mes": sales_dates.dt.to_period("M").astype(str).where(timeline_mask),
+                    "sucursal": (
+                        _keys(sales[branch_col])
+                        if use_branch_goals and branch_col
+                        else "todas"
+                    ),
+                    "venta": amount.where(timeline_mask),
+                }
+            ).dropna(subset=["mes", "venta"])
+            target_by_key = target_detail.groupby(["mes", "sucursal"], dropna=False)[
+                "meta"
+            ].sum()
+            actual_by_key = actual_detail.groupby(["mes", "sucursal"], dropna=False)[
+                "venta"
+            ].sum()
+            goal_comparison = target_by_key.rename("meta").to_frame()
+            goal_comparison["venta"] = actual_by_key.reindex(
+                goal_comparison.index
+            ).fillna(0)
+            goal_comparison["cumplida"] = (
+                goal_comparison["venta"] >= goal_comparison["meta"]
             )
+            target_by_month = goal_comparison.groupby(level="mes")["meta"].sum()
+            actual_by_month = goal_comparison.groupby(level="mes")["venta"].sum()
             monthly_goals = []
             for month, target in target_by_month.sort_index().items():
                 actual = float(actual_by_month.get(month, 0.0))
@@ -1311,6 +1771,8 @@ def analyze_business_workbook(
                 "meta_nuevos_clientes": round(float(goal_clients[goal_period].sum()), 2)
                 if goal_clients[goal_period].notna().any()
                 else None,
+                "metas_cumplidas": int(goal_comparison["cumplida"].sum()),
+                "metas_evaluadas": int(len(goal_comparison)),
                 "por_mes": monthly_goals,
                 "nota": "Las ventas se comparan solo en los meses que tienen una meta informada.",
             }
@@ -1321,24 +1783,16 @@ def analyze_business_workbook(
                     row["meta_venta"] = match["meta_venta"]
                     row["cumplimiento_meta_pct"] = match["cumplimiento_pct"]
 
-    contribution = (
-        gross_profit - variable_expenses
-        if gross_profit is not None and variable_expenses is not None
-        else gross_profit
-    )
-    contribution_margin = (
-        contribution / paired_sales if contribution is not None and paired_sales else None
-    )
     monthly_fixed_expenses = (
         fixed_expenses / len(paired_months)
         if fixed_expenses is not None and paired_months
         else None
     )
     break_even_sales = (
-        monthly_fixed_expenses / contribution_margin
-        if monthly_fixed_expenses is not None
-        and contribution_margin
-        and contribution_margin > 0
+        expenses_total / (gross_margin / 100)
+        if expenses_total is not None
+        and gross_margin is not None
+        and gross_margin > 0
         else None
     )
     inventory_turnover = (
@@ -1394,12 +1848,12 @@ def analyze_business_workbook(
         ),
         _ratio(
             "punto_equilibrio_ventas",
-            "Punto de equilibrio mensual",
+            "Punto de equilibrio del periodo",
             break_even_sales,
             "partial" if break_even_sales is not None else "unavailable",
-            "Gasto fijo mensual promedio / margen de contribución",
-            "Aproximación sobre los meses con costo pareado y la clasificación fijo/variable de gastos.",
-            ["ventas", "costos", "gastos fijos y variables"],
+            "Gastos operacionales / margen bruto",
+            "Aproximación sobre la base de ventas con costo histórico relacionado.",
+            ["ventas", "costos históricos", "gastos operacionales"],
         ),
         _ratio(
             "rotacion_inventario",
@@ -1423,16 +1877,28 @@ def analyze_business_workbook(
         _ratio("prueba_acida", "Prueba ácida", None, "unavailable", "(Activo corriente - inventario) / pasivo corriente", "No hay balance de situación.", ["activo corriente", "inventario", "pasivo corriente"]),
         _ratio("roe", "ROE", None, "unavailable", "Utilidad neta / patrimonio", "No hay utilidad neta ni patrimonio contable.", ["utilidad neta", "patrimonio"]),
         _ratio("roa", "ROA", None, "unavailable", "Utilidad neta / activos", "No hay utilidad neta ni activos totales.", ["utilidad neta", "activos totales"]),
-        _ratio("ebitda", "EBITDA", None, "unavailable", "Resultado operacional + depreciación + amortización", "Falta clasificación contable de depreciación y amortización.", ["resultado operacional", "depreciación", "amortización"]),
+        _ratio(
+            "ebitda",
+            "EBITDA",
+            ebitda,
+            "partial" if ebitda is not None else "unavailable",
+            "Resultado operacional + depreciación + amortización",
+            (
+                "Se calcula con las categorías de gasto que declaran depreciación o amortización."
+                if ebitda is not None
+                else "Falta clasificación contable de depreciación y amortización."
+            ),
+            ["resultado operacional", "depreciación", "amortización"],
+        ),
     ]
 
     decisions: list[dict[str, Any]] = []
     if duplicate_extra_rows:
         decisions.append({
             "severidad": "alta",
-            "titulo": f"Resolver {duplicate_groups} documentos repetidos antes de certificar ventas",
+            "titulo": f"Revisar {duplicate_groups} líneas de negocio repetidas",
             "evidencia": f"Hay {duplicate_extra_rows} filas adicionales y {conflict_groups} grupos con contenido distinto.",
-            "accion": "Revisa los conflictos en Limpieza; los indicadores certificados los excluyen hasta que decidas.",
+            "accion": "Revisa los casos en Limpieza; se conservaron en los totales hasta que confirmes una acción.",
             "confianza": 1.0,
         })
     date_issue_rows = int(outside_declared_period.sum() + invalid_sales_date.sum())
@@ -1445,8 +1911,8 @@ def analyze_business_workbook(
                 f"{int(outside_declared_period.sum())} están fuera del periodo declarado."
             ),
             "accion": (
-                "Corrige esas fechas en Limpieza; se excluyeron de los indicadores "
-                "del periodo para no mover ventas, costos ni gastos a meses inventados."
+                "Corrige esas fechas en Limpieza; las fechas inválidas se conservan "
+                "en el total global, pero no entran a meses ni costos por vigencia."
             ),
             "confianza": 1.0,
         })
@@ -1577,6 +2043,7 @@ def analyze_business_workbook(
                 (kinds.get("vendedores") or [None])[0],
                 (kinds.get("proveedores") or [None])[0],
                 (kinds.get("metas") or [None])[0],
+                (kinds.get("campanas") or [None])[0],
             )
             if name
         ],
@@ -1619,8 +2086,16 @@ def analyze_business_workbook(
             "ventas_pareadas": round(paired_sales, 2),
             "costo_venta_conocido": round(paired_cost, 2),
             "costo_venta_estimado_catalogo": round(
-                float(cost_of_sales[indicator_mask & estimated_current_cost].sum()), 2
+                float(all_cost_of_sales[indicator_mask & estimated_current_cost].sum()), 2
             ),
+            "costo_venta_con_relleno_estimado": round(estimated_total_cost, 2),
+            "ventas_pareadas_estimadas": round(estimated_paired_sales, 2),
+            "utilidad_bruta_estimada": round(estimated_gross_profit, 2)
+            if estimated_gross_profit is not None
+            else None,
+            "margen_bruto_estimado_pct": round(estimated_gross_margin, 2)
+            if estimated_gross_margin is not None
+            else None,
             "utilidad_bruta": round(gross_profit, 2) if gross_profit is not None else None,
             "margen_bruto_pct": round(gross_margin, 2) if gross_margin is not None else None,
             "gastos_operacionales": round(expenses_total, 2) if expenses_total is not None else None,
@@ -1634,7 +2109,12 @@ def analyze_business_workbook(
             "filas_gastos": expenses_rows,
             "resultado_operacional": round(operating_result, 2) if operating_result is not None else None,
             "margen_operacional_pct": round(operating_margin, 2) if operating_margin is not None else None,
+            "depreciacion_amortizacion": round(depreciation_expense, 2)
+            if depreciation_expense is not None
+            else None,
+            "ebitda": round(ebitda, 2) if ebitda is not None else None,
             "cobertura_costos_pct": cost_coverage,
+            "cobertura_costos_estimada_pct": estimated_cost_coverage,
             "cobertura_costos_historica_pct": historical_cost_coverage,
             "cobertura_costos_certificable_pct": certified_cost_coverage,
             "ventas_certificables_pareadas": round(certified_paired_sales, 2),
@@ -1653,8 +2133,27 @@ def analyze_business_workbook(
             "cobranza_sobre_documentos_pct": round(collection_coverage, 2) if collection_coverage is not None else None,
             "documentos_sobrepagados": overpaid_documents,
             "pagos_duplicados_excluidos": collection_duplicates_excluded,
+            "cobranzas_huerfanas": orphan_collection_rows,
+            "cuentas_por_cobrar": round(accounts_receivable, 2)
+            if accounts_receivable is not None
+            else None,
+            "cuentas_vencidas": round(overdue_receivable, 2)
+            if overdue_receivable is not None
+            else None,
+            "dso_dias": round(dso_days, 2) if dso_days is not None else None,
+            "mora_promedio_dias": round(overdue_days, 2)
+            if overdue_days is not None
+            else None,
             "valor_inventario": round(inventory_value, 2) if inventory_value is not None else None,
+            "stock_inventario": round(inventory_stock, 2)
+            if inventory_stock is not None
+            else None,
+            "inventario_bajo_minimo": inventory_below_minimum,
+            "fecha_corte_inventario": inventory_snapshot_date,
             "compras_efectivas": round(purchases_total, 2) if purchases_total is not None else None,
+            "fletes_compra": round(purchase_freight, 2)
+            if purchase_freight is not None
+            else None,
             "gastos_fijos": round(fixed_expenses, 2) if fixed_expenses is not None else None,
             "gastos_variables": round(variable_expenses, 2) if variable_expenses is not None else None,
             "gasto_fijo_mensual_promedio": round(monthly_fixed_expenses, 2)
@@ -1662,6 +2161,18 @@ def analyze_business_workbook(
             else None,
             "punto_equilibrio_ventas": round(break_even_sales, 2) if break_even_sales is not None else None,
             "rotacion_inventario_aprox": round(inventory_turnover, 2) if inventory_turnover is not None else None,
+            "inversion_marketing": round(marketing_investment, 2)
+            if marketing_investment is not None
+            else None,
+            "ctr_marketing_pct": round(marketing_ctr, 2)
+            if marketing_ctr is not None
+            else None,
+            "conversion_marketing_pct": round(marketing_conversion_rate, 2)
+            if marketing_conversion_rate is not None
+            else None,
+            "costo_por_conversion": round(marketing_cost_per_conversion, 2)
+            if marketing_cost_per_conversion is not None
+            else None,
         },
         "evolucion": monthly_rows,
         "agrupaciones": groupings,

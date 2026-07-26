@@ -23,7 +23,14 @@ from typing import Any
 
 import pandas as pd
 
-from .business import _dates, _declared_sales_period, _status_mask, _text_key
+from .business import (
+    _applicable_unit_cost,
+    _dates,
+    _declared_sales_period,
+    _sheet_kind,
+    _status_mask,
+    _text_key,
+)
 from .mapping import resolve_mapping
 from .metrics import CurrencyDetection
 from .multi_sheet import join_related_frames, relation_stats
@@ -235,6 +242,78 @@ def build_relationship_dashboard(
     join_right = right
     if template == "sales_inventory":
         join_right = collapse_inventory_snapshots(right, keys=list(right_keys))
+
+    if _sheet_kind(right_name, right) == "historial_costos" and purpose == "ventas_costos":
+        product_key = (
+            left_mapping.get("producto")
+            or find_column(left.columns, "sku", "producto")
+            or find_column(left.columns, "id", "producto")
+        )
+        date_column = left_mapping.get("fecha") or find_column(left.columns, "fecha")
+        quantity_column = left_mapping.get("cantidad") or find_column(
+            left.columns, "cantidad"
+        )
+        unit_cost, cost_source, _ = _applicable_unit_cost(
+            left,
+            product_key,
+            _dates(left, date_column),
+            None,
+            None,
+            None,
+            right,
+        )
+        quantity = numeric_series(left, quantity_column)
+        historical_cost = (quantity * unit_cost).where(
+            quantity.notna() & unit_cost.notna() & cost_source.eq("historial_asof")
+        )
+        merged = left.copy()
+        cost_column = "Costo_Venta_Historico"
+        suffix = 2
+        while cost_column in merged.columns:
+            cost_column = f"Costo_Venta_Historico_{suffix}"
+            suffix += 1
+        merged[cost_column] = historical_cost
+        merged_mapping = dict(left_mapping)
+        merged_mapping["costo"] = cost_column
+        matched_rows = int(historical_cost.notna().sum())
+        provenance = {
+            "mode": "asof",
+            "left_sheet": left_name,
+            "right_sheet": right_name,
+            "rows_before": len(left),
+            "rows_after": len(left),
+            "filas_sin_correspondencia": int(len(left) - matched_rows),
+            "coverage": round(matched_rows / max(len(left), 1), 4),
+            "join_strategy": "vigencia_por_fecha",
+        }
+        relation_meta.update(
+            {
+                "cardinality": "muchos_a_uno_temporal",
+                "coverage_left": provenance["coverage"],
+                "coverage_right": 1.0,
+                "overlap": provenance["coverage"],
+                "safe": True,
+            }
+        )
+        context = _DashboardContext(
+            left_name=left_name,
+            right_name=right_name,
+            left_keys=list(left_keys),
+            right_keys=list(right_keys),
+            merged=merged,
+            merged_mapping=merged_mapping,
+            right=right,
+            right_mapping=right_mapping,
+            provenance=provenance,
+            relation=relation_meta,
+            template=template,
+            currency=currency,
+            date_from=date_from,
+            date_to=date_to,
+            derived_cost=None,
+            append_sheets=append_sheets,
+        )
+        return context.build()
 
     stats = relation_stats(left, list(left_keys), join_right, list(right_keys))
     relation_meta["cardinality"] = stats.cardinality
@@ -900,6 +979,9 @@ class _DashboardContext:
                     else pd.to_datetime(text)
                 )
                 frame = frame[frame["_fecha"].isna() | frame["_fecha"].le(end)]
+            valid_snapshots = frame["_fecha"].dropna()
+            if not valid_snapshots.empty:
+                frame = frame.loc[frame["_fecha"].eq(valid_snapshots.max())]
             frame = frame.sort_values("_fecha")
         frame = frame.dropna(subset=["_clave"])
         latest = frame.groupby(["_clave", "_sucursal"], dropna=False).tail(1)
