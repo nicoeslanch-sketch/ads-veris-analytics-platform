@@ -718,7 +718,7 @@ export default function Resumen() {
             <div className="contents xl:block xl:space-y-6">
               <Card className="order-1 min-w-0">
               <h2 className="text-base font-semibold text-navy">
-                {hasCosts ? 'Evolución de Ingresos, Gastos y Utilidad' : 'Ingresos por mes'}
+                {hasCosts ? 'Evolución de Ingresos, Costo de Venta y Utilidad Bruta' : 'Ingresos por mes'}
               </h2>
               {(period.from || period.to) && (
                 <p className="mt-0.5 text-xs text-navy/45">
@@ -738,7 +738,7 @@ export default function Resumen() {
                       <div className="h-56"><FinancialLineChart evolution={evolution} mesParcial={mesParcial?.mes} series={['ingresos']} showAverage /></div>
                     </div>
                     <div>
-                      <p className="mb-2 text-xs font-semibold text-navy/65">Costos y utilidad</p>
+                      <p className="mb-2 text-xs font-semibold text-navy/65">Costo de venta y utilidad bruta</p>
                       <div className="h-56"><FinancialLineChart evolution={evolution} mesParcial={mesParcial?.mes} series={['gastos', 'utilidad']} /></div>
                     </div>
                   </div>
@@ -763,8 +763,8 @@ export default function Resumen() {
                 <div className="mt-2 flex flex-wrap gap-4 text-xs text-navy/70">
                   {[
                     { name: 'Ingresos', color: CHART.ingresos },
-                    { name: 'Gastos', color: CHART.gastos },
-                    { name: 'Utilidad', color: CHART.utilidad },
+                    { name: 'Costo de venta', color: CHART.gastos },
+                    { name: 'Utilidad bruta', color: CHART.utilidad },
                   ].map((s) => (
                     <span key={s.name} className="flex items-center gap-1.5">
                       <span className="h-0.5 w-4 rounded" style={{ background: s.color }} />
@@ -1056,8 +1056,8 @@ function FinancialLineChart({
 }) {
   const config = {
     ingresos: { name: 'Ingresos', color: CHART.ingresos },
-    gastos: { name: 'Gastos', color: CHART.gastos },
-    utilidad: { name: 'Utilidad', color: CHART.utilidad },
+    gastos: { name: 'Costo de venta', color: CHART.gastos },
+    utilidad: { name: 'Utilidad bruta', color: CHART.utilidad },
   } as const
   return (
     <ResponsiveContainer width="100%" height="100%">

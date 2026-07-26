@@ -641,6 +641,9 @@ export interface BusinessAnalysis {
     filas_totales_estructurales: number
     filas_anuladas: number
     filas_indicadores: number
+    periodo_declarado?: { desde: string | null; hasta: string | null } | null
+    filas_fecha_invalida?: number
+    filas_fuera_periodo_declarado?: number
     documentos_repetidos: number
     filas_adicionales_documento: number
     documentos_conflictivos: number
@@ -655,6 +658,8 @@ export interface BusinessAnalysis {
     margen_bruto_pct: number | null
     gastos_operacionales: number | null
     gastos_operacionales_periodo: number | null
+    base_gastos_operacionales?: 'monto_neto' | 'total_gasto' | null
+    iva_gastos_excluido?: number | null
     filas_gastos: number
     resultado_operacional: number | null
     margen_operacional_pct: number | null

@@ -923,7 +923,7 @@ def compute_metrics(
         )
     if not has_costs:
         warnings.append(
-            "No se detectó una columna de costos; gastos, utilidad y margen requieren esa columna."
+            "No se detectó una columna de costos; costo de venta, utilidad bruta y margen bruto requieren esa columna."
         )
 
     dates_all = (

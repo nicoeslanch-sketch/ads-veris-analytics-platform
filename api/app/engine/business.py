@@ -8,6 +8,7 @@ inventory directly to sales, which prevents accidental row multiplication.
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 from typing import Any
 
 import pandas as pd
@@ -62,6 +63,36 @@ def _date_filter(dates: pd.Series, date_from: str | None, date_to: str | None) -
     if date_from or date_to:
         mask &= dates.notna()
     return mask
+
+
+def _declared_sales_period(
+    frames: dict[str, pd.DataFrame],
+) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    """Read an explicit sales period from a parameter sheet when available."""
+
+    for name, frame in frames.items():
+        if "parametr" not in normalized_header(name) or frame.empty:
+            continue
+        label_column = find_column(frame.columns, "parametro") or str(frame.columns[0])
+        value_column = find_column(frame.columns, "valor") or (
+            str(frame.columns[1]) if len(frame.columns) > 1 else None
+        )
+        if not value_column:
+            continue
+        labels = frame[label_column].astype(str).map(strip_accents_lower)
+        matches = frame.loc[labels.str.contains(r"periodo\s+ventas?", regex=True, na=False)]
+        for raw_value in matches[value_column]:
+            tokens = re.findall(r"\d{1,4}[-/]\d{1,2}[-/]\d{1,4}", str(raw_value))
+            if len(tokens) < 2:
+                continue
+            parsed = [
+                pd.to_datetime(parse_date(token), errors="coerce", dayfirst=True)
+                for token in tokens[:2]
+            ]
+            if all(pd.notna(value) for value in parsed):
+                start, end = sorted(parsed)
+                return start.normalize(), end.normalize()
+    return None, None
 
 
 def _sheet_kind(name: str, frame: pd.DataFrame) -> str:
@@ -638,6 +669,17 @@ def analyze_business_workbook(
     sales = _append_sales(frames, sales_names)
     if sales.empty:
         return None
+    declared_period_from, declared_period_to = _declared_sales_period(frames)
+
+    def analysis_period_mask(dates: pd.Series) -> pd.Series:
+        mask = _date_filter(dates, date_from, date_to)
+        if declared_period_from is not None:
+            mask &= dates.ge(declared_period_from)
+        if declared_period_to is not None:
+            mask &= dates.le(declared_period_to)
+        if declared_period_from is not None or declared_period_to is not None:
+            mask &= dates.notna()
+        return mask
 
     mapping = {}
     for name in sales_names:
@@ -653,8 +695,15 @@ def analyze_business_workbook(
     sales_dates = _dates(sales, date_col)
     structural = structural_total_mask(sales, date_col)
     cancelled = _status_mask(sales, status_col, r"\b(?:anulad|cancelad|void)\w*")
-    period_mask = _date_filter(sales_dates, date_from, date_to)
+    period_mask = analysis_period_mask(sales_dates)
     indicator_mask = ~structural & ~cancelled & period_mask
+    outside_declared_period = pd.Series(False, index=sales.index)
+    if declared_period_from is not None:
+        outside_declared_period |= sales_dates.lt(declared_period_from)
+    if declared_period_to is not None:
+        outside_declared_period |= sales_dates.gt(declared_period_to)
+    outside_declared_period &= ~structural & ~cancelled & sales_dates.notna()
+    invalid_sales_date = ~structural & ~cancelled & sales_dates.isna()
 
     amount = numeric_series(sales, amount_col)
     quantity = numeric_series(sales, quantity_col)
@@ -803,13 +852,21 @@ def analyze_business_workbook(
         * 100,
         1,
     )
-    paired_months = set(sales_dates.loc[paired].dt.to_period("M").astype(str))
+    # ``astype(str)`` turns NaT into the literal "NaT". If it remains in this
+    # set, an expense with an invalid date can be matched to a sale with an
+    # invalid date and enter the operating result as if both belonged to a real
+    # accounting period.
+    paired_months = set(
+        sales_dates.loc[paired & sales_dates.notna()].dt.to_period("M").astype(str)
+    )
 
     expenses_total = None
     expenses_period_total = None
     expenses_rows = 0
     fixed_expenses = None
     variable_expenses = None
+    expense_value_basis = None
+    expense_tax_excluded = None
     expense_mask = pd.Series(dtype=bool)
     expense_values = pd.Series(dtype=float)
     expense_frame = frames.get((kinds.get("gastos") or [None])[0]) if kinds.get("gastos") else None
@@ -818,17 +875,29 @@ def analyze_business_workbook(
         expense_status = find_column(expense_frame.columns, "estado")
         expense_mask = ~_status_mask(expense_frame, expense_status, r"\b(?:anulad|cancelad)\w*")
         expense_dates = _dates(expense_frame, expense_date_col)
-        expense_mask &= _date_filter(expense_dates, date_from, date_to)
+        # A row without a valid date cannot be assigned to an operating period.
+        # It stays visible in quality controls, but not in period P&L metrics.
+        expense_mask &= expense_dates.notna()
+        expense_mask &= analysis_period_mask(expense_dates)
+        expense_net_col = find_column(expense_frame.columns, "monto", "neto")
+        expense_total_col = find_column(expense_frame.columns, "total", "gasto")
+        expense_value_col = expense_net_col or expense_total_col
+        expense_value_basis = "monto_neto" if expense_net_col else "total_gasto"
         expense_values = numeric_series(
             expense_frame,
-            find_column(expense_frame.columns, "total", "gasto")
-            or find_column(expense_frame.columns, "monto", "neto"),
+            expense_value_col,
         )
         expenses_period_total = float(expense_values[expense_mask].dropna().sum())
         comparable_expense_mask = expense_mask & expense_dates.dt.to_period("M").astype(
             str
         ).isin(paired_months)
         expenses_total = float(expense_values[comparable_expense_mask].dropna().sum())
+        expense_tax_col = find_column(expense_frame.columns, "iva")
+        if expense_value_basis == "monto_neto" and expense_tax_col:
+            expense_tax = numeric_series(expense_frame, expense_tax_col)
+            expense_tax_excluded = float(
+                expense_tax[comparable_expense_mask].dropna().sum()
+            )
         expenses_rows = int((comparable_expense_mask & expense_values.notna()).sum())
         expense_type = find_column(expense_frame.columns, "tipo", "gasto")
         if expense_type:
@@ -882,10 +951,8 @@ def analyze_business_workbook(
             find_column(purchase_frame.columns, "estado"),
             r"\b(?:anulad|cancelad)\w*",
         )
-        purchase_mask &= _date_filter(
+        purchase_mask &= analysis_period_mask(
             _dates(purchase_frame, find_column(purchase_frame.columns, "fecha", "compra")),
-            date_from,
-            date_to,
         )
         purchases = numeric_series(
             purchase_frame, find_column(purchase_frame.columns, "total", "compra")
@@ -906,8 +973,8 @@ def analyze_business_workbook(
         payment_status = find_column(collection_rows.columns, "estado", "pago")
         payment_date = find_column(collection_rows.columns, "fecha", "pago")
         applied = _status_mask(collection_rows, payment_status, r"aplicad")
-        applied &= _date_filter(
-            _dates(collection_rows, payment_date), date_from, date_to
+        applied &= analysis_period_mask(
+            _dates(collection_rows, payment_date)
         )
         payment_amount = numeric_series(
             collection_rows, find_column(collection_rows.columns, "monto", "pago")
@@ -941,7 +1008,7 @@ def analyze_business_workbook(
 
     month_frame = pd.DataFrame(
         {
-            "mes": sales_dates.dt.to_period("M").astype(str),
+            "mes": sales_dates.dt.to_period("M").astype(str).where(indicator_mask),
             "ingresos": amount.where(indicator_mask),
             "costo": cost_of_sales.where(indicator_mask),
         }
@@ -1190,7 +1257,7 @@ def analyze_business_workbook(
         goal_margin_col = find_column(goals_frame.columns, "meta", "margen")
         goal_clients_col = find_column(goals_frame.columns, "meta", "nuevo", "cliente")
         goal_dates = _dates(goals_frame, goal_date_col)
-        goal_period = _date_filter(goal_dates, date_from, date_to)
+        goal_period = analysis_period_mask(goal_dates)
         goal_amount = numeric_series(goals_frame, goal_amount_col)
         goal_margin = numeric_series(goals_frame, goal_margin_col)
         goal_clients = numeric_series(goals_frame, goal_clients_col)
@@ -1368,6 +1435,21 @@ def analyze_business_workbook(
             "accion": "Revisa los conflictos en Limpieza; los indicadores certificados los excluyen hasta que decidas.",
             "confianza": 1.0,
         })
+    date_issue_rows = int(outside_declared_period.sum() + invalid_sales_date.sum())
+    if date_issue_rows:
+        decisions.append({
+            "severidad": "media",
+            "titulo": "Corregir ventas sin un periodo contable válido",
+            "evidencia": (
+                f"{int(invalid_sales_date.sum())} filas no tienen fecha válida y "
+                f"{int(outside_declared_period.sum())} están fuera del periodo declarado."
+            ),
+            "accion": (
+                "Corrige esas fechas en Limpieza; se excluyeron de los indicadores "
+                "del periodo para no mover ventas, costos ni gastos a meses inventados."
+            ),
+            "confianza": 1.0,
+        })
     if cost_coverage < 99.5:
         decisions.append({
             "severidad": "alta",
@@ -1463,13 +1545,19 @@ def analyze_business_workbook(
             "confianza": 0.85,
         })
 
-    quality_penalty = min(45.0, duplicate_groups * 0.15 + formula_issues * 0.015 + orphan_rows * 0.01)
+    quality_penalty = min(
+        45.0,
+        duplicate_groups * 0.15
+        + formula_issues * 0.015
+        + orphan_rows * 0.01
+        + date_issue_rows * 0.05,
+    )
     confidence = max(0.0, min(100.0, certified_cost_coverage - quality_penalty))
     certification = (
         "blocked"
         if duplicate_groups or conflict_groups or certified_cost_coverage < 95 or cost_quality["negativos"]
         else "partial"
-        if formula_issues or orphan_rows or certified_cost_coverage < 99.5
+        if formula_issues or orphan_rows or date_issue_rows or certified_cost_coverage < 99.5
         else "certified"
     )
     used_sheets = {
@@ -1507,6 +1595,18 @@ def analyze_business_workbook(
             "filas_totales_estructurales": int(structural.sum()),
             "filas_anuladas": int(cancelled.sum()),
             "filas_indicadores": int(indicator_mask.sum()),
+            "periodo_declarado": {
+                "desde": declared_period_from.date().isoformat()
+                if declared_period_from is not None
+                else None,
+                "hasta": declared_period_to.date().isoformat()
+                if declared_period_to is not None
+                else None,
+            }
+            if declared_period_from is not None or declared_period_to is not None
+            else None,
+            "filas_fecha_invalida": int(invalid_sales_date.sum()),
+            "filas_fuera_periodo_declarado": int(outside_declared_period.sum()),
             "documentos_repetidos": duplicate_groups,
             "filas_adicionales_documento": duplicate_extra_rows,
             "documentos_conflictivos": conflict_groups,
@@ -1526,6 +1626,10 @@ def analyze_business_workbook(
             "gastos_operacionales": round(expenses_total, 2) if expenses_total is not None else None,
             "gastos_operacionales_periodo": round(expenses_period_total, 2)
             if expenses_period_total is not None
+            else None,
+            "base_gastos_operacionales": expense_value_basis,
+            "iva_gastos_excluido": round(expense_tax_excluded, 2)
+            if expense_tax_excluded is not None
             else None,
             "filas_gastos": expenses_rows,
             "resultado_operacional": round(operating_result, 2) if operating_result is not None else None,

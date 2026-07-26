@@ -109,6 +109,16 @@ function certificationBlockers(analysis: BusinessAnalysis): CertificationBlocker
       cta: { to: '/limpieza?revision=1', label: 'Revisar conflictos' },
     })
   }
+  const invalidDates = alcance.filas_fecha_invalida ?? 0
+  const outOfPeriodDates = alcance.filas_fuera_periodo_declarado ?? 0
+  if (invalidDates > 0 || outOfPeriodDates > 0) {
+    blockers.push({
+      key: 'fechas-periodo',
+      label: `${formatNumber(invalidDates + outOfPeriodDates)} venta(s) excluida(s) por fecha`,
+      detail: `${formatNumber(invalidDates)} no tienen fecha válida y ${formatNumber(outOfPeriodDates)} quedan fuera del periodo declarado en el Excel. No entran en ventas, costos, gastos ni gráficos del periodo.`,
+      cta: { to: '/limpieza?revision=1', label: 'Revisar fechas' },
+    })
+  }
   const coverage = result.cobertura_costos_certificable_pct
   if (coverage != null && coverage < 95) {
     blockers.push({
@@ -268,6 +278,12 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
   const result = analysis.estado_resultados
   const operation = analysis.operacion
   const usesEstimatedCosts = result.costo_venta_estimado_catalogo > 0
+  const provisionalProfitability = usesEstimatedCosts ||
+    result.cobertura_costos_certificable_pct < 99.5 ||
+    analysis.estado_certificacion !== 'certified'
+  const operatingExpenseLabel = result.base_gastos_operacionales === 'monto_neto'
+    ? 'gastos operacionales netos (IVA separado)'
+    : 'gastos operacionales'
   const cards = [
     {
       label: analysis.alcance.documentos_repetidos > 0 ? 'Ventas verificables' : 'Ventas observadas',
@@ -292,18 +308,18 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
       color: CHART.utilidad,
     },
     {
-      label: 'Margen bruto',
+      label: provisionalProfitability ? 'Margen bruto estimado' : 'Margen bruto',
       value: percent(result.margen_bruto_pct),
       detail: 'solo ventas con costo relacionado',
       icon: Scale,
       color: CHART.flujo,
     },
     {
-      label: 'Resultado operacional',
+      label: provisionalProfitability ? 'Resultado operacional estimado' : 'Resultado operacional',
       value: money(result.resultado_operacional),
       detail: result.margen_operacional_pct == null
         ? 'sin ventas, costos y gastos comparables suficientes'
-        : `ventas − costo de venta − gastos operacionales · margen ${percent(result.margen_operacional_pct)}`,
+        : `ventas − costo de venta − ${operatingExpenseLabel} · margen ${percent(result.margen_operacional_pct)}`,
       icon: Wallet,
       color: CHART.alerta,
     },
@@ -379,7 +395,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           <Card className="mb-6 break-inside-avoid">
             <h2 className="text-base font-semibold text-navy">Evolución del negocio</h2>
             <p className="mt-1 text-xs text-navy/55">
-              Resultado operacional = ventas − costo de venta relacionado − gastos operacionales del periodo. Los vacíos no se convierten en cero.
+              Resultado operacional = ventas − costo de venta relacionado − {operatingExpenseLabel} del periodo. Los gastos sin fecha válida quedan fuera del cálculo y los vacíos no se convierten en cero.
             </p>
             <div className="mt-4 h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -393,7 +409,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
                   <Bar dataKey="costo" name="Costo relacionado" fill={CHART.gastos} radius={[3, 3, 0, 0]} maxBarSize={24} fillOpacity={0.85} />
                   {/* Resultado operacional en coral y más grueso: es la línea clave
                       y debe leerse por encima de las barras de ventas/costo. */}
-                  <Line type="monotone" dataKey="resultado_operacional" name="Resultado operacional" stroke={CHART.alerta} strokeWidth={3.25} dot={{ r: 3, strokeWidth: 1.5, stroke: '#ffffff', fill: CHART.alerta }} activeDot={{ r: 5 }} connectNulls={false} />
+                  <Line type="monotone" dataKey="resultado_operacional" name={provisionalProfitability ? 'Resultado operacional estimado' : 'Resultado operacional'} stroke={CHART.alerta} strokeWidth={3.25} dot={{ r: 3, strokeWidth: 1.5, stroke: '#ffffff', fill: CHART.alerta }} activeDot={{ r: 5 }} connectNulls={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -479,7 +495,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
                   <YAxis yAxisId="margin" orientation="right" tickFormatter={(value) => `${formatNumber(value)}%`} tick={{ fill: AXIS_INK, fontSize: 10 }} width={42} axisLine={false} tickLine={false} />
                   <Tooltip
                     formatter={(value, name) => (
-                      name === 'Margen bruto'
+                      String(name).startsWith('Margen bruto')
                         ? `${formatNumber(Number(value))}%`
                         : formatCLP(Number(value))
                     )}
@@ -487,8 +503,8 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <ReferenceLine yAxisId="money" y={0} stroke={AXIS_INK} strokeOpacity={0.45} />
-                  <Bar yAxisId="money" dataKey="utilidad_bruta" name="Utilidad bruta" fill={CHART.utilidad} radius={[4, 4, 0, 0]} maxBarSize={36} />
-                  <Line yAxisId="margin" type="monotone" dataKey="margen_pct" name="Margen bruto" stroke={CHART.flujo} strokeWidth={2.5} dot={{ r: 3 }} connectNulls={false} />
+                  <Bar yAxisId="money" dataKey="utilidad_bruta" name={provisionalProfitability ? 'Utilidad bruta estimada' : 'Utilidad bruta'} fill={CHART.utilidad} radius={[4, 4, 0, 0]} maxBarSize={36} />
+                  <Line yAxisId="margin" type="monotone" dataKey="margen_pct" name={provisionalProfitability ? 'Margen bruto estimado' : 'Margen bruto'} stroke={CHART.flujo} strokeWidth={2.5} dot={{ r: 3 }} connectNulls={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>

@@ -376,8 +376,75 @@ def test_missing_cost_is_not_zero():
     assert kpis["cobertura"]["value"] == pytest.approx(50.0)
     assert any(alert["id"] == "costos_faltantes" for alert in dashboard["alerts"])
     rows = {row["nombre"]: row for row in dashboard["table"]["rows"]}
+    assert rows["A"]["margen"] == pytest.approx(60.0)
     assert rows["Nueve"]["utilidad"] is None
     assert rows["Nueve"]["margen"] is None
+
+
+def test_extreme_unit_cost_is_excluded_instead_of_inventing_a_loss():
+    product_ids = [f"P{i:02d}" for i in range(21)]
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": [f"V{i:02d}" for i in range(21)],
+            "Fecha": ["2025-01-01"] * 21,
+            "ID_Producto": product_ids,
+            "Cantidad": [1] * 21,
+            "Monto_Venta": [1000] * 21,
+        }
+    )
+    productos = pd.DataFrame(
+        {
+            "ID_Producto": product_ids,
+            "Nombre_Producto": product_ids,
+            "Costo_Unitario": [400] * 20 + [20_000_000],
+        }
+    )
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Productos": productos},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert kpis["costo"]["value"] == pytest.approx(8000.0)
+    assert kpis["cobertura"]["value"] == pytest.approx(95.2)
+    assert "estimado" in kpis["costo"]["label"].lower()
+    assert any("extremo" in warning for warning in dashboard["quality"]["warnings"])
+
+
+def test_sales_relationship_uses_declared_period_when_no_filter_is_selected():
+    ventas = pd.DataFrame(
+        {
+            "ID_Venta": ["V1", "V2"],
+            "Fecha": ["2025-06-01", "2026-01-01"],
+            "ID_Producto": ["P1", "P1"],
+            "Cantidad": [1, 1],
+            "Monto_Venta": [1000, 9000],
+        }
+    )
+    productos = pd.DataFrame(
+        {
+            "ID_Producto": ["P1"],
+            "Nombre_Producto": ["A"],
+            "Costo_Unitario": [400],
+        }
+    )
+    parametros = pd.DataFrame(
+        {
+            "Parametro": ["Periodo ventas"],
+            "Valor": ["01-01-2025 a 31-12-2025"],
+        }
+    )
+    dashboard = build_relationship_dashboard(
+        {"Ventas": ventas, "Productos": productos, "Parametros": parametros},
+        {},
+        {},
+        _relation("Ventas", "Productos", ["ID_Producto"], ["ID_Producto"]),
+    )
+    kpis = {kpi["id"]: kpi for kpi in dashboard["kpis"]}
+    assert dashboard["period"]["desde"] == "2025-01-01"
+    assert dashboard["period"]["hasta"] == "2025-12-31"
+    assert kpis["ventas"]["value"] == pytest.approx(1000.0)
 
 
 def test_all_missing_costs_are_unavailable_instead_of_zero():
