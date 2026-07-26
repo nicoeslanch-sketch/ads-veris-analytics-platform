@@ -680,7 +680,7 @@ export default function Resumen() {
       ) : metrics && kpis ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
           {/* KPIs (con tono suave del color de cada indicador) */}
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-4">
             {kpiCards.map(({ label, icon: Icon, color, value, variation, spark }) => (
               <Card
                 key={label}

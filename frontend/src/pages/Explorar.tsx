@@ -855,7 +855,7 @@ export default function Explorar() {
             </span>
           )}
         </p>
-        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
           {visiblePresets.map((preset) => {
             const active =
               groupBy === preset.groupBy &&
@@ -1348,7 +1348,7 @@ function CostReliabilityAnalysis({ metrics }: { metrics: MetricsResult }) {
           {coverage ? `${formatNumber(coverage.pct)}% con costo` : 'Cobertura desconocida'}
         </span>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
         <CostContextItem
           label="Base pareada"
           value={coverage ? `${formatNumber(coverage.filas_con_ingreso_y_costo)} de ${formatNumber(coverage.filas_con_ingreso)}` : '—'}
