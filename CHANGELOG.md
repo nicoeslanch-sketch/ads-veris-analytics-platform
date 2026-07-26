@@ -15,9 +15,10 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
   ritmo diario y una proyección explícitamente estimada.
 - Descuentos ambiguos apenas superiores a 1 se conservan para revisión en vez
   de convertirse silenciosamente en porcentajes válidos.
-- Historial muestra el snapshot anterior de inmediato cuando cambia el motor y
-  actualiza el documento elegido una vez en segundo plano. El alcance guardado
-  se reutiliza para evitar una nueva búsqueda visible de relaciones.
+- Historial muestra el snapshot anterior de inmediato cuando cambia el motor.
+  Resumen, Explorar y Relaciones recalculan solo su vista con el motor actual;
+  ya no se reconstruye todo el libro en paralelo ni se compite con la primera
+  carga visible. El alcance guardado se reutiliza para evitar trabajo extra.
 - El gráfico mensual de una hoja individual usa una altura compacta y ya no se
   estira para igualar una tarjeta lateral más alta. No se agrega migración.
 

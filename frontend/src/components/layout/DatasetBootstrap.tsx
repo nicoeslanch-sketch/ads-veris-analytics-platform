@@ -125,29 +125,17 @@ export default function DatasetBootstrap() {
         if (!active || cancelledRef.current) return
         restoredAvailable = applyRestored(restored)
         if (!restoredAvailable) return
-
-        if (restored.refresh_required) {
-          // El trabajo ya está disponible. La actualización del motor no
-          // mantiene la pantalla bloqueada ni obliga a repetir la limpieza.
-          setRestoring(null)
-          setContextRestoring(false)
-          const refreshed = await apiPostJson<RestoreLatestResult>(
-            '/restore/refresh',
-            {},
-            { timeoutMs: AUTO_RESTORE_TIMEOUT_MS, signal: controller.signal },
-          )
-          if (!active || cancelledRef.current) return
-          applyRestored(refreshed)
-        }
+        // Las páginas visibles recalculan sus indicadores con el motor actual.
+        // No reconstruimos aquí todo el libro: hacerlo en paralelo con
+        // métricas o relaciones duplicaba el trabajo y podía cancelar la
+        // primera carga de un documento restaurado.
       } catch (err) {
         if (active && !cancelledRef.current) {
           // Un 403 significa "sin acceso de procesamiento" (cuenta sin plan o
           // prueba expirada): no hay nada que restaurar y no es un error.
           if (!(err instanceof ApiError && err.status === 403)) {
             setRestoreError(
-              restoredAvailable
-                ? 'Restauramos tus datos, pero el análisis actualizado no pudo terminar en segundo plano.'
-                : err instanceof ApiError
+              err instanceof ApiError
                   ? `No pudimos restaurar automáticamente tu último trabajo. ${err.message}`
                   : 'No pudimos restaurar automáticamente tu último trabajo.',
             )
