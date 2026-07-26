@@ -87,17 +87,12 @@ export default function Historial() {
     datasetRevision,
     restoreDataset,
     reset,
-    setMetrics: setContextMetrics,
   } = useDataset()
   const { plan, isAdmin } = usePlan()
   // Bug: "Retomar" cambiaba el archivo activo pero dejaba el banner y los
   // números ficticios de la demo visibles hasta salir manualmente.
   const demo = useDemo()
   const navigate = useNavigate()
-  const activeDatasetIdRef = useRef(datasetId)
-  useEffect(() => {
-    activeDatasetIdRef.current = datasetId
-  }, [datasetId])
 
   const [datasets, setDatasets] = useState<DatasetRow[] | null>(null)
   const [activity, setActivity] = useState<ActivityRow[] | null>(null)
@@ -270,28 +265,14 @@ export default function Historial() {
         state: restored.refresh_required
           ? {
               resumeWarning:
-                'Restauramos tu limpieza guardada. Los indicadores se actualizarán en segundo plano con la versión actual del motor.',
+                'Restauramos tu limpieza guardada. Cada vista recalculará sus indicadores con el motor actual sin repetir la limpieza.',
             }
           : undefined,
       })
-      if (restored.refresh_required) {
-        // La sesión guardada ya está visible; la actualización del motor no
-        // bloquea Historial ni vuelve a mostrar el pipeline de limpieza.
-        const refreshForm = new FormData()
-        refreshForm.append('dataset_id', dataset.id)
-        void apiPost<RestoreLatestResult>('/restore/refresh', refreshForm, {
-          timeoutMs: 120_000,
-        })
-          .then((refreshed) => {
-            if (
-              activeDatasetIdRef.current === dataset.id
-              && refreshed.metrics
-            ) {
-              setContextMetrics(withPublicAnalysisScope(refreshed.metrics))
-            }
-          })
-          .catch(() => undefined)
-      }
+      // No se lanza /restore/refresh en paralelo. Resumen, Explorar y el
+      // workspace de relaciones ya piden sus resultados con el motor actual;
+      // reconstruir además las 15-20 hojas aquí competía por CPU con esa
+      // primera vista y podía hacer vencer su timeout.
     } catch (err) {
       setResumeError(
         err instanceof ApiError ? err.message : 'No se pudo retomar el dataset.',
