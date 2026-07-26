@@ -3648,11 +3648,8 @@ def _response_from_snapshot_bundle(
     return response
 
 
-def _restore_latest_sync(user_id: str) -> dict:
-    """Restore from a persistent snapshot, or rebuild once as a fallback."""
-    record = fetch_latest_restore_record(user_id)
-    if record is None:
-        return {"dataset": None, "source": "empty"}
+def _restore_record_sync(user_id: str, record: dict) -> dict:
+    """Restore one owned dataset from its snapshot, rebuilding only as fallback."""
     production_cache = get_settings().app_env == "production"
     authoritative_state = (
         fetch_restore_state_metadata(record["id"], user_id)
@@ -3759,6 +3756,35 @@ def _restore_latest_sync(user_id: str) -> dict:
         if refreshed_state and refreshed_state.get("revision") == revision and refreshed_key:
             _restore_response_cache_store(refreshed_key, response)
     return response
+
+
+def _restore_latest_sync(user_id: str) -> dict:
+    """Restore the latest dataset without choosing it on the client."""
+    record = fetch_latest_restore_record(user_id)
+    if record is None:
+        return {"dataset": None, "source": "empty"}
+    return _restore_record_sync(user_id, record)
+
+
+def _restore_dataset_sync(user_id: str, dataset_id: str) -> dict:
+    """Restore the selected History entry without rerunning the visible pipeline."""
+    record = fetch_restore_record(dataset_id, user_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="El dataset no existe.")
+    if record.get("status") == "error":
+        raise HTTPException(
+            status_code=409,
+            detail="El dataset está en estado de error y no se puede restaurar.",
+        )
+    if not record.get("storage_path"):
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "El archivo original ya no está disponible en Storage. "
+                "La entrada se conserva como trazabilidad, pero no puede retomarse."
+            ),
+        )
+    return _restore_record_sync(user_id, record)
 
 
 def _refresh_restore_sync(user_id: str) -> dict:
@@ -4101,6 +4127,20 @@ async def restore_latest(
         require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
     )
     return await run_in_threadpool(_restore_latest_sync, user.id)
+
+
+@router.post("/restore/dataset")
+async def restore_dataset(
+    dataset_id: UUID = Form(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Restore a selected History item from the same validated snapshot path."""
+
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    )
+    return await run_in_threadpool(_restore_dataset_sync, user.id, str(dataset_id))
 
 
 @router.post("/restore/refresh")

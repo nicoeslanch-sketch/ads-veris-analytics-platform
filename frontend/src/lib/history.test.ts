@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACTIVITY_RETENTION_DAYS,
+  RECENT_ACTIVITY_DATASET_LIMIT,
   RECENT_ACTIVITY_LIMIT,
-  activityRetentionCutoff,
+  compactRecentActivity,
   hasVerifiedMonetaryIntegrity,
+  type ActivityRow,
   type AnalysisRow,
 } from './history'
 
@@ -46,14 +47,36 @@ describe('integridad monetaria de análisis guardados', () => {
 })
 
 describe('retención de actividad reciente', () => {
-  it('calcula un corte estable de 30 días', () => {
-    expect(activityRetentionCutoff(new Date('2026-07-25T12:00:00.000Z'))).toBe(
-      '2026-06-25T12:00:00.000Z',
-    )
-    expect(ACTIVITY_RETENTION_DAYS).toBe(30)
+  const row = (
+    id: string,
+    datasetId: string | null,
+    activityType: ActivityRow['activity_type'],
+    description: string,
+  ): ActivityRow => ({
+    id,
+    dataset_id: datasetId,
+    activity_type: activityType,
+    description,
+    created_at: `2026-07-${String(30 - Number(id)).padStart(2, '0')}T12:00:00Z`,
   })
 
-  it('mantiene compacta la lista visible', () => {
-    expect(RECENT_ACTIVITY_LIMIT).toBe(20)
+  it('muestra una sola limpieza por documento aunque existan filas por hoja', () => {
+    const compact = compactRecentActivity([
+      row('1', 'dataset-a', 'limpieza', 'Limpieza completada: libro.xlsx (Ventas)'),
+      row('2', 'dataset-a', 'limpieza', 'Limpieza completada: libro.xlsx (Productos)'),
+      row('3', 'dataset-a', 'estandarizacion', 'Estandarización: libro.xlsx'),
+    ])
+    expect(compact.map((item) => item.id)).toEqual(['1', '3'])
+  })
+
+  it('limita por cantidad de fuentes y movimientos, no por días', () => {
+    const rows = Array.from({ length: 15 }, (_, index) =>
+      row(String(index + 1), `dataset-${index + 1}`, 'carga', `Carga ${index + 1}`),
+    )
+    const compact = compactRecentActivity(rows, 3, 2)
+    expect(compact).toHaveLength(2)
+    expect(compact.map((item) => item.dataset_id)).toEqual(['dataset-1', 'dataset-2'])
+    expect(RECENT_ACTIVITY_DATASET_LIMIT).toBe(10)
+    expect(RECENT_ACTIVITY_LIMIT).toBe(24)
   })
 })

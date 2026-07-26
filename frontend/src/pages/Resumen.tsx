@@ -756,9 +756,9 @@ export default function Resumen() {
           {/* En escritorio, cada columna avanza con su propia altura: una
               tarjeta alta a la derecha no reserva espacio vacío a la izquierda.
               En móvil, `contents` + `order` conserva el orden de lectura. */}
-          <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="contents xl:block xl:space-y-6">
-              <Card className="order-1 min-w-0">
+          <div className="mt-6 grid items-stretch gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="contents xl:block">
+              <Card className="order-1 flex min-w-0 flex-col xl:h-full">
               <h2 className="text-base font-semibold text-navy">
                 {hasCosts ? 'Evolución de Ingresos, Costo de Venta y Utilidad Bruta' : 'Ingresos por mes'}
               </h2>
@@ -786,7 +786,7 @@ export default function Resumen() {
                   </div>
                 </div>
               ) : hasCosts ? (
-                <div className="mt-4 h-72">
+                <div className="mt-4 min-h-72 flex-1">
                   <FinancialLineChart
                     evolution={evolution}
                     mesParcial={mesParcial?.mes}
@@ -797,7 +797,7 @@ export default function Resumen() {
               ) : (
                 /* Hoja de ventas sin costos: un solo indicador (ingresos) se lee
                    mejor como barras por mes que como una línea suelta. */
-                <div className="mt-4 h-72">
+                <div className="mt-4 min-h-72 flex-1">
                   <MonthlyIncomeBars evolution={evolution} mesParcial={mesParcial?.mes} />
                 </div>
               )}
@@ -828,56 +828,6 @@ export default function Resumen() {
               )}
               </Card>
 
-              {(metrics.por_categoria ?? []).length > 0 && (
-              <Card className="order-3 min-w-0">
-              <h2 className="text-base font-semibold text-navy">Análisis por Categoría</h2>
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-navy/10 text-left text-xs font-semibold uppercase tracking-wide text-navy/50">
-                      <th className="whitespace-nowrap pb-2 pr-4">Categoría</th>
-                      <th className="whitespace-nowrap pb-2 pr-4 text-right">Ingresos</th>
-                      {/* Fase 14b: participación BRUTA — distribución real que suma 100% */}
-                      <th className="whitespace-nowrap pb-2 pr-4 text-right">% Ventas brutas</th>
-                      {categoriaConCostos && (
-                        <>
-                          <th className="whitespace-nowrap pb-2 pr-4 text-right">Costo asociado</th>
-                          <th className="whitespace-nowrap pb-2 pr-4 text-right">Utilidad</th>
-                          <th className="pb-2">Margen</th>
-                        </>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(metrics.por_categoria ?? []).map((row) => (
-                      <tr key={row.nombre} className="border-b border-navy/5">
-                        <td className="py-2.5 pr-4 font-medium text-navy">{row.nombre}</td>
-                        <td className="py-2.5 pr-4 text-right text-navy/75">{formatCLP(row.ingresos)}</td>
-                        <td className="whitespace-nowrap py-2.5 pr-4 text-right text-navy/75">
-                          {formatNumber(row.participacion_bruta_pct ?? row.porcentaje)}%
-                        </td>
-                        {categoriaConCostos ? (
-                          <>
-                            <td className="py-2.5 pr-4 text-right text-navy/75">
-                              {row.costo != null ? formatCLP(row.costo) : '—'}
-                            </td>
-                            <td className="py-2.5 pr-4 text-right text-navy/75">
-                              {row.utilidad != null ? formatCLP(row.utilidad) : '—'}
-                            </td>
-                            <td className="py-2.5">
-                              {row.margen_pct !== undefined && row.margen_pct !== null
-                                ? `${formatNumber(row.margen_pct)}%`
-                                : '—'}
-                            </td>
-                          </>
-                        ) : null}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              </Card>
-              )}
             </div>
 
             {/* Grilla en orden de lectura: evita que CSS multi-column reordene
@@ -1054,7 +1004,7 @@ export default function Resumen() {
             </div>
 
             <div className="contents xl:block xl:space-y-6">
-              <Card className="order-2">
+              <Card className="order-2 xl:h-full">
               <h2 className="text-base font-semibold text-navy">Indicadores Clave</h2>
               <p className="mt-0.5 text-xs text-navy/50">Calculados de tus datos reales.</p>
               <ul className="mt-3 divide-y divide-navy/5">
@@ -1075,6 +1025,56 @@ export default function Resumen() {
               </Card>
 
             </div>
+
+            {(metrics.por_categoria ?? []).length > 0 && (
+              <Card className="order-6 min-w-0 xl:col-span-2">
+                <h2 className="text-base font-semibold text-navy">Análisis por Categoría</h2>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-navy/10 text-left text-xs font-semibold uppercase tracking-wide text-navy/50">
+                        <th className="whitespace-nowrap pb-2 pr-4">Categoría</th>
+                        <th className="whitespace-nowrap pb-2 pr-4 text-right">Ingresos</th>
+                        <th className="whitespace-nowrap pb-2 pr-4 text-right">% Ventas brutas</th>
+                        {categoriaConCostos && (
+                          <>
+                            <th className="whitespace-nowrap pb-2 pr-4 text-right">Costo asociado</th>
+                            <th className="whitespace-nowrap pb-2 pr-4 text-right">Utilidad</th>
+                            <th className="pb-2">Margen</th>
+                          </>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(metrics.por_categoria ?? []).map((row) => (
+                        <tr key={row.nombre} className="border-b border-navy/5">
+                          <td className="py-2.5 pr-4 font-medium text-navy">{row.nombre}</td>
+                          <td className="py-2.5 pr-4 text-right text-navy/75">{formatCLP(row.ingresos)}</td>
+                          <td className="whitespace-nowrap py-2.5 pr-4 text-right text-navy/75">
+                            {formatNumber(row.participacion_bruta_pct ?? row.porcentaje)}%
+                          </td>
+                          {categoriaConCostos ? (
+                            <>
+                              <td className="py-2.5 pr-4 text-right text-navy/75">
+                                {row.costo != null ? formatCLP(row.costo) : '—'}
+                              </td>
+                              <td className="py-2.5 pr-4 text-right text-navy/75">
+                                {row.utilidad != null ? formatCLP(row.utilidad) : '—'}
+                              </td>
+                              <td className="py-2.5">
+                                {row.margen_pct !== undefined && row.margen_pct !== null
+                                  ? `${formatNumber(row.margen_pct)}%`
+                                  : '—'}
+                              </td>
+                            </>
+                          ) : null}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
           </div>
 
         </div>

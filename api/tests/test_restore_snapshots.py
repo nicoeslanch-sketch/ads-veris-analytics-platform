@@ -332,6 +332,76 @@ def test_restore_latest_requiere_autenticacion(client):
     assert response.status_code == 401
 
 
+def test_restore_dataset_elegido_usa_snapshot_sin_reestandarizar_ni_limpiar(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline as pl
+
+    dataset_id = "00000000-0000-0000-0000-000000000041"
+    snapshot = _snapshot()
+    record = {
+        "id": dataset_id,
+        "name": "historico.xlsx",
+        "source": "excel_csv",
+        "storage_path": "user-test-123/historico.xlsx",
+        "status": "limpio",
+    }
+    monkeypatch.setattr(pl, "require_capability_for_user", lambda *_args: "ok")
+    monkeypatch.setattr(
+        pl,
+        "fetch_restore_record",
+        lambda selected_id, user_id, *_args: (
+            record
+            if selected_id == dataset_id and user_id == "user-test-123"
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        pl,
+        "fetch_restore_state_bundle",
+        lambda *_args, **_kwargs: {
+            "state": {
+                "active_sheet": None,
+                "available_sheets": [],
+                "excluded_sheets": [],
+                "combine_sheets": False,
+                "source_sha256": snapshot["source_sha256"],
+                "engine_version": snapshot["engine_version"],
+            },
+            "sheets": [
+                {
+                    "sheet_key": "__single__",
+                    "revision": snapshot["revision"],
+                    "source_sha256": snapshot["source_sha256"],
+                    "rules_hash": snapshot["rules_hash"],
+                    "mapping_hash": snapshot["mapping_hash"],
+                    "sheet": snapshot["sheet"],
+                    "engine_version": snapshot["engine_version"],
+                    "snapshot": snapshot,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        pl,
+        "download_from_storage",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("Retomar no debe descargar ni reprocesar un snapshot válido")
+        ),
+    )
+
+    response = client.post(
+        "/restore/dataset",
+        data={"dataset_id": dataset_id},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "snapshot"
+    assert response.json()["dataset"]["id"] == dataset_id
+    assert response.json()["cleaning"] == snapshot["cleaning"]
+
+
 def test_store_snapshot_confirma_fila_y_filtra_por_propietario(monkeypatch):
     from app import restore_cache
 

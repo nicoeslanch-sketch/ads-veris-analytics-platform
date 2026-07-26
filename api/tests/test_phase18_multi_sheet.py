@@ -61,6 +61,27 @@ def test_sheet_classification_is_explainable_and_never_removes_sheets():
     assert all(profile["motivos"] for profile in profiles.values())
 
 
+def test_small_business_master_is_not_excluded_as_ambiguous():
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "ID_Sucursal": ["S-01", "S-02", "S-03"],
+                "Nombre": ["Centro", "Norte", "Sur"],
+                "Region": ["RM", "V", "VI"],
+            }
+        ).to_excel(writer, sheet_name="Sucursales", index=False)
+
+    _, report = load_dataframe_with_report(
+        "maestras.xlsx", output.getvalue(), sheet="Sucursales"
+    )
+    profile = report["clasificacion_hojas"][0]
+
+    assert profile["clasificacion"] == "datos"
+    assert profile["recomendacion"] == "procesar"
+    assert "tabla maestra pequeña" in profile["motivos"][0]
+
+
 def test_bulk_sheet_loader_matches_individual_results_and_opens_excel_once(monkeypatch):
     content = _classified_workbook()
     real_excel_file = pd.ExcelFile

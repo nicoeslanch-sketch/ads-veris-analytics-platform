@@ -13,15 +13,9 @@ import {
 
 const BUCKET = 'datasets'
 
-export const ACTIVITY_RETENTION_DAYS = 30
-export const RECENT_ACTIVITY_LIMIT = 20
-
-export function activityRetentionCutoff(now = new Date()): string {
-  const millisecondsPerDay = 24 * 60 * 60 * 1000
-  return new Date(
-    now.getTime() - ACTIVITY_RETENTION_DAYS * millisecondsPerDay,
-  ).toISOString()
-}
+export const RECENT_ACTIVITY_DATASET_LIMIT = 10
+export const RECENT_ACTIVITY_LIMIT = 24
+const ACTIVITY_QUERY_LIMIT = 200
 
 export type ActivityType =
   | 'carga'
@@ -38,6 +32,38 @@ export interface ActivityRow {
   description: string
   dataset_id: string | null
   created_at: string
+}
+
+/** Compacta filas heredadas y nuevas: una limpieza visible por documento y
+ * solo actividad de las fuentes recientes. Las filas antiguas se podan luego
+ * en backend, pero la pantalla deja de saturarse incluso antes de esa poda. */
+export function compactRecentActivity(
+  rows: ActivityRow[],
+  datasetLimit = RECENT_ACTIVITY_DATASET_LIMIT,
+  limit = RECENT_ACTIVITY_LIMIT,
+): ActivityRow[] {
+  const datasetIds = new Set<string>()
+  const eventKeys = new Set<string>()
+  const compact: ActivityRow[] = []
+  for (const row of rows) {
+    if (row.dataset_id && !datasetIds.has(row.dataset_id)) {
+      if (datasetIds.size >= datasetLimit) continue
+      datasetIds.add(row.dataset_id)
+    }
+    const description = sanitizeActivityDescription(row.description)
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLocaleLowerCase('es-CL')
+    const key =
+      row.activity_type === 'limpieza' && row.dataset_id
+        ? `${row.dataset_id}:limpieza`
+        : `${row.dataset_id ?? 'cuenta'}:${row.activity_type}:${description}`
+    if (eventKeys.has(key)) continue
+    eventKeys.add(key)
+    compact.push(row)
+    if (compact.length >= limit) break
+  }
+  return compact
 }
 
 // El path de Storage antepone Date.now()_ al nombre (lib/datasets.ts) para
@@ -117,14 +143,13 @@ export async function fetchActivity(
   const { data, error } = await supabase
     .from('activity_log')
     .select('id, activity_type, description, dataset_id, created_at')
-    .gte('created_at', activityRetentionCutoff())
     .order('created_at', { ascending: false })
-    .limit(limit)
+    .limit(ACTIVITY_QUERY_LIMIT)
   if (error) {
     console.warn('[historial] No se pudo leer activity_log:', error.message)
     return 'error'
   }
-  return data as ActivityRow[]
+  return compactRecentActivity(data as ActivityRow[], RECENT_ACTIVITY_DATASET_LIMIT, limit)
 }
 
 // Fase 11 §14.3: el Plan Gold conserva hasta 50 archivos — el listado debe alcanzarlos.

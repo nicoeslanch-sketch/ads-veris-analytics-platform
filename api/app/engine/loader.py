@@ -93,6 +93,11 @@ _AUXILIARY_SHEET_NAME_RE = re.compile(
     r"notas?|diccionario|par[aá]metros?|parametros?|configuraci[oó]n|"
     r"portada|caratula|car[aá]tula)(?:$|[_\s-])"
 )
+_BUSINESS_TABLE_SHEET_NAME_RE = re.compile(
+    r"(?i)(?:^|[_\s-])(?:ventas?|productos?|costos?|clientes?|proveedores?|"
+    r"sucursales?|trabajadores?|vendedores?|compras?|inventarios?|gastos?|"
+    r"cobranzas?|pagos?|metas?|campa(?:n|ñ)as?)(?:$|[_\s-])"
+)
 _SHEET_STRUCTURE_CACHE_LOCK = threading.Lock()
 _SHEET_STRUCTURE_CACHE: "OrderedDict[str, dict[str, dict]]" = OrderedDict()
 _SHEET_STRUCTURE_CACHE_SIZE = 8
@@ -228,6 +233,14 @@ def _classify_sheet_sample(
     )
     data_rows = max(populated_rows - header_row - 1, 0)
     auxiliary_name = bool(_AUXILIARY_SHEET_NAME_RE.search(name.strip()))
+    business_table_name = bool(_BUSINESS_TABLE_SHEET_NAME_RE.search(name.strip()))
+    business_key_header = any(
+        re.search(
+            r"(?i)(?:^|[_\s-])(?:id|sku|rut|codigo|código|folio)(?:$|[_\s-])",
+            header,
+        )
+        for header in sample_headers
+    )
     formulas = int(structure.get("formulas_muestra", 0) or 0)
     merged = int(structure.get("celdas_combinadas", 0) or 0)
     reasons: list[str] = []
@@ -235,11 +248,24 @@ def _classify_sheet_sample(
     if auxiliary_name:
         classification = "auxiliar"
         reasons.append("El nombre indica guía, control, lectura o instrucciones.")
-    elif populated_columns >= 2 and data_rows >= 5 and density >= 0.35:
-        classification = "datos"
-        reasons.append(
-            f"Tiene estructura tabular ({data_rows} filas de datos y {populated_columns} columnas en la muestra)."
+    elif (
+        populated_columns >= 2
+        and density >= 0.35
+        and (
+            data_rows >= 5
+            or (data_rows >= 1 and (business_table_name or business_key_header))
         )
+    ):
+        classification = "datos"
+        if data_rows < 5:
+            reasons.append(
+                f"Es una tabla maestra pequeña con llave empresarial "
+                f"({data_rows} filas de datos y {populated_columns} columnas)."
+            )
+        else:
+            reasons.append(
+                f"Tiene estructura tabular ({data_rows} filas de datos y {populated_columns} columnas en la muestra)."
+            )
     else:
         classification = "ambigua"
         reasons.append("La muestra no permite confirmar una tabla de datos con suficiente confianza.")

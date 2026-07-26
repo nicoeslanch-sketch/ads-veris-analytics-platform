@@ -16,7 +16,8 @@ de fallar con 404 al retomar). Así el Storage no crece sin control y la
 plataforma se mantiene rápida y barata de operar.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+import re
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -138,23 +139,92 @@ def _unlink_datasets(user_id: str, names: list[str], settings: Settings) -> None
 
 
 def _prune_activity(user_id: str, settings: Settings) -> int:
-    """Elimina únicamente actividad antigua del usuario autenticado."""
-    retention_days = max(1, settings.activity_retention_days)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    rest = f"{settings.supabase_url.rstrip('/')}/rest/v1/activity_log"
-    response = httpx.request(
-        "DELETE",
-        rest,
+    """Conserva una bitácora compacta de las fuentes recientes.
+
+    Además colapsa el legado multihoja que registró una limpieza idéntica por
+    hoja. No toca cleaning_jobs ni snapshots: activity_log es trazabilidad,
+    no la caché que permite restaurar documentos.
+    """
+
+    root = f"{settings.supabase_url.rstrip('/')}/rest/v1"
+    datasets_response = httpx.get(
+        f"{root}/datasets",
         params={
             "user_id": f"eq.{user_id}",
-            "created_at": f"lt.{cutoff.isoformat()}",
+            "select": "id",
+            "order": "created_at.desc",
+            "limit": str(max(1, settings.activity_retention_dataset_limit)),
         },
-        headers={**_headers(settings), "Prefer": "return=representation"},
+        headers=_headers(settings),
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
-    deleted = response.json()
-    return len(deleted) if isinstance(deleted, list) else 0
+    datasets_response.raise_for_status()
+    recent_datasets = {
+        str(row["id"])
+        for row in datasets_response.json()
+        if isinstance(row, dict) and row.get("id")
+    }
+
+    activity_response = httpx.get(
+        f"{root}/activity_log",
+        params={
+            "user_id": f"eq.{user_id}",
+            "select": "id,dataset_id,activity_type,description,created_at",
+            "order": "created_at.desc",
+            "limit": "1000",
+        },
+        headers=_headers(settings),
+        timeout=_TIMEOUT,
+    )
+    activity_response.raise_for_status()
+    rows = activity_response.json()
+    if not isinstance(rows, list):
+        return 0
+
+    kept = 0
+    seen: set[str] = set()
+    delete_ids: list[str] = []
+    max_events = max(1, settings.activity_retention_max_events)
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("id"):
+            continue
+        dataset_id = str(row.get("dataset_id") or "")
+        description = re.sub(r"\s+", " ", str(row.get("description") or "")).strip().casefold()
+        activity_type = str(row.get("activity_type") or "")
+        key = (
+            f"{dataset_id}:limpieza"
+            if dataset_id and activity_type == "limpieza"
+            else f"{dataset_id}:{activity_type}:{description}"
+        )
+        outside_recent_sources = bool(dataset_id) and dataset_id not in recent_datasets
+        duplicate = key in seen
+        over_limit = kept >= max_events
+        if outside_recent_sources or duplicate or over_limit:
+            delete_ids.append(str(row["id"]))
+            continue
+        seen.add(key)
+        kept += 1
+
+    if not delete_ids:
+        return 0
+    deleted_count = 0
+    for start in range(0, len(delete_ids), 100):
+        batch = delete_ids[start : start + 100]
+        response = httpx.request(
+            "DELETE",
+            f"{root}/activity_log",
+            params={
+                "user_id": f"eq.{user_id}",
+                "id": f"in.({','.join(batch)})",
+            },
+            headers={**_headers(settings), "Prefer": "return=representation"},
+            timeout=_TIMEOUT,
+        )
+        response.raise_for_status()
+        deleted = response.json()
+        if isinstance(deleted, list):
+            deleted_count += len(deleted)
+    return deleted_count
 
 
 def _retention_sync(user_id: str, settings: Settings) -> dict:

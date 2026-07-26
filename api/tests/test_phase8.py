@@ -215,39 +215,76 @@ def test_retention_keep_last_es_intocable(monkeypatch):
     assert result["conservados"] == 3
 
 
-def test_retention_poda_solo_actividad_antigua_del_usuario(monkeypatch):
-    """La poda REST queda acotada por usuario y por la fecha configurada."""
+def test_retention_poda_actividad_por_fuentes_y_colapsa_limpieza(monkeypatch):
+    """La poda queda acotada por usuario, fuentes recientes y evento lógico."""
     from app.config import Settings
     from app.routes import retention as retention_module
 
     settings = Settings(
         supabase_url="https://proyecto-test.supabase.co",
         supabase_service_role_key="service-key",
-        activity_retention_days=30,
+        activity_retention_dataset_limit=2,
+        activity_retention_max_events=3,
     )
-    captured: dict = {}
+    captured: list[dict] = []
 
     class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
         def raise_for_status(self):
             return None
 
         def json(self):
-            return [{"id": "old-1"}, {"id": "old-2"}]
+            return self.payload
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/datasets"):
+            return FakeResponse([{"id": "dataset-new"}, {"id": "dataset-mid"}])
+        return FakeResponse(
+            [
+                {
+                    "id": "a1",
+                    "dataset_id": "dataset-new",
+                    "activity_type": "limpieza",
+                    "description": "Limpieza completada: libro.xlsx (Ventas)",
+                },
+                {
+                    "id": "a2",
+                    "dataset_id": "dataset-new",
+                    "activity_type": "limpieza",
+                    "description": "Limpieza completada: libro.xlsx (Productos)",
+                },
+                {
+                    "id": "a3",
+                    "dataset_id": "dataset-mid",
+                    "activity_type": "carga",
+                    "description": "Archivo cargado",
+                },
+                {
+                    "id": "a4",
+                    "dataset_id": "dataset-old",
+                    "activity_type": "carga",
+                    "description": "Archivo antiguo",
+                },
+            ]
+        )
 
     def fake_request(method, url, **kwargs):
-        captured.update({"method": method, "url": url, **kwargs})
-        return FakeResponse()
+        captured.append({"method": method, "url": url, **kwargs})
+        return FakeResponse([{"id": "a2"}, {"id": "a4"}])
 
+    monkeypatch.setattr(retention_module.httpx, "get", fake_get)
     monkeypatch.setattr(retention_module.httpx, "request", fake_request)
 
     deleted = retention_module._prune_activity("user-1", settings)
 
     assert deleted == 2
-    assert captured["method"] == "DELETE"
-    assert captured["url"].endswith("/rest/v1/activity_log")
-    assert captured["params"]["user_id"] == "eq.user-1"
-    assert captured["params"]["created_at"].startswith("lt.")
-    assert captured["headers"]["Prefer"] == "return=representation"
+    assert captured[0]["method"] == "DELETE"
+    assert captured[0]["url"].endswith("/rest/v1/activity_log")
+    assert captured[0]["params"]["user_id"] == "eq.user-1"
+    assert captured[0]["params"]["id"] == "in.(a2,a4)"
+    assert captured[0]["headers"]["Prefer"] == "return=representation"
 
 
 # ── Motor: robustez extra Fase 8 (§5.14) ─────────────────────────────────────

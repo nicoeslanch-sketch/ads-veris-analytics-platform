@@ -36,7 +36,7 @@ import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiGet, apiPost, apiDownload, buildDatasetForm, ApiError } from '../lib/api'
-import { saveCleaningJob, saveColumnMapping } from '../lib/datasets'
+import { logActivity, saveCleaningJob, saveColumnMapping } from '../lib/datasets'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
 import { useCapability, usePlan } from '../lib/usePlan'
@@ -382,7 +382,15 @@ export default function Limpieza() {
               'La hoja se limpió, pero el punto de restauración no pudo guardarse.',
             )
           }
-          historyWrites.push(saveCleaningJob(datasetId, response.reglas_activas, response))
+          historyWrites.push(
+            saveCleaningJob(
+              datasetId,
+              response.reglas_activas,
+              response,
+              response.opciones_aplicacion,
+              { logActivity: false },
+            ),
+          )
         } else {
           failedCount += 1
           const message = batch.errores[name] ?? 'No se pudo limpiar esta hoja.'
@@ -406,6 +414,21 @@ export default function Limpieza() {
       const historyFailed = historyResults.some(
         (result) => result.status === 'rejected' || result.value === false,
       )
+      const completedSheets = historyResults.filter(
+        (result) => result.status === 'fulfilled' && result.value,
+      ).length
+      if (completedSheets > 0 && datasetId) {
+        const activitySaved = await logActivity(
+          'limpieza',
+          `Limpieza de datos completada: ${file.name} (${completedSheets} hoja${completedSheets === 1 ? '' : 's'})`,
+          datasetId,
+        )
+        if (!activitySaved) {
+          setPersistWarning(
+            'La limpieza quedó guardada, pero no pudimos actualizar la actividad reciente.',
+          )
+        }
+      }
       if (historyFailed && supabaseConfigured && datasetId) {
         setPersistWarning(
           'La limpieza se aplicó correctamente, pero una o más hojas no se pudieron guardar en el historial.',

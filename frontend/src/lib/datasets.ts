@@ -115,6 +115,7 @@ export async function saveCleaningJob(
   rules: CleaningRules,
   result: CleanResult,
   options: CleaningOptions = result.opciones_aplicacion ?? DEFAULT_CLEANING_OPTIONS,
+  persistence: { logActivity?: boolean } = {},
 ): Promise<boolean> {
   const userId = await getUserId()
   if (!supabase || !userId || !datasetId) return false
@@ -149,10 +150,12 @@ export async function saveCleaningJob(
       console.warn('[persistencia] Falló el update de datasets:', dsError.message)
       return false
     }
-    try {
-      await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
-    } catch (err) {
-      console.warn('[persistencia] No se pudo registrar actividad de limpieza:', err)
+    if (persistence.logActivity !== false) {
+      try {
+        await logActivity('limpieza', `Limpieza de datos completada: ${result.archivo}`, datasetId)
+      } catch (err) {
+        console.warn('[persistencia] No se pudo registrar actividad de limpieza:', err)
+      }
     }
     return true
   } catch (err) {

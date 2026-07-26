@@ -30,15 +30,14 @@ import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
 import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
-import { apiDelete, apiPost, buildDatasetForm, ApiError } from '../lib/api'
+import { apiDelete, apiPost, ApiError } from '../lib/api'
 import {
-  ACTIVITY_RETENTION_DAYS,
+  RECENT_ACTIVITY_DATASET_LIMIT,
   RECENT_ACTIVITY_LIMIT,
   deleteAnalysis,
   fetchActivity,
   fetchAnalyses,
   fetchDatasets,
-  fetchLatestCleaningConfig,
   hasVerifiedMonetaryIntegrity,
   sanitizeActivityDescription,
   type ActivityRow,
@@ -48,7 +47,13 @@ import {
 } from '../lib/history'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatDateTime, formatNumber, formatRelativeTime } from '../lib/format'
-import { DEFAULT_RULES, type CleanResult, type StandardizeResult } from '../lib/types'
+import { usePlan } from '../lib/usePlan'
+import {
+  restoredAnalysisSelection,
+  restoredSheetStatus,
+  withPublicAnalysisScope,
+} from '../lib/multiSheet'
+import type { RestoreLatestResult } from '../lib/types'
 
 const ACTIVITY_META: Record<ActivityType, { label: string; icon: LucideIcon; tone: string }> = {
   carga: { label: 'Carga', icon: Upload, tone: 'bg-teal/10 text-teal' },
@@ -77,7 +82,8 @@ function sourceBadge(source: string | null | undefined) {
 }
 
 export default function Historial() {
-  const { datasetId, setUploaded, setStandardization, setCleaning, reset } = useDataset()
+  const { datasetId, datasetRevision, restoreDataset, reset } = useDataset()
+  const { plan, isAdmin } = usePlan()
   // Bug: "Retomar" cambiaba el archivo activo pero dejaba el banner y los
   // números ficticios de la demo visibles hasta salir manualmente.
   const demo = useDemo()
@@ -186,53 +192,78 @@ export default function Historial() {
     }
   }
 
-  /** Rehidrata la sesión re-ejecutando el pipeline sobre el archivo de
-   * Storage. Fase 11 §5.4: el archivo YA NO se descarga al navegador — todas
-   * las llamadas usan storage_path y el backend lo lee directo (con archivos
-   * grandes, bajar 15 MB al cliente era la mitad de la lentitud de Retomar);
-   * el segundo módulo que lo pida sale del caché del servidor. */
+  /** Rehidrata desde el snapshot validado del dataset elegido. Solo cuando no
+   * existe ningún snapshot el backend reconstruye una vez y lo persiste. */
   const handleResume = async (dataset: DatasetRow) => {
     if (!dataset.storage_path) return
     demo.exit()
     setResuming(dataset.id)
     setResumeError(null)
     try {
-      // Placeholder liviano: solo aporta el nombre (la data viaja por storage_path).
-      const file = new File([], dataset.name, { type: 'application/octet-stream' })
-      const result = await apiPost<StandardizeResult>(
-        '/standardize',
-        buildDatasetForm(file, dataset.storage_path),
-      )
-      if (dataset.status === 'limpio') {
-        // Continuar con las reglas reales del último cleaning_job cuando existan.
-        const savedConfig = await fetchLatestCleaningConfig(dataset.id)
-        const usedDefaultRules = !savedConfig?.rules
-        const cleaned = await apiPost<CleanResult>(
-          '/clean',
-          buildDatasetForm(file, dataset.storage_path, {
-            apply: 'true',
-            rules: JSON.stringify(savedConfig?.rules ?? DEFAULT_RULES),
-            eliminar_duplicados: String(
-              savedConfig?.options.eliminar_duplicados ?? false,
-            ),
-          }),
-        )
-        setUploaded(file, dataset.id, dataset.storage_path)
-        setStandardization(result)
-        setCleaning(cleaned)
-        navigate('/', {
-          state: usedDefaultRules
-            ? {
-                resumeWarning:
-                  'No encontramos reglas guardadas para este dataset; se retomo con las reglas automaticas por defecto.',
-              }
-            : undefined,
-        })
-      } else {
-        setUploaded(file, dataset.id, dataset.storage_path)
-        setStandardization(result)
-        navigate('/limpieza')
+      const form = new FormData()
+      form.append('dataset_id', dataset.id)
+      const restored = await apiPost<RestoreLatestResult>('/restore/dataset', form, {
+        timeoutMs: 90_000,
+      })
+      if (!restored.dataset || !restored.standardization) {
+        throw new ApiError(409, 'El documento guardado no tiene un estado restaurable.')
       }
+      const placeholder = new File([], restored.dataset.name, {
+        type: 'application/octet-stream',
+      })
+      const restoredSessions = Object.fromEntries(
+        Object.entries(restored.sheet_sessions ?? {}).map(([name, session]) => {
+          const restoredError = restored.sheet_errors?.[name] ?? null
+          return [
+            name,
+            {
+              standardization: session.standardization,
+              cleaning: session.cleaning,
+              mappingOverride: session.mapping,
+              eliminarDuplicados: session.eliminar_duplicados,
+              status: restoredSheetStatus(restoredError, Boolean(session.cleaning)),
+              error: restoredError,
+            },
+          ]
+        }),
+      )
+      const restoredSelection = restoredAnalysisSelection(
+        restored.analysis_scope,
+        restored.selection_mode,
+      )
+      const applied = restoreDataset(
+        placeholder,
+        restored.dataset.id,
+        restored.dataset.storage_path,
+        restored.standardization,
+        restored.cleaning ?? null,
+        restored.metrics ? withPublicAnalysisScope(restored.metrics) : null,
+        restored.mapping ?? null,
+        Boolean(restored.eliminar_duplicados),
+        {
+          activeSheet: restored.active_sheet ?? null,
+          availableSheets:
+            restored.available_sheets ??
+            restored.standardization.carga?.hojas_disponibles ??
+            [],
+          combineSheets: Boolean(restored.combine_sheets),
+          sheetSessions: restoredSessions,
+          selectedSheets: restored.selected_sheets,
+          sheetErrors: restored.sheet_errors,
+          analysisScope: restoredSelection.analysisScope,
+          selectionMode: restoredSelection.selectionMode,
+          expectedRevision: datasetRevision,
+        },
+      )
+      if (!applied) return
+      navigate(restored.cleaning ? '/' : '/limpieza', {
+        state: restored.refresh_required
+          ? {
+              resumeWarning:
+                'Restauramos tu limpieza guardada. Los indicadores se actualizarán en segundo plano con la versión actual del motor.',
+            }
+          : undefined,
+      })
     } catch (err) {
       setResumeError(
         err instanceof ApiError ? err.message : 'No se pudo retomar el dataset.',
@@ -313,6 +344,8 @@ export default function Historial() {
     )
   }
 
+  const storageLimit = isAdmin || plan === 'gold' ? 50 : plan === 'analista' ? 25 : 10
+
   return (
     <>
       <PageHeader
@@ -334,7 +367,11 @@ export default function Historial() {
             Archivos cargados
           </h2>
           <p className="mt-0.5 text-sm text-navy/60">
-            Retomar descarga el archivo desde Storage y lo deja listo en Limpieza.
+            Retomar abre el estado ya guardado sin repetir la limpieza.
+          </p>
+          <p className="mt-1 text-xs text-navy/45">
+            {datasets?.length ?? 0} de {storageLimit} archivos disponibles en tu plan ·
+            solo el documento activo se carga en memoria.
           </p>
           {resumeError && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-3 py-2 text-xs text-coral">
@@ -517,7 +554,8 @@ export default function Historial() {
           <Card className="h-fit min-w-0 max-w-full overflow-hidden lg:overflow-visible">
             <h2 className="text-base font-semibold text-navy">Actividad reciente</h2>
             <p className="mt-0.5 text-xs text-navy/50">
-              Últimos {ACTIVITY_RETENTION_DAYS} días · hasta {RECENT_ACTIVITY_LIMIT} movimientos.
+              Una entrada por acción · últimas {RECENT_ACTIVITY_DATASET_LIMIT} fuentes ·
+              hasta {RECENT_ACTIVITY_LIMIT} movimientos.
             </p>
             <ul className="mt-4 max-h-[34rem] space-y-4 overflow-y-auto pr-1">
               {(activity ?? []).map((item) => {

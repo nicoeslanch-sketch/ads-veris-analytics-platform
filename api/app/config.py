@@ -65,8 +65,13 @@ class Settings(BaseSettings):
     storage_max_files_gold: int = 50
     storage_retention_days: int = 60
     storage_keep_last: int = 5
-    # La bitácora operacional es útil para retomar trabajo reciente, pero no
-    # debe crecer indefinidamente ni saturar Historial.
+    # La bitácora se acota por documentos, no por calendario: así una cuenta
+    # activa no ve cientos de limpiezas y una cuenta esporádica no pierde una
+    # acción útil solo porque pasaron algunos días.
+    activity_retention_dataset_limit: int = 10
+    activity_retention_max_events: int = 30
+    # Compatibilidad de despliegue con entornos que aún declaran la variable.
+    # Ya no se usa como criterio de borrado.
     activity_retention_days: int = 30
 
     # SOLO desarrollo local sin Supabase: acepta requests sin JWT.
