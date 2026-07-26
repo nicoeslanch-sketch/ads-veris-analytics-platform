@@ -753,12 +753,12 @@ export default function Resumen() {
             </div>
           )}
 
-          {/* En escritorio, cada columna avanza con su propia altura: una
-              tarjeta alta a la derecha no reserva espacio vacío a la izquierda.
-              En móvil, `contents` + `order` conserva el orden de lectura. */}
+          {/* Dos columnas realmente independientes: reducir la gráfica no debe
+              dejar una fila fantasma del alto de "Indicadores clave". El flujo
+              principal continúa inmediatamente con sus tarjetas y tabla. */}
           <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="contents xl:block">
-              <Card className="order-1 min-w-0">
+            <div className="min-w-0 space-y-6">
+              <Card data-testid="summary-primary-chart" className="min-w-0">
               <h2 className="text-base font-semibold text-navy">
                 {hasCosts ? 'Evolución de Ingresos, Costo de Venta y Utilidad Bruta' : 'Ingresos por mes'}
               </h2>
@@ -828,17 +828,15 @@ export default function Resumen() {
               )}
               </Card>
 
-            </div>
-
-            {/* Grilla en orden de lectura: evita que CSS multi-column reordene
-                tarjetas o deje grandes huecos cuando faltan secciones. */}
-            <div className="order-5 @container xl:order-last xl:col-span-2">
+              {/* Flujo tipo masonry: cada tarjeta sube hasta la anterior de su
+                  columna, sin reservar el alto de la tarjeta vecina. */}
+              <div className="@container">
               <div
                 data-testid="summary-compact-flow"
-                className="grid items-start gap-6 @2xl:grid-cols-2 @5xl:grid-cols-3"
+                className="columns-1 gap-6 @xl:columns-2"
               >
                   {canal.length > 0 && (
-                  <Card className="min-w-0">
+                  <Card className="mb-6 min-w-0 break-inside-avoid">
                     <h2 className="text-base font-semibold text-navy">Ventas por {canalLabel}</h2>
                     <div className="mt-2 flex flex-col items-center justify-center gap-3">
                       <div className="relative h-44 w-44 shrink-0">
@@ -892,7 +890,7 @@ export default function Resumen() {
                   )}
 
                   {topProducts.length > 0 && (
-                  <Card className="min-w-0">
+                  <Card className="mb-6 min-w-0 break-inside-avoid">
                     <h2 className="text-base font-semibold text-navy">Top Productos / Servicios</h2>
                     {/* flex-1 + reparto uniforme: los productos ocupan el alto
                         sobrante en vez de dejar un hueco al pie de la card. */}
@@ -923,111 +921,19 @@ export default function Resumen() {
                   </Card>
                   )}
 
-                  <Card className="min-w-0">
-                    {/* Fase 12b §20: es una EXTRAPOLACIÓN del promedio observado, no
-                        una predicción — el copy no debe prometer más que el método. */}
-                    <h2 className="text-base font-semibold text-navy">
-                      Extrapolación simple (3 meses)
-                    </h2>
-                    {metrics.proyeccion ? (
-                      <>
-                        <p className="mt-2 text-sm text-navy/60">
-                          Si se mantiene el crecimiento promedio observado
-                        </p>
-                        <p className="text-3xl font-bold text-navy">
-                          {metrics.proyeccion.crecimiento_pct >= 0 ? '+' : ''}
-                          {formatNumber(metrics.proyeccion.crecimiento_pct)}%
-                        </p>
-                        <p className="text-xs text-navy/50">mensual promedio</p>
-                        <div className="mt-3 h-28">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart
-                              data={[
-                                ...evolution.map((m) => ({ mes: m.mes, real: m.ingresos })),
-                                ...metrics.proyeccion.meses.map((m) => ({
-                                  mes: m.mes,
-                                  proyectado: m.ingresos,
-                                })),
-                              ]}
-                              margin={{ top: 6, right: 8, bottom: 0, left: 8 }}
-                            >
-                              <XAxis
-                                dataKey="mes"
-                                tickFormatter={formatMonthShort}
-                                tick={{ fill: AXIS_INK, fontSize: 10 }}
-                                axisLine={{ stroke: GRID_STROKE }}
-                                tickLine={false}
-                              />
-                              <Tooltip content={<ChartTooltip />} />
-                              <Line
-                                type="monotone"
-                                dataKey="real"
-                                name="Real"
-                                stroke={CHART.ingresos}
-                                strokeWidth={2}
-                                dot={false}
-                              />
-                              <Line
-                                type="monotone"
-                                dataKey="proyectado"
-                                name="Proyectado"
-                                stroke={CHART.gastos}
-                                strokeWidth={2}
-                                strokeDasharray="5 4"
-                                dot={false}
-                              />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </div>
-                        <p className="pt-3 text-[11px] text-navy/45">
-                          Extrapolación del crecimiento promedio de {evolution.length} mes(es) de
-                          historia — no considera estacionalidad ni meses incompletos. Línea
-                          punteada = extrapolación.
-                        </p>
-                      </>
-                    ) : (
-                      <p className="mt-4 text-sm text-navy/50">
-                        Se necesitan al menos 2 meses de historia para proyectar tus ingresos.
-                      </p>
-                    )}
-                  </Card>
-
               {/* Fase 18: agrupaciones flexibles — ventas por sucursal, región,
                   zona u otras columnas categóricas del archivo (incluidas las
                   enriquecidas por "Relacionar otras hojas"). */}
-                  {/* Sin div envolvente: cada card ES el ítem de la grilla, así
-                      `h-full` iguala alturas y el conteo nth-child es correcto. */}
                   {(metrics.agrupaciones_flexibles ?? []).map((agrupacion) => (
-                    <FlexibleGroupCard key={agrupacion.columna} agrupacion={agrupacion} />
+                    <div key={agrupacion.columna} className="mb-6 break-inside-avoid">
+                      <FlexibleGroupCard agrupacion={agrupacion} />
+                    </div>
                   ))}
               </div>
-            </div>
-
-            <div className="contents xl:block xl:space-y-6">
-              <Card className="order-2">
-              <h2 className="text-base font-semibold text-navy">Indicadores Clave</h2>
-              <p className="mt-0.5 text-xs text-navy/50">Calculados de tus datos reales.</p>
-              <ul className="mt-3 divide-y divide-navy/5">
-                {buildOperationalIndicators(metrics).map(({ label, value, hint }) => (
-                  <li key={label} className="flex items-center justify-between gap-2 py-2.5 text-sm">
-                    <span className="text-navy/70">{label}</span>
-                    <span className="text-right">
-                      <span className="font-semibold text-navy">{value}</span>
-                      {hint && <span className="block text-[10px] text-navy/40">{hint}</span>}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-3 rounded-lg bg-navy/[0.04] px-3 py-2 text-[11px] leading-relaxed text-navy/50">
-                ROA, ROE, liquidez y prueba ácida se habilitarán cuando conectes los datos
-                de balance de tu negocio.
-              </p>
-              </Card>
-
-            </div>
+              </div>
 
             {(metrics.por_categoria ?? []).length > 0 && (
-              <Card className="order-6 min-w-0 xl:col-span-2">
+              <Card className="min-w-0">
                 <h2 className="text-base font-semibold text-navy">Análisis por Categoría</h2>
                 <div className="mt-4 overflow-x-auto">
                   <table className="w-full text-sm">
@@ -1075,6 +981,33 @@ export default function Resumen() {
                 </div>
               </Card>
             )}
+            </div>
+
+            {/* La columna lateral también fluye por sí sola. La proyección
+                ocupa el espacio que antes quedaba vacío bajo los indicadores. */}
+            <aside className="min-w-0 space-y-6">
+              <Card>
+                <h2 className="text-base font-semibold text-navy">Indicadores Clave</h2>
+                <p className="mt-0.5 text-xs text-navy/50">Calculados de tus datos reales.</p>
+                <ul className="mt-3 divide-y divide-navy/5">
+                  {buildOperationalIndicators(metrics).map(({ label, value, hint }) => (
+                    <li key={label} className="flex items-center justify-between gap-2 py-2.5 text-sm">
+                      <span className="text-navy/70">{label}</span>
+                      <span className="text-right">
+                        <span className="font-semibold text-navy">{value}</span>
+                        {hint && <span className="block text-[10px] text-navy/40">{hint}</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 rounded-lg bg-navy/[0.04] px-3 py-2 text-[11px] leading-relaxed text-navy/50">
+                  ROA, ROE, liquidez y prueba ácida se habilitarán cuando conectes los datos
+                  de balance de tu negocio.
+                </p>
+              </Card>
+
+              <ProjectionCard metrics={metrics} evolution={evolution} />
+            </aside>
           </div>
 
         </div>
@@ -1082,6 +1015,84 @@ export default function Resumen() {
       </>
       )}
     </>
+  )
+}
+
+function ProjectionCard({
+  metrics,
+  evolution,
+}: {
+  metrics: MetricsResult
+  evolution: MetricsResult['evolucion_mensual']
+}) {
+  return (
+    <Card className="min-w-0">
+      {/* Es una extrapolación del promedio observado, no una predicción. */}
+      <h2 className="text-base font-semibold text-navy">
+        Extrapolación simple (3 meses)
+      </h2>
+      {metrics.proyeccion ? (
+        <>
+          <p className="mt-2 text-sm text-navy/60">
+            Si se mantiene el crecimiento promedio observado
+          </p>
+          <p className="text-3xl font-bold text-navy">
+            {metrics.proyeccion.crecimiento_pct >= 0 ? '+' : ''}
+            {formatNumber(metrics.proyeccion.crecimiento_pct)}%
+          </p>
+          <p className="text-xs text-navy/50">mensual promedio</p>
+          <div className="mt-3 h-28">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={[
+                  ...evolution.map((month) => ({ mes: month.mes, real: month.ingresos })),
+                  ...metrics.proyeccion.meses.map((month) => ({
+                    mes: month.mes,
+                    proyectado: month.ingresos,
+                  })),
+                ]}
+                margin={{ top: 6, right: 8, bottom: 0, left: 8 }}
+              >
+                <XAxis
+                  dataKey="mes"
+                  tickFormatter={formatMonthShort}
+                  tick={{ fill: AXIS_INK, fontSize: 10 }}
+                  axisLine={{ stroke: GRID_STROKE }}
+                  tickLine={false}
+                />
+                <Tooltip content={<ChartTooltip />} />
+                <Line
+                  type="monotone"
+                  dataKey="real"
+                  name="Real"
+                  stroke={CHART.ingresos}
+                  strokeWidth={2}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="proyectado"
+                  name="Proyectado"
+                  stroke={CHART.gastos}
+                  strokeWidth={2}
+                  strokeDasharray="5 4"
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <p className="pt-3 text-[11px] text-navy/45">
+            Extrapolación del crecimiento promedio de {evolution.length} mes(es) de
+            historia — no considera estacionalidad ni meses incompletos. Línea
+            punteada = extrapolación.
+          </p>
+        </>
+      ) : (
+        <p className="mt-4 text-sm text-navy/50">
+          Se necesitan al menos 2 meses de historia para proyectar tus ingresos.
+        </p>
+      )}
+    </Card>
   )
 }
 

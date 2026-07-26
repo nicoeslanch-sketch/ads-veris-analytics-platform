@@ -20,7 +20,10 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC
   ya no se reconstruye todo el libro en paralelo ni se compite con la primera
   carga visible. El alcance guardado se reutiliza para evitar trabajo extra.
 - El gráfico mensual de una hoja individual usa una altura compacta y ya no se
-  estira para igualar una tarjeta lateral más alta. No se agrega migración.
+  estira para igualar una tarjeta lateral más alta. El resto del Resumen ahora
+  usa columnas independientes: tarjetas y tablas suben inmediatamente bajo el
+  gráfico, las tarjetas variables fluyen sin huecos verticales y la proyección
+  aprovecha el espacio bajo los indicadores. No se agrega migración.
 
 ## [Fase 20] - 2026-07-24 - Botonera del Resumen y workspace de relaciones
 

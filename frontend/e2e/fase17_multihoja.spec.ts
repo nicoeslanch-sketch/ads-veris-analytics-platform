@@ -276,23 +276,33 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     // evolución cambia a "Ingresos por mes" (Resumen.tsx, `hasCosts` false).
     await expect(page.getByText(/Evolución de Ingresos|Ingresos por mes/)).toBeVisible({ timeout: 90_000 })
     const compactFlow = page.getByTestId('summary-compact-flow')
+    const primaryChart = page.getByTestId('summary-primary-chart')
     await expect(compactFlow).toBeVisible()
-    // La grilla conserva el orden de lectura y la altura natural de cada
-    // tarjeta, sin huecos ni reordenamientos entre columnas.
+    // Las tarjetas comienzan justo después del gráfico reducido y fluyen como
+    // columnas compactas: una tarjeta alta no deja un hueco bajo su vecina.
     const compactLayout = await compactFlow.evaluate((element) => {
       const children = Array.from(element.children) as HTMLElement[]
       const style = getComputedStyle(element)
       return {
         display: style.display,
-        columnCount: style.gridTemplateColumns.split(' ').filter(Boolean).length,
+        columnCount: Number(style.columnCount),
         cardCount: children.length,
-        distinctHeights: new Set(children.map((child) => Math.round(child.getBoundingClientRect().height))).size,
+        avoidsBreaks: children.every(
+          (child) => getComputedStyle(child).breakInside === 'avoid',
+        ),
       }
     })
-    expect(compactLayout.display).toBe('grid')
+    expect(compactLayout.display).toBe('block')
     expect(compactLayout.columnCount).toBeGreaterThanOrEqual(2)
-    expect(compactLayout.cardCount).toBeGreaterThan(1)
-    expect(compactLayout.distinctHeights).toBeGreaterThan(1)
+    expect(compactLayout.cardCount).toBeGreaterThanOrEqual(1)
+    expect(compactLayout.avoidsBreaks).toBe(true)
+    const [chartBox, compactBox] = await Promise.all([
+      primaryChart.boundingBox(),
+      compactFlow.boundingBox(),
+    ])
+    expect(chartBox).not.toBeNull()
+    expect(compactBox).not.toBeNull()
+    expect(Math.round(compactBox!.y - (chartBox!.y + chartBox!.height))).toBeLessThanOrEqual(25)
 
     await page.getByRole('button', { name: /Visión del negocio/ }).click()
     await expect(page.getByText('Ventas + costos activo')).toBeVisible({ timeout: 90_000 })
