@@ -20,9 +20,15 @@ interface ActiveSheetSelectorProps {
   /** Notifica a la página el modo actual para decidir si mostrar el workspace
    * de relaciones (mode === 'join') en lugar del dashboard genérico. */
   onModeChange?: (mode: Mode) => void
+  /** Al incrementar, abre "Relación manual" desde fuera (lo usa el aviso de
+   * relación bloqueada, cuya única salida real es cambiar la relación). */
+  openRelationsNonce?: number
 }
 
-export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelectorProps = {}) {
+export default function ActiveSheetSelector({
+  onModeChange,
+  openRelationsNonce,
+}: ActiveSheetSelectorProps = {}) {
   const location = useLocation()
   const {
     file,
@@ -104,6 +110,16 @@ export default function ActiveSheetSelector({ onModeChange }: ActiveSheetSelecto
   useEffect(() => {
     onModeChange?.(mode)
   }, [mode, onModeChange])
+
+  // Apertura de "Relación manual" pedida por la página. Se ignora el valor
+  // inicial: solo un incremento posterior representa una acción del usuario.
+  const initialRelationsNonce = useRef(openRelationsNonce)
+  useEffect(() => {
+    if (openRelationsNonce === undefined) return
+    if (openRelationsNonce === initialRelationsNonce.current) return
+    manualModeSelected.current = true
+    setMode('join')
+  }, [openRelationsNonce])
 
   useEffect(() => {
     if (compatibleSheets.length < 1) return

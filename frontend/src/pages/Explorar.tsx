@@ -46,6 +46,7 @@ import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
+import RelationBlockedPanel from '../components/RelationBlockedPanel'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
@@ -56,6 +57,7 @@ import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { principalPorParticipacionBruta } from '../lib/metrics'
 import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../lib/multiSheet'
+import { relationBlockedNotice } from '../lib/relationBlocked'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
@@ -380,6 +382,7 @@ export default function Explorar() {
     analysisScope?.mode ?? 'single',
   )
   const relationshipMode = selectorMode === 'join'
+  const [openRelationsNonce, setOpenRelationsNonce] = useState(0)
   const ready = Boolean(file && cleaning) || demo.active
 
   const [groupBy, setGroupBy] = useState<GroupBy>('mes')
@@ -846,7 +849,7 @@ export default function Explorar() {
         )}
       </div>
 
-      <ActiveSheetSelector onModeChange={setSelectorMode} />
+      <ActiveSheetSelector onModeChange={setSelectorMode} openRelationsNonce={openRelationsNonce} />
 
       {/* "Relación manual" tiene su propio espacio también aquí. Antes esta
           página mostraba la botonera pero nunca el workspace: al elegir el
@@ -957,7 +960,14 @@ export default function Explorar() {
       </Card>
 
       {/* Resultados: gráfico + hallazgos / profundiza + recomendación */}
-      {error ? (
+      {relationBlockedNotice(error) ? (
+        <div className="mt-6">
+          <RelationBlockedPanel
+            notice={relationBlockedNotice(error)!}
+            onOpenRelations={() => setOpenRelationsNonce((nonce) => nonce + 1)}
+          />
+        </div>
+      ) : error ? (
         <Card className="mt-6 border-coral/40 bg-coral/5">
           <div className="flex flex-wrap items-start gap-2 text-sm text-coral">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

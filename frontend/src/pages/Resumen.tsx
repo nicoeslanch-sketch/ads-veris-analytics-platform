@@ -35,6 +35,7 @@ import KpiValue from '../components/ui/KpiValue'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
+import RelationBlockedPanel from '../components/RelationBlockedPanel'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
@@ -50,6 +51,7 @@ import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { summaryContentKind } from '../lib/metrics'
+import { relationBlockedNotice } from '../lib/relationBlocked'
 import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../lib/multiSheet'
 import type { AnalysisScope, MetricsResult } from '../lib/types'
 
@@ -245,6 +247,10 @@ export default function Resumen() {
     analysisScope?.mode ?? 'single',
   )
   const relationshipMode = selectorMode === 'join'
+  // Una relación guardada que ya no sirve para este libro bloquea el análisis;
+  // reintentar reproduce el error, así que se ofrece la salida real.
+  const [openRelationsNonce, setOpenRelationsNonce] = useState(0)
+  const blockedNotice = relationBlockedNotice(error)
   const defaultPeriodSet = useRef(false)
   const lastFetchKey = useRef<string | null>(null)
   const lastDatasetKey = useRef<string | null>(null)
@@ -609,7 +615,7 @@ export default function Resumen() {
         </Link>
       </div>
 
-      <ActiveSheetSelector onModeChange={setSelectorMode} />
+      <ActiveSheetSelector onModeChange={setSelectorMode} openRelationsNonce={openRelationsNonce} />
 
       {relationshipMode && !demo.active ? (
         <RelationshipWorkspace />
@@ -623,7 +629,14 @@ export default function Resumen() {
           onChange={setBusinessFilters}
         />
       )}
-      {error && (
+      {blockedNotice ? (
+        <div className="mb-6">
+          <RelationBlockedPanel
+            notice={blockedNotice}
+            onOpenRelations={() => setOpenRelationsNonce((nonce) => nonce + 1)}
+          />
+        </div>
+      ) : error && (
         <div className="mb-6 flex flex-wrap items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p className="min-w-0 flex-1">{error}</p>
