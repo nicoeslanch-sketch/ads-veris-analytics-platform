@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import Card from './ui/Card'
+import KpiValue from './ui/KpiValue'
 import {
   AXIS_INK,
   CATEGORICAL,
@@ -92,7 +93,7 @@ function KpiCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-navy/55">{title}</p>
-          <p className="mt-2 break-words text-xl font-bold leading-tight text-navy">{value}</p>
+          <KpiValue value={value} maxPx={20} className="mt-2" />
         </div>
         <span
           className="grid h-9 w-9 shrink-0 place-items-center rounded-full"

@@ -31,6 +31,7 @@ import {
 } from 'recharts'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
+import KpiValue from '../components/ui/KpiValue'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
@@ -696,7 +697,7 @@ export default function Resumen() {
                   </span>
                   <p className="text-xs font-medium text-navy/55">{label}</p>
                 </div>
-                <p className="mt-2.5 text-[22px] font-bold leading-tight text-navy">{value}</p>
+                <KpiValue value={value} maxPx={22} className="mt-2.5" />
                 <div className="mt-1.5 flex items-end justify-between gap-2">
                   <div className="min-w-0">{variation}</div>
                   <Sparkline data={spark} color={color} />

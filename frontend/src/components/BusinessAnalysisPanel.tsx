@@ -29,6 +29,7 @@ import {
 import Card from './ui/Card'
 import Badge from './ui/Badge'
 import KpiCarousel from './ui/KpiCarousel'
+import KpiValue from './ui/KpiValue'
 import AdaptiveIndicatorCatalog from './AdaptiveIndicatorCatalog'
 import NominalCollectionDashboard from './NominalCollectionDashboard'
 import {
@@ -552,7 +553,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
               </span>
               <p className="text-xs font-medium text-navy/55">{label}</p>
             </div>
-            <p className="mt-3 break-words text-xl font-bold leading-tight text-navy">{value}</p>
+            <KpiValue value={value} maxPx={20} className="mt-3" />
             <p className="mt-1 text-[11px] leading-relaxed text-navy/50">{detail}</p>
             <p className="mt-2 text-[10px] font-medium text-navy/55">{comparison}</p>
             <span className={[

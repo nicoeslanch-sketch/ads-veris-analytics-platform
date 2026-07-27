@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import Card from './ui/Card'
 import KpiCarousel from './ui/KpiCarousel'
+import KpiValue from './ui/KpiValue'
 import {
   AXIS_INK,
   CATEGORICAL,
@@ -129,9 +130,7 @@ function IndicatorCard({ indicator }: { indicator: BusinessIndicator }) {
           style={{ backgroundColor: meta.color }}
         />
       </div>
-      <p className="mt-2 break-words text-lg font-bold leading-tight text-navy">
-        {indicatorValue(indicator)}
-      </p>
+      <KpiValue value={indicatorValue(indicator)} maxPx={18} className="mt-2" />
       <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
         <span className={[
           'rounded-full px-2 py-0.5 font-semibold',
