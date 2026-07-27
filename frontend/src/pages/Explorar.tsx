@@ -47,6 +47,7 @@ import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
 import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
 import RelationBlockedPanel from '../components/RelationBlockedPanel'
+import BusinessInsightsPanel from '../components/BusinessInsightsPanel'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
@@ -58,6 +59,7 @@ import { DemoEmptyActions } from '../demo/DemoBanner'
 import { principalPorParticipacionBruta } from '../lib/metrics'
 import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../lib/multiSheet'
 import { relationBlockedNotice } from '../lib/relationBlocked'
+import { computeBusinessInsights } from '../lib/businessInsights'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
@@ -859,6 +861,10 @@ export default function Explorar() {
         <RelationshipWorkspace />
       ) : (
       <>
+      {/* Explorar interpreta; Resumen muestra. Esta lectura va ARRIBA de los
+          gráficos porque es la razón de entrar a esta página. */}
+      {metrics && <BusinessInsightsPanel insights={computeBusinessInsights(metrics)} />}
+
       {hasCosts && metrics && <CostReliabilityAnalysis metrics={metrics} />}
 
       {/* ¿Qué quieres descubrir hoy? (adaptado a las columnas del archivo) */}
