@@ -1801,6 +1801,11 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         ))
     for aviso in result.get("avisos", []):
         text = str(aviso)
+        if "fila(s) de totales" in text.casefold():
+            observations.append(
+                ("-", source_sheet, "*", "fila_resumen_omitida", text[:400])
+            )
+            continue
         if "ambigu" not in text.casefold():
             continue
         if "1,234" in text and numeric_ambiguities:
@@ -1808,6 +1813,22 @@ def _export_annotations(result: dict, df) -> tuple[dict, dict, list[tuple]]:
         match = re.search(r"columna '([^']+)'", text)
         observations.append(
             ("-", source_sheet, match.group(1) if match else "*", "revisar", text[:400])
+        )
+
+    for suggestion in result.get("sugerencias_fusion", [])[:500]:
+        observations.append(
+            (
+                "-",
+                source_sheet,
+                suggestion.get("columna", "*"),
+                "unificacion_semantica_pendiente",
+                (
+                    f"'{suggestion.get('origen', '')}' se parece a "
+                    f"'{suggestion.get('destino_sugerido', '')}' "
+                    f"({suggestion.get('filas', 0)} fila(s)). Se conservó sin "
+                    "cambios; requiere confirmación humana."
+                )[:400],
+            )
         )
 
     for source_row in (result.get("_filas_duplicadas_normalizadas") or [])[:300]:

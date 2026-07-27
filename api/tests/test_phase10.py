@@ -122,8 +122,8 @@ def test_fuzzy_no_toca_identificadores(client, auth_headers):
     assert despues  # (la estandarización corrió)
 
 
-def test_fuzzy_sigue_activo_en_categorias(client, auth_headers):
-    """El fuzzy legítimo (typos en ciudades/categorías) sigue funcionando."""
+def test_fuzzy_sugiere_en_categorias_sin_reescribir(client, auth_headers):
+    """Los typos posibles se sugieren; una similitud no autoriza cambios."""
     filas = "\n".join(f"0{i}/05/2026;Santiago;100" for i in range(1, 6))
     csv = f"Fecha;Ciudad;Ventas\n{filas}\n06/05/2026;Santigo;100\n"
     body = client.post(
@@ -132,7 +132,8 @@ def test_fuzzy_sigue_activo_en_categorias(client, auth_headers):
         data={"apply": "true"},
         headers=auth_headers,
     ).json()
-    assert body["fusiones_texto"]["total"] >= 1
+    assert body["fusiones_texto"]["total"] == 0
+    assert any(item["origen"] == "Santigo" for item in body["sugerencias_fusion"])
 
 
 def test_duplicados_normalizados_sin_id_no_se_eliminan(client, auth_headers):

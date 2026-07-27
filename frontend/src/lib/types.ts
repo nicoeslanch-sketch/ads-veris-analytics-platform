@@ -100,6 +100,13 @@ export interface CleanResult {
   avisos?: string[]
   duplicados_criterio?: string
   fusiones_texto?: { total: number; ejemplos: string[][] }
+  sugerencias_fusion?: Array<{
+    columna: string
+    origen: string
+    destino_sugerido: string
+    filas: number
+    aplicado: false
+  }>
   mojibake_auditoria?: MojibakeAudit[]
   carga?: LoadInfo
   dirigida?: DirectedInfo
@@ -558,8 +565,8 @@ export const DEFAULT_RULES: CleaningRules = {
   duplicados: true,
   tipos: true,
   nulos: true,
-  // Fase 12b §9: detectar sí, eliminar NO por defecto (filosofía conservadora)
-  columnas_vacias: false,
+  // Se eliminan solo columnas 100% vacías; el cambio queda auditado.
+  columnas_vacias: true,
   fuera_de_rango: true,
 }
 

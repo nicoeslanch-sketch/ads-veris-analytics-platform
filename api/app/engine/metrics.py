@@ -954,7 +954,14 @@ def compute_metrics(
         sin_fecha = int(undated_mask.sum())
         monto_sin_fecha = float(amounts_all[undated_mask].sum())
         if sin_fecha:
-            amount_label = f"{monto_sin_fecha:,.0f}".replace(",", ".")
+            currency_prefix = {
+                "CLP": "$",
+                "USD": "US$",
+                "EUR": "€",
+            }.get(currency.dominante, f"{currency.dominante} ")
+            amount_label = (
+                currency_prefix + f"{monto_sin_fecha:,.0f}".replace(",", ".")
+            )
             if date_from or date_to:
                 warnings.append(
                     f"El filtro excluye {sin_fecha} venta(s) sin fecha válida por un "

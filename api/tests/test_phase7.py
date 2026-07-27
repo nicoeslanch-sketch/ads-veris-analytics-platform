@@ -433,8 +433,8 @@ def test_convencion_miles_se_mantiene(client, auth_headers):
     assert "850000" in despues
 
 
-def test_fuzzy_unifica_typos(client, auth_headers):
-    """§5.11: 'Santigo' (typo raro) se fusiona con 'Santiago' (frecuente)."""
+def test_fuzzy_sugiere_typos_sin_modificarlos(client, auth_headers):
+    """La similitud se reporta y el valor original queda intacto."""
     filas = "\n".join(f"0{i}/05/2026;Santiago;100" for i in range(1, 6))
     csv = f"Fecha;Ciudad;Ventas\n{filas}\n06/05/2026;Santigo;100\n"
     response = client.post(
@@ -446,8 +446,9 @@ def test_fuzzy_unifica_typos(client, auth_headers):
     body = _clean_apply(client, auth_headers, "typos.csv", csv).json()
     ciudad_idx = body["preview"]["columnas"].index("Ciudad")
     valores = {fila[ciudad_idx] for fila in body["preview"]["filas"]}
-    assert "Santigo" not in valores
-    assert body["fusiones_texto"]["total"] >= 1
+    assert "Santigo" in valores
+    assert body["fusiones_texto"]["total"] == 0
+    assert any(item["origen"] == "Santigo" for item in body["sugerencias_fusion"])
 
 
 def test_excel_multihoja_y_fila_de_titulo(client, auth_headers):

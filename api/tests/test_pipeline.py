@@ -125,8 +125,8 @@ def test_clean_aplica_correcciones(client, auth_headers, sample_csv):
     # Fase 12: limpiar ya no elimina filas sin una decisión separada.
     assert resumen["filas_despues"] == resumen["filas_antes"]
     assert body["correcciones"]["filas_duplicadas_a_eliminar"] == 0
-    # Fase 12b §9: la columna vacía se DETECTA pero no se elimina por defecto
-    assert resumen["columnas_despues"] == resumen["columnas_antes"]
+    # Las columnas 100% vacías se eliminan por defecto y quedan auditadas.
+    assert resumen["columnas_despues"] == resumen["columnas_antes"] - 1
     assert resumen["calidad_despues"] >= resumen["calidad_antes"]
 
 

@@ -61,10 +61,9 @@ DEFAULT_RULES = {
     "duplicados": True,
     "tipos": True,             # Convertir tipos de dato
     "nulos": True,             # Normalizar y señalizar valores nulos
-    # Fase 12b §9: detectar sí, eliminar NO por defecto — una columna vacía
-    # puede ser parte del esquema exigido por otro sistema (misma filosofía
-    # conservadora que los duplicados). El usuario la activa si quiere.
-    "columnas_vacias": False,
+    # Una columna 100% vacía no aporta datos al archivo limpio. Se elimina por
+    # defecto, queda registrada en la auditoría y la regla puede desactivarse.
+    "columnas_vacias": True,
     "fuera_de_rango": True,    # Validar rangos y outliers (solo roles métricos)
 }
 
@@ -1023,6 +1022,7 @@ def analyze_and_clean(
         )
     avisos.extend(pattern["mensaje"] for pattern in structural_patterns)
     fusiones = std_report.get("fusiones_texto", {})
+    sugerencias_fusion = std_report.get("sugerencias_fusion", [])
     if fusiones.get("total"):
         ejemplos = ", ".join(f"{a} → {b}" for a, b in fusiones.get("ejemplos", [])[:3])
         avisos.append(
@@ -1195,6 +1195,7 @@ def analyze_and_clean(
         "avisos": avisos,
         "duplicados_criterio": duplicados_criterio,
         "fusiones_texto": fusiones,
+        "sugerencias_fusion": sugerencias_fusion,
         "mojibake_auditoria": std_report.get("mojibake_auditoria", []),
         "_ambiguedades_numericas": std_report.get("ambiguedades_numericas", {}),
         "_df_limpio": df if apply else None,

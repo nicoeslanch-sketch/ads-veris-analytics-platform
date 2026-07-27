@@ -1,7 +1,8 @@
 {
  "archivo": "demo_empresa_ficticia.csv",
  "avisos": [
-  "Se detectaron 2 repetición(es) exacta(s) en el archivo original. Se conservarán mientras no confirmes explícitamente su eliminación."
+  "Se detectaron 2 repetición(es) exacta(s) en el archivo original. Se conservarán mientras no confirmes explícitamente su eliminación.",
+  "Se detectaron 1 placeholder(s) dependientes del rol. Se conservaron literalmente y se señalan como nulos semánticos, separados de las celdas físicamente vacías."
  ],
  "carga": {
   "clasificacion_hojas": [],
@@ -69,13 +70,15 @@
   "celdas_con_variantes_unificadas": 3,
   "celdas_textuales_unicas_modificadas": 3,
   "encabezados_normalizados": 0,
+  "equivalencias_booleanas": 0,
   "equivalencias_canal": 0,
+  "equivalencias_moneda": 0,
   "fechas_estandarizadas": 0,
   "fusiones_fuzzy": 0,
   "mojibake_detectado": 0,
   "mojibake_reparado": 0,
   "numeros_estandarizados": 0,
-  "placeholders_detectados": 0,
+  "placeholders_detectados": 1,
   "textos_normalizados": 3
  },
  "fusiones_texto": {
@@ -150,7 +153,7 @@
  "nulos_detalle": {
   "fisicos": 62,
   "posibles_estructurales": [],
-  "semanticos": 0
+  "semanticos": 1
  },
  "opciones_aplicacion": {
   "eliminar_duplicados": false
@@ -258,7 +261,7 @@
   "montos_cero": 0,
   "montos_negativos": 2,
   "nulos_fisicos": 62,
-  "nulos_semanticos": 0,
+  "nulos_semanticos": 1,
   "outliers_iqr": 4,
   "posibles_nulos_estructurales": 0,
   "textos_inconsistentes": 3,
@@ -267,7 +270,7 @@
   "valores_nulos": 62
  },
  "reglas_activas": {
-  "columnas_vacias": false,
+  "columnas_vacias": true,
   "duplicados": true,
   "fechas": true,
   "fuera_de_rango": true,
@@ -336,7 +339,7 @@
    "nulos": 38,
    "nulos_fisicos": 38,
    "nulos_pct": 13.6,
-   "nulos_semanticos": 0,
+   "nulos_semanticos": 1,
    "rol": "cliente",
    "rol_extendido": "cliente",
    "tipo": "texto"
@@ -463,7 +466,7 @@
   "calidad_antes": 96.5,
   "calidad_despues": 96.5,
   "calidad_dimensiones": {
-   "cobertura_analitica": 96.3,
+   "cobertura_analitica": 96.2,
    "completitud": 97.2,
    "consistencia": 99.9,
    "integridad": 100.0,
@@ -471,7 +474,7 @@
    "validez": 99.8
   },
   "calidad_dimensiones_antes": {
-   "cobertura_analitica": 96.3,
+   "cobertura_analitica": 96.2,
    "completitud": 97.2,
    "consistencia": 99.9,
    "integridad": 100.0,
@@ -479,7 +482,7 @@
    "validez": 99.8
   },
   "calidad_dimensiones_despues": {
-   "cobertura_analitica": 96.3,
+   "cobertura_analitica": 96.2,
    "completitud": 97.2,
    "consistencia": 100.0,
    "integridad": 100.0,
@@ -490,5 +493,6 @@
   "columnas_despues": 8,
   "filas_antes": 279,
   "filas_despues": 279
- }
+ },
+ "sugerencias_fusion": []
 }

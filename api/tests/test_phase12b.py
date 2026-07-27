@@ -153,18 +153,18 @@ def test_grupos_exponen_base_de_calculo():
     assert cats["A"]["cobertura_costos_pct"] == 50.0
 
 
-# ── §9: columnas vacías — detectar sí, eliminar no por defecto ───────────────
+# ── §9: columnas vacías — detectar y eliminar por defecto ────────────────────
 
 
-def test_columna_vacia_se_detecta_pero_no_se_elimina_por_defecto():
+def test_columna_vacia_se_detecta_y_elimina_por_defecto():
     csv = "Fecha;Notas;Ventas\n05/01/2026;;100\n06/01/2026;;200\n"
     result, _ = _run(csv)
     assert result["problemas"]["columnas_vacias"] == 1
-    assert "Notas" in list(result["_df_limpio"].columns)  # conservada
-    # Con la regla activada explícitamente, sí se elimina
+    assert "Notas" not in list(result["_df_limpio"].columns)
+    # La compatibilidad permite conservarla desactivando la regla.
     df, _ = load_dataframe_with_report("t.csv", csv.encode())
-    applied = analyze_and_clean(df, {"columnas_vacias": True}, apply=True)
-    assert "Notas" not in list(applied["_df_limpio"].columns)
+    preserved = analyze_and_clean(df, {"columnas_vacias": False}, apply=True)
+    assert "Notas" in list(preserved["_df_limpio"].columns)
 
 
 # ── §10: "Total Energies" al final NO es una fila de totales ─────────────────

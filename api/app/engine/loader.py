@@ -74,14 +74,19 @@ def _guard_xlsx_zip(content: bytes) -> None:
             "forma segura. Exporta la base como CSV e inténtalo de nuevo."
         )
 
-# Fila-resumen al final de la planilla: su primera celda con texto es una
-# etiqueta de total. Solo se revisan las ÚLTIMAS filas (nunca datos del medio).
+# Fila-resumen al final de la planilla. La etiqueta puede estar en cualquier
+# columna de texto (muchos ERP la ponen en "Categoría", no en la primera).
+# Solo se revisan las ÚLTIMAS filas (nunca datos del medio).
 _TOTAL_ROW_RE = re.compile(
-    # Fase 13: coincidencia EXACTA de la etiqueta — "Total Energies" o "Suma
-    # Servicios" son datos (una empresa), no un resumen.
-    r"^((sub)?total(es)?( general(es)?)?|suma(s|torias?)?|gran total)$"
+    r"^(?:(?:sub\s*)?total(?:es)?|gran total|suma(?:s|toria|torias)?)"
+    r"(?:\b|$)"
 )
 _MAX_TRAILING_TOTAL_ROWS = 3
+_SUMMARY_LABEL_MAX_LENGTH = 80
+_KEY_COLUMN_RE = re.compile(
+    r"(?i)(?:^|[\s_])(?:id|codigo|código|cod|folio|documento|rut|sku)"
+    r"(?:$|[\s_])"
+)
 
 _VOLATILE_FORMULA_RE = re.compile(
     r"(?i)(?:ALEATORIO(?:\.ENTRE)?|RAND(?:BETWEEN)?|RANDBETWEEN|AHORA|NOW|HOY|TODAY|INDIRECTO|INDIRECT)\s*\("
@@ -331,13 +336,39 @@ def _strip_accents_lower(text: str) -> str:
     return "".join(c for c in normalized if unicodedata.category(c) != "Mn").lower()
 
 
+def _is_summary_label(value: str) -> bool:
+    normalized = re.sub(r"\s+", " ", _strip_accents_lower(value)).strip()
+    if not normalized or len(normalized) > _SUMMARY_LABEL_MAX_LENGTH:
+        return False
+    match = _TOTAL_ROW_RE.match(normalized)
+    if not match:
+        return False
+    suffix = normalized[match.end():].strip(" :-")
+    if not suffix:
+        return True
+    # Prefijos ampliados solo cuando el resto describe un resumen reconocible.
+    # Evita borrar razones sociales como "Total Energies".
+    return bool(
+        re.search(r"\b(?:general|gastos?|ventas?|costos?|ingresos?|egresos?|"
+                  r"compras?|fijos?|variables?|periodo|mes|ano|20\d{2})\b", suffix)
+    )
+
+
 def _looks_like_summary_row(row_values: list[str]) -> bool:
     """La fila califica como resumen SOLO si, además de la etiqueta, el resto
     de sus celdas pobladas son numéricas o está casi vacía (Fase 12b §10: una
     fila de datos real de "Total Energies" o "Suma Servicios" tiene el resto
     de las columnas con texto y NO debe eliminarse)."""
-    populated = [v for v in row_values if v]
-    others = populated[1:]  # sin la etiqueta
+    label_positions = {
+        index for index, value in enumerate(row_values) if _is_summary_label(value)
+    }
+    if not label_positions:
+        return False
+    others = [
+        value
+        for index, value in enumerate(row_values)
+        if value and index not in label_positions
+    ]
     if len(others) <= 1:
         return True
     numeric_like = sum(
@@ -349,10 +380,23 @@ def _looks_like_summary_row(row_values: list[str]) -> bool:
 def _drop_trailing_total_rows(df: pd.DataFrame, report: dict) -> pd.DataFrame:
     """Omite hasta 3 filas de totales al final del archivo (Fase 8)."""
     dropped = 0
+    key_positions = [
+        index
+        for index, column in enumerate(df.columns)
+        if _KEY_COLUMN_RE.search(str(column))
+        and df.iloc[:, index].astype(str).str.strip().ne("").mean() >= 0.8
+    ]
     while len(df) > 1 and dropped < _MAX_TRAILING_TOTAL_ROWS:
         row_values = [str(v).strip() for v in df.iloc[-1]]
-        first_text = next((v for v in row_values if v), "")
-        if not _TOTAL_ROW_RE.match(_strip_accents_lower(first_text)):
+        if not any(_is_summary_label(value) for value in row_values):
+            break
+        # Una fila de negocio real ("Total Energies") suele mantener su ID,
+        # folio o SKU. Una fila-resumen deja esas claves vacías o escribe allí
+        # la propia etiqueta TOTAL.
+        if key_positions and any(
+            row_values[index] and not _is_summary_label(row_values[index])
+            for index in key_positions
+        ):
             break
         if not _looks_like_summary_row(row_values):
             break

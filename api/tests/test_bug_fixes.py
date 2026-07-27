@@ -36,14 +36,8 @@ def test_metrics_expone_costo_cuando_existe(client, auth_headers):
     assert body["kpis"].get("ganancia_neta") is not None
 
 
-def test_fuzzy_unifica_pagado_pagada(client, auth_headers):
-    """Regresión: 'pagada' (rara relativa a 'pagado', aunque tenga ≥ 3
-    apariciones en términos absolutos) debe fusionarse con 'pagado' (Bug #4).
-
-    El preview de /clean solo muestra las primeras filas (PREVIEW_ROWS=8), así
-    que con 50 filas la fusión no sería visible ahí — se verifica en
-    `fusiones_texto`, el conteo que hace el propio motor de estandarización
-    (igual que test_fuzzy_unifica_typos en test_phase7.py)."""
+def test_fuzzy_sugiere_pagado_pagada_sin_modificar(client, auth_headers):
+    """Una similitud morfológica se reporta, pero no modifica el dato."""
     filas = "\n".join(f"0{i % 9 + 1}/05/2026;Pagado" for i in range(38))
     csv = f"Fecha;Estado\n{filas}\n" + "\n".join(
         f"1{i % 9 + 1}/06/2026;pagada" for i in range(12)
@@ -56,11 +50,14 @@ def test_fuzzy_unifica_pagado_pagada(client, auth_headers):
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["fusiones_texto"]["total"] >= 1
-    ejemplos = [tuple(par) for par in body["fusiones_texto"]["ejemplos"]]
+    assert body["fusiones_texto"]["total"] == 0
+    ejemplos = body["sugerencias_fusion"]
     assert any(
-        rare.lower() == "pagada" and canon.lower() == "pagado" for rare, canon in ejemplos
-    ), f"Esperaba fusión pagada→pagado, encontré: {ejemplos}"
+        item["origen"].lower() == "pagada"
+        and item["destino_sugerido"].lower() == "pagado"
+        and item["aplicado"] is False
+        for item in ejemplos
+    ), f"Esperaba sugerencia pagada→pagado, encontré: {ejemplos}"
 
 
 def test_negativo_contable_exporta_como_numero(client, auth_headers):
@@ -90,11 +87,8 @@ def test_negativo_contable_exporta_como_numero(client, auth_headers):
     raise AssertionError("No se encontró la celda -12990 en el archivo exportado")
 
 
-def test_estandarizacion_unifica_abreviacion_chilena_conocida(client, auth_headers):
-    """Regresión: 'Stgo Centro' no se unificaba con 'Santiago Centro' — la
-    distancia de edición entre ambas claves es demasiado grande para el
-    fuzzy clásico de typos. Es una abreviación chilena conocida (diccionario
-    curado): confianza alta, fusión directa (Bug QA-admin #5)."""
+def test_estandarizacion_sugiere_abreviacion_chilena_sin_modificar(client, auth_headers):
+    """Una abreviación geográfica tampoco se reescribe sin confirmación."""
     filas = "\n".join(f"0{i % 9 + 1}/05/2026;Santiago Centro;1000" for i in range(20))
     csv = f"Fecha;Sucursal;Ventas\n{filas}\n" + "\n".join(
         f"1{i % 9 + 1}/06/2026;Stgo Centro;500" for i in range(5)
@@ -107,12 +101,13 @@ def test_estandarizacion_unifica_abreviacion_chilena_conocida(client, auth_heade
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["fusiones_texto"]["total"] >= 1
-    ejemplos = [tuple(par) for par in body["fusiones_texto"]["ejemplos"]]
+    assert body["fusiones_texto"]["total"] == 0
+    ejemplos = body["sugerencias_fusion"]
     assert any(
-        rare.lower() == "stgo centro" and canon.lower() == "santiago centro"
-        for rare, canon in ejemplos
-    ), f"Esperaba fusión Stgo Centro→Santiago Centro, encontré: {ejemplos}"
+        item["origen"].lower() == "stgo centro"
+        and item["destino_sugerido"].lower() == "santiago centro"
+        for item in ejemplos
+    ), f"Esperaba sugerencia Stgo Centro→Santiago Centro, encontré: {ejemplos}"
 
 
 def test_estandarizacion_sugiere_truncamiento_desconocido_sin_fusionar(client, auth_headers):

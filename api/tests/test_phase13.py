@@ -175,16 +175,15 @@ def test_fila_total_exacta_si_se_omite():
 # ── P0.1: la calidad no "mejora" con nulos preservados ───────────────────────
 
 
-def test_calidad_no_sube_por_nulos_preservados():
+def test_calidad_sube_al_eliminar_columna_completamente_vacia():
     csv = "Fecha;Nota;Ventas\n" + "\n".join(
         f"{d:02d}/01/2026;;{d * 100}" for d in range(1, 21)
     )
     result, _ = _run(csv)
     antes = result["resumen"]["calidad_antes"]
     despues = result["resumen"]["calidad_despues"]
-    # Los nulos siguen ahí: la calidad no puede saltar a 100 sin corregir nada
-    assert despues < 100.0
-    assert abs(despues - antes) < 10.0
+    assert despues == 100.0
+    assert despues > antes
 
 
 # ── CSV con comas entrecomilladas ────────────────────────────────────────────
@@ -201,7 +200,7 @@ def test_separador_ignora_comas_entre_comillas():
 # ── Conteo real de fusiones fuzzy (antes: capado a 5 ejemplos) ───────────────
 
 
-def test_fusiones_fuzzy_cuenta_real():
+def test_sugerencias_fuzzy_cuenta_real_sin_aplicar():
     ciudades = [
         "Santiago", "Valparaiso", "Concepcion", "Antofagasta",
         "Temuco", "Rancagua", "Iquique", "Talca",
@@ -213,6 +212,6 @@ def test_fusiones_fuzzy_cuenta_real():
     valores = [c for c in ciudades for _ in range(6)] + typos
     df = pd.DataFrame({"Sucursal": valores, "Ventas": ["100"] * len(valores)})
     out, report = standardize_dataframe(df)
-    fusiones = report["fusiones_texto"]
-    assert fusiones["total"] >= 8  # el conteo ya no está capado por los ejemplos
-    assert len(fusiones["ejemplos"]) <= 5
+    assert report["fusiones_texto"]["total"] == 0
+    assert len(report["sugerencias_fusion"]) >= 8
+    assert set(out["Sucursal"]) >= set(typos)

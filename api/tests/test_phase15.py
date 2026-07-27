@@ -195,11 +195,12 @@ def test_fuzzy_en_columna_de_clientes_es_sugerencia_no_fusion():
     assert any("Comercial Peres" in a for a in report.get("avisos", []))
 
 
-def test_fuzzy_en_sucursal_geografica_sigue_automatico():
+def test_fuzzy_en_sucursal_geografica_requiere_confirmacion():
     sucursales = ["Santiago"] * 8 + ["Santigo"] * 2
     df = pd.DataFrame({"Sucursal": sucursales, "Ventas": ["100"] * len(sucursales)})
-    out, _ = standardize_dataframe(df)
-    assert set(out["Sucursal"]) == {"Santiago"}
+    out, report = standardize_dataframe(df)
+    assert set(out["Sucursal"]) == {"Santiago", "Santigo"}
+    assert any(item["origen"] == "Santigo" for item in report["sugerencias_fusion"])
 
 
 def test_abreviacion_geografica_no_se_aplica_en_productos():

@@ -29,6 +29,15 @@ from .mapping import norm_key, resolve_mapping, strip_accents_lower
 # por el usuario siempre se conserva literalmente durante todo el pipeline.
 MISSING_TOKENS = {"", "-", "--", "n/a", "na", "null", "none", "s/i", "sin dato"}
 
+# Marcadores inequívocos que también se detectan en columnas sin rol. Se
+# conservan literalmente: detectar no significa borrar ni convertir a nulo.
+# Los textos ambiguos None/null/nan/NaT/NA quedan fuera para mantener la
+# compatibilidad y no destruir categorías empresariales válidas.
+GENERIC_TEXT_PLACEHOLDERS = {
+    "-", "--", ".", "?", "xx", "n/a", "n/d", "s/i", "sin dato",
+    "sin informacion", "(vacio)", "0000-00-00",
+}
+
 # Placeholders dependientes del significado de la columna. Se conservan en el
 # DataFrame para distinguirlos de una celda físicamente vacía.
 PLACEHOLDERS_BY_ROLE = {
@@ -40,6 +49,20 @@ PLACEHOLDERS_BY_ROLE = {
 DATE_HINTS = ("fecha", "date", "periodo", "emision", "vencimiento")
 _DATE_SHAPE = re.compile(r"^\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\s*$")
 _NUMBER_SHAPE = re.compile(r"^\s*-?\s*\$?\s*-?[\d.,]+\s*$")
+_BOOLEAN_HEADER_RE = re.compile(r"(?i)(?:^|[\s_])(?:activo|activa|vigente|habilitado|habilitada)(?:$|[\s_])")
+_CURRENCY_HEADER_RE = re.compile(r"(?i)(?:^|[\s_])(?:moneda|currency|divisa)(?:$|[\s_])")
+_BOOLEAN_EQUIVALENCES = {
+    "si": "Si", "s": "Si", "true": "Si", "1": "Si", "verdadero": "Si",
+    "activo": "Si", "activa": "Si",
+    "no": "No", "n": "No", "false": "No", "0": "No", "falso": "No",
+    "inactivo": "No", "inactiva": "No",
+}
+_CURRENCY_EQUIVALENCES = {
+    "clp": "CLP", "$": "CLP", "peso": "CLP", "pesos": "CLP",
+    "peso chileno": "CLP", "pesos chilenos": "CLP",
+    "usd": "USD", "us$": "USD", "dolar": "USD", "dolares": "USD",
+    "eur": "EUR", "€": "EUR", "euro": "EUR", "euros": "EUR",
+}
 
 
 def is_percentage_column(column: str) -> bool:
@@ -120,7 +143,7 @@ def physical_missing_mask(series: pd.Series) -> pd.Series:
 def is_semantic_placeholder(value: str, role: str | None) -> bool:
     placeholders = PLACEHOLDERS_BY_ROLE.get(role or "", set())
     normalized = " ".join(strip_accents_lower(value).split())
-    return normalized in placeholders
+    return normalized in placeholders or normalized in GENERIC_TEXT_PLACEHOLDERS
 
 
 def semantic_missing_mask(
@@ -135,13 +158,10 @@ def semantic_missing_mask(
     se consideran placeholders en columnas de fecha/número; en columnas de
     texto son datos literales y por tanto no se marcan como ausentes.
     """
-    placeholders = PLACEHOLDERS_BY_ROLE.get(role or "", set())
     text = series.astype(str)
-    role_mask = (
-        map_unique(text, lambda value: is_semantic_placeholder(value, role)).astype(bool)
-        if placeholders
-        else pd.Series(False, index=series.index)
-    )
+    role_mask = map_unique(
+        text, lambda value: is_semantic_placeholder(value, role)
+    ).astype(bool)
     if column_type not in {"fecha", "numero"}:
         return role_mask
     token_mask = text.str.strip().str.lower().isin(MISSING_TOKENS - {""})
@@ -797,11 +817,9 @@ def _normalize_text_column(
     Devuelve (serie, desglose, ejemplos_de_fusiones_fuzzy, auditoría_mojibake,
     sugerencias_de_fusión). Las variantes que solo difieren en mayúsculas/
     tildes/espacios se reemplazan por la forma más frecuente; los typos
-    cercanos se fusionan con Levenshtein acotado — SOLO si `allow_fuzzy`
-    (jamás en columnas identificadoras, Fase 10 §6.1). Las sugerencias son
-    truncamientos genéricos (ej. "conce" de "Concepción") que NO se fusionan
-    solos por no ser una abreviación conocida — se avisan para que el
-    usuario confirme, en vez de fusionar a ciegas o dejarlas pasar calladas."""
+    cercanos por Levenshtein, morfología o abreviación se reportan únicamente
+    como sugerencias cuando `allow_fuzzy` está activo (jamás se aplican ni se
+    evalúan en identificadores, Fase 10 §6.1)."""
     original = series.map(str)
     semantic_mask = semantic_missing_mask(original, role)
 
@@ -836,6 +854,8 @@ def _normalize_text_column(
     stripped = stripped.where(~semantic_mask, original)
     spacing_changes = int((stripped != original).sum())
     channel_changes = 0
+    boolean_changes = 0
+    currency_changes = 0
     if role == "canal":
         channel_equivalences = {
             "tda": "Tienda",
@@ -856,6 +876,35 @@ def _normalize_text_column(
         channel_normalized = channel_normalized.where(~semantic_mask, original)
         channel_changes = int((channel_normalized != stripped).sum())
         stripped = channel_normalized
+
+    header = str(series.name or "")
+    normalized_nonempty = [
+        strip_accents_lower(value).strip()
+        for value in stripped.astype(str)
+        if value and not is_semantic_placeholder(value, role)
+    ]
+    if _BOOLEAN_HEADER_RE.search(header) and normalized_nonempty:
+        recognized = sum(value in _BOOLEAN_EQUIVALENCES for value in normalized_nonempty)
+        if recognized / len(normalized_nonempty) >= 0.9:
+            boolean_normalized = map_unique(
+                stripped,
+                lambda value: _BOOLEAN_EQUIVALENCES.get(
+                    strip_accents_lower(value).strip(), value
+                ),
+            )
+            boolean_changes = int((boolean_normalized != stripped).sum())
+            stripped = boolean_normalized
+    if _CURRENCY_HEADER_RE.search(header) and normalized_nonempty:
+        recognized = sum(value in _CURRENCY_EQUIVALENCES for value in normalized_nonempty)
+        if recognized / len(normalized_nonempty) >= 0.9:
+            currency_normalized = map_unique(
+                stripped,
+                lambda value: _CURRENCY_EQUIVALENCES.get(
+                    strip_accents_lower(value).strip(), value
+                ),
+            )
+            currency_changes = int((currency_normalized != stripped).sum())
+            stripped = currency_normalized
 
     frequencies: dict[str, dict[str, int]] = {}
     # La frecuencia contiene la misma informacion que recorrer cada fila,
@@ -891,34 +940,16 @@ def _normalize_text_column(
     fuzzy_examples: list[list[str]] = []
     fuzzy_merges = 0  # Fase 13: conteo REAL (los ejemplos van capados a 5)
     suggestions: list[tuple[str, str, int]] = []
-    # Fase 15 — política por ROL: las ENTIDADES comerciales (cliente,
-    # producto, vendedor, categoría) JAMÁS se fusionan solas por typo,
-    # morfología o abreviación — dos clientes con nombres parecidos pueden
-    # ser empresas DISTINTAS, y fusionarlos corrompe datos comerciales. En
-    # esas columnas toda fusión candidata pasa a SUGERENCIA (el usuario
-    # confirma). Las abreviaciones chilenas de lugares se aplican solas SOLO
-    # cuando la columna es geográfica (rol sucursal o encabezado de ciudad/
-    # comuna/región/dirección/zona); en otras columnas, sugerencia.
-    entity_column = role in {"cliente", "producto", "vendedor", "categoria"}
-    _header = strip_accents_lower(str(series.name or ""))
-    geo_column = role == "sucursal" or bool(
-        re.search(
-            r"ciudad|comuna|region|direccion|ubicacion|zona|sucursal|localidad",
-            _header,
-        )
-    )
+    # Una distancia de edición no demuestra equivalencia semántica. Desde
+    # esta versión, NINGÚN fuzzy cambia datos automáticamente: San Bernardo y
+    # San Fernando, o "mes 10" y "mes 02", son valores legítimamente
+    # diferentes aunque se parezcan. Las candidatas se reportan para revisión.
     if allow_fuzzy:
         totals = {key: sum(v.values()) for key, v in frequencies.items()}
         for rare_key, canon_key in _fuzzy_merge_keys(frequencies).items():
-            if entity_column:
-                suggestions.append(
-                    (canonical[rare_key], canonical[canon_key], totals[rare_key])
-                )
-                continue
-            if len(fuzzy_examples) < 5:
-                fuzzy_examples.append([canonical[rare_key], canonical[canon_key]])
-            canonical[rare_key] = canonical[canon_key]
-            fuzzy_merges += 1
+            suggestions.append(
+                (canonical[rare_key], canonical[canon_key], totals[rare_key])
+            )
 
         ordered = sorted(totals, key=lambda k: totals[k], reverse=True)
 
@@ -944,15 +975,9 @@ def _normalize_text_column(
                     )
                     plural = minor == major + "s" or major == minor + "s"
                     if vowel_swap or plural:
-                        if entity_column:
-                            suggestions.append(
-                                (canonical[minor], canonical[major], totals[minor])
-                            )
-                            break
-                        if len(fuzzy_examples) < 5:
-                            fuzzy_examples.append([canonical[minor], canonical[major]])
-                        canonical[minor] = canonical[major]
-                        fuzzy_merges += 1
+                        suggestions.append(
+                            (canonical[minor], canonical[major], totals[minor])
+                        )
                         break
 
         # Abreviaciones chilenas conocidas (Bug): "Stgo Centro" no se
@@ -971,13 +996,7 @@ def _normalize_text_column(
             major = expanded_key
             if totals[minor] > totals[major]:
                 continue  # la forma abreviada no puede ser más frecuente que la completa
-            if not geo_column or entity_column:
-                suggestions.append((canonical[minor], canonical[major], totals[minor]))
-                continue
-            if len(fuzzy_examples) < 5:
-                fuzzy_examples.append([canonical[minor], canonical[major]])
-            canonical[minor] = canonical[major]
-            fuzzy_merges += 1
+            suggestions.append((canonical[minor], canonical[major], totals[minor]))
 
         # Truncamientos genéricos (Bug): "conce" de "Concepción" no está en
         # ningún diccionario y podría ser una categoría real distinta (mismo
@@ -1020,6 +1039,8 @@ def _normalize_text_column(
         "mojibake_reparado": mojibake_repaired,
         "fusiones_fuzzy": fuzzy_merges,
         "equivalencias_canal": channel_changes,
+        "equivalencias_booleanas": boolean_changes,
+        "equivalencias_moneda": currency_changes,
     }, fuzzy_examples, mojibake_audit, suggestions
 
 
@@ -1047,6 +1068,7 @@ def standardize_dataframe(
     date_dayfirst: dict[str, bool] = {}
     fuzzy_total = 0
     fuzzy_examples: list[list[str]] = []
+    fuzzy_suggestions: list[dict] = []
     date_avisos: list[str] = []
     mojibake_audit: list[dict] = []
     text_changes = date_changes = number_changes = 0
@@ -1059,6 +1081,8 @@ def standardize_dataframe(
         "mojibake_reparado": 0,
         "fusiones_fuzzy": 0,
         "equivalencias_canal": 0,
+        "equivalencias_booleanas": 0,
+        "equivalencias_moneda": 0,
     }
 
     for col in result.columns:
@@ -1069,7 +1093,9 @@ def standardize_dataframe(
         # eliminaba ceros iniciales antes de relacionar o exportar. Un rol
         # numérico/fecha elegido explícitamente conserva precedencia.
         identifier_by_name = is_identifier_column(col)
-        if identifier_by_name and role not in {"monto", "costo", "cantidad", "fecha"}:
+        if _BOOLEAN_HEADER_RE.search(str(col)) or _CURRENCY_HEADER_RE.search(str(col)):
+            ctype, confidence = "texto", 1.0
+        elif identifier_by_name and role not in {"monto", "costo", "cantidad", "fecha"}:
             ctype, confidence = "texto", 1.0
         else:
             ctype, confidence = detect_value_type_confidence(result[col], col)
@@ -1097,11 +1123,37 @@ def standardize_dataframe(
             # Bug: truncamientos como "conce"/"Concepción" no son una
             # abreviación conocida — se avisan en vez de fusionarse solos o
             # pasar calladas, para que el usuario confirme manualmente.
-            for rare_display, canon_display, rare_count in suggestions[:3]:
+            seen_suggestions: set[tuple[str, str]] = set()
+            for rare_display, canon_display, rare_count in suggestions:
+                suggestion_key = (rare_display, canon_display)
+                if suggestion_key in seen_suggestions:
+                    continue
+                seen_suggestions.add(suggestion_key)
+                if len(fuzzy_suggestions) < 500:
+                    fuzzy_suggestions.append(
+                        {
+                            "columna": col,
+                            "origen": rare_display,
+                            "destino_sugerido": canon_display,
+                            "filas": int(rare_count),
+                            "aplicado": False,
+                        }
+                    )
+            for rare_display, canon_display, rare_count in sorted(
+                {
+                    (source, target, count)
+                    for source, target, count in suggestions
+                },
+                key=lambda item: (
+                    item[0].casefold(),
+                    item[1].casefold(),
+                    item[2],
+                ),
+            )[:3]:
                 date_avisos.append(
-                    f"En '{col}': \"{rare_display}\" ({rare_count} fila(s)) podría ser una "
-                    f"forma abreviada de \"{canon_display}\" — revísalo y corrígelo a mano "
-                    "si corresponde a la misma sucursal o categoría."
+                    f"En '{col}': \"{rare_display}\" ({rare_count} fila(s)) se parece a "
+                    f"\"{canon_display}\". Se conservó sin cambios: confirma la "
+                    "equivalencia antes de unificar valores empresariales."
                 )
         elif ctype == "fecha":
             profile = column_date_profile(result[col])
@@ -1227,6 +1279,7 @@ def standardize_dataframe(
         "fechas_dayfirst": date_dayfirst,
         "avisos": date_avisos,
         "fusiones_texto": {"total": fuzzy_total, "ejemplos": fuzzy_examples},
+        "sugerencias_fusion": fuzzy_suggestions,
         "mojibake_auditoria": mojibake_audit,
         "cambios": {
             "encabezados_normalizados": renamed_headers,
