@@ -392,6 +392,51 @@ describe('estado multihoja', () => {
     )).toEqual(['CLP', 'CLP2'])
   })
 
+  it('apila dos periodos con los mismos roles aunque los encabezados esten escritos distinto', () => {
+    // Caso real (Prueba_PyME_..._SUCIO): S1 y S2 traen las MISMAS columnas
+    // analíticas escritas de otra forma. Antes quedaban en grupos distintos y
+    // el análisis se quedaba con un solo semestre, subestimando las ventas.
+    const semestre1 = {
+      preview: { columnas: ['FECHA', 'Monto Neto', 'cantidad', 'ID Cliente'] },
+      column_types: {
+        FECHA: 'fecha', 'Monto Neto': 'numero', cantidad: 'numero', 'ID Cliente': 'texto',
+      },
+      mapeo: { fecha: 'FECHA', monto: 'Monto Neto', cantidad: 'cantidad', cliente: 'ID Cliente' },
+      moneda: 'CLP',
+    }
+    const semestre2 = {
+      preview: { columnas: ['Fecha', 'MONTO_NETO', 'CANTIDAD', 'id cliente'] },
+      column_types: {
+        Fecha: 'fecha', MONTO_NETO: 'numero', CANTIDAD: 'numero', 'id cliente': 'texto',
+      },
+      mapeo: { fecha: 'Fecha', monto: 'MONTO_NETO', cantidad: 'CANTIDAD', cliente: 'id cliente' },
+      moneda: 'CLP',
+    }
+    expect(compatibleAppendSheets(
+      ['Ventas_2025_S1', 'Ventas_2025_S2'],
+      { Ventas_2025_S1: semestre1, Ventas_2025_S2: semestre2 },
+    )).toEqual(['Ventas_2025_S1', 'Ventas_2025_S2'])
+  })
+
+  it('sigue separando hojas cuyos roles tienen tipos distintos', () => {
+    const conMonto = {
+      preview: { columnas: ['Fecha', 'Monto'] },
+      column_types: { Fecha: 'fecha', Monto: 'numero' },
+      mapeo: { fecha: 'Fecha', monto: 'Monto' },
+      moneda: 'CLP',
+    }
+    const montoComoTexto = {
+      preview: { columnas: ['Fecha', 'Monto'] },
+      column_types: { Fecha: 'fecha', Monto: 'texto' },
+      mapeo: { fecha: 'Fecha', monto: 'Monto' },
+      moneda: 'CLP',
+    }
+    expect(compatibleAppendSheets(
+      ['A', 'B'],
+      { A: conMonto, B: montoComoTexto },
+    )).toEqual(['A'])
+  })
+
   it('elige el grupo compatible mas grande aunque no sea el primero del libro', () => {
     const result = (columns: string[]) => ({
       preview: { columnas: columns },

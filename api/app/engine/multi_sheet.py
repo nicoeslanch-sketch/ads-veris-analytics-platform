@@ -16,7 +16,7 @@ from typing import Any
 
 import pandas as pd
 
-from .mapping import detect_columns_extended, norm_key, resolve_mapping
+from .mapping import detect_columns_extended, norm_key, resolve_mapping, strip_accents_lower
 from .metrics import detect_currency, is_transaction_profile
 from .standardize import NUMERIC_CANONICAL_ATTR, detect_value_type_confidence, parse_number
 
@@ -598,6 +598,33 @@ def _metric_totals(frame: pd.DataFrame, mapping: dict[str, str]) -> dict[str, fl
     return totals
 
 
+def _canonical_header(name: str) -> str:
+    """Clave para reconocer la MISMA columna escrita distinto entre hojas.
+
+    Un libro real trae el mismo semestre con encabezados desparejos —"FECHA" y
+    "Fecha", "Monto Neto" y "MONTO_NETO"—. Alinear por el nombre literal dejaba
+    esas hojas como incompatibles y el análisis se quedaba con UN solo periodo,
+    subestimando las ventas. La clave solo se usa para aparear: los nombres que
+    ve el usuario se conservan tal cual los escribió.
+    """
+    text = strip_accents_lower(str(name)).replace("_", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _alignment_renames(frame: pd.DataFrame) -> dict[str, str]:
+    """original → canónico. Si dos columnas de la MISMA hoja colapsan al mismo
+    canónico (p. ej. "Monto Neto" y "Monto_Neto" juntas), ninguna se renombra:
+    perder esa distinción sería peor que no alinear."""
+    grupos: dict[str, list[str]] = {}
+    for column in map(str, frame.columns):
+        grupos.setdefault(_canonical_header(column), []).append(column)
+    return {
+        originales[0]: clave
+        for clave, originales in grupos.items()
+        if len(originales) == 1 and originales[0] != clave
+    }
+
+
 def append_compatible_frames(
     frames: dict[str, pd.DataFrame],
     mappings: dict[str, dict[str, str]],
@@ -606,9 +633,33 @@ def append_compatible_frames(
 ) -> tuple[pd.DataFrame, dict[str, str], dict[str, Any]]:
     if len(frames) < 2 and not (allow_single and len(frames) == 1):
         raise ValueError("Se necesitan al menos dos hojas para apilar.")
+    original_frames = frames
+    renames = {name: _alignment_renames(frame) for name, frame in frames.items()}
+    frames = {
+        name: frame.rename(columns=renames[name]) for name, frame in frames.items()
+    }
+    for name, frame in frames.items():
+        frame.attrs = dict(original_frames[name].attrs)
+    # Los mapeos apuntan a los nombres originales: se traducen al canónico para
+    # que la comparación de roles use la misma referencia que las columnas.
+    mappings = {
+        name: {
+            role: renames.get(name, {}).get(str(column), str(column))
+            for role, column in (mappings.get(name) or {}).items()
+        }
+        for name in frames
+    }
     names = list(frames)
     first_name = names[0]
     first = frames[first_name]
+    # Nombre visible de cada columna: el que trae la primera hoja y, para las
+    # que solo existen en otras, el de la hoja donde aparecen.
+    display: dict[str, str] = {}
+    for name in names:
+        for original in map(str, original_frames[name].columns):
+            # Nombre con el que la columna quedó tras alinear → nombre original.
+            # `setdefault` hace que gane la PRIMERA hoja, que es la referencia.
+            display.setdefault(renames[name].get(original, original), original)
     columns = [str(column) for column in first.columns]
     union_columns = list(columns)
     for frame in frames.values():
@@ -649,7 +700,10 @@ def append_compatible_frames(
             if current_mapping.get(role) != column:
                 raise ValueError("Las hojas seleccionadas tienen interpretaciones incompatibles.")
         missing_by_sheet[name] = [
-            column for column in union_columns if column not in current_columns
+            # Se reporta el nombre que el usuario reconoce, no el canónico.
+            display.get(column, column)
+            for column in union_columns
+            if column not in current_columns
         ]
         part = current.copy()
         part.insert(0, "hoja_origen", name)
@@ -657,7 +711,13 @@ def append_compatible_frames(
     combined = pd.concat(parts, ignore_index=True)
     if all(bool(frame.attrs.get(NUMERIC_CANONICAL_ATTR)) for frame in frames.values()):
         combined.attrs[NUMERIC_CANONICAL_ATTR] = True
-    combined_mapping = dict(first_mapping)
+    # Se devuelven los nombres tal como los escribió el usuario: el canónico
+    # existe solo para aparear hojas, nunca para mostrarse.
+    if display:
+        combined = combined.rename(columns=display)
+    combined_mapping = {
+        role: display.get(column, column) for role, column in first_mapping.items()
+    }
     for role in ("monto", "costo"):
         column = combined_mapping.get(role)
         if column and column in combined.columns and detect_currency(combined[column]).mixta:

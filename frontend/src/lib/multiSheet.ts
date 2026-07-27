@@ -455,6 +455,19 @@ function transactionGroupScore(
   }).length
 }
 
+/** Clave para reconocer la MISMA columna escrita distinto entre hojas
+ * ("FECHA" / "Fecha", "Monto Neto" / "MONTO_NETO"). Espeja `_canonical_header`
+ * del motor: solo sirve para aparear, nunca para mostrar. */
+function canonicalHeader(name: string): string {
+  return String(name)
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function compatibleAppendSheets(
   sheets: string[],
   results: Record<string, AppendCompatibilityResult | null | undefined>,
@@ -470,7 +483,15 @@ export function compatibleAppendSheets(
       // duplicado en solo un mes debe viajar como columna opcional, no dejar
       // esa hoja fuera del apilado. Se comparan roles y tipos analíticos.
       types: mappedTypes,
-      mapping: Object.entries(result.mapeo).sort(([left], [right]) => left.localeCompare(right)),
+      // El mapeo se compara por nombre NORMALIZADO. Un libro real escribe el
+      // mismo semestre con encabezados desparejos ("FECHA"/"Fecha",
+      // "Monto Neto"/"MONTO_NETO"): comparando el literal, esas hojas quedaban
+      // incompatibles, el análisis se quedaba con UN solo periodo y las ventas
+      // salían subestimadas. Normalizar mantiene la distinción real (dos tablas
+      // distintas siguen separadas) sin castigar el estilo del encabezado.
+      mapping: Object.entries(result.mapeo)
+        .map(([role, column]) => [role, canonicalHeader(column)] as const)
+        .sort(([left], [right]) => left.localeCompare(right)),
       currency: result.moneda_detalle?.dominante ?? result.moneda ?? 'CLP',
     })
   }
