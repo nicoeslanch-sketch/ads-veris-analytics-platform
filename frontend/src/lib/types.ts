@@ -645,6 +645,11 @@ export type BusinessFilterKey =
   | 'categoria'
   | 'producto'
   | 'moneda'
+  | 'periodo_cotizado'
+  | 'equipo'
+  | 'subgrupo'
+  | 'agencia_pago'
+  | 'forma_pago'
 
 export type BusinessFilters = Partial<Record<BusinessFilterKey, string>>
 
@@ -690,8 +695,62 @@ export interface BusinessIndicatorCatalog {
   no_disponibles: number
 }
 
+export interface CollectionGroupRow {
+  nombre: string
+  valor: number
+  participacion_pct: number | null
+}
+
+export interface NominalCollectionAnalysis {
+  hoja: string
+  moneda: string
+  grano_temporal: 'día' | 'semana' | 'mes' | string
+  periodo: { desde: string | null; hasta: string | null }
+  kpis: {
+    recaudacion_cobranza: number
+    recaudacion_total: number
+    diferencia: number
+    diferencia_pct: number | null
+    participacion_cobranza_pct: number | null
+    registros: number
+    registros_cobranza: number
+    pagos_positivos: number
+    ticket_promedio_total: number | null
+    ticket_promedio_cobranza: number | null
+  }
+  comparacion: {
+    recaudacion_actual: number
+    recaudacion_anterior: number | null
+    diferencia: number | null
+    variacion_pct: number | null
+    base_comparable: boolean
+  }
+  evolucion: Array<{
+    periodo: string
+    recaudacion_total: number
+    recaudacion_cobranza: number
+    diferencia: number
+  }>
+  equipos: Array<{
+    equipo: string
+    subgrupo: string | null
+    recaudacion_cobranza: number
+    recaudacion_total: number
+    diferencia: number
+    participacion_pct: number | null
+    participacion_equipo_pct?: number | null
+  }>
+  agencias: CollectionGroupRow[]
+  formas_pago: CollectionGroupRow[]
+  periodos_cotizados: Array<{ periodo: string; valor: number }>
+  descripciones_pago: CollectionGroupRow[]
+  notas: string[]
+}
+
 export interface BusinessAnalysis {
   version: number
+  perfil?: 'negocio' | 'cobranza_nominal' | string
+  cobranza?: NominalCollectionAnalysis
   filtros?: {
     disponibles: Partial<Record<BusinessFilterKey, string[]>>
     aplicados: BusinessFilters

@@ -11,6 +11,11 @@ const FILTERS: Array<{ key: BusinessFilterKey; label: string }> = [
   { key: 'categoria', label: 'Categoría' },
   { key: 'producto', label: 'Producto' },
   { key: 'moneda', label: 'Moneda' },
+  { key: 'periodo_cotizado', label: 'Periodo cotizado' },
+  { key: 'equipo', label: 'Equipo / grupo' },
+  { key: 'subgrupo', label: 'Subgrupo' },
+  { key: 'agencia_pago', label: 'Agencia de pago' },
+  { key: 'forma_pago', label: 'Forma de pago' },
 ]
 
 interface BusinessFilterBarProps {
@@ -88,9 +93,9 @@ export default function BusinessFilterBar({
 
       {activeCount > 0 && (
         <p className="mt-3 text-[11px] leading-relaxed text-navy/50">
-          No se prorratean gastos, cobranza ni inventario sin una dimensión equivalente:
-          esos indicadores se muestran como no disponibles cuando el filtro no puede
-          aplicarse de forma verificable.
+          La selección se aplica antes de recalcular KPI, porcentajes y gráficos.
+          Un indicador queda no disponible si su fuente no contiene la dimensión
+          elegida; ADS Veris no prorratea ni inventa resultados.
         </p>
       )}
     </section>

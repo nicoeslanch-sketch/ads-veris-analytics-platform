@@ -91,6 +91,24 @@ pd.DataFrame({
   execFileSync('python', ['-c', script, path])
 }
 
+function createNominalCollectionWorkbook(path: string) {
+  const script = String.raw`
+import pandas as pd
+import sys
+pd.DataFrame({
+    "Fecha Pago": ["01/05/2026", "02/05/2026", "03/05/2026", "01/04/2026"],
+    "Período Cotizado": ["01/03/2026", "01/04/2026", "01/04/2026", "01/02/2026"],
+    "Valor Nominal": [100, 200, 50, 80],
+    "Descripción Lote": ["PAGOS EN AGENCIAS", "PAGO ELECTRONICO", "PAGOS EN AGENCIAS", "PAGOS EN AGENCIAS"],
+    "Lote": [88, 250, 301, 100],
+    "Agencia Recepción Pago": ["WEB", "WEB", "SANTIAGO", "WEB"],
+    "Forma de pago descrip.": ["Tarjeta", "Transferencia", "Efectivo", "Tarjeta"],
+    "Cobrador Final Grupo": ["EST. JURIDICO LEXCO", "EJECUTIVOS NMV FLUJO", "STOCK", "EST. JURIDICO GNA"],
+}).to_excel(sys.argv[1], sheet_name="REQ5325", index=False)
+`
+  execFileSync('python', ['-c', script, path])
+}
+
 function createBusinessWorkbook(path: string) {
   const script = String.raw`
 import pandas as pd
@@ -475,7 +493,7 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await expect(page.getByRole('heading', { name: 'Filtros del negocio' })).toBeVisible()
   await page.getByLabel('Sucursal').selectOption({ label: 'Centro' })
   await expect(page.getByText('$8.400', { exact: true }).first()).toBeVisible({ timeout: 90_000 })
-  await expect(page.getByText('No se prorratean gastos', { exact: false })).toBeVisible()
+  await expect(page.getByText('ADS Veris no prorratea ni inventa resultados', { exact: false })).toBeVisible()
 
   await page.getByRole('link', { name: /Explorar datos/ }).first().click()
   await expect(page.getByText('Explorar · entender causas')).toBeVisible({ timeout: 90_000 })
@@ -497,6 +515,50 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   }))
   expect(mobileOverflow.content).toBeLessThanOrEqual(mobileOverflow.viewport + 1)
   await page.screenshot({ path: testInfo.outputPath('explorar-diagnostico-mobile.png'), fullPage: true })
+})
+
+test('perfil de cobranza nominal adapta KPI, filtros y detalle sin inventar transacciones', async ({ page }, testInfo) => {
+  const workbook = testInfo.outputPath('cobranza_nominal.xlsx')
+  createNominalCollectionWorkbook(workbook)
+
+  await page.goto('/estandarizacion')
+  const chooserPromise = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: /Subir archivo/ }).click()
+  const chooser = await chooserPromise
+  await chooser.setFiles(workbook)
+  await expect(page.getByText(/Dataset activo:/)).toBeVisible({ timeout: 60_000 })
+
+  await page.getByRole('link', { name: /Limpieza de datos/ }).first().click()
+  await expect(page.getByText('Problemas detectados')).toBeVisible({ timeout: 90_000 })
+  await page.getByRole('button', { name: 'Limpiar datos', exact: true }).click()
+  await expect(page.getByText(/Todas las hojas están limpias/)).toBeVisible({ timeout: 90_000 })
+
+  await page.getByRole('link', { name: /Resumen/ }).first().click()
+  await expect(page.getByRole('heading', { name: 'Cobranza basada en Valor Nominal' })).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByText('Recaudación de cobranza', { exact: true })).toBeVisible()
+  await expect(page.getByText('$380', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Recaudación total', { exact: true })).toBeVisible()
+  await expect(page.getByText('$430', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Recaudación de cobranza vs recaudación total')).toBeVisible()
+  await expect(page.getByText('Participación en cobranza por equipo')).toBeVisible()
+  await expect(page.getByLabel('Equipo / grupo')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('cobranza-resumen.png'), fullPage: true })
+  await page.getByLabel('Equipo / grupo').selectOption({ label: 'JUDICIAL' })
+  await expect(page.getByText('$180', { exact: true }).first()).toBeVisible({ timeout: 90_000 })
+
+  await page.getByRole('link', { name: /Explorar datos/ }).first().click()
+  await expect(page.getByText('Recaudación por equipo y subgrupo')).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByRole('cell', { name: 'EST. JURIDICO LEXCO' })).toBeVisible()
+  await expect(page.getByText('Recaudación por forma de pago')).toBeVisible()
+  await expect(page.getByText('Recaudación por periodo cotizado')).toBeVisible()
+  await expect(page.getByText('Descripción del pago')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('cobranza-explorar.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  const overflow = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    content: document.documentElement.scrollWidth,
+  }))
+  expect(overflow.content).toBeLessThanOrEqual(overflow.viewport + 1)
 })
 
 test('Fase 17 bloquea una relacion many-to-many', async ({ page }, testInfo) => {

@@ -30,6 +30,11 @@ BUSINESS_FILTER_KEYS = (
     "categoria",
     "producto",
     "moneda",
+    "periodo_cotizado",
+    "equipo",
+    "subgrupo",
+    "agencia_pago",
+    "forma_pago",
 )
 
 
@@ -122,7 +127,15 @@ def _sheet_kind(name: str, frame: pd.DataFrame) -> str:
         return "compras"
     if "gasto" in sheet or "id gasto" in headers:
         return "gastos"
-    if "cobran" in sheet or "id pago" in headers:
+    if (
+        "cobran" in sheet
+        or "id pago" in headers
+        or (
+            "valor nominal" in headers
+            and "lote" in headers
+            and "fecha pago" in headers
+        )
+    ):
         return "cobranzas"
     if "meta" in sheet or "meta venta" in headers:
         return "metas"
@@ -958,6 +971,658 @@ def _indicator_contract(
     }
 
 
+def _collection_profile_columns(frame: pd.DataFrame) -> dict[str, str | None] | None:
+    """Recognize the auditable nominal-value collection profile.
+
+    The profile is intentionally strict: a generic payments sheet must not be
+    reinterpreted as this dashboard unless the three defining fields exist.
+    Optional dimensions only enable their corresponding filter or chart.
+    """
+
+    exact_lot = next(
+        (
+            str(column)
+            for column in frame.columns
+            if normalized_header(column) == "lote"
+        ),
+        None,
+    )
+    columns = {
+        "valor": find_column(frame.columns, "valor", "nominal"),
+        "lote": exact_lot,
+        "fecha_pago": find_column(frame.columns, "fecha", "pago"),
+        "periodo_cotizado": find_column(frame.columns, "periodo", "cotizado"),
+        "subgrupo": find_column(frame.columns, "cobrador", "final", "grupo"),
+        "agencia_pago": find_column(frame.columns, "agencia", "recepcion", "pago"),
+        "forma_pago": find_column(frame.columns, "forma", "pago"),
+        "descripcion_pago": find_column(frame.columns, "descripcion", "lote"),
+    }
+    if not all(columns[key] for key in ("valor", "lote", "fecha_pago")):
+        return None
+    return columns
+
+
+def has_collection_dashboard_profile(frames: dict[str, pd.DataFrame]) -> bool:
+    """Cheap public predicate used by the metrics route."""
+
+    return any(_collection_profile_columns(frame) for frame in frames.values())
+
+
+def _collection_team(value: object) -> str:
+    normalized = normalized_header(value)
+    if normalized in {
+        "est juridico lexco",
+        "est juridico proinnova",
+        "est juridico gna",
+        "judicial",
+    }:
+        return "JUDICIAL"
+    if normalized == "ejecutivos nmv flujo":
+        return "FLUJO"
+    if normalized == "stock":
+        return "STOCK"
+    return "SIN ASIGNAR"
+
+
+def _collection_label(value: object, fallback: str = "SIN ASIGNAR") -> str:
+    if value is None or pd.isna(value):
+        return fallback
+    text = " ".join(str(value).strip().split())
+    return text or fallback
+
+
+def _collection_options(series: pd.Series | None) -> list[str]:
+    if series is None:
+        return []
+    by_key: dict[str, str] = {}
+    for value in series:
+        label = _collection_label(value)
+        by_key.setdefault(_text_key(label) or label.casefold(), label)
+    return sorted(by_key.values(), key=lambda item: strip_accents_lower(item))
+
+
+def _collection_group(
+    frame: pd.DataFrame,
+    column: str,
+    *,
+    collection_mask: pd.Series,
+    top: int | None = None,
+    other_label: str = "Otros",
+) -> list[dict[str, Any]]:
+    if column not in frame.columns:
+        return []
+    working = pd.DataFrame({
+        "nombre": frame[column].map(_collection_label),
+        "valor": frame["_valor_nominal"].where(collection_mask),
+    }).dropna(subset=["valor"])
+    grouped = (
+        working.groupby("nombre", dropna=False)["valor"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    if top and len(grouped) > top:
+        visible = grouped.iloc[:top].copy()
+        visible.loc[other_label] = float(grouped.iloc[top:].sum())
+        grouped = visible
+    total = float(grouped.sum())
+    return [
+        {
+            "nombre": str(name),
+            "valor": round(float(value), 2),
+            "participacion_pct": round(float(value) / total * 100, 2)
+            if total
+            else None,
+        }
+        for name, value in grouped.items()
+    ]
+
+
+def _empty_business_shell(
+    *,
+    profile: str,
+    filters_available: dict[str, list[str]],
+    filters_applied: dict[str, str],
+    catalog: dict[str, Any],
+    collection: dict[str, Any],
+    sheet_name: str,
+) -> dict[str, Any]:
+    """Keep the established API contract while exposing a specialized view."""
+
+    return {
+        "version": 3,
+        "perfil": profile,
+        "filtros": {
+            "disponibles": filters_available,
+            "aplicados": filters_applied,
+        },
+        "estado_certificacion": "certified",
+        "confianza_pct": 100.0,
+        "alcance": {
+            "hojas_ventas": [],
+            "hoja_costos": None,
+            "hoja_historial_costos": None,
+            "hojas_utilizadas": [sheet_name],
+            "filas_ventas_sin_filtros": 0,
+            "filas_ventas_fisicas": 0,
+            "filas_totales_estructurales": 0,
+            "filas_anuladas": 0,
+            "filas_indicadores": 0,
+            "documentos_repetidos": 0,
+            "filas_adicionales_documento": 0,
+            "documentos_conflictivos": 0,
+        },
+        "estado_resultados": {
+            "ventas_observadas": 0,
+            "ventas_certificables": 0,
+            "ventas_pareadas": 0,
+            "costo_venta_conocido": 0,
+            "costo_venta_estimado_catalogo": 0,
+            "utilidad_bruta": None,
+            "margen_bruto_pct": None,
+            "gastos_operacionales": None,
+            "gastos_operacionales_periodo": None,
+            "filas_gastos": 0,
+            "resultado_operacional": None,
+            "margen_operacional_pct": None,
+            "cobertura_costos_pct": 0,
+            "cobertura_costos_historica_pct": 0,
+            "cobertura_costos_certificable_pct": 0,
+            "ventas_certificables_pareadas": 0,
+            "costo_certificable": 0,
+            "utilidad_certificable": None,
+            "margen_certificable_pct": None,
+            "resultado_operacional_certificable": None,
+            "margen_operacional_certificable_pct": None,
+        },
+        "operacion": {
+            "cobrado_aplicado": collection["kpis"]["recaudacion_cobranza"],
+            "cobranza_sobre_documentos_pct": collection["kpis"]["participacion_cobranza_pct"],
+            "documentos_sobrepagados": 0,
+            "pagos_duplicados_excluidos": 0,
+            "cobranzas_huerfanas": 0,
+            "cuentas_por_cobrar": None,
+            "cuentas_vencidas": None,
+            "dso_dias": None,
+            "mora_promedio_dias": None,
+            "valor_inventario": None,
+            "stock_inventario": None,
+            "inventario_bajo_minimo": None,
+            "fecha_corte_inventario": None,
+            "compras_efectivas": None,
+            "fletes_compra": None,
+            "gastos_fijos": None,
+            "gastos_variables": None,
+            "gasto_fijo_mensual_promedio": None,
+            "punto_equilibrio_ventas": None,
+            "rotacion_inventario_aprox": None,
+        },
+        "evolucion": [],
+        "agrupaciones": {},
+        "portafolio": {"umbrales": None, "productos": []},
+        "metas": {
+            "disponible": False,
+            "meta_venta": None,
+            "venta_comparable": None,
+            "cumplimiento_pct": None,
+            "meta_margen_pct": None,
+            "meta_nuevos_clientes": None,
+            "por_mes": [],
+            "nota": "Este perfil analiza recaudación; no infiere metas de venta.",
+        },
+        "sensibilidad": {
+            "base_utilidad_bruta": None,
+            "costo_mas_5": None,
+            "costo_mas_10": None,
+            "nota": "No corresponde al perfil de cobranza nominal.",
+        },
+        "calidad": {
+            "costos": {},
+            "integridad_referencial": [],
+            "controles_formula": [],
+            "filas_inconsistentes_formula": 0,
+            "referencias_problematicas": 0,
+        },
+        "ratios": [],
+        "decisiones": [],
+        "catalogo_indicadores": catalog,
+        "cobranza": collection,
+    }
+
+
+def _analyze_nominal_collection(
+    frames: dict[str, pd.DataFrame],
+    results: dict[str, dict],
+    *,
+    date_from: str | None,
+    date_to: str | None,
+    filters: dict[str, str] | None,
+) -> dict[str, Any] | None:
+    profile: tuple[str, pd.DataFrame, dict[str, str | None]] | None = None
+    for name, frame in frames.items():
+        columns = _collection_profile_columns(frame)
+        if columns:
+            profile = (name, frame.copy(), columns)
+            break
+    if profile is None:
+        return None
+    sheet_name, frame, columns = profile
+    value_column = str(columns["valor"])
+    lot_column = str(columns["lote"])
+    date_column = str(columns["fecha_pago"])
+    frame["_valor_nominal"] = numeric_series(frame, value_column)
+    frame["_lote"] = numeric_series(frame, lot_column)
+    frame["_fecha_pago"] = _dates(frame, date_column)
+    frame["_equipo"] = (
+        frame[str(columns["subgrupo"])].map(_collection_team)
+        if columns["subgrupo"]
+        else pd.Series("SIN ASIGNAR", index=frame.index)
+    )
+    dimensions: dict[str, pd.Series] = {
+        "equipo": frame["_equipo"],
+    }
+    for key in ("periodo_cotizado", "subgrupo", "agencia_pago", "forma_pago"):
+        column = columns[key]
+        if column:
+            dimensions[key] = frame[str(column)]
+    available_filters = {
+        key: _collection_options(series)
+        for key, series in dimensions.items()
+        if series is not None and series.notna().any()
+    }
+    applied_filters = {
+        key: str(value).strip()
+        for key, value in (filters or {}).items()
+        if key in dimensions and str(value).strip()
+    }
+
+    dimension_mask = pd.Series(True, index=frame.index)
+    for key, selected in applied_filters.items():
+        dimension_mask &= _keys(dimensions[key]).eq(_text_key(selected))
+    current_mask = dimension_mask & _date_filter(
+        frame["_fecha_pago"], date_from, date_to
+    )
+    current = frame.loc[current_mask].copy()
+    current_collection = current["_lote"].le(300) & current["_lote"].notna()
+    amount = current["_valor_nominal"]
+    total = float(amount.dropna().sum())
+    collection_total = float(amount[current_collection].dropna().sum())
+    difference = total - collection_total
+    row_count = int(len(current))
+    collection_rows = int(current_collection.sum())
+    positive_rows = int(amount.gt(0).sum())
+    difference_pct = difference / total * 100 if total else None
+    collection_share = collection_total / total * 100 if total else None
+
+    prior_total = None
+    prior_collection = None
+    prior_frame = pd.DataFrame()
+    period_start = current["_fecha_pago"].dropna().min() if not current.empty else None
+    period_end = current["_fecha_pago"].dropna().max() if not current.empty else None
+    requested_start = pd.to_datetime(date_from) if date_from else period_start
+    requested_end = (
+        pd.Period(date_to, freq="M").end_time.normalize()
+        if date_to and len(str(date_to)) == 7
+        else pd.to_datetime(date_to)
+        if date_to
+        else period_end
+    )
+    if (
+        requested_start is not None
+        and requested_end is not None
+        and pd.notna(requested_start)
+        and pd.notna(requested_end)
+    ):
+        duration = (requested_end.normalize() - requested_start.normalize()).days + 1
+        prior_end = requested_start.normalize() - pd.Timedelta(days=1)
+        prior_start = prior_end - pd.Timedelta(days=max(duration - 1, 0))
+        prior_mask = (
+            dimension_mask
+            & frame["_fecha_pago"].ge(prior_start)
+            & frame["_fecha_pago"].le(prior_end)
+        )
+        prior_frame = frame.loc[prior_mask].copy()
+        prior_collection_mask = (
+            prior_frame["_lote"].le(300) & prior_frame["_lote"].notna()
+        )
+        prior_total = float(prior_frame["_valor_nominal"].dropna().sum())
+        prior_collection = float(
+            prior_frame.loc[prior_collection_mask, "_valor_nominal"].dropna().sum()
+        )
+
+    span_days = (
+        (requested_end.normalize() - requested_start.normalize()).days + 1
+        if requested_start is not None
+        and requested_end is not None
+        and pd.notna(requested_start)
+        and pd.notna(requested_end)
+        else 0
+    )
+    if span_days <= 31:
+        period_key = current["_fecha_pago"].dt.strftime("%Y-%m-%d")
+        grain = "día"
+    elif span_days <= 180:
+        period_key = current["_fecha_pago"].dt.to_period("W-MON").astype(str)
+        grain = "semana"
+    else:
+        period_key = current["_fecha_pago"].dt.to_period("M").astype(str)
+        grain = "mes"
+    timeline_frame = pd.DataFrame({
+        "periodo": period_key,
+        "total": amount,
+        "cobranza": amount.where(current_collection),
+    }).dropna(subset=["periodo"])
+    timeline = [
+        {
+            "periodo": str(period),
+            "recaudacion_total": round(float(row["total"]), 2),
+            "recaudacion_cobranza": round(float(row["cobranza"]), 2),
+            "diferencia": round(float(row["total"] - row["cobranza"]), 2),
+        }
+        for period, row in (
+            timeline_frame.groupby("periodo")[["total", "cobranza"]]
+            .sum()
+            .sort_index()
+            .iterrows()
+        )
+    ]
+
+    team_rows: list[dict[str, Any]] = []
+    for team, rows in current.groupby("_equipo", dropna=False):
+        team_collection = rows["_lote"].le(300) & rows["_lote"].notna()
+        team_total = float(rows["_valor_nominal"].dropna().sum())
+        team_collected = float(
+            rows.loc[team_collection, "_valor_nominal"].dropna().sum()
+        )
+        team_rows.append({
+            "equipo": str(team),
+            "subgrupo": None,
+            "recaudacion_cobranza": round(team_collected, 2),
+            "recaudacion_total": round(team_total, 2),
+            "diferencia": round(team_total - team_collected, 2),
+            "participacion_pct": round(team_collected / collection_total * 100, 2)
+            if collection_total
+            else None,
+        })
+        if team == "JUDICIAL" and columns["subgrupo"]:
+            for subgroup, subgroup_rows in rows.groupby(str(columns["subgrupo"])):
+                subgroup_collection = (
+                    subgroup_rows["_lote"].le(300)
+                    & subgroup_rows["_lote"].notna()
+                )
+                subgroup_total = float(
+                    subgroup_rows["_valor_nominal"].dropna().sum()
+                )
+                subgroup_collected = float(
+                    subgroup_rows.loc[
+                        subgroup_collection, "_valor_nominal"
+                    ].dropna().sum()
+                )
+                team_rows.append({
+                    "equipo": "JUDICIAL",
+                    "subgrupo": _collection_label(subgroup),
+                    "recaudacion_cobranza": round(subgroup_collected, 2),
+                    "recaudacion_total": round(subgroup_total, 2),
+                    "diferencia": round(subgroup_total - subgroup_collected, 2),
+                    "participacion_pct": round(
+                        subgroup_collected / collection_total * 100, 2
+                    )
+                    if collection_total
+                    else None,
+                    "participacion_equipo_pct": round(
+                        subgroup_collected / team_collected * 100, 2
+                    )
+                    if team_collected
+                    else None,
+                })
+    parent_rows = sorted(
+        (row for row in team_rows if row["subgrupo"] is None),
+        key=lambda row: -float(row["recaudacion_cobranza"]),
+    )
+    subgroup_rows = sorted(
+        (row for row in team_rows if row["subgrupo"] is not None),
+        key=lambda row: -float(row["recaudacion_cobranza"]),
+    )
+    team_rows = []
+    for parent in parent_rows:
+        team_rows.append(parent)
+        if parent["equipo"] == "JUDICIAL":
+            team_rows.extend(subgroup_rows)
+
+    period_rows: list[dict[str, Any]] = []
+    period_column = columns["periodo_cotizado"]
+    if period_column:
+        quoted_dates = _dates(current, str(period_column))
+        period_working = pd.DataFrame({
+            "periodo": quoted_dates.dt.to_period("M").astype(str),
+            "valor": amount.where(current_collection),
+        })
+        period_working = period_working[
+            quoted_dates.notna() & period_working["valor"].notna()
+        ]
+        period_rows = [
+            {"periodo": str(period), "valor": round(float(value), 2)}
+            for period, value in (
+                period_working.groupby("periodo")["valor"]
+                .sum()
+                .sort_index()
+                .tail(12)
+                .items()
+            )
+        ]
+
+    detection = results.get(sheet_name, {}).get("_moneda")
+    currency = getattr(detection, "dominante", None) or "CLP"
+    period_from = (
+        requested_start.date().isoformat()
+        if requested_start is not None and pd.notna(requested_start)
+        else None
+    )
+    period_to = (
+        requested_end.date().isoformat()
+        if requested_end is not None and pd.notna(requested_end)
+        else None
+    )
+    indicators = [
+        _indicator_contract(
+            "recaudacion_cobranza",
+            "cobranza",
+            "Recaudación de cobranza",
+            collection_total,
+            currency,
+            period_from=period_from,
+            period_to=period_to,
+            prior_value=prior_collection,
+            formula="Σ Valor Nominal donde Lote ≤ 300",
+            numerator=collection_total,
+            required=["Valor Nominal", "Lote"],
+            sources=[sheet_name],
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal", "donut"],
+        ),
+        _indicator_contract(
+            "recaudacion_total",
+            "cobranza",
+            "Recaudación total",
+            total,
+            currency,
+            period_from=period_from,
+            period_to=period_to,
+            prior_value=prior_total,
+            formula="Σ Valor Nominal de todos los lotes",
+            numerator=total,
+            required=["Valor Nominal"],
+            sources=[sheet_name],
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "diferencia_recaudacion",
+            "cobranza",
+            "Diferencia total − cobranza",
+            difference,
+            currency,
+            period_from=period_from,
+            period_to=period_to,
+            formula="Recaudación total − recaudación de cobranza",
+            numerator=total,
+            denominator=collection_total,
+            required=["Valor Nominal", "Lote"],
+            sources=[sheet_name],
+            polarity="neutral",
+            visualizations=["kpi", "barras"],
+        ),
+        _indicator_contract(
+            "porcentaje_diferencia",
+            "cobranza",
+            "% diferencia",
+            difference_pct,
+            "%",
+            period_from=period_from,
+            period_to=period_to,
+            formula="Diferencia ÷ recaudación total × 100",
+            numerator=difference,
+            denominator=total,
+            variation_type="puntos_porcentuales",
+            required=["Valor Nominal", "Lote"],
+            sources=[sheet_name],
+            polarity="lower_is_better",
+            visualizations=["kpi"],
+        ),
+        _indicator_contract(
+            "pagos_registrados",
+            "cobranza",
+            "N.º de pagos registrados",
+            row_count,
+            "registros",
+            period_from=period_from,
+            period_to=period_to,
+            formula="Conteo de filas filtradas; no existe ID único de pago",
+            numerator=row_count,
+            required=["una fila por registro"],
+            sources=[sheet_name],
+            polarity="higher_is_better",
+            visualizations=["kpi"],
+        ),
+        _indicator_contract(
+            "ticket_promedio_cobranza",
+            "cobranza",
+            "Ticket promedio de cobranza",
+            collection_total / collection_rows if collection_rows else None,
+            f"{currency}/registro",
+            period_from=period_from,
+            period_to=period_to,
+            formula="Recaudación de cobranza ÷ registros con Lote ≤ 300",
+            numerator=collection_total,
+            denominator=collection_rows,
+            required=["Valor Nominal", "Lote"],
+            sources=[sheet_name],
+            polarity="higher_is_better",
+            visualizations=["kpi"],
+        ),
+    ]
+    catalog = {
+        "version": 2,
+        "moneda": currency,
+        "categorias": [{
+            "id": "cobranza",
+            "nombre": "Cobranza y recaudación",
+            "descripcion": "Valor nominal, lotes, equipos, agencias y medios de pago.",
+            "estado": "available",
+            "disponibles": len(indicators),
+            "total": len(indicators),
+            "indicadores": indicators,
+        }],
+        "disponibles": len(indicators),
+        "parciales": 0,
+        "no_disponibles": 0,
+    }
+    collection = {
+        "hoja": sheet_name,
+        "moneda": currency,
+        "grano_temporal": grain,
+        "periodo": {"desde": period_from, "hasta": period_to},
+        "kpis": {
+            "recaudacion_cobranza": round(collection_total, 2),
+            "recaudacion_total": round(total, 2),
+            "diferencia": round(difference, 2),
+            "diferencia_pct": round(difference_pct, 2)
+            if difference_pct is not None
+            else None,
+            "participacion_cobranza_pct": round(collection_share, 2)
+            if collection_share is not None
+            else None,
+            "registros": row_count,
+            "registros_cobranza": collection_rows,
+            "pagos_positivos": positive_rows,
+            "ticket_promedio_total": round(total / row_count, 2)
+            if row_count
+            else None,
+            "ticket_promedio_cobranza": round(
+                collection_total / collection_rows, 2
+            )
+            if collection_rows
+            else None,
+        },
+        "comparacion": {
+            "recaudacion_actual": round(collection_total, 2),
+            "recaudacion_anterior": round(prior_collection, 2)
+            if prior_collection is not None
+            else None,
+            "diferencia": round(collection_total - prior_collection, 2)
+            if prior_collection is not None
+            else None,
+            "variacion_pct": round(
+                (collection_total - prior_collection)
+                / abs(prior_collection)
+                * 100,
+                2,
+            )
+            if prior_collection
+            else None,
+            "base_comparable": bool(prior_collection),
+        },
+        "evolucion": timeline,
+        "equipos": team_rows,
+        "agencias": _collection_group(
+            current,
+            str(columns["agencia_pago"]),
+            collection_mask=current_collection,
+            top=10,
+        )
+        if columns["agencia_pago"]
+        else [],
+        "formas_pago": _collection_group(
+            current,
+            str(columns["forma_pago"]),
+            collection_mask=current_collection,
+            top=6,
+        )
+        if columns["forma_pago"]
+        else [],
+        "periodos_cotizados": period_rows,
+        "descripciones_pago": _collection_group(
+            current,
+            str(columns["descripcion_pago"]),
+            collection_mask=current_collection,
+        )
+        if columns["descripcion_pago"]
+        else [],
+        "notas": [
+            "Todas las medidas monetarias parten exclusivamente de Valor Nominal.",
+            "Cobranza agrega la condición Lote ≤ 300 después de aplicar los filtros.",
+            "El conteo corresponde a filas porque el archivo no contiene un ID único de pago.",
+        ],
+    }
+    return _empty_business_shell(
+        profile="cobranza_nominal",
+        filters_available=available_filters,
+        filters_applied=applied_filters,
+        catalog=catalog,
+        collection=collection,
+        sheet_name=sheet_name,
+    )
+
+
 def analyze_business_workbook(
     frames: dict[str, pd.DataFrame],
     mappings: dict[str, dict[str, str]],
@@ -968,6 +1633,16 @@ def analyze_business_workbook(
     filters: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Build an executive and diagnostic view without mixing table grains."""
+
+    collection_profile = _analyze_nominal_collection(
+        frames,
+        results,
+        date_from=date_from,
+        date_to=date_to,
+        filters=filters,
+    )
+    if collection_profile is not None:
+        return collection_profile
 
     kinds = classify_business_sheets(frames)
     sales_names = kinds.get("ventas", [])

@@ -857,3 +857,118 @@ def test_adaptive_indicator_catalog_blocks_unfiltered_mixed_currency_money():
     assert "monedas incompatibles" in by_id["ventas_netas"]["advertencias"][0]
     # Non-monetary metrics remain usable.
     assert by_id["unidades_vendidas"]["estado"] == "unavailable"
+
+
+def _nominal_collection_frame() -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "Fecha Pago": "01/05/2026",
+            "Período Cotizado": "01/03/2026",
+            "Valor Nominal": 100,
+            "Lote": 88,
+            "Descripción Lote": "PAGOS EN AGENCIAS",
+            "Agencia Recepción Pago": "WEB",
+            "Forma de pago descrip.": "Tarjeta",
+            "Cobrador Final Grupo": "EST. JURIDICO LEXCO",
+        },
+        {
+            "Fecha Pago": "02/05/2026",
+            "Período Cotizado": "01/04/2026",
+            "Valor Nominal": 200,
+            "Lote": 250,
+            "Descripción Lote": "PAGO ELECTRONICO",
+            "Agencia Recepción Pago": "WEB",
+            "Forma de pago descrip.": "Transferencia",
+            "Cobrador Final Grupo": "EJECUTIVOS NMV FLUJO",
+        },
+        {
+            "Fecha Pago": "03/05/2026",
+            "Período Cotizado": "01/04/2026",
+            "Valor Nominal": 50,
+            "Lote": 301,
+            "Descripción Lote": "PAGOS EN AGENCIAS",
+            "Agencia Recepción Pago": "SANTIAGO",
+            "Forma de pago descrip.": "Efectivo",
+            "Cobrador Final Grupo": "STOCK",
+        },
+        {
+            "Fecha Pago": "01/04/2026",
+            "Período Cotizado": "01/02/2026",
+            "Valor Nominal": 80,
+            "Lote": 100,
+            "Descripción Lote": "PAGOS EN AGENCIAS",
+            "Agencia Recepción Pago": "WEB",
+            "Forma de pago descrip.": "Tarjeta",
+            "Cobrador Final Grupo": "EST. JURIDICO GNA",
+        },
+    ])
+
+
+def test_nominal_collection_profile_uses_value_and_lot_rule():
+    result = analyze_business_workbook(
+        {"REQ5325": _nominal_collection_frame()},
+        {},
+        {},
+        date_from="2026-05-01",
+        date_to="2026-05-31",
+    )
+
+    assert result is not None
+    assert result["perfil"] == "cobranza_nominal"
+    dashboard = result["cobranza"]
+    assert dashboard["kpis"]["recaudacion_total"] == 350
+    assert dashboard["kpis"]["recaudacion_cobranza"] == 300
+    assert dashboard["kpis"]["diferencia"] == 50
+    assert dashboard["kpis"]["diferencia_pct"] == pytest.approx(14.29)
+    assert dashboard["kpis"]["registros"] == 3
+    assert dashboard["kpis"]["registros_cobranza"] == 2
+    assert dashboard["kpis"]["ticket_promedio_cobranza"] == 150
+    assert dashboard["comparacion"]["recaudacion_anterior"] == 80
+    assert dashboard["comparacion"]["variacion_pct"] == 275
+    assert result["catalogo_indicadores"]["categorias"][0]["indicadores"][0][
+        "formula"
+    ] == "Σ Valor Nominal donde Lote ≤ 300"
+
+
+def test_nominal_collection_filters_recalculate_denominators_and_judicial_team():
+    result = analyze_business_workbook(
+        {"REQ5325": _nominal_collection_frame()},
+        {},
+        {},
+        date_from="2026-04-01",
+        date_to="2026-05-31",
+        filters={"equipo": "JUDICIAL"},
+    )
+
+    assert result is not None
+    dashboard = result["cobranza"]
+    assert dashboard["kpis"]["recaudacion_total"] == 180
+    assert dashboard["kpis"]["recaudacion_cobranza"] == 180
+    assert dashboard["kpis"]["participacion_cobranza_pct"] == 100
+    assert result["filtros"]["aplicados"] == {"equipo": "JUDICIAL"}
+    assert set(result["filtros"]["disponibles"]["equipo"]) == {
+        "FLUJO",
+        "JUDICIAL",
+        "STOCK",
+    }
+    subgroups = {
+        row["subgrupo"]: row
+        for row in dashboard["equipos"]
+        if row["subgrupo"] is not None
+    }
+    assert subgroups["EST. JURIDICO LEXCO"]["participacion_equipo_pct"] == pytest.approx(
+        55.56
+    )
+    assert subgroups["EST. JURIDICO GNA"]["participacion_equipo_pct"] == pytest.approx(
+        44.44
+    )
+
+
+def test_business_filter_validation_accepts_collection_dimensions():
+    assert _validate_business_filters({
+        "periodo_cotizado": "2026-03",
+        "equipo": "JUDICIAL",
+        "subgrupo": "EST. JURIDICO LEXCO",
+        "agencia_pago": "WEB",
+        "forma_pago": "Tarjeta Red Compra",
+    })["equipo"] == "JUDICIAL"

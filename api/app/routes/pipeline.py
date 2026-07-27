@@ -56,7 +56,10 @@ from ..capabilities import Capability, require_capability_for_user
 from ..config import Settings, get_settings
 from ..engine.ai_refine import refine_with_ai
 from ..engine.audit import AUDIT_COLUMNS, build_audit_dataframe
-from ..engine.business import analyze_business_workbook
+from ..engine.business import (
+    analyze_business_workbook,
+    has_collection_dashboard_profile,
+)
 from ..engine.clean import DEFAULT_RULES, analyze_and_clean
 from ..engine.directed import (
     MAX_INSTRUCTIONS_CHARS,
@@ -584,6 +587,7 @@ _VALID_MAPPING_ROLES = {
 }
 _VALID_BUSINESS_FILTERS = {
     "sucursal", "canal", "vendedor", "categoria", "producto", "moneda",
+    "periodo_cotizado", "equipo", "subgrupo", "agencia_pago", "forma_pago",
 }
 
 
@@ -2842,7 +2846,7 @@ def _metrics_multi_from_processed(
         "eliminados": removed_duplicates,
         "conservados": max(detected_duplicates - removed_duplicates, 0),
     }
-    if business_view:
+    if business_view or has_collection_dashboard_profile(frames):
         business = analyze_business_workbook(
             frames,
             mappings,
@@ -3308,6 +3312,9 @@ def _metrics_from_clean_result(
     result: dict,
     date_from: str | None = None,
     date_to: str | None = None,
+    *,
+    sheet_name: str | None = None,
+    business_filters: dict[str, str] | None = None,
 ) -> dict:
     """Calcula KPI desde el resultado limpio ya disponible en memoria."""
 
@@ -3345,6 +3352,19 @@ def _metrics_from_clean_result(
         "eliminados": removed_duplicates,
         "conservados": max(detected_duplicates - removed_duplicates, 0),
     }
+    frame_name = sheet_name or "Datos"
+    frame = result["_df_limpio"]
+    if has_collection_dashboard_profile({frame_name: frame}):
+        business = analyze_business_workbook(
+            {frame_name: frame},
+            {frame_name: result.get("mapeo", {})},
+            {frame_name: result},
+            date_from=date_from,
+            date_to=date_to,
+            filters=business_filters,
+        )
+        if business is not None:
+            computed["analisis_negocio"] = business
     return computed
 
 
@@ -3360,6 +3380,7 @@ def _metrics_sync(
     scope: dict | None = None,
     cache_dataset_id: str | None = None,
     cache_revision: int | None = None,
+    business_filters: dict[str, str] | None = None,
 ) -> dict:
     # Las métricas siempre se calculan sobre datos estandarizados y limpios.
     # Con el caché (§5.7), cambiar el periodo NO re-corre todo el motor.
@@ -3375,7 +3396,14 @@ def _metrics_sync(
         cache_dataset_id=cache_dataset_id,
         cache_revision=cache_revision,
     )
-    return _metrics_from_clean_result(filename, result, date_from, date_to)
+    return _metrics_from_clean_result(
+        filename,
+        result,
+        date_from,
+        date_to,
+        sheet_name=sheet or "Datos",
+        business_filters=business_filters,
+    )
 
 
 def _restore_response(
@@ -4754,16 +4782,16 @@ async def metrics(
     )
     filename, content = await _read_input(file, storage_path, user)
     sheet_manifest = _parse_sheet_manifest(manifest)
+    parsed_business_filters = _validate_business_filters(
+        _parse_json_field(business_filters, "business_filters")
+        if business_filters
+        else None
+    )
     if sheet_manifest is not None:
         if not analysis_scope:
             raise HTTPException(status_code=422, detail="Las metricas multihoja requieren analysis_scope.")
         available = [entry["nombre"] for entry in sheet_manifest["hojas"]]
         parsed_analysis_scope = _parse_analysis_scope(analysis_scope, available)
-        parsed_business_filters = _validate_business_filters(
-            _parse_json_field(business_filters, "business_filters")
-            if business_filters
-            else None
-        )
         return await run_in_threadpool(
             _metrics_multi_cached_sync,
             filename,
@@ -4782,7 +4810,7 @@ async def metrics(
     return await run_in_threadpool(
         _metrics_sync, filename, content, mapping_dict, date_from, date_to,
         _clean_sheet_param(sheet), eliminar_duplicados, rules_dict, scope_dict,
-        dataset_id, revision,
+        dataset_id, revision, parsed_business_filters,
     )
 
 

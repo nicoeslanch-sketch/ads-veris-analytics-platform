@@ -29,6 +29,7 @@ import {
 import Card from './ui/Card'
 import Badge from './ui/Badge'
 import AdaptiveIndicatorCatalog from './AdaptiveIndicatorCatalog'
+import NominalCollectionDashboard from './NominalCollectionDashboard'
 import {
   AXIS_INK,
   CATEGORICAL,
@@ -919,6 +920,9 @@ export default function BusinessAnalysisPanel({
   analysis: BusinessAnalysis
   variant: Variant
 }) {
+  if (analysis.perfil === 'cobranza_nominal' && analysis.cobranza) {
+    return <NominalCollectionDashboard analysis={analysis} variant={variant} />
+  }
   return variant === 'summary'
     ? <ExecutiveSummary analysis={analysis} />
     : <DiagnosticAnalysis analysis={analysis} />
