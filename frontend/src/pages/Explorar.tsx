@@ -45,6 +45,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import ActiveSheetSelector from '../components/ActiveSheetSelector'
+import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
 import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
@@ -61,7 +62,7 @@ import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, truncateLabel } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
-import type { DatasetDimensions, GroupRow, MetricsResult } from '../lib/types'
+import type { AnalysisScope, DatasetDimensions, GroupRow, MetricsResult } from '../lib/types'
 
 // ── Configuración del análisis ────────────────────────────────────────────────
 
@@ -373,6 +374,12 @@ export default function Explorar() {
   const { file, cleaning, datasetId, storagePath, uploadedAt, metrics: contextMetrics, monthsAvailable, setMonthsAvailable, mappingOverride, sheet, sheetManifest, analysisScope, businessFilters, setBusinessFilters, eliminarDuplicados, period: rango, setPeriod: setRango } = useDataset()
   // Fase 14: la demo ficticia sirve métricas congeladas del bundle (sin backend)
   const demo = useDemo()
+  // "Relación manual" (modo `join`) reemplaza el contenido de la página por el
+  // workspace de relaciones, igual que en Resumen.
+  const [selectorMode, setSelectorMode] = useState<AnalysisScope['mode']>(
+    analysisScope?.mode ?? 'single',
+  )
+  const relationshipMode = selectorMode === 'join'
   const ready = Boolean(file && cleaning) || demo.active
 
   const [groupBy, setGroupBy] = useState<GroupBy>('mes')
@@ -839,8 +846,16 @@ export default function Explorar() {
         )}
       </div>
 
-      <ActiveSheetSelector />
+      <ActiveSheetSelector onModeChange={setSelectorMode} />
 
+      {/* "Relación manual" tiene su propio espacio también aquí. Antes esta
+          página mostraba la botonera pero nunca el workspace: al elegir el
+          modo el botón quedaba marcado y debajo seguía el contenido normal,
+          como si el botón no hiciera nada. */}
+      {relationshipMode && !demo.active ? (
+        <RelationshipWorkspace />
+      ) : (
+      <>
       {hasCosts && metrics && <CostReliabilityAnalysis metrics={metrics} />}
 
       {/* ¿Qué quieres descubrir hoy? (adaptado a las columnas del archivo) */}
@@ -1308,6 +1323,8 @@ export default function Explorar() {
             </Card>
           </div>
         </div>
+      )}
+      </>
       )}
     </>
   )
