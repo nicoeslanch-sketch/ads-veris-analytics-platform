@@ -466,15 +466,26 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
     await page.getByRole('link', { name: /Resumen/ }).first().click()
   }
   await expect(page.getByRole('heading', { name: 'Indicadores disponibles' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Indicadores habilitados por este libro' })).toBeVisible()
-  await expect(page.getByText('Ventas y crecimiento', { exact: true })).toBeVisible()
-  await expect(page.getByText('Rentabilidad', { exact: true })).toBeVisible()
-  await expect(page.getByText('Caja y liquidez', { exact: true })).toBeVisible()
-  await expect(page.getByText('Indicadores financieros', { exact: true })).toBeVisible()
-  await expect(page.getByText(/por conectar/).first()).toBeVisible()
-  await page
-    .locator('section[aria-labelledby="adaptive-indicators-title"]')
-    .screenshot({ path: testInfo.outputPath('catalogo-adaptativo.png') })
+  // El recuadro "Catálogo adaptativo" (conteos y resumen por categoría) se
+  // retiró por ocupar una pantalla describiendo el mecanismo. La selección
+  // adaptativa se comprueba donde importa: las tarjetas que el libro puede
+  // calcular, en UNA sola fila deslizable.
+  const adaptiveIndicators = page.getByRole('group', {
+    name: 'Indicadores habilitados por este libro',
+  })
+  await expect(adaptiveIndicators).toBeVisible()
+  const adaptiveRow = await adaptiveIndicators.evaluate((element) => {
+    const cards = Array.from(element.firstElementChild?.children ?? []) as HTMLElement[]
+    return {
+      count: cards.length,
+      filas: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top))).size,
+    }
+  })
+  expect(adaptiveRow.count).toBeGreaterThan(0)
+  expect(adaptiveRow.filas).toBe(1)
+  await adaptiveIndicators.screenshot({
+    path: testInfo.outputPath('indicadores-adaptativos.png'),
+  })
   const flow = page.getByTestId('business-summary-flow')
   await expect(flow).toBeVisible()
   const layout = await flow.evaluate((element) => ({

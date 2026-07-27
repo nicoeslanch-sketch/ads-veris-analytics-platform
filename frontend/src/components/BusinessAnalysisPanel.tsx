@@ -28,6 +28,7 @@ import {
 } from 'recharts'
 import Card from './ui/Card'
 import Badge from './ui/Badge'
+import KpiCarousel from './ui/KpiCarousel'
 import AdaptiveIndicatorCatalog from './AdaptiveIndicatorCatalog'
 import NominalCollectionDashboard from './NominalCollectionDashboard'
 import {
@@ -449,6 +450,32 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         }]
       : []),
   ]
+  // Una tarjeta cuyo valor no se pudo calcular no se muestra: antes ocupaba
+  // sitio con "No disponible"/"Dato faltante" y obligaba a leer decenas de
+  // KPIs vacíos. Si el libro no trae con qué calcular cuentas por cobrar,
+  // inventario o EBITDA, esa tarjeta simplemente no existe.
+  // El orden es de relevancia para una PyME: lo que se ve primero en la fila
+  // es el resultado del negocio, no un dato de detalle.
+  const cardPriority = [
+    'Ventas netas observadas',
+    'Utilidad operacional',
+    'Utilidad bruta histórica',
+    'Margen bruto · base histórica',
+    'Gastos operativos',
+    'Costo de ventas histórico',
+    'Cuentas por cobrar',
+    'Inventario valorizado',
+    'EBITDA',
+  ]
+  const visibleCards = cards
+    .filter((card) => card.value !== 'No disponible' && card.state !== 'Dato faltante')
+    .sort((left, right) => {
+      const rank = (label: string) => {
+        const index = cardPriority.indexOf(label)
+        return index === -1 ? cardPriority.length : index
+      }
+      return rank(left.label) - rank(right.label)
+    })
   const availableRatios = analysis.ratios.filter((ratio) => ratio.estado !== 'unavailable')
   const monthlyProfitability = analysis.evolucion
     .filter((row) => row.utilidad_bruta != null)
@@ -511,11 +538,11 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-4">
-        {cards.map(({ label, value, detail, icon: Icon, color, comparison, state }) => (
+      <KpiCarousel label="Indicadores del negocio">
+        {visibleCards.map(({ label, value, detail, icon: Icon, color, comparison, state }) => (
           <Card
             key={label}
-            className="!p-4"
+            className="flex h-full flex-col !p-4"
             style={{ background: `linear-gradient(145deg, ${color}16, #ffffff 66%)` }}
           >
             <div className="flex items-center gap-2">
@@ -528,7 +555,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
             <p className="mt-1 text-[11px] leading-relaxed text-navy/50">{detail}</p>
             <p className="mt-2 text-[10px] font-medium text-navy/55">{comparison}</p>
             <span className={[
-              'mt-2 inline-flex rounded-full px-2 py-0.5 text-[9px] font-semibold',
+              'mt-auto inline-flex self-start rounded-full px-2 py-0.5 pt-0.5 text-[9px] font-semibold',
               state === 'Certificado'
                 ? 'bg-green/10 text-green'
                 : state === 'Dato faltante' || state === 'No certificado'
@@ -539,7 +566,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
             </span>
           </Card>
         ))}
-      </section>
+      </KpiCarousel>
 
       {qualityIssueCount > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold/30 bg-gold/[0.07] px-4 py-3">

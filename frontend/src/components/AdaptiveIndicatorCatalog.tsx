@@ -24,6 +24,7 @@ import {
   UsersRound,
 } from 'lucide-react'
 import Card from './ui/Card'
+import KpiCarousel from './ui/KpiCarousel'
 import {
   AXIS_INK,
   CATEGORICAL,
@@ -31,11 +32,7 @@ import {
   truncateLabel,
 } from '../lib/charts'
 import { formatCLP, formatNumber } from '../lib/format'
-import type {
-  BusinessAnalysis,
-  BusinessIndicator,
-  BusinessIndicatorCategory,
-} from '../lib/types'
+import type { BusinessAnalysis, BusinessIndicator } from '../lib/types'
 
 const CATEGORY_META = {
   ventas: { color: '#0ea5a8', icon: ChartNoAxesCombined },
@@ -169,34 +166,6 @@ function IndicatorCard({ indicator }: { indicator: BusinessIndicator }) {
   )
 }
 
-function CategorySummary({ category }: { category: BusinessIndicatorCategory }) {
-  const meta = categoryMeta(category.id)
-  const Icon = meta.icon
-  return (
-    <div className={[
-      'min-h-[64px] rounded-lg border px-3 py-3 transition-colors',
-      category.disponibles > 0
-        ? 'border-navy/10 bg-white hover:border-teal/30'
-        : 'border-navy/5 bg-navy/[0.025]',
-    ].join(' ')}>
-      <div className="flex items-center gap-2">
-        <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-          style={{ color: meta.color, backgroundColor: `${meta.color}16` }}
-        >
-          <Icon className="h-4 w-4" />
-        </span>
-        <div className="min-w-0">
-          <p className="line-clamp-2 text-xs font-semibold leading-tight text-navy">{category.nombre}</p>
-          <p className="text-[10px] text-navy/45">
-            {category.disponibles} de {category.total} habilitados
-          </p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function DonutPanel({
   title,
   subtitle,
@@ -301,24 +270,27 @@ export default function AdaptiveIndicatorCatalog({ analysis }: { analysis: Busin
   const enabled = catalog.categorias
     .flatMap((category) => category.indicadores)
     .filter((indicator) => indicator.estado === 'available' || indicator.estado === 'partial')
+  // Orden de relevancia para una PyME: primero lo que mide el resultado y la
+  // caja; los promedios por documento y las métricas de detalle van al final
+  // (se alcanzan deslizando, sin ocupar la primera pantalla).
   const priority = [
     'ventas_ultimo_mes_completo',
-    'ticket_promedio_documento',
-    'unidades_vendidas',
     'cobertura_costos_pct',
     'cuentas_por_cobrar',
     'cobranza_vencida',
     'stock_valorizado',
     'rotacion_inventario',
     'compras_netas',
+    'unidades_vendidas',
     'concentracion_cliente_principal',
     'cumplimiento_meta_ventas',
+    'ticket_promedio_documento',
     'conversion_marketing',
   ]
   const highlights = priority
     .map((id) => enabled.find((indicator) => indicator.id === id))
     .filter((indicator): indicator is BusinessIndicator => Boolean(indicator))
-    .slice(0, 8)
+    .slice(0, 10)
   const receivables = analysis.operacion.cuentas_por_cobrar
   const overdue = analysis.operacion.cuentas_vencidas
   const expenseFixed = analysis.operacion.gastos_fijos
@@ -326,46 +298,17 @@ export default function AdaptiveIndicatorCatalog({ analysis }: { analysis: Busin
   const monetaryChartsAllowed = catalog.moneda !== 'mixta'
 
   return (
-    <section className="space-y-4" aria-labelledby="adaptive-indicators-title">
-      <Card>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-teal">
-              Catálogo adaptativo
-            </p>
-            <h2 id="adaptive-indicators-title" className="mt-1 text-base font-semibold text-navy">
-              Indicadores habilitados por este libro
-            </h2>
-            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-navy/55">
-              ADS Veris elige cálculos y gráficos según las hojas, campos y relaciones realmente disponibles.
-              Un indicador sin base suficiente se explica; nunca se inventa ni convierte un dato faltante en cero.
-            </p>
-          </div>
-          <div className="flex gap-2 text-[10px]">
-            <span className="rounded-full bg-green/10 px-2.5 py-1 font-semibold text-green">
-              {catalog.disponibles} disponibles
-            </span>
-            <span className="rounded-full bg-gold/15 px-2.5 py-1 font-semibold text-amber-700">
-              {catalog.parciales} parciales
-            </span>
-            <span className="rounded-full bg-navy/7 px-2.5 py-1 font-semibold text-navy/50">
-              {catalog.no_disponibles} por conectar
-            </span>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          {catalog.categorias.map((category) => (
-            <CategorySummary key={category.id} category={category} />
-          ))}
-        </div>
-      </Card>
-
+    <section className="space-y-4">
+      {/* El recuadro "Catálogo adaptativo" (conteos y resumen por categoría)
+          se retiró: ocupaba una pantalla entera para describir el mecanismo en
+          vez de mostrar resultados. La selección adaptativa sigue intacta —
+          abajo solo aparecen los indicadores que este libro puede calcular. */}
       {highlights.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCarousel label="Indicadores habilitados por este libro">
           {highlights.map((indicator) => (
             <IndicatorCard key={indicator.id} indicator={indicator} />
           ))}
-        </div>
+        </KpiCarousel>
       )}
 
       <div className="grid items-start gap-4 xl:grid-cols-2">
