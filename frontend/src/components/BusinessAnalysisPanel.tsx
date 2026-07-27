@@ -553,7 +553,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
               </span>
               <p className="text-xs font-medium text-navy/55">{label}</p>
             </div>
-            <KpiValue value={value} maxPx={30} className="mt-3" />
+            <KpiValue value={value} maxPx={24} className="mt-3" />
             <p className="mt-1 text-[11px] leading-relaxed text-navy/50">{detail}</p>
             <p className="mt-2 text-[10px] font-medium text-navy/55">{comparison}</p>
             <span className={[

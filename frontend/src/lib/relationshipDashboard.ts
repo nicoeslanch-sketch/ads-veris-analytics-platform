@@ -222,7 +222,12 @@ export async function fetchRelationshipCatalog(
       manifest: JSON.stringify(params.manifest),
       ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
     }),
-    { signal, timeoutMs: 60_000 },
+    // Analizar el libro completo es trabajo de PIPELINE, no una lectura
+    // rápida: con el arranque en frío de Render (~50 s) un presupuesto de
+    // 60-90 s se agotaba antes de empezar y la petición se cancelaba sola
+    // ("La solicitud tardó demasiado"). Sin `timeoutMs` se usa el margen
+    // amplio del pipeline, el mismo que ya usa /metrics.
+    { signal },
   )
   console.info('[ADS Veris timing] relationship-catalog', {
     durationMs: Math.round(performance.now() - started),
@@ -260,7 +265,12 @@ export async function fetchRelationshipDashboard(
       ...(period.from ? { date_from: period.from } : {}),
       ...(period.to ? { date_to: period.to } : {}),
     }),
-    { signal, timeoutMs: 90_000 },
+    // Analizar el libro completo es trabajo de PIPELINE, no una lectura
+    // rápida: con el arranque en frío de Render (~50 s) un presupuesto de
+    // 60-90 s se agotaba antes de empezar y la petición se cancelaba sola
+    // ("La solicitud tardó demasiado"). Sin `timeoutMs` se usa el margen
+    // amplio del pipeline, el mismo que ya usa /metrics.
+    { signal },
   )
   console.info('[ADS Veris timing] relationship-dashboard', {
     durationMs: Math.round(performance.now() - started),
@@ -283,6 +293,11 @@ export async function validateManualRelationship(
       relationship: JSON.stringify({ ...join, type: 'left' }),
       ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
     }),
-    { signal, timeoutMs: 60_000 },
+    // Analizar el libro completo es trabajo de PIPELINE, no una lectura
+    // rápida: con el arranque en frío de Render (~50 s) un presupuesto de
+    // 60-90 s se agotaba antes de empezar y la petición se cancelaba sola
+    // ("La solicitud tardó demasiado"). Sin `timeoutMs` se usa el margen
+    // amplio del pipeline, el mismo que ya usa /metrics.
+    { signal },
   )
 }

@@ -101,7 +101,7 @@ function KpiCard({
       </div>
       {/* Fuera de la fila del icono: así el valor se centra respecto de TODA
           la tarjeta y dispone del ancho completo para agrandarse. */}
-      <KpiValue value={value} maxPx={30} className="mt-2" />
+      <KpiValue value={value} maxPx={24} className="mt-2" />
       <div className="mt-2 min-h-[16px]">{comparison}</div>
       <p className="mt-1 text-[10px] leading-relaxed text-navy/45">{note}</p>
     </Card>

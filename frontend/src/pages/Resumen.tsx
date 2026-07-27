@@ -697,7 +697,7 @@ export default function Resumen() {
                   </span>
                   <p className="text-xs font-medium text-navy/55">{label}</p>
                 </div>
-                <KpiValue value={value} maxPx={30} className="mt-2.5" />
+                <KpiValue value={value} maxPx={26} className="mt-2.5" />
                 <div className="mt-1.5 flex items-end justify-between gap-2">
                   <div className="min-w-0">{variation}</div>
                   <Sparkline data={spark} color={color} />

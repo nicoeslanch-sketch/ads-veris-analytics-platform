@@ -130,7 +130,7 @@ function IndicatorCard({ indicator }: { indicator: BusinessIndicator }) {
           style={{ backgroundColor: meta.color }}
         />
       </div>
-      <KpiValue value={indicatorValue(indicator)} maxPx={26} className="mt-2" />
+      <KpiValue value={indicatorValue(indicator)} maxPx={22} className="mt-2" />
       <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
         <span className={[
           'rounded-full px-2 py-0.5 font-semibold',
