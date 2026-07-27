@@ -3985,7 +3985,13 @@ def _refresh_restore_sync(user_id: str, dataset_id: str | None = None) -> dict:
                 sheet=sheet,
                 eliminar_duplicados=remove_duplicates,
                 cache_dataset_id=record["id"],
-                cache_revision=revision,
+                # La revisión nueva protege la escritura atómica, pero no
+                # cambia archivo, reglas, mapeo ni hoja. Usarla también como
+                # identidad de cálculo descartaba la limpieza ya validada y
+                # hacía que /restore/refresh repitiera todo el pipeline. La
+                # clave conserva la revisión que produjo el snapshot anterior;
+                # ENGINE_VERSION sigue invalidando resultados de otro motor.
+                cache_revision=old_snapshot.get("revision"),
                 preloaded=preloaded,
             )
             cleaning = _public_clean_response(internal, filename)

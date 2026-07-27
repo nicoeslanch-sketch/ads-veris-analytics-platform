@@ -278,6 +278,13 @@ def test_refresh_recalcula_el_snapshot_guardado_con_una_revision_nueva(monkeypat
         "snapshot": old,
     }
     stored: list[dict] = []
+    cache_revisions: list[int | None] = []
+    analyze_cached = pl._analyze_cached
+
+    def tracked_analyze(*args, **kwargs):
+        cache_revisions.append(kwargs.get("cache_revision"))
+        return analyze_cached(*args, **kwargs)
+
     monkeypatch.setattr(
         pl,
         "fetch_latest_restore_record",
@@ -295,6 +302,7 @@ def test_refresh_recalcula_el_snapshot_guardado_con_una_revision_nueva(monkeypat
     )
     monkeypatch.setattr(pl, "reserve_restore_snapshot_revision", lambda *_args: 44)
     monkeypatch.setattr(pl, "download_from_storage", lambda _path: content)
+    monkeypatch.setattr(pl, "_analyze_cached", tracked_analyze)
     monkeypatch.setattr(
         pl,
         "store_restore_snapshot",
@@ -308,6 +316,9 @@ def test_refresh_recalcula_el_snapshot_guardado_con_una_revision_nueva(monkeypat
     assert body["metrics"]["kpis"]["ingresos_totales"]["valor"] == 1000
     assert len(stored) == 1
     assert stored[0]["revision"] == 44
+    # La revisión 44 protege la escritura, pero el cálculo puede reutilizar la
+    # limpieza validada que produjo el snapshot 12.
+    assert cache_revisions == [old["revision"]]
 
 
 def test_snapshot_recalcula_hashes_y_exige_sha256_real():
