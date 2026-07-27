@@ -74,4 +74,30 @@ describe('alertas empresariales', () => {
     const metrics = { ...metricsFixture(), moneda_mixta: true }
     expect(buildBusinessAlerts(metrics, DEFAULT_ALERT_RULES)).toEqual([])
   })
+
+  it('no marca concentración de producto cuando el catálogo tiene un solo producto', () => {
+    // Regresión: un solo producto en top_productos concentra 100% por
+    // definición -- no es un hallazgo accionable (no hay a qué diversificar).
+    // El mismo resguardo ya existía para concentración de canal (>= 2).
+    const metrics = {
+      ...metricsFixture(),
+      top_productos: [
+        { nombre: 'Único producto', ingresos: 1000, porcentaje: 100, participacion_bruta_pct: 100 },
+      ],
+    }
+    const alerts = buildBusinessAlerts(metrics, DEFAULT_ALERT_RULES)
+    expect(alerts.some((alert) => alert.id === 'concentracion_producto')).toBe(false)
+  })
+
+  it('sí marca concentración de producto con 2+ productos y uno dominante', () => {
+    const metrics = {
+      ...metricsFixture(),
+      top_productos: [
+        { nombre: 'Dominante', ingresos: 900, porcentaje: 90, participacion_bruta_pct: 90 },
+        { nombre: 'Secundario', ingresos: 100, porcentaje: 10, participacion_bruta_pct: 10 },
+      ],
+    }
+    const alerts = buildBusinessAlerts(metrics, DEFAULT_ALERT_RULES)
+    expect(alerts.some((alert) => alert.id === 'concentracion_producto')).toBe(true)
+  })
 })

@@ -297,6 +297,10 @@ export function buildBusinessAlerts(
   if (
     rules.concentracion_producto.activa
     && product
+    // Un solo producto en el catálogo concentra 100% por definición -- no es
+    // un hallazgo accionable (no hay "alternativa" a diversificar). Mismo
+    // resguardo que ya tiene la concentración de canal más abajo.
+    && (metrics.top_productos?.length ?? 0) >= 2
     && productShare != null
     && productShare > rules.concentracion_producto.umbral_pct
   ) {
