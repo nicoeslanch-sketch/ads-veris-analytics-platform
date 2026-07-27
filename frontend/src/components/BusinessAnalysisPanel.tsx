@@ -28,6 +28,7 @@ import {
 } from 'recharts'
 import Card from './ui/Card'
 import Badge from './ui/Badge'
+import AdaptiveIndicatorCatalog from './AdaptiveIndicatorCatalog'
 import {
   AXIS_INK,
   CATEGORICAL,
@@ -552,6 +553,8 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           </Link>
         </div>
       )}
+
+      <AdaptiveIndicatorCatalog analysis={analysis} />
 
       <div data-testid="business-summary-flow" className="grid items-start gap-6 xl:grid-cols-2">
         {analysis.evolucion.length > 0 && (

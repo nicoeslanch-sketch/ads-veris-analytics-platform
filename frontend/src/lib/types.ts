@@ -648,6 +648,48 @@ export type BusinessFilterKey =
 
 export type BusinessFilters = Partial<Record<BusinessFilterKey, string>>
 
+export interface BusinessIndicator {
+  id: string
+  categoria: string
+  nombre: string
+  valor: number | null
+  unidad: 'CLP' | 'CLP/documento' | 'unidades' | '%' | 'días' | 'veces' | string
+  periodo_actual: { desde: string | null; hasta: string | null }
+  valor_anterior: number | null
+  diferencia_nominal: number | null
+  variacion: number | null
+  tipo_variacion: 'porcentaje' | 'puntos_porcentuales' | string
+  formula: string
+  numerador: number | null
+  denominador: number | null
+  cobertura_datos_pct: number | null
+  estado: 'available' | 'partial' | 'unavailable' | 'blocked'
+  advertencias: string[]
+  requiere: string[]
+  fuentes: string[]
+  polaridad: 'higher_is_better' | 'lower_is_better' | 'neutral' | string
+  visualizaciones: string[]
+}
+
+export interface BusinessIndicatorCategory {
+  id: string
+  nombre: string
+  descripcion: string
+  estado: 'available' | 'partial' | 'unavailable'
+  disponibles: number
+  total: number
+  indicadores: BusinessIndicator[]
+}
+
+export interface BusinessIndicatorCatalog {
+  version: number
+  moneda: string
+  categorias: BusinessIndicatorCategory[]
+  disponibles: number
+  parciales: number
+  no_disponibles: number
+}
+
 export interface BusinessAnalysis {
   version: number
   filtros?: {
@@ -822,6 +864,7 @@ export interface BusinessAnalysis {
     accion: string
     confianza: number
   }>
+  catalogo_indicadores?: BusinessIndicatorCatalog
 }
 
 export interface MetricsResult {

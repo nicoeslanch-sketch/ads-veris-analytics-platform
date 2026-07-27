@@ -3,6 +3,7 @@
 import pandas as pd
 import pytest
 from fastapi import HTTPException
+from types import SimpleNamespace
 
 from app.engine.business import analyze_business_workbook, classify_business_sheets
 from app.routes.pipeline import _validate_business_filters
@@ -733,7 +734,19 @@ def test_business_analysis_enriches_category_by_id_and_marks_partial_month_pace(
         }
     }
 
-    result = analyze_business_workbook(frames, mappings, {})
+    result = analyze_business_workbook(
+        frames,
+        mappings,
+        {
+            "Ventas_2026": {
+                "_moneda": SimpleNamespace(
+                    dominante="CLP",
+                    detectadas=["CLP", "USD"],
+                    mixta=True,
+                )
+            }
+        },
+    )
 
     assert result is not None
     assert result["agrupaciones"]["categorias"][0]["nombre"] == "Aseo Industrial"
@@ -745,3 +758,102 @@ def test_business_analysis_enriches_category_by_id_and_marks_partial_month_pace(
     # Noviembre: 3.000 / 30 = 100 por día; diciembre: 1.800 / 18 = 100.
     assert december["variacion_ritmo_pct"] == pytest.approx(0.0)
     assert december["proyeccion_ritmo_mes_completo"] == pytest.approx(3100.0)
+
+
+def test_adaptive_indicator_catalog_exposes_only_defensible_metrics():
+    frames = {
+        "Ventas_2026": pd.DataFrame([
+            {
+                "Fecha Venta": "31/01/2026",
+                "ID Documento": "D1",
+                "SKU Producto": "A",
+                "Cantidad": 2,
+                "Monto Venta": 200,
+                "Estado": "Vigente",
+            },
+            {
+                "Fecha Venta": "28/02/2026",
+                "ID Documento": "D2",
+                "SKU Producto": "A",
+                "Cantidad": 1,
+                "Monto Venta": 120,
+                "Estado": "Vigente",
+            },
+        ]),
+        "Costos_Productos": pd.DataFrame([
+            {"SKU Producto": "A", "Costo Unitario": 40},
+        ]),
+        "Inventario": pd.DataFrame([
+            {
+                "Fecha Snapshot": "28/02/2026",
+                "SKU Producto": "A",
+                "Stock Disponible": 5,
+                "Valor Inventario": 200,
+            },
+        ]),
+    }
+
+    result = analyze_business_workbook(frames, _sales_mapping(), {})
+
+    assert result is not None
+    catalog = result["catalogo_indicadores"]
+    assert result["version"] == 2
+    assert catalog["version"] == 1
+    by_id = {
+        indicator["id"]: indicator
+        for category in catalog["categorias"]
+        for indicator in category["indicadores"]
+    }
+    assert by_id["ventas_netas"]["valor"] == 320
+    assert by_id["ventas_netas"]["estado"] == "available"
+    assert by_id["ticket_promedio_documento"]["valor"] == 160
+    assert by_id["costo_venta"]["valor"] == 120
+    assert by_id["utilidad_bruta"]["valor"] == 200
+    assert by_id["stock_valorizado"]["valor"] == 200
+    # Cash flow and balance metrics are not inferred from sales or inventory.
+    # Missing inputs stay null rather than becoming a fake zero.
+    assert by_id["flujo_neto_caja"]["valor"] is None
+    assert by_id["flujo_neto_caja"]["estado"] == "unavailable"
+    assert by_id["liquidez_corriente"]["valor"] is None
+    assert by_id["roe"]["valor"] is None
+    assert by_id["costo_venta"]["formula"].startswith("Σ (cantidad")
+    assert by_id["costo_venta"]["fuentes"]
+
+
+def test_adaptive_indicator_catalog_blocks_unfiltered_mixed_currency_money():
+    frames = {
+        "Ventas_2026": pd.DataFrame([
+            {
+                "Fecha Venta": "31/01/2026",
+                "ID Documento": "D1",
+                "Monto Venta": 100,
+                "Moneda": "CLP",
+                "Estado": "Vigente",
+            },
+            {
+                "Fecha Venta": "28/02/2026",
+                "ID Documento": "D2",
+                "Monto Venta": 20,
+                "Moneda": "USD",
+                "Estado": "Vigente",
+            },
+        ]),
+    }
+    mappings = _sales_mapping()
+    mappings["Ventas_2026"]["moneda"] = "Moneda"
+
+    result = analyze_business_workbook(frames, mappings, {})
+
+    assert result is not None
+    catalog = result["catalogo_indicadores"]
+    assert catalog["moneda"] == "mixta"
+    by_id = {
+        indicator["id"]: indicator
+        for category in catalog["categorias"]
+        for indicator in category["indicadores"]
+    }
+    assert by_id["ventas_netas"]["valor"] is None
+    assert by_id["ventas_netas"]["estado"] == "blocked"
+    assert "monedas incompatibles" in by_id["ventas_netas"]["advertencias"][0]
+    # Non-monetary metrics remain usable.
+    assert by_id["unidades_vendidas"]["estado"] == "unavailable"

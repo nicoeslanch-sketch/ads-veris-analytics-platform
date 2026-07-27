@@ -534,6 +534,11 @@ def _business_filter_dimensions(
             sales, seller_key, sellers, seller_ref_key, seller_name
         ).fillna(sales[seller_key])
 
+    currency_column = mapping.get("moneda") or find_column(sales.columns, "moneda")
+    if currency_column and currency_column in sales.columns:
+        dimensions["moneda"] = sales[currency_column]
+        return dimensions
+
     currency_by_sheet: dict[str, str] = {}
     for name in kinds.get("ventas", []):
         detection = results.get(name, {}).get("_moneda")
@@ -868,6 +873,91 @@ def _ratio(
     }
 
 
+def _indicator_contract(
+    key: str,
+    category: str,
+    label: str,
+    value: float | int | None,
+    unit: str,
+    *,
+    period_from: str | None,
+    period_to: str | None,
+    formula: str,
+    numerator: float | int | None = None,
+    denominator: float | int | None = None,
+    prior_value: float | int | None = None,
+    variation_type: str = "porcentaje",
+    coverage: float | None = None,
+    status: str | None = None,
+    warnings: list[str] | None = None,
+    required: list[str] | None = None,
+    sources: list[str] | None = None,
+    polarity: str = "neutral",
+    visualizations: list[str] | None = None,
+) -> dict[str, Any]:
+    """Stable, auditable contract used by every adaptive KPI.
+
+    Missing inputs remain ``None`` and are never converted to zero.  The
+    frontend can therefore distinguish an unavailable indicator from a real
+    result equal to zero.
+    """
+
+    effective_status = status or (
+        "available"
+        if value is not None and (coverage is None or coverage >= 99.5)
+        else "partial"
+        if value is not None
+        else "unavailable"
+    )
+    nominal_change = (
+        float(value) - float(prior_value)
+        if value is not None and prior_value is not None
+        else None
+    )
+    if variation_type == "puntos_porcentuales":
+        variation = nominal_change
+    elif (
+        nominal_change is not None
+        and prior_value is not None
+        and float(prior_value) != 0
+    ):
+        variation = nominal_change / abs(float(prior_value)) * 100
+    else:
+        variation = None
+    return {
+        "id": key,
+        "categoria": category,
+        "nombre": label,
+        "valor": round(float(value), 2) if value is not None else None,
+        "unidad": unit,
+        "periodo_actual": {"desde": period_from, "hasta": period_to},
+        "valor_anterior": round(float(prior_value), 2)
+        if prior_value is not None
+        else None,
+        "diferencia_nominal": round(nominal_change, 2)
+        if nominal_change is not None
+        else None,
+        "variacion": round(variation, 2) if variation is not None else None,
+        "tipo_variacion": variation_type,
+        "formula": formula,
+        "numerador": round(float(numerator), 2)
+        if numerator is not None
+        else None,
+        "denominador": round(float(denominator), 2)
+        if denominator is not None
+        else None,
+        "cobertura_datos_pct": round(float(coverage), 1)
+        if coverage is not None
+        else None,
+        "estado": effective_status,
+        "advertencias": warnings or [],
+        "requiere": required or [],
+        "fuentes": sources or [],
+        "polaridad": polarity,
+        "visualizaciones": visualizations or [],
+    }
+
+
 def analyze_business_workbook(
     frames: dict[str, pd.DataFrame],
     mappings: dict[str, dict[str, str]],
@@ -926,6 +1016,7 @@ def analyze_business_workbook(
     amount_col = _net_amount_column(sales.columns, domain="venta") or mapping.get("monto")
     quantity_col = mapping.get("cantidad") or find_column(sales.columns, "cantidad")
     product_key = find_column(sales.columns, "sku", "producto") or find_column(sales.columns, "id", "producto")
+    client_key = mapping.get("cliente") or find_column(sales.columns, "id", "cliente")
     document_key = find_column(sales.columns, "id", "documento")
     record_key = _first_column(
         sales.columns,
@@ -2243,9 +2334,771 @@ def analyze_business_workbook(
             if name
         ],
     }
+    period_dates = sales_dates[indicator_mask & sales_dates.notna()]
+    period_start = (
+        date_from
+        or (
+            declared_period_from.date().isoformat()
+            if declared_period_from is not None
+            else period_dates.min().date().isoformat()
+            if not period_dates.empty
+            else None
+        )
+    )
+    period_end = (
+        date_to
+        or (
+            declared_period_to.date().isoformat()
+            if declared_period_to is not None
+            else period_dates.max().date().isoformat()
+            if not period_dates.empty
+            else None
+        )
+    )
+    complete_months = [row for row in monthly_rows if not row.get("parcial")]
+    latest_complete = complete_months[-1] if complete_months else None
+    previous_complete = complete_months[-2] if len(complete_months) >= 2 else None
+    indicator_rows = int((indicator_mask & amount.notna()).sum())
+    indicator_documents = (
+        int(document_keys[indicator_mask & document_keys.notna()].nunique())
+        if document_key
+        else indicator_rows
+    )
+    indicator_units = (
+        float(quantity[indicator_mask & quantity.notna()].sum())
+        if quantity_col and quantity.notna().any()
+        else None
+    )
+    indicator_clients = (
+        int(_keys(sales.loc[indicator_mask, client_key]).dropna().nunique())
+        if client_key
+        else None
+    )
+    ticket_average = (
+        observed_sales / indicator_documents if indicator_documents else None
+    )
+    currency_options = available_filters.get("moneda", [])
+    selected_currency = applied_filters.get("moneda")
+    currency_label = (
+        selected_currency
+        or (currency_options[0] if len(currency_options) == 1 else None)
+        or "CLP"
+    )
+    mixed_unfiltered_currency = len(currency_options) > 1 and not selected_currency
+    currency_unit = currency_label
+    ticket_currency_unit = f"{currency_label}/documento"
+    available_source_names = sorted(used_sheets)
+    cost_warning = (
+        []
+        if certified_cost_coverage >= 99.5
+        else [
+            "Se calcula solo sobre ventas con costo válido; las ventas sin costo "
+            "no se tratan como costo cero."
+        ]
+    )
+    partial_period_warning = (
+        [
+            "El último mes es parcial; las comparaciones usan los dos últimos "
+            "meses completos."
+        ]
+        if monthly_rows and monthly_rows[-1].get("parcial")
+        else []
+    )
+
+    indicator_catalog_rows = [
+        _indicator_contract(
+            "ventas_netas",
+            "ventas",
+            "Ventas netas",
+            observed_sales,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ monto neto de documentos no anulados y no estructurales",
+            numerator=observed_sales,
+            coverage=100.0 if amount_col else None,
+            warnings=partial_period_warning,
+            required=["fecha", "monto neto", "estado"],
+            sources=sales_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal", "barras_comparativas"],
+        ),
+        _indicator_contract(
+            "ventas_ultimo_mes_completo",
+            "ventas",
+            "Ventas del último mes completo",
+            latest_complete.get("ventas") if latest_complete else None,
+            currency_unit,
+            period_from=latest_complete.get("mes") if latest_complete else None,
+            period_to=latest_complete.get("mes") if latest_complete else None,
+            prior_value=previous_complete.get("ventas")
+            if previous_complete
+            else None,
+            formula="Σ ventas del último mes con cobertura completa",
+            warnings=partial_period_warning,
+            required=["fecha", "monto neto"],
+            sources=sales_names,
+            polarity="higher_is_better",
+            visualizations=["kpi_tendencia", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "ticket_promedio_documento",
+            "ventas",
+            "Ticket promedio por documento",
+            ticket_average,
+            ticket_currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Ventas netas ÷ documentos únicos",
+            numerator=observed_sales,
+            denominator=indicator_documents,
+            status="available" if document_key and ticket_average is not None else "partial"
+            if ticket_average is not None
+            else "unavailable",
+            warnings=[]
+            if document_key
+            else ["No existe ID de documento; se usa cada fila como aproximación."],
+            required=["monto neto", "ID documento"],
+            sources=sales_names,
+            polarity="neutral",
+            visualizations=["kpi"],
+        ),
+        _indicator_contract(
+            "unidades_vendidas",
+            "ventas",
+            "Unidades vendidas",
+            indicator_units,
+            "unidades",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ cantidad; las devoluciones conservan su signo",
+            numerator=indicator_units,
+            required=["cantidad", "estado"],
+            sources=sales_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal", "barras_comparativas"],
+        ),
+        _indicator_contract(
+            "costo_venta",
+            "rentabilidad",
+            "Costo de ventas conocido",
+            paired_cost if paired.any() else None,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ (cantidad × costo unitario vigente a la fecha)",
+            numerator=paired_cost if paired.any() else None,
+            coverage=certified_cost_coverage,
+            warnings=cost_warning,
+            required=["cantidad", "fecha", "clave producto", "costo unitario vigente"],
+            sources=[
+                name
+                for name in (cost_history_name, current_cost_name, *sales_names)
+                if name
+            ],
+            polarity="lower_is_better",
+            visualizations=["kpi", "barras_apiladas", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "utilidad_bruta",
+            "rentabilidad",
+            "Utilidad bruta",
+            gross_profit,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Ventas pareadas − costo de ventas conocido",
+            numerator=gross_profit,
+            denominator=paired_sales,
+            coverage=certified_cost_coverage,
+            warnings=cost_warning,
+            required=["ventas", "costo de ventas"],
+            sources=available_source_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal", "ranking"],
+        ),
+        _indicator_contract(
+            "margen_bruto_pct",
+            "rentabilidad",
+            "Margen bruto",
+            gross_margin,
+            "%",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Utilidad bruta ÷ ventas pareadas × 100",
+            numerator=gross_profit,
+            denominator=paired_sales,
+            variation_type="puntos_porcentuales",
+            coverage=certified_cost_coverage,
+            warnings=cost_warning,
+            required=["ventas pareadas", "utilidad bruta"],
+            sources=available_source_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_porcentual", "matriz_volumen_margen"],
+        ),
+        _indicator_contract(
+            "cobertura_costos_pct",
+            "rentabilidad",
+            "Cobertura de costos",
+            certified_cost_coverage,
+            "%",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Filas de venta con costo válido ÷ filas de venta con monto × 100",
+            numerator=int(certified_paired.sum()),
+            denominator=int((certified_mask & amount.notna()).sum()),
+            variation_type="puntos_porcentuales",
+            coverage=100.0,
+            status="available" if certified_cost_coverage >= 99.5 else "partial",
+            warnings=cost_warning,
+            required=["ventas", "costos"],
+            sources=available_source_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "barra_progreso"],
+        ),
+        _indicator_contract(
+            "ebitda",
+            "rentabilidad",
+            "EBITDA",
+            ebitda,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Resultado operacional + depreciación y amortización",
+            numerator=ebitda,
+            coverage=certified_cost_coverage if ebitda is not None else None,
+            warnings=cost_warning,
+            required=["resultado operacional", "depreciación y amortización"],
+            sources=available_source_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "punto_equilibrio",
+            "rentabilidad",
+            "Punto de equilibrio",
+            break_even_sales,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Gastos operacionales ÷ margen bruto",
+            numerator=expenses_total,
+            denominator=(gross_margin / 100) if gross_margin is not None else None,
+            coverage=certified_cost_coverage if break_even_sales is not None else None,
+            warnings=cost_warning,
+            required=["gastos operacionales", "margen bruto"],
+            sources=available_source_names,
+            polarity="lower_is_better",
+            visualizations=["kpi", "referencia_en_ventas"],
+        ),
+        _indicator_contract(
+            "flujo_neto_caja",
+            "caja",
+            "Flujo neto de caja",
+            None,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Ingresos de caja − egresos de caja",
+            status="unavailable",
+            warnings=[
+                "Cobranzas no equivale por sí sola al flujo de caja: faltan todos "
+                "los egresos y sus fechas de pago."
+            ],
+            required=["ingresos de caja", "egresos de caja", "fecha de pago"],
+            sources=[],
+            polarity="higher_is_better",
+            visualizations=["linea_temporal", "saldo_acumulado"],
+        ),
+        _indicator_contract(
+            "cuentas_por_cobrar",
+            "cobranza",
+            "Cuentas por cobrar",
+            accounts_receivable,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ saldo abierto de documentos válidos",
+            numerator=accounts_receivable,
+            required=["ID documento", "monto documento", "estado de pago"],
+            sources=[name for name in ((kinds.get("cobranzas") or [None])[0], *sales_names) if name],
+            polarity="lower_is_better",
+            visualizations=["kpi", "barras_antiguedad"],
+        ),
+        _indicator_contract(
+            "cobranza_vencida",
+            "cobranza",
+            "Cobranza vencida",
+            overdue_receivable,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ saldo de documentos vencidos",
+            numerator=overdue_receivable,
+            denominator=accounts_receivable,
+            required=["saldo", "fecha de vencimiento o estado vencido"],
+            sources=[(kinds.get("cobranzas") or [None])[0]]
+            if kinds.get("cobranzas")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "donut", "barras_antiguedad"],
+        ),
+        _indicator_contract(
+            "dso_dias",
+            "cobranza",
+            "Días promedio de cobro",
+            dso_days,
+            "días",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Promedio(fecha de pago − fecha de emisión) en documentos cobrados",
+            numerator=dso_days,
+            required=["fecha emisión", "fecha pago", "ID documento"],
+            sources=[(kinds.get("cobranzas") or [None])[0]]
+            if kinds.get("cobranzas")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "mora_promedio_dias",
+            "cobranza",
+            "Mora promedio vencida",
+            overdue_days,
+            "días",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Promedio de días de mora en documentos vencidos",
+            numerator=overdue_days,
+            required=["días de mora", "estado vencido"],
+            sources=[(kinds.get("cobranzas") or [None])[0]]
+            if kinds.get("cobranzas")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "barras_antiguedad"],
+        ),
+        _indicator_contract(
+            "porcentaje_cartera_vencida",
+            "cobranza",
+            "Cartera vencida",
+            (
+                overdue_receivable / accounts_receivable * 100
+                if overdue_receivable is not None
+                and accounts_receivable is not None
+                and accounts_receivable > 0
+                else None
+            ),
+            "%",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Saldo vencido ÷ cuentas por cobrar × 100",
+            numerator=overdue_receivable,
+            denominator=accounts_receivable,
+            variation_type="puntos_porcentuales",
+            required=["saldo abierto", "saldo vencido"],
+            sources=[(kinds.get("cobranzas") or [None])[0]]
+            if kinds.get("cobranzas")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "donut"],
+        ),
+        _indicator_contract(
+            "stock_valorizado",
+            "inventario",
+            "Inventario valorizado",
+            inventory_value,
+            currency_unit,
+            period_from=inventory_snapshot_date,
+            period_to=inventory_snapshot_date,
+            formula="Σ stock disponible × costo unitario ponderado, último corte",
+            numerator=inventory_value,
+            warnings=[]
+            if inventory_snapshot_date
+            else ["No se identificó una fecha de corte; se usa el conjunto disponible."],
+            required=["stock", "costo unitario", "fecha de snapshot"],
+            sources=[(kinds.get("inventario") or [None])[0]]
+            if kinds.get("inventario")
+            else [],
+            polarity="neutral",
+            visualizations=["kpi", "ranking", "barras"],
+        ),
+        _indicator_contract(
+            "rotacion_inventario",
+            "inventario",
+            "Rotación de inventario",
+            inventory_turnover,
+            "veces",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Costo de ventas conocido ÷ inventario del último corte",
+            numerator=paired_cost if paired.any() else None,
+            denominator=inventory_value,
+            coverage=certified_cost_coverage if inventory_turnover is not None else None,
+            status="partial" if inventory_turnover is not None else "unavailable",
+            warnings=[
+                "Es una aproximación con inventario de cierre; el promedio de "
+                "inventario requiere al menos dos cortes comparables."
+            ] if inventory_turnover is not None else [],
+            required=["costo de ventas", "inventario promedio"],
+            sources=available_source_names,
+            polarity="neutral",
+            visualizations=["kpi", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "stock_disponible",
+            "inventario",
+            "Stock disponible",
+            inventory_stock,
+            "unidades",
+            period_from=inventory_snapshot_date,
+            period_to=inventory_snapshot_date,
+            formula="Σ stock disponible del último corte",
+            numerator=inventory_stock,
+            required=["stock", "fecha de snapshot"],
+            sources=[(kinds.get("inventario") or [None])[0]]
+            if kinds.get("inventario")
+            else [],
+            polarity="neutral",
+            visualizations=["kpi", "ranking"],
+        ),
+        _indicator_contract(
+            "registros_bajo_minimo",
+            "inventario",
+            "Registros bajo stock mínimo",
+            inventory_below_minimum,
+            "registros",
+            period_from=inventory_snapshot_date,
+            period_to=inventory_snapshot_date,
+            formula="Conteo de registros donde stock disponible < stock mínimo",
+            numerator=inventory_below_minimum,
+            required=["stock disponible", "stock mínimo"],
+            sources=[(kinds.get("inventario") or [None])[0]]
+            if kinds.get("inventario")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "ranking_alertas"],
+        ),
+        _indicator_contract(
+            "dias_inventario_aprox",
+            "inventario",
+            "Días de inventario aproximados",
+            365 / inventory_turnover
+            if inventory_turnover is not None and inventory_turnover > 0
+            else None,
+            "días",
+            period_from=period_start,
+            period_to=period_end,
+            formula="365 ÷ rotación aproximada",
+            denominator=inventory_turnover,
+            coverage=certified_cost_coverage if inventory_turnover is not None else None,
+            status="partial" if inventory_turnover is not None else "unavailable",
+            warnings=[
+                "Usa inventario de cierre; para un resultado certificado se "
+                "requiere inventario promedio."
+            ] if inventory_turnover is not None else [],
+            required=["rotación", "inventario promedio"],
+            sources=available_source_names,
+            polarity="neutral",
+            visualizations=["kpi"],
+        ),
+        _indicator_contract(
+            "compras_netas",
+            "compras",
+            "Compras netas",
+            purchases_total,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ monto neto de compras no anuladas",
+            numerator=purchases_total,
+            required=["fecha compra", "monto neto", "estado"],
+            sources=[(kinds.get("compras") or [None])[0]]
+            if kinds.get("compras")
+            else [],
+            polarity="neutral",
+            visualizations=["kpi", "linea_temporal", "ranking_proveedores"],
+        ),
+        _indicator_contract(
+            "fletes_compra",
+            "compras",
+            "Fletes de compra",
+            purchase_freight,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ flete por documento de compra sin duplicarlo por línea",
+            numerator=purchase_freight,
+            required=["ID documento compra", "flete"],
+            sources=[(kinds.get("compras") or [None])[0]]
+            if kinds.get("compras")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "gastos_operacionales",
+            "gastos",
+            "Gastos operacionales",
+            expenses_period_total,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ gasto neto no anulado con fecha válida",
+            numerator=expenses_period_total,
+            required=["fecha gasto", "monto neto", "estado"],
+            sources=[(kinds.get("gastos") or [None])[0]]
+            if kinds.get("gastos")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "donut", "linea_temporal", "barras_centro_costo"],
+        ),
+        _indicator_contract(
+            "resultado_operacional",
+            "gastos",
+            "Resultado operacional",
+            operating_result,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Utilidad bruta conocida − gastos operacionales comparables",
+            numerator=operating_result,
+            denominator=observed_sales,
+            coverage=certified_cost_coverage if operating_result is not None else None,
+            warnings=cost_warning,
+            required=["utilidad bruta", "gastos operacionales"],
+            sources=available_source_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "gastos_fijos",
+            "gastos",
+            "Gastos fijos",
+            fixed_expenses,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ gastos declarados como fijos",
+            numerator=fixed_expenses,
+            required=["tipo de gasto", "monto"],
+            sources=[(kinds.get("gastos") or [None])[0]]
+            if kinds.get("gastos")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "donut"],
+        ),
+        _indicator_contract(
+            "gastos_variables",
+            "gastos",
+            "Gastos variables",
+            variable_expenses,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Σ gastos declarados como variables",
+            numerator=variable_expenses,
+            required=["tipo de gasto", "monto"],
+            sources=[(kinds.get("gastos") or [None])[0]]
+            if kinds.get("gastos")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "donut"],
+        ),
+        _indicator_contract(
+            "clientes_con_compra",
+            "clientes",
+            "Clientes con compra",
+            indicator_clients,
+            "clientes",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Clientes únicos en ventas no anuladas",
+            numerator=indicator_clients,
+            required=["ID cliente", "ventas"],
+            sources=sales_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal", "segmentos"],
+        ),
+        _indicator_contract(
+            "concentracion_cliente_principal",
+            "clientes",
+            "Concentración del principal cliente",
+            top_clients[0].get("participacion_pct") if top_clients else None,
+            "%",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Ventas positivas del principal cliente ÷ ventas positivas × 100",
+            numerator=top_clients[0].get("ingresos") if top_clients else None,
+            denominator=observed_sales if top_clients else None,
+            variation_type="puntos_porcentuales",
+            required=["ID cliente", "monto neto"],
+            sources=available_source_names,
+            polarity="lower_is_better",
+            visualizations=["kpi", "ranking", "pareto"],
+        ),
+        _indicator_contract(
+            "cumplimiento_meta_ventas",
+            "comercial",
+            "Cumplimiento de meta de ventas",
+            target_compliance,
+            "%",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Ventas comparables ÷ meta de ventas × 100",
+            numerator=goals.get("venta_comparable"),
+            denominator=goals.get("meta_venta"),
+            variation_type="puntos_porcentuales",
+            required=["periodo", "meta de ventas", "ventas"],
+            sources=available_source_names,
+            polarity="higher_is_better",
+            visualizations=["kpi", "barra_progreso", "barras_sucursal"],
+        ),
+        _indicator_contract(
+            "conversion_marketing",
+            "comercial",
+            "Conversión de campañas",
+            marketing_conversion_rate,
+            "%",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Conversiones ÷ clics × 100",
+            numerator=None,
+            denominator=None,
+            variation_type="puntos_porcentuales",
+            required=["clics", "conversiones"],
+            sources=[(kinds.get("campanas") or [None])[0]]
+            if kinds.get("campanas")
+            else [],
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal", "embudo"],
+        ),
+        _indicator_contract(
+            "ctr_marketing",
+            "comercial",
+            "CTR de campañas",
+            marketing_ctr,
+            "%",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Clics ÷ impresiones × 100",
+            variation_type="puntos_porcentuales",
+            required=["clics", "impresiones"],
+            sources=[(kinds.get("campanas") or [None])[0]]
+            if kinds.get("campanas")
+            else [],
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_temporal"],
+        ),
+        _indicator_contract(
+            "costo_por_conversion",
+            "comercial",
+            "Costo por conversión",
+            marketing_cost_per_conversion,
+            currency_unit,
+            period_from=period_start,
+            period_to=period_end,
+            formula="Inversión de campañas ÷ conversiones",
+            numerator=marketing_investment,
+            required=["inversión", "conversiones"],
+            sources=[(kinds.get("campanas") or [None])[0]]
+            if kinds.get("campanas")
+            else [],
+            polarity="lower_is_better",
+            visualizations=["kpi", "ranking_campañas"],
+        ),
+        _indicator_contract(
+            "liquidez_corriente",
+            "balance",
+            "Liquidez corriente",
+            None,
+            "veces",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Activo corriente ÷ pasivo corriente",
+            status="unavailable",
+            required=["activo corriente", "pasivo corriente"],
+            warnings=["No se infieren partidas de balance desde ventas o cobranza."],
+            sources=[],
+            polarity="higher_is_better",
+            visualizations=["kpi"],
+        ),
+        _indicator_contract(
+            "roe",
+            "balance",
+            "ROE",
+            None,
+            "%",
+            period_from=period_start,
+            period_to=period_end,
+            formula="Utilidad neta ÷ patrimonio promedio × 100",
+            variation_type="puntos_porcentuales",
+            status="unavailable",
+            required=["utilidad neta", "patrimonio inicial y final"],
+            warnings=["La utilidad operacional no se presenta como utilidad neta."],
+            sources=[],
+            polarity="higher_is_better",
+            visualizations=["kpi", "linea_porcentual"],
+        ),
+    ]
+    if mixed_unfiltered_currency:
+        for indicator in indicator_catalog_rows:
+            if indicator["unidad"] in {currency_unit, ticket_currency_unit}:
+                indicator["valor"] = None
+                indicator["valor_anterior"] = None
+                indicator["diferencia_nominal"] = None
+                indicator["variacion"] = None
+                indicator["estado"] = "blocked"
+                indicator["advertencias"] = [
+                    "Hay monedas incompatibles. Elige una moneda antes de usar "
+                    "este indicador monetario.",
+                    *indicator["advertencias"],
+                ]
+    category_definitions = [
+        ("ventas", "Ventas y crecimiento", "Ingresos, tendencia, ticket y unidades."),
+        ("rentabilidad", "Rentabilidad", "Costo, utilidad, margen y cobertura."),
+        ("caja", "Caja y liquidez", "Flujo, saldo y capacidad de pago."),
+        ("cobranza", "Cobranza", "Cartera, mora y velocidad de cobro."),
+        ("inventario", "Inventario", "Stock, valorización, rotación y quiebres."),
+        ("clientes", "Clientes", "Concentración, recurrencia y segmentos."),
+        ("compras", "Compras y proveedores", "Abastecimiento, costo y dependencia."),
+        ("gastos", "Gastos y resultado", "Gasto operacional y resultado del negocio."),
+        ("comercial", "Desempeño comercial", "Metas, campañas, vendedor y sucursal."),
+        ("balance", "Indicadores financieros", "Liquidez, deuda, ROA y ROE."),
+    ]
+    indicator_categories = []
+    for category_id, category_label, category_description in category_definitions:
+        category_indicators = [
+            row for row in indicator_catalog_rows if row["categoria"] == category_id
+        ]
+        available_count = sum(
+            row["estado"] in {"available", "partial"}
+            for row in category_indicators
+        )
+        fully_available = bool(category_indicators) and all(
+            row["estado"] == "available" for row in category_indicators
+        )
+        indicator_categories.append({
+            "id": category_id,
+            "nombre": category_label,
+            "descripcion": category_description,
+            "estado": "available"
+            if fully_available
+            else "partial"
+            if available_count
+            else "unavailable",
+            "disponibles": available_count,
+            "total": len(category_indicators),
+            "indicadores": category_indicators,
+        })
+    catalog_available = sum(
+        row["estado"] == "available" for row in indicator_catalog_rows
+    )
+    catalog_partial = sum(
+        row["estado"] == "partial" for row in indicator_catalog_rows
+    )
 
     return {
-        "version": 1,
+        "version": 2,
         "filtros": {
             "disponibles": available_filters,
             "aplicados": applied_filters,
@@ -2393,4 +3246,14 @@ def analyze_business_workbook(
         },
         "ratios": ratios,
         "decisiones": decisions,
+        "catalogo_indicadores": {
+            "version": 1,
+            "moneda": currency_label if not mixed_unfiltered_currency else "mixta",
+            "categorias": indicator_categories,
+            "disponibles": catalog_available,
+            "parciales": catalog_partial,
+            "no_disponibles": len(indicator_catalog_rows)
+            - catalog_available
+            - catalog_partial,
+        },
     }

@@ -448,6 +448,15 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
     await page.getByRole('link', { name: /Resumen/ }).first().click()
   }
   await expect(page.getByRole('heading', { name: 'Indicadores disponibles' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Indicadores habilitados por este libro' })).toBeVisible()
+  await expect(page.getByText('Ventas y crecimiento', { exact: true })).toBeVisible()
+  await expect(page.getByText('Rentabilidad', { exact: true })).toBeVisible()
+  await expect(page.getByText('Caja y liquidez', { exact: true })).toBeVisible()
+  await expect(page.getByText('Indicadores financieros', { exact: true })).toBeVisible()
+  await expect(page.getByText(/por conectar/).first()).toBeVisible()
+  await page
+    .locator('section[aria-labelledby="adaptive-indicators-title"]')
+    .screenshot({ path: testInfo.outputPath('catalogo-adaptativo.png') })
   const flow = page.getByTestId('business-summary-flow')
   await expect(flow).toBeVisible()
   const layout = await flow.evaluate((element) => ({
