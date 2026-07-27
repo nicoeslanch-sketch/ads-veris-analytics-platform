@@ -91,10 +91,7 @@ function KpiCard({
       style={{ background: `linear-gradient(145deg, ${color}15, #fff 70%)` }}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-navy/55">{title}</p>
-          <KpiValue value={value} maxPx={20} className="mt-2" />
-        </div>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-navy/55">{title}</p>
         <span
           className="grid h-9 w-9 shrink-0 place-items-center rounded-full"
           style={{ backgroundColor: `${color}18`, color }}
@@ -102,6 +99,9 @@ function KpiCard({
           <Icon className="h-4.5 w-4.5" />
         </span>
       </div>
+      {/* Fuera de la fila del icono: así el valor se centra respecto de TODA
+          la tarjeta y dispone del ancho completo para agrandarse. */}
+      <KpiValue value={value} maxPx={30} className="mt-2" />
       <div className="mt-2 min-h-[16px]">{comparison}</div>
       <p className="mt-1 text-[10px] leading-relaxed text-navy/45">{note}</p>
     </Card>
