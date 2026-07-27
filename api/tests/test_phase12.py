@@ -290,6 +290,21 @@ def test_contador_textual_no_cuenta_dos_veces_la_misma_celda():
     assert detail["mojibake_reparado"] == 0
 
 
+def test_normalizacion_conserva_puntuacion_sin_romper_fuzzy():
+    values = pd.Series(
+        ["-", "--", "?", "  "] * 4
+        + ["Comentario válido"] * 5
+        + ["Comentario valido"] * 2,
+        name="Observaciones",
+    )
+
+    unified, _, _, _, _ = _normalize_text_column(values)
+
+    assert unified.iloc[:4].tolist() == ["-", "--", "?", ""]
+    assert len(unified) == len(values)
+    assert unified.str.startswith("Comentario").sum() == 7
+
+
 def test_controles_monetarios_e_iqr_son_solo_senalizacion(client, auth_headers):
     amounts = [0, -1, 1, 2, 3, 4, 5, 6, 7, 100]
     csv = "Ventas\n" + "\n".join(map(str, amounts)) + "\n"

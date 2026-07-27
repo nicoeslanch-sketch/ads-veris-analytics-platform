@@ -141,7 +141,7 @@ export async function apiPost<T>(
   } catch (err) {
     throw connectionError(
       err,
-      'No se pudo contactar al motor de datos. ¿Está corriendo la API? (VITE_API_BASE_URL)',
+      'Se interrumpió la comunicación con el motor de datos. El servidor pudo detener el procesamiento o puede haber un problema de conexión. Intenta nuevamente.',
     )
   }
 

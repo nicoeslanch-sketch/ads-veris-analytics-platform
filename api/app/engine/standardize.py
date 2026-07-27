@@ -762,14 +762,24 @@ def _fuzzy_merge_keys(frequencies: dict[str, dict[str, int]]) -> dict[str, str]:
     if not (2 <= len(frequencies) <= _FUZZY_MAX_UNIQUE_KEYS):
         return {}
     totals = {key: sum(variants.values()) for key, variants in frequencies.items()}
-    frequent = [k for k, t in totals.items() if t >= 3]
+    # Una variante formada solo por puntuación ("-", "--", "?") puede
+    # normalizarse a una clave vacía. Se conserva como texto, pero no participa
+    # en fusiones difusas: no tiene caracteres que comparar y acceder a
+    # ``canon[0]`` provocaba un IndexError que abortaba todo el archivo.
+    frequent = [
+        k
+        for k, t in totals.items()
+        if t >= 3
+        and len(k) >= _FUZZY_MIN_KEY_LEN
+        and any(c.isalpha() for c in k)
+    ]
     merges: dict[str, str] = {}
     for key, total in totals.items():
         if len(key) < _FUZZY_MIN_KEY_LEN or not any(c.isalpha() for c in key):
             continue
         max_distance = 1 if len(key) <= 6 else 2
         for canon in frequent:
-            if canon == key or canon[0] != key[0] or len(canon) < _FUZZY_MIN_KEY_LEN:
+            if canon == key or canon[0] != key[0]:
                 continue
             if total > max(2, totals[canon] // 2):
                 continue
