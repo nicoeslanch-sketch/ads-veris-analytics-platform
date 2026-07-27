@@ -538,6 +538,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
 
   return (
     <div className="space-y-6">
+      {visibleCards.length > 0 && (
       <KpiCarousel label="Indicadores del negocio">
         {visibleCards.map(({ label, value, detail, icon: Icon, color, comparison, state }) => (
           <Card
@@ -567,6 +568,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           </Card>
         ))}
       </KpiCarousel>
+      )}
 
       {qualityIssueCount > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold/30 bg-gold/[0.07] px-4 py-3">
