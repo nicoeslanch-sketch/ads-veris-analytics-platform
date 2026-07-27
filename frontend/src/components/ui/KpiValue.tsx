@@ -51,11 +51,13 @@ export default function KpiValue({
 }) {
   const text = String(value)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const textRef = useRef<HTMLParagraphElement>(null)
   const [fontPx, setFontPx] = useState(() => kpiFontSize(text.length, maxPx))
 
   useLayoutEffect(() => {
     const wrap = wrapRef.current
-    if (!wrap) return
+    const node = textRef.current
+    if (!wrap || !node) return
     // Se observa el CONTENEDOR, no el texto: cambiar el tamaño de letra altera
     // el alto del texto y observarlo a él realimentaría el bucle.
     let lastWidth = -1
@@ -65,12 +67,22 @@ export default function KpiValue({
       const family = getComputedStyle(wrap).fontFamily
       const widthAtMax = measureTextWidth(text, maxPx, family)
       if (widthAtMax <= 0) return
-      // El ancho crece de forma lineal con el tamaño, así que basta medir una
-      // vez y escalar. Se descuenta 1px para no rozar el borde por redondeo.
-      const next = widthAtMax <= available
+      // El ancho crece de forma lineal con el tamaño: basta medir una vez y
+      // escalar. El canvas puede medir con una tipografía sustituta (Poppins
+      // se carga aparte), así que la estimación se VERIFICA contra el DOM y
+      // se baja de a un píxel hasta que entra. Sin esto, un valor quedaba
+      // recortado con "…" pese a caber a un tamaño apenas menor.
+      let size = widthAtMax <= available
         ? maxPx
-        : Math.max(Math.floor(maxPx * ((available - 1) / widthAtMax)), MIN_PX)
-      setFontPx(next)
+        : Math.max(Math.floor(maxPx * (available / widthAtMax)), MIN_PX)
+      node.style.fontSize = `${size}px`
+      let guard = 0
+      while (node.scrollWidth > node.clientWidth && size > MIN_PX && guard < 24) {
+        size -= 1
+        guard += 1
+        node.style.fontSize = `${size}px`
+      }
+      setFontPx(size)
     }
     fit()
     const observer = new ResizeObserver((entries) => {
@@ -86,6 +98,7 @@ export default function KpiValue({
   return (
     <div ref={wrapRef} className={`min-w-0 ${className}`}>
       <p
+        ref={textRef}
         title={text}
         className="overflow-hidden text-ellipsis whitespace-nowrap text-center font-bold leading-tight text-navy"
         style={{ fontSize: `${fontPx}px` }}
