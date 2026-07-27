@@ -63,6 +63,9 @@ export interface RestoreDatasetOptions {
   /** Revisión observada al iniciar la restauración. Si el usuario ya
    * eligió otro archivo, la respuesta antigua se descarta. */
   expectedRevision?: number
+  /** El snapshot puede mostrarse, pero sus métricas pertenecen a una versión
+   * anterior del motor y deben actualizarse una sola vez en segundo plano. */
+  metricsStale?: boolean
 }
 
 /** Construye el periodo de un mes "YYYY-MM" (primer al último día). */
@@ -141,6 +144,7 @@ interface DatasetState {
    * defecto que luego cambia (Bug: "Sin fuentes conectadas" parpadeaba
    * antes de que apareciera el archivo real). */
   restoring: boolean
+  metricsStale: boolean
   datasetRevision: number
   setRestoring: (value: boolean) => void
   setSheet: (sheet: string | null) => void
@@ -211,6 +215,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [combineSheets, setCombineSheets] = useState(false)
   const [selectionMode, setSelectionMode] = useState<'all' | 'custom'>('all')
   const [restoring, setRestoring] = useState(false)
+  const [metricsStale, setMetricsStale] = useState(false)
   const [datasetRevision, setDatasetRevision] = useState(0)
   const datasetRevisionRef = useRef(0)
   const activeFileRef = useRef<File | null>(null)
@@ -228,6 +233,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setStandardizationState(session?.standardization ?? null)
     setCleaningState(session?.cleaning ?? null)
     setMetricsState(null)
+    setMetricsStale(false)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
     setBusinessFilters({})
@@ -287,6 +293,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     // resultado nuevo cambia el manifest y vuelve obsoletas las métricas
     // combinadas que estaban en memoria.
     setMetricsState(null)
+    setMetricsStale(false)
     if (activate) {
       if (activeSheet) setSheetState(activeSheet)
       setCleaningState(result)
@@ -317,6 +324,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMappingOverrideState(mapping)
     if (!options.preserveCleaning) setCleaningState(null)
     setMetricsState(null)
+    setMetricsStale(false)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
     setBusinessFilters({})
@@ -364,6 +372,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setStandardizationState(null)
       setCleaningState(null)
       setMetricsState(null)
+      setMetricsStale(false)
       setUploadedAt(new Date())
       setPeriod(ALL_PERIOD)
       setMonthsAvailable([])
@@ -436,6 +445,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setStandardizationState(activeSession?.standardization ?? restoredStandardization)
     setCleaningState(activeSession?.cleaning ?? restoredCleaning)
     setMetricsState(restoredMetrics)
+    setMetricsStale(Boolean(options?.metricsStale && restoredMetrics))
     setUploadedAt(new Date())
     setPeriod(ALL_PERIOD)
     setBusinessFilters({})
@@ -478,6 +488,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setStandardizationState(null)
     setCleaningState(null)
     setMetricsState(null)
+    setMetricsStale(false)
     setUploadedAt(null)
     setPeriod(ALL_PERIOD)
     setMonthsAvailable([])
@@ -541,6 +552,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     // El estado entra al manifest multihoja; invalida incluso si `name` no es
     // la vista activa para no reutilizar métricas de una selección anterior.
     setMetricsState(null)
+    setMetricsStale(false)
     setSheetSessions((previous) => ({
       ...previous,
       [name]: {
@@ -564,10 +576,16 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     if (analysisScopesEqual(analysisScope, scope)) return
     setAnalysisScopeState(scope)
     setMetricsState(null)
+    setMetricsStale(false)
     setMonthsAvailable([])
     setPeriod(ALL_PERIOD)
     setBusinessFilters({})
   }, [analysisScope])
+
+  const setMetrics = useCallback((result: MetricsResult) => {
+    setMetricsState(result)
+    setMetricsStale(false)
+  }, [])
 
   const sheetManifest = useMemo<SheetManifest | null>(() => {
     if (availableSheets.length <= 1) return null
@@ -630,6 +648,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       selectionMode,
       restoreState,
       restoring,
+      metricsStale,
       datasetRevision,
       setRestoring,
       setSheet,
@@ -638,7 +657,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       restoreDataset,
       setStandardization,
       setCleaning,
-      setMetrics: setMetricsState,
+      setMetrics,
       setPeriod,
       setMonthsAvailable,
       setMappingOverride,
@@ -675,6 +694,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       selectionMode,
       restoreState,
       restoring,
+      metricsStale,
       datasetRevision,
       setSheet,
       setUploaded,
@@ -683,6 +703,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setStandardization,
       setMappingOverride,
       setCleaning,
+      setMetrics,
       updateEliminarDuplicados,
       setSelectedSheets,
       setAnalysisScope,

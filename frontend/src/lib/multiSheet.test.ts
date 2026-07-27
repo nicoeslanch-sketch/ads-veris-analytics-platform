@@ -7,6 +7,7 @@ import {
   cleaningScopeState,
   compatibleAppendSheets,
   joinScope,
+  metricsSnapshotMatchesScope,
   normalizedRestoredSelection,
   sheetPreparationAction,
   sheetSelectionCountLabel,
@@ -554,6 +555,21 @@ describe('estado multihoja', () => {
     expect(equivalent).not.toBe(first)
     expect(analysisScopesEqual(first, equivalent)).toBe(true)
     expect(analysisScopesEqual(first, { ...equivalent, active_sheet: 'Febrero' })).toBe(false)
+  })
+
+  it('reutiliza métricas legacy sin analysis_scope solo para la hoja individual activa', () => {
+    const single: AnalysisScope = {
+      mode: 'single',
+      sheets: ['REQ5325'],
+      active_sheet: 'REQ5325',
+    }
+    expect(metricsSnapshotMatchesScope(undefined, single, 'REQ5325')).toBe(true)
+    expect(metricsSnapshotMatchesScope(undefined, single, 'Otra')).toBe(false)
+    expect(metricsSnapshotMatchesScope(undefined, {
+      mode: 'append',
+      sheets: ['Enero', 'Febrero'],
+      active_sheet: 'Enero',
+    }, 'Enero')).toBe(false)
   })
 
   it('explica una relacion insegura sin jerga de cardinalidad', () => {

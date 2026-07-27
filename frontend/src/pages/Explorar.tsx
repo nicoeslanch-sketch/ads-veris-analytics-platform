@@ -54,7 +54,7 @@ import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { principalPorParticipacionBruta } from '../lib/metrics'
-import { analysisScopesEqual, serializedAnalysisScope } from '../lib/multiSheet'
+import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../lib/multiSheet'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
@@ -442,7 +442,7 @@ export default function Explorar() {
     }
     const snapshotMatchesRange = Boolean(
       contextMetrics &&
-      analysisScopesEqual(contextMetrics.analysis_scope, analysisScope) &&
+      metricsSnapshotMatchesScope(contextMetrics.analysis_scope, analysisScope, sheet) &&
       !rango.from &&
       !rango.to &&
       Object.keys(businessFilters).length === 0 &&

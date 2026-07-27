@@ -159,6 +159,29 @@ export function analysisScopesEqual(left: unknown, right: unknown): boolean {
   return serializedAnalysisScope(left) === serializedAnalysisScope(right)
 }
 
+/** Single-sheet snapshots created before analysis_scope was persisted still
+ * identify their data unambiguously through the active sheet. Treating a
+ * missing scope as incompatible forced every History restore to recalculate
+ * the complete pipeline, even when the saved metrics were valid. Multi-sheet
+ * scopes remain strict because an omitted append/join contract is ambiguous. */
+export function metricsSnapshotMatchesScope(
+  snapshotScope: unknown,
+  currentScope: unknown,
+  activeSheet: string | null,
+): boolean {
+  if (analysisScopesEqual(snapshotScope, currentScope)) return true
+  if (serializedAnalysisScope(snapshotScope) !== null) return false
+  const current = publicAnalysisScope(currentScope)
+  return Boolean(
+    current &&
+    current.mode === 'single' &&
+    activeSheet &&
+    current.active_sheet === activeSheet &&
+    current.sheets.length === 1 &&
+    current.sheets[0] === activeSheet,
+  )
+}
+
 export function withPublicAnalysisScope<T extends object>(value: T): T {
   const result = { ...value } as T & { analysis_scope?: unknown }
   if (!Object.prototype.hasOwnProperty.call(result, 'analysis_scope')) return result

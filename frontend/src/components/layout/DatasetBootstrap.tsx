@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom'
 import { AlertTriangle, Loader2 } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { useDataset } from '../../data/DatasetContext'
-import { ApiError, apiPostJson } from '../../lib/api'
+import { ApiError, apiPost, apiPostJson } from '../../lib/api'
 import { useAccess } from '../../lib/access'
 import {
   restoredAnalysisSelection,
@@ -27,14 +27,21 @@ export default function DatasetBootstrap() {
   const { status: accessStatus, can } = useAccess()
   const {
     file,
+    datasetId,
     datasetRevision,
+    metricsStale,
     restoreDataset,
+    setMetrics,
     setRestoring: setContextRestoring,
   } = useDataset()
   const [restoring, setRestoring] = useState<string | null>(null)
   const [restoreError, setRestoreError] = useState<string | null>(null)
+  const [refreshingMetrics, setRefreshingMetrics] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [refreshRetry, setRefreshRetry] = useState(0)
   const cancelledRef = useRef(false)
   const restoreAbortRef = useRef<AbortController | null>(null)
+  const refreshAttemptRef = useRef<string | null>(null)
 
   // Fase 13: al cerrar sesión se limpia el intento — reingresar con la
   // misma cuenta vuelve a restaurar el último trabajo.
@@ -108,6 +115,7 @@ export default function DatasetBootstrap() {
           analysisScope: restoredSelection.analysisScope,
           selectionMode: restoredSelection.selectionMode,
           expectedRevision: restoreRevision,
+          metricsStale: Boolean(restored.metrics_stale),
         },
       )
     }
@@ -162,6 +170,48 @@ export default function DatasetBootstrap() {
     }
   }, [user, file, datasetRevision, restoreDataset, accessStatus, can, setContextRestoring])
 
+  // Un snapshot de otro motor se muestra inmediatamente y se actualiza una
+  // sola vez en segundo plano. /restore/refresh reutiliza la limpieza guardada,
+  // reserva una revisión atómica y persiste el resultado nuevo; así la próxima
+  // recarga no vuelve a ejecutar /metrics ni repite actividad de limpieza.
+  useEffect(() => {
+    if (!user || !datasetId || !metricsStale || restoring) return
+    const attemptKey = `${datasetId}:${refreshRetry}`
+    if (refreshAttemptRef.current === attemptKey) return
+    refreshAttemptRef.current = attemptKey
+    const controller = new AbortController()
+    let active = true
+    const run = async () => {
+      setRefreshingMetrics(true)
+      setRefreshError(null)
+      try {
+        const form = new FormData()
+        form.append('dataset_id', datasetId)
+        const refreshed = await apiPost<RestoreLatestResult>(
+          '/restore/refresh',
+          form,
+          { timeoutMs: 300_000, signal: controller.signal },
+        )
+        if (!active || controller.signal.aborted || !refreshed.metrics) return
+        setMetrics(withPublicAnalysisScope(refreshed.metrics))
+      } catch (err) {
+        if (!active || controller.signal.aborted) return
+        setRefreshError(
+          err instanceof ApiError
+            ? `No pudimos actualizar los indicadores guardados. ${err.message}`
+            : 'No pudimos actualizar los indicadores guardados.',
+        )
+      } finally {
+        if (active) setRefreshingMetrics(false)
+      }
+    }
+    void run()
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [datasetId, metricsStale, refreshRetry, restoring, setMetrics, user])
+
   if (!restoring && restoreError) {
     return (
       <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-gold/35 bg-gold/[0.08] px-4 py-3 text-sm text-navy/80">
@@ -182,6 +232,40 @@ export default function DatasetBootstrap() {
         >
           Ocultar
         </button>
+      </div>
+    )
+  }
+
+  if (!restoring && (refreshingMetrics || refreshError)) {
+    return (
+      <div className={`mb-5 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-sm text-navy/80 ${
+        refreshError
+          ? 'border-gold/35 bg-gold/[0.08]'
+          : 'border-teal/25 bg-teal/[0.06]'
+      }`}>
+        {refreshError
+          ? <AlertTriangle className="h-4 w-4 shrink-0 text-gold" />
+          : <Loader2 className="h-4 w-4 shrink-0 animate-spin text-teal" />}
+        <p className="min-w-0 flex-1">
+          {refreshError ?? (
+            <>
+              Ya puedes usar el resultado guardado. Estamos actualizando sus indicadores
+              una sola vez con el motor actual para que las próximas recargas sean inmediatas.
+            </>
+          )}
+        </p>
+        {refreshError && (
+          <button
+            type="button"
+            onClick={() => {
+              refreshAttemptRef.current = null
+              setRefreshRetry((value) => value + 1)
+            }}
+            className="shrink-0 rounded-lg border border-navy/20 bg-white px-3 py-1.5 text-xs font-semibold text-navy transition-colors hover:border-teal/60"
+          >
+            Reintentar actualización
+          </button>
+        )}
       </div>
     )
   }

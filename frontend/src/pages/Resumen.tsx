@@ -49,7 +49,7 @@ import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { summaryContentKind } from '../lib/metrics'
-import { analysisScopesEqual, serializedAnalysisScope } from '../lib/multiSheet'
+import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../lib/multiSheet'
 import type { AnalysisScope, MetricsResult } from '../lib/types'
 
 type UsableMonetaryKpis = MetricsResult['kpis'] & {
@@ -313,7 +313,7 @@ export default function Resumen() {
     }
     const snapshotMatchesPeriod = Boolean(
       contextMetrics &&
-      analysisScopesEqual(contextMetrics.analysis_scope, analysisScope) &&
+      metricsSnapshotMatchesScope(contextMetrics.analysis_scope, analysisScope, sheet) &&
       !period.from &&
       !period.to &&
       Object.keys(businessFilters).length === 0 &&
