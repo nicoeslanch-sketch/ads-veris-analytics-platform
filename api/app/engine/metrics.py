@@ -31,7 +31,7 @@ from .standardize import (
     physical_missing_mask,
     semantic_missing_mask,
 )
-from .quality import structural_total_mask
+from .quality import line_sales_evidence, structural_total_mask
 
 FINANCIAL_RATIOS = [
     "roa",
@@ -515,20 +515,23 @@ def is_transaction_profile(
     )
     amount_name = normalized_columns.get(str(roles.get("monto")), "")
     amount_words = set(re.split(r"[^a-z0-9]+", amount_name.strip()))
+    # "MONTO", "Valor", "Total" o "Facturación" aislados no prueban una
+    # venta: también aparecen en contratos, cuotas, tarifas y referencias.
+    # Las palabras inequívocas conservan la detección tradicional; MONTO
+    # genérico necesita las demás señales estructurales o la evidencia de
+    # fórmula evaluada por ``line_sales_evidence``.
     clear_transaction_amount = bool(
         amount_words
         & {
-            "monto",
             "venta",
             "ventas",
             "ingreso",
             "ingresos",
-            "importe",
-            "facturacion",
+            "factura",
             "revenue",
             "sales",
         }
-    )
+    ) or {"monto", "neto"}.issubset(amount_words)
     non_sales_profile = detect_non_sales_profile(columns, roles)
     explicit_operational_profiles = {
         "ordenes_trabajo",
@@ -551,10 +554,19 @@ def is_transaction_profile(
     ):
         return False
     return bool(
-        roles.get("fecha")
-        or (roles.get("cantidad") and roles.get("producto"))
+        (roles.get("cantidad") and roles.get("producto"))
         or has_transaction_id
         or clear_transaction_amount
+        # Compatibilidad con extractos mínimos ya admitidos: Fecha+Monto o
+        # Producto+Monto, sin columnas adicionales que puedan describir una
+        # cuota, tarifa o referencia no comercial.
+        or (
+            len(list(columns)) <= 2
+            and (roles.get("fecha") or roles.get("producto"))
+        )
+        # Monto + costo + fecha sí constituye un hecho económico realizado;
+        # tablas de tarifas/contratos se excluyeron arriba por su perfil.
+        or (roles.get("fecha") and roles.get("costo"))
     )
 
 
@@ -960,13 +972,19 @@ def compute_metrics(
         and bool(roles.get("producto"))
     )
     non_sales_profile = detect_non_sales_profile(df.columns, roles)
+    line_sales = line_sales_evidence(df, roles)
     # Un historial de costos tiene muchas observaciones por SKU. Resumirlo
     # como un catálogo estático mezclaría vigencias y falsearía el ranking.
     if non_sales_profile == "historial_costos":
         product_catalog = False
     transactional_profile = bool(
-        is_transaction_profile(df.columns, roles)
-        and non_sales_profile is None
+        (
+            (
+                is_transaction_profile(df.columns, roles)
+                and non_sales_profile is None
+            )
+            or line_sales.confirmed
+        )
         and not inventory_profile
     )
 
@@ -1050,6 +1068,18 @@ def compute_metrics(
         warnings.append(
             "No se detectó una columna de costos; costo de venta, utilidad bruta y margen bruto requieren esa columna."
         )
+    if line_sales.confirmed:
+        warnings.append(
+            f"{line_sales.amount_column} se reconoce como venta neta por línea: "
+            f"{line_sales.matching_rows} de {line_sales.evaluated_rows} filas "
+            "evaluadas coinciden con cantidad × precio unitario × (1 − descuento)."
+        )
+        if line_sales.mismatch_rows:
+            warnings.append(
+                f"{line_sales.mismatch_rows} línea(s) no coinciden con la fórmula "
+                "comercial declarada. Se conservan en ventas y quedan señaladas; "
+                "no se corrigen ni excluyen automáticamente."
+            )
 
     dates_all = (
         map_unique(df[roles["fecha"]], parse_date)
@@ -1415,6 +1445,7 @@ def compute_metrics(
         warnings.insert(0, currency.advertencia)
 
     result: dict = {
+        "tipo_analisis": "ventas" if transactional_profile else None,
         "moneda": currency.dominante,
         "moneda_mixta": currency.mixta,
         "moneda_detalle": currency.to_dict(),
@@ -1464,6 +1495,62 @@ def compute_metrics(
         "kpis": kpis,
         "evolucion_mensual": evolucion,
     }
+    if transactional_profile:
+        included_lines = int(amounts.notna().sum())
+        amount_numeric = amounts_all.notna() & indicator_row_mask
+        valid_dates = (
+            int((dates_all.notna() & indicator_row_mask).sum())
+            if roles.get("fecha")
+            else 0
+        )
+        invalid_dates = (
+            int((dates_all.isna() & amount_numeric).sum())
+            if roles.get("fecha")
+            else 0
+        )
+        result["semantica_ventas"] = {
+            "granularidad": "linea" if line_sales.confirmed else "registro",
+            "etiqueta_total": (
+                "Ventas netas" if line_sales.confirmed else "Ingresos totales"
+            ),
+            "etiqueta_promedio": (
+                "Venta promedio por línea"
+                if line_sales.confirmed
+                else "Ticket promedio"
+            ),
+        }
+        result["trazabilidad_ventas"] = {
+            "hoja": None,
+            "columna": roles.get("monto"),
+            "formula_validacion": (
+                "MONTO = CANTIDAD × PRECIO UNITARIO × (1 − DESCUENTO)"
+                if line_sales.confirmed
+                else None
+            ),
+            "evidencia_formula": (
+                line_sales.to_dict() if line_sales.confirmed else None
+            ),
+            "lineas_incluidas": included_lines,
+            "lineas_excluidas": {
+                "total": max(int(len(df) - included_lines), 0),
+                "totales_estructurales": total_rows,
+                "anuladas": cancelled_rows,
+                "monto_no_numerico_o_ausente": int(
+                    (indicator_row_mask & amounts_all.isna()).sum()
+                ),
+                "fuera_del_filtro": int((amount_numeric & ~mask).sum()),
+            },
+            "cobertura_numerica_pct": round(
+                float(amounts_all.notna().sum())
+                / max(int(indicator_row_mask.sum()), 1)
+                * 100,
+                1,
+            ),
+            "fechas_validas": valid_dates,
+            "fechas_invalidas": invalid_dates,
+            "filtros": {"desde": date_from, "hasta": date_to},
+            "relaciones_utilizadas": [],
+        }
 
     group_costs = costs if has_costs else None
     if roles.get("categoria"):

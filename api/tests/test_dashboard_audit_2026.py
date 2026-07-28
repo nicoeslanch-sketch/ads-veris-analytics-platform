@@ -3,9 +3,11 @@ import json
 import pandas as pd
 
 from app.engine.clean import analyze_and_clean
+from app.engine.business import analyze_business_workbook
 from app.engine.loader import _classify_sheet_sample, _detect_header_row
 from app.engine.mapping import detect_column_roles
 from app.engine.metrics import compute_metrics
+from app.engine.quality import line_sales_evidence
 from app.engine.relationships import detect_relationship_catalog
 from app.engine.standardize import parse_date, parse_number
 
@@ -94,6 +96,108 @@ def test_excel_servicios_no_inventa_ventas_en_hojas_operacionales():
             for item in metrics["analisis_generico"]["numericas"]
         }
         assert expected_label in labels
+
+
+def _detalle_ot_sales_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "N° OT": [f"OT-{index:03d}" for index in range(1, 11)],
+            "Fecha": [f"2025-01-{index:02d}T00:00:00" for index in range(1, 10)]
+            + ["fecha inválida"],
+            "Tipo de Línea": ["Material", "Subcontrato"] * 5,
+            "Cod Item": [f"ITEM-{index:03d}" for index in range(1, 11)],
+            "CANTIDAD": [2, 3, 1, 4, 5, 2, 1, 3, 2, 4],
+            "PRECIO UNITARIO": [
+                "2.935600E+05",
+                100_000,
+                50_000,
+                25_000,
+                80_000,
+                40_000,
+                120_000,
+                30_000,
+                55_000,
+                10_000,
+            ],
+            "DESCUENTO": ["10%", "10", 0.10, 0, 0.05, 5, 0, 0.20, 20, 0],
+            # La última línea no cuadra a propósito. Se informa, pero la fuente
+            # sigue confirmada porque las otras nueve validan la fórmula.
+            "MONTO": [
+                "5.284080E+05",
+                270_000,
+                45_000,
+                100_000,
+                380_000,
+                76_000,
+                120_000,
+                72_000,
+                88_000,
+                90_000,
+            ],
+        }
+    )
+
+
+def test_detalle_ot_confirma_ventas_por_formula_sin_relaciones():
+    source = _detalle_ot_sales_frame()
+    cleaned = analyze_and_clean(source, None, apply=True)
+    evidence = cleaned["evidencia_venta_linea"]
+    assert evidence["confirmada"] is True
+    assert evidence["columna_monto"] == "MONTO"
+    assert evidence["filas_evaluadas"] == 10
+    assert evidence["filas_inconsistentes"] == 1
+    assert evidence["coincidencia_formula_pct"] == 90.0
+
+    metrics = compute_metrics(cleaned["_df_limpio"], cleaned["mapeo"])
+    assert metrics["tipo_analisis"] == "ventas"
+    assert metrics["semantica_ventas"] == {
+        "granularidad": "linea",
+        "etiqueta_total": "Ventas netas",
+        "etiqueta_promedio": "Venta promedio por línea",
+    }
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 1_769_408
+    assert metrics["kpis"]["transacciones"] == 10
+    assert metrics["kpis"]["unidades_totales"] == 27
+    assert metrics["kpis"]["gastos_totales"] is None
+    assert metrics["kpis"]["ganancia_neta"] is None
+    assert metrics["trazabilidad_ventas"]["columna"] == "MONTO"
+    assert metrics["trazabilidad_ventas"]["fechas_validas"] == 9
+    assert metrics["trazabilidad_ventas"]["fechas_invalidas"] == 1
+    assert metrics["trazabilidad_ventas"]["relaciones_utilizadas"] == []
+    assert any("1 línea(s) no coinciden" in warning for warning in metrics["advertencias"])
+
+    business = analyze_business_workbook(
+        {"Detalle_OT": cleaned["_df_limpio"]},
+        {"Detalle_OT": cleaned["mapeo"]},
+        {"Detalle_OT": cleaned},
+    )
+    assert business is not None
+    indicators = {
+        indicator["id"]: indicator
+        for category in business["catalogo_indicadores"]["categorias"]
+        for indicator in category["indicadores"]
+    }
+    assert indicators["ventas_netas"]["valor"] == 1_769_408
+    assert indicators["ticket_promedio_documento"]["nombre"] == "Venta promedio por línea"
+    assert indicators["ticket_promedio_documento"]["unidad"] == "CLP/línea"
+    assert indicators["costo_venta"]["valor"] is None
+    assert indicators["utilidad_bruta"]["valor"] is None
+    assert indicators["clientes_con_compra"]["valor"] is None
+
+
+def test_monto_generico_sin_evidencia_comercial_no_es_venta():
+    frame = pd.DataFrame(
+        {
+            "Periodo": ["2025-01", "2025-02", "2025-03"],
+            "Descripción": ["Cuota A", "Cuota B", "Cuota C"],
+            "MONTO": [100_000, 120_000, 90_000],
+        }
+    )
+    evidence = line_sales_evidence(frame)
+    metrics = _metrics(frame)
+    assert evidence.confirmed is False
+    assert metrics.get("tipo_analisis") != "ventas"
+    assert metrics["kpis"]["ingresos_totales"] is None
 
 
 def test_parser_admite_cientificos_iso_t_y_encabezado_inferior_multinivel():

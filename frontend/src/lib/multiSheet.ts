@@ -413,6 +413,7 @@ interface AppendCompatibilityResult {
   preview: { columnas: string[] }
   column_types: Record<string, string>
   mapeo: Record<string, string>
+  evidencia_venta_linea?: { confirmada?: boolean }
   moneda?: string
   moneda_mixta?: boolean
   moneda_detalle?: { dominante: string }
@@ -476,6 +477,7 @@ function looksLikeOperationalSheet(
   name: string,
   result: AppendCompatibilityResult | null | undefined,
 ): boolean {
+  if (result?.evidencia_venta_linea?.confirmada) return false
   if (OPERATIONAL_SHEET_PATTERN.test(normalizedColumnName(name))) return true
   return Boolean(result?.preview.columnas.some(
     (column) => OPERATIONAL_COLUMN_PATTERN.test(normalizedColumnName(column)),

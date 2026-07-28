@@ -40,6 +40,7 @@ from .mapping import (
     strip_accents_lower,
 )
 from .loader import SOURCE_ROWS_ATTR, SOURCE_SHEET_ATTR
+from .quality import line_sales_evidence
 from .standardize import (
     is_identifier_column,
     is_semantic_placeholder,
@@ -1191,6 +1192,10 @@ def analyze_and_clean(
         "estandarizacion": std_report["cambios"],
         "column_types": column_types,
         "mapeo": roles,
+        "evidencia_venta_linea": line_sales_evidence(
+            df if apply else df_before_clean,
+            roles,
+        ).to_dict(),
         "reporte_calidad": per_column,
         "avisos": avisos,
         "duplicados_criterio": duplicados_criterio,

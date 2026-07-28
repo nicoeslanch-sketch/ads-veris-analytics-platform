@@ -3099,6 +3099,14 @@ def _metrics_multi_from_processed(
     computed["calidad_datos"] = round(sum(qualities) / max(len(qualities), 1), 1)
     computed["analysis_scope"] = analysis_scope
     computed["analysis_provenance"] = provenance
+    if isinstance(computed.get("trazabilidad_ventas"), dict):
+        computed["trazabilidad_ventas"]["hoja"] = analysis_scope["active_sheet"]
+        computed["trazabilidad_ventas"]["relaciones_utilizadas"] = (
+            [provenance.get("join")]
+            if analysis_scope["mode"] in {"join", "append_join"}
+            and provenance.get("join")
+            else []
+        )
     pipeline_warnings: list[str] = []
     detected_duplicates = 0
     removed_duplicates = 0
@@ -3558,7 +3566,8 @@ def _business_focus_from_clean_responses(
         mapping = response.get("mapeo") or entry.get("mapping") or {}
         preview = response.get("preview") or {}
         columns = preview.get("columnas") or list(mapping.values())
-        if is_transaction_profile(columns, mapping):
+        sales_evidence = response.get("evidencia_venta_linea") or {}
+        if sales_evidence.get("confirmada") or is_transaction_profile(columns, mapping):
             focused.append(name)
     return focused
 
@@ -3636,7 +3645,12 @@ def _metrics_from_clean_result(
     }
     frame_name = sheet_name or "Datos"
     frame = result["_df_limpio"]
-    if has_collection_dashboard_profile({frame_name: frame}):
+    if isinstance(computed.get("trazabilidad_ventas"), dict):
+        computed["trazabilidad_ventas"]["hoja"] = frame_name
+    if (
+        has_collection_dashboard_profile({frame_name: frame})
+        or computed.get("tipo_analisis") == "ventas"
+    ):
         business = analyze_business_workbook(
             {frame_name: frame},
             {frame_name: result.get("mapeo", {})},

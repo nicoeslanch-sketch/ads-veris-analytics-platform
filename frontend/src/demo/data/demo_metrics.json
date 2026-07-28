@@ -415,6 +415,12 @@
    }
   ]
  },
+ "semantica_ventas": {
+  "etiqueta_promedio": "Ticket promedio",
+  "etiqueta_total": "Ingresos totales",
+  "granularidad": "registro"
+ },
+ "tipo_analisis": "ventas",
  "top_productos": [
   {
    "cobertura_costos_pct": 97.2,
@@ -529,6 +535,28 @@
    "ventas_netas": 304440.0
   }
  ],
+ "trazabilidad_ventas": {
+  "cobertura_numerica_pct": 100.0,
+  "columna": "Ventas",
+  "evidencia_formula": null,
+  "fechas_invalidas": 0,
+  "fechas_validas": 279,
+  "filtros": {
+   "desde": null,
+   "hasta": null
+  },
+  "formula_validacion": null,
+  "hoja": "Datos",
+  "lineas_excluidas": {
+   "anuladas": 0,
+   "fuera_del_filtro": 0,
+   "monto_no_numerico_o_ausente": 0,
+   "total": 0,
+   "totales_estructurales": 0
+  },
+  "lineas_incluidas": 279,
+  "relaciones_utilizadas": []
+ },
  "ventas_por_canal": [
   {
    "cobertura_costos_pct": 92.0,

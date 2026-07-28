@@ -17,6 +17,7 @@ from .mapping import strip_accents_lower
 from .quality import (
     find_column,
     formula_mismatch,
+    line_sales_evidence,
     normalized_header,
     numeric_series,
     structural_total_mask,
@@ -113,6 +114,12 @@ def _sheet_kind(name: str, frame: pd.DataFrame) -> str:
     sheet = normalized_header(name)
     sheet_tokens = set(sheet.split())
     headers = " | ".join(normalized_header(column) for column in frame.columns)
+    # A line-level commercial formula is stronger evidence than the sheet
+    # name. This allows Detalle_OT to be sales when MONTO reconciles with
+    # quantity, selling price and discount, while tariffs/contracts/UF remain
+    # operational because they cannot satisfy the same joint evidence.
+    if line_sales_evidence(frame).confirmed:
+        return "ventas"
     # Dominios operacionales de servicios. Deben resolverse antes de buscar
     # palabras monetarias: MONTO, tarifa o valor no convierten una OT en venta.
     if "detalle ot" in sheet or (
@@ -3104,7 +3111,11 @@ def analyze_business_workbook(
     )
     mixed_unfiltered_currency = len(currency_options) > 1 and not selected_currency
     currency_unit = currency_label
-    ticket_currency_unit = f"{currency_label}/documento"
+    ticket_currency_unit = (
+        f"{currency_label}/documento"
+        if document_key
+        else f"{currency_label}/línea"
+    )
     available_source_names = sorted(used_sheets)
     cost_warning = (
         []
@@ -3162,21 +3173,36 @@ def analyze_business_workbook(
         _indicator_contract(
             "ticket_promedio_documento",
             "ventas",
-            "Ticket promedio por documento",
+            (
+                "Ticket promedio por documento"
+                if document_key
+                else "Venta promedio por línea"
+            ),
             ticket_average,
             ticket_currency_unit,
             period_from=period_start,
             period_to=period_end,
-            formula="Ventas netas ÷ documentos únicos",
+            formula=(
+                "Ventas netas ÷ documentos únicos"
+                if document_key
+                else "Ventas netas ÷ líneas con monto"
+            ),
             numerator=observed_sales,
             denominator=indicator_documents,
-            status="available" if document_key and ticket_average is not None else "partial"
-            if ticket_average is not None
-            else "unavailable",
-            warnings=[]
-            if document_key
-            else ["No existe ID de documento; se usa cada fila como aproximación."],
-            required=["monto neto", "ID documento"],
+            status="available" if ticket_average is not None else "unavailable",
+            warnings=(
+                []
+                if document_key
+                else [
+                    "No existe un documento único: este promedio es por línea "
+                    "vendida y no se presenta como ticket."
+                ]
+            ),
+            required=(
+                ["monto neto", "ID documento"]
+                if document_key
+                else ["monto neto"]
+            ),
             sources=sales_names,
             polarity="neutral",
             visualizations=["kpi"],

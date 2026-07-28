@@ -81,6 +81,22 @@
   "placeholders_detectados": 1,
   "textos_normalizados": 3
  },
+ "evidencia_venta_linea": {
+  "cobertura_comparable_pct": 0.0,
+  "coincidencia_formula_pct": 0.0,
+  "columna_cantidad": "Cantidad",
+  "columna_descuento": null,
+  "columna_dimension_linea": "Producto",
+  "columna_fecha": "Fecha",
+  "columna_identificador": null,
+  "columna_monto": "Ventas",
+  "columna_precio_unitario": null,
+  "confirmada": false,
+  "filas_coincidentes": 0,
+  "filas_evaluadas": 0,
+  "filas_inconsistentes": 0,
+  "formula": "monto = cantidad × precio unitario × (1 − descuento)"
+ },
  "fusiones_texto": {
   "ejemplos": [],
   "total": 0

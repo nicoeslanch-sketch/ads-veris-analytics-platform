@@ -553,6 +553,37 @@ describe('estado multihoja', () => {
     )).toEqual([])
   })
 
+  it('acepta Detalle_OT como fuente comercial cuando el backend valida su fórmula', () => {
+    const columns = ['N° OT', 'Fecha', 'Tipo de Línea', 'Cantidad', 'Precio Unitario', 'Descuento', 'MONTO']
+    expect(compatibleAppendSheets(
+      ['Detalle_OT', 'Tarifas_Tecnicos'],
+      {
+        Detalle_OT: {
+          preview: { columnas: columns },
+          column_types: {
+            'N° OT': 'texto',
+            Fecha: 'fecha',
+            'Tipo de Línea': 'texto',
+            Cantidad: 'numero',
+            'Precio Unitario': 'numero',
+            Descuento: 'numero',
+            MONTO: 'numero',
+          },
+          mapeo: { fecha: 'Fecha', cantidad: 'Cantidad', monto: 'MONTO' },
+          moneda: 'CLP',
+          evidencia_venta_linea: { confirmada: true },
+        },
+        Tarifas_Tecnicos: {
+          preview: { columnas: ['Cod Tecnico', 'Valor Hora Venta', 'Costo Hora'] },
+          column_types: {},
+          mapeo: { monto: 'Valor Hora Venta', costo: 'Costo Hora' },
+          moneda: 'CLP',
+          evidencia_venta_linea: { confirmada: false },
+        },
+      },
+    )).toEqual(['Detalle_OT'])
+  })
+
   it('sincroniza los checkboxes de append_join con el alcance real', () => {
     const scope: Extract<AnalysisScope, { mode: 'append_join' }> = {
       mode: 'append_join',

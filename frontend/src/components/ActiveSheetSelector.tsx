@@ -148,6 +148,13 @@ export default function ActiveSheetSelector({
   const activeAppendJoin = mode === 'append_join' && analysisScope?.mode === 'append_join'
     ? analysisScope
     : null
+  const standaloneBusinessSheet = (
+    mode === 'append_join'
+    && analysisScope?.mode === 'single'
+    && compatibleSheets.includes(analysisScope.active_sheet)
+  )
+    ? analysisScope.active_sheet
+    : null
   const activeRelationCandidate = activeAppendJoin
     ? candidates.find((candidate) => (
         candidate.left_sheet === activeAppendJoin.join.left_sheet &&
@@ -297,9 +304,21 @@ export default function ActiveSheetSelector({
           `Listo: analizamos ${appendSelection.length} hojas de ventas como un solo periodo y vinculamos los costos de ${recommended.right_sheet} usando ${recommended.left_keys.join(' + ')}.`,
         )
       } else {
-        // No conservar detrás de este diagnóstico un alcance anterior que
-        // afirmaba haber agregado costos.
-        if (analysisScope?.mode === 'append_join') setAnalysisScope(null)
+        // Una fuente comercial confirmada puede sostener la Visión del
+        // negocio por sí sola. Las relaciones enriquecen dimensiones/costos,
+        // pero no son requisito para reconocer ventas reales.
+        if (appendSelection.length >= 1) {
+          const salesSheet = appendSelection[0]
+          manualModeSelected.current = true
+          setSheet(salesSheet)
+          setAnalysisScope({
+            mode: 'single',
+            sheets: [salesSheet],
+            active_sheet: salesSheet,
+          })
+        } else if (analysisScope?.mode === 'append_join') {
+          setAnalysisScope(null)
+        }
         const explanation = costSelection.blocked ?? costSelection.candidates[0]
         setRelationMessage(
           explanation
@@ -486,6 +505,29 @@ export default function ActiveSheetSelector({
             <p className="flex items-center gap-2 text-xs text-navy/60">
               <Loader2 className="h-4 w-4 animate-spin text-teal" /> Buscando conexiones seguras...
             </p>
+          ) : standaloneBusinessSheet ? (
+            <div className="rounded-lg border border-green/25 bg-green/[0.07] p-3">
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" />
+                <div>
+                  <p className="text-xs font-semibold text-navy">
+                    Ventas confirmadas en {standaloneBusinessSheet}
+                  </p>
+                  <p className="mt-1 text-xs text-navy/60">
+                    La visión usa únicamente sus ventas netas, unidades, fechas,
+                    descuentos y tipo de línea. Costos, clientes, contratos y
+                    técnicos solo aparecerán después de validar sus relaciones.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => selectMode('join')}
+                    className="mt-2 text-xs font-semibold text-teal hover:underline"
+                  >
+                    Enriquecer con una relación
+                  </button>
+                </div>
+              </div>
+            </div>
           ) : activeAppendJoin ? (
             <div className="rounded-lg border border-green/25 bg-green/[0.07] p-3">
               <div className="flex items-start gap-2.5">

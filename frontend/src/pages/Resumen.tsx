@@ -41,6 +41,7 @@ import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
 import BusinessFilterBar from '../components/BusinessFilterBar'
 import AnalysisLoadingPanel from '../components/AnalysisLoadingPanel'
+import SalesTraceability from '../components/SalesTraceability'
 import { useAuth } from '../auth/AuthContext'
 import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
@@ -247,9 +248,15 @@ export default function Resumen() {
     analysisScope?.mode ?? 'single',
   )
   const relationshipMode = selectorMode === 'join'
+  const standaloneBusinessAvailable = (
+    analysisScope?.mode === 'single'
+    && metrics?.tipo_analisis === 'ventas'
+    && Boolean(metrics.analisis_negocio)
+  )
   const businessUnavailable = (
     selectorMode === 'append_join'
     && analysisScope?.mode !== 'append_join'
+    && !standaloneBusinessAvailable
   )
   // Una relación guardada que ya no sirve para este libro bloquea el análisis;
   // reintentar reproduce el error, así que se ofrece la salida real.
@@ -482,7 +489,7 @@ export default function Resumen() {
     ? hasCosts
       ? [
           {
-            label: 'Ingresos Totales',
+            label: metrics?.semantica_ventas?.etiqueta_total ?? 'Ingresos Totales',
             icon: Wallet,
             color: CHART.ingresos,
             value: formatCLP(kpis.ingresos_totales.valor),
@@ -550,7 +557,7 @@ export default function Resumen() {
         ]
       : [
           {
-            label: 'Ingresos Totales',
+            label: metrics?.semantica_ventas?.etiqueta_total ?? 'Ingresos Totales',
             icon: Wallet,
             color: CHART.ingresos,
             value: formatCLP(kpis.ingresos_totales.valor),
@@ -558,11 +565,17 @@ export default function Resumen() {
             spark: sparkOf('ingresos'),
           },
           {
-            label: 'Ticket Promedio',
+            label: metrics?.semantica_ventas?.etiqueta_promedio ?? 'Ticket Promedio',
             icon: Coins,
             color: CHART.utilidad,
             value: formatCLP(kpis.ticket_promedio),
-            variation: <p className="text-xs text-navy/40">por registro con monto</p>,
+            variation: (
+              <p className="text-xs text-navy/40">
+                {metrics?.semantica_ventas?.granularidad === 'linea'
+                  ? 'por línea vendida con monto'
+                  : 'por registro con monto'}
+              </p>
+            ),
             spark: sparkOf('ingresos'),
           },
           {
@@ -691,7 +704,12 @@ export default function Resumen() {
           ctaTo="/limpieza"
         />
       ) : metrics?.analisis_negocio ? (
-        <BusinessAnalysisPanel analysis={metrics.analisis_negocio} variant="summary" />
+        <>
+          {metrics.trazabilidad_ventas && (
+            <SalesTraceability trace={metrics.trazabilidad_ventas} />
+          )}
+          <BusinessAnalysisPanel analysis={metrics.analisis_negocio} variant="summary" />
+        </>
       ) : contentKind === 'product_catalog' && metrics?.analisis_productos ? (
         <ProductCatalogSummary analysis={metrics.analisis_productos} variant="summary" />
       ) : contentKind === 'adaptive_profile' && metrics ? (

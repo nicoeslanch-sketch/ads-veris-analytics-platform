@@ -96,6 +96,22 @@ export interface CleanResult {
   estandarizacion: StandardizeResult['cambios']
   column_types: Record<string, ColumnType>
   mapeo: Record<string, string>
+  evidencia_venta_linea?: {
+    confirmada: boolean
+    columna_monto: string | null
+    columna_cantidad: string | null
+    columna_precio_unitario: string | null
+    columna_descuento: string | null
+    columna_dimension_linea: string | null
+    columna_fecha: string | null
+    columna_identificador: string | null
+    filas_evaluadas: number
+    filas_coincidentes: number
+    filas_inconsistentes: number
+    cobertura_comparable_pct: number
+    coincidencia_formula_pct: number
+    formula: string
+  }
   reporte_calidad?: Record<string, ColumnQuality>
   avisos?: string[]
   duplicados_criterio?: string
@@ -935,6 +951,23 @@ export interface MetricsResult {
    * UI bloquea los KPIs monetarios (jamás mostrar una cifra sumada inválida). */
   moneda_mixta?: boolean
   mapeo: Record<string, string>
+  semantica_ventas?: {
+    granularidad: 'linea' | 'registro'
+    etiqueta_total: string
+    etiqueta_promedio: string
+  }
+  trazabilidad_ventas?: {
+    hoja: string | null
+    columna: string | null
+    formula_validacion: string | null
+    lineas_incluidas: number
+    lineas_excluidas: Record<string, number>
+    cobertura_numerica_pct: number
+    fechas_validas: number
+    fechas_invalidas: number
+    filtros: { desde: string | null; hasta: string | null }
+    relaciones_utilizadas: unknown[]
+  }
   dimensiones?: DatasetDimensions
   agrupado_por_canal: 'canal' | 'sucursal' | null
   periodo: {
@@ -1038,7 +1071,7 @@ export interface MetricsResult {
   }
   analysis_scope?: AnalysisScope
   analysis_provenance?: Record<string, unknown>
-  tipo_analisis?: 'catalogo_productos' | 'campanas_marketing' | 'inventario' | 'generico'
+  tipo_analisis?: 'ventas' | 'catalogo_productos' | 'campanas_marketing' | 'inventario' | 'generico'
   analisis_productos?: {
     productos: number
     referencia_tipo?: 'precio_lista' | 'costo_total_unitario' | null

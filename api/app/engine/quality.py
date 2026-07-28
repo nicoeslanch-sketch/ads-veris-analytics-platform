@@ -129,6 +129,135 @@ class FormulaCheck:
         }
 
 
+@dataclass(frozen=True)
+class LineSalesEvidence:
+    """Evidence that a row-level amount is a commercial net sale.
+
+    Generic monetary names are intentionally insufficient. Confirmation
+    requires quantity, unit selling price, discount, a line/product dimension,
+    transaction context and a high agreement with the declared formula.
+    """
+
+    confirmed: bool
+    amount_column: str | None
+    quantity_column: str | None
+    unit_price_column: str | None
+    discount_column: str | None
+    line_dimension_column: str | None
+    date_column: str | None
+    transaction_id_column: str | None
+    evaluated_rows: int
+    matching_rows: int
+    mismatch_rows: int
+    comparable_coverage_pct: float
+    formula_match_pct: float
+
+    def to_dict(self) -> dict:
+        return {
+            "confirmada": self.confirmed,
+            "columna_monto": self.amount_column,
+            "columna_cantidad": self.quantity_column,
+            "columna_precio_unitario": self.unit_price_column,
+            "columna_descuento": self.discount_column,
+            "columna_dimension_linea": self.line_dimension_column,
+            "columna_fecha": self.date_column,
+            "columna_identificador": self.transaction_id_column,
+            "filas_evaluadas": self.evaluated_rows,
+            "filas_coincidentes": self.matching_rows,
+            "filas_inconsistentes": self.mismatch_rows,
+            "cobertura_comparable_pct": self.comparable_coverage_pct,
+            "coincidencia_formula_pct": self.formula_match_pct,
+            "formula": "monto = cantidad × precio unitario × (1 − descuento)",
+        }
+
+
+def line_sales_evidence(
+    frame: pd.DataFrame,
+    roles: dict[str, str] | None = None,
+) -> LineSalesEvidence:
+    """Confirm line sales from structure plus the commercial formula.
+
+    The check is read-only. Inconsistent rows are reported but never changed
+    or silently discarded. Percent discounts may be encoded as 0.10, 10 or
+    ``10%``; they are normalized only for this validation calculation.
+    """
+
+    roles = roles or {}
+    amount = roles.get("monto") or find_column(
+        frame.columns, "monto", excluded=("mensual", "cuota", "uf")
+    )
+    quantity = roles.get("cantidad") or find_column(frame.columns, "cantidad")
+    unit_price = find_column(
+        frame.columns, "precio", "unitario", excluded=("costo",)
+    )
+    discount = find_column(frame.columns, "descuento")
+    line_dimension = (
+        find_column(frame.columns, "tipo", "linea")
+        or find_column(frame.columns, "producto")
+        or find_column(frame.columns, "servicio")
+        or find_column(frame.columns, "item")
+    )
+    date = roles.get("fecha") or find_column(frame.columns, "fecha")
+    transaction_id = (
+        find_column(frame.columns, "id", "linea")
+        or find_column(frame.columns, "numero", "ot")
+        or find_column(frame.columns, "n", "ot")
+        or find_column(frame.columns, "id", "orden")
+        or find_column(frame.columns, "documento")
+    )
+    required = (amount, quantity, unit_price, discount, line_dimension)
+    if not all(required) or not (date or transaction_id) or frame.empty:
+        return LineSalesEvidence(
+            False, amount, quantity, unit_price, discount, line_dimension,
+            date, transaction_id, 0, 0, 0, 0.0, 0.0,
+        )
+
+    actual = numeric_series(frame, amount)
+    units = numeric_series(frame, quantity)
+    price = numeric_series(frame, unit_price)
+    discount_values = numeric_series(frame, discount)
+    discount_ratio = discount_values.where(
+        discount_values.abs() <= 1, discount_values / 100.0
+    )
+    eligible = (
+        actual.notna()
+        & units.notna()
+        & price.notna()
+        & discount_ratio.notna()
+        & discount_ratio.between(0, 1)
+    )
+    expected = units * price * (1 - discount_ratio)
+    tolerance = expected.abs().mul(0.005).clip(lower=2.0)
+    matches = eligible & actual.sub(expected).abs().le(tolerance)
+    evaluated = int(eligible.sum())
+    matching = int(matches.sum())
+    mismatches = max(evaluated - matching, 0)
+    populated_amounts = max(int(actual.notna().sum()), 1)
+    coverage = evaluated / populated_amounts * 100
+    agreement = matching / evaluated * 100 if evaluated else 0.0
+    minimum_rows = min(3, populated_amounts)
+    confirmed = bool(
+        evaluated >= minimum_rows
+        and coverage >= 60.0
+        and agreement >= 90.0
+    )
+    return LineSalesEvidence(
+        confirmed,
+        amount,
+        quantity,
+        unit_price,
+        discount,
+        line_dimension,
+        date,
+        transaction_id,
+        evaluated,
+        matching,
+        mismatches,
+        round(coverage, 1),
+        round(agreement, 1),
+    )
+
+
 def formula_mismatch(
     name: str,
     actual: pd.Series,

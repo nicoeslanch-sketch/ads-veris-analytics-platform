@@ -53,6 +53,7 @@ import AdaptiveProfileSummary from '../components/AdaptiveProfileSummary'
 import BusinessAnalysisPanel from '../components/BusinessAnalysisPanel'
 import BusinessFilterBar from '../components/BusinessFilterBar'
 import AnalysisLoadingPanel from '../components/AnalysisLoadingPanel'
+import SalesTraceability from '../components/SalesTraceability'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
@@ -384,10 +385,6 @@ export default function Explorar() {
     analysisScope?.mode ?? 'single',
   )
   const relationshipMode = selectorMode === 'join'
-  const businessUnavailable = (
-    selectorMode === 'append_join'
-    && analysisScope?.mode !== 'append_join'
-  )
   const [openRelationsNonce, setOpenRelationsNonce] = useState(0)
   const ready = Boolean(file && cleaning) || demo.active
 
@@ -396,6 +393,16 @@ export default function Explorar() {
 
   const [fetchedMetrics, setMetrics] = useState<MetricsResult | null>(null)
   const metrics = demo.active ? demo.metrics : fetchedMetrics
+  const standaloneBusinessAvailable = (
+    analysisScope?.mode === 'single'
+    && metrics?.tipo_analisis === 'ventas'
+    && Boolean(metrics.analisis_negocio)
+  )
+  const businessUnavailable = (
+    selectorMode === 'append_join'
+    && analysisScope?.mode !== 'append_join'
+    && !standaloneBusinessAvailable
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Fase 11 §9.3: "Reintentar" tras un timeout o corte de red
@@ -672,6 +679,9 @@ export default function Explorar() {
           disabled={loading}
           onChange={setBusinessFilters}
         />
+        {metrics.trazabilidad_ventas && (
+          <SalesTraceability trace={metrics.trazabilidad_ventas} />
+        )}
         <BusinessAnalysisPanel analysis={metrics.analisis_negocio} variant="explore" />
       </>
     )

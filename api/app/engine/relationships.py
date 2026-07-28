@@ -533,6 +533,8 @@ def detect_relationship_catalog(
         ("ventas", "sucursales"),
         ("ventas", "inventario"),
         ("ventas", "cobranzas"),
+        ("ventas", "ordenes_trabajo"),
+        ("ventas", "items"),
         ("productos", "proveedores"),
         ("compras", "productos"),
         ("compras", "proveedores"),
