@@ -147,39 +147,39 @@ const GENERIC_TITLES: Record<string, { titulo: string; nota: string }> = {
   },
   ordenes_trabajo: {
     titulo: 'Órdenes de trabajo',
-    nota: 'Actividad operacional por estado, cliente y responsable. No representa ventas ni facturación.',
+    nota: 'Esta hoja no contiene el ingreso. Relaciónala con Detalle_OT, Horas_Tecnicos y Cuotas_Contrato para ver ventas y resultado por OT.',
   },
   detalle_ot: {
     titulo: 'Detalle de órdenes de trabajo',
-    nota: 'Los montos corresponden a líneas OT. No se reconocen como ingresos hasta validar una regla de facturación.',
+    nota: 'Vista exploratoria: MONTO de líneas Material es venta neta validada por cantidad × precio × (1 − descuento); Subcontrato es costo, nunca ingreso.',
   },
   horas_tecnicos: {
     titulo: 'Horas técnicas',
-    nota: 'Horas normales, extra y facturables como actividad operacional; no se convierten en dinero sin una tarifa vigente validada.',
+    nota: 'Esta hoja no contiene el ingreso monetario. Relaciónala con Tarifas_Tecnicos por técnico y vigencia para valorizar horas y costos.',
   },
   tarifas_tecnicos: {
     titulo: 'Tarifas de técnicos',
-    nota: 'Valores unitarios y margen potencial de tarifa. No representan ingresos ni utilidad realizada.',
+    nota: 'Esta hoja no contiene ventas realizadas. Relaciónala con Horas_Tecnicos por técnico y vigencia; sumar tarifas unitarias no tiene sentido.',
   },
   tecnicos: {
     titulo: 'Equipo técnico',
-    nota: 'Maestra de técnicos, especialidades y estado. No representa ventas.',
+    nota: 'Esta hoja no contiene el ingreso. Relaciónala con Horas_Tecnicos y Ordenes_Trabajo para medir utilización y productividad.',
   },
   contratos: {
     titulo: 'Contratos',
-    nota: 'Valores y vigencias contractuales. Un monto contratado no equivale a una venta realizada.',
+    nota: 'Esta hoja no confirma ingresos realizados. Relaciónala con Cuotas_Contrato y Valor_UF para convertir y reconocer cuotas del periodo.',
   },
   cuotas_contrato: {
     titulo: 'Cuotas contractuales',
-    nota: 'Estado de cuotas por moneda y periodo. Facturación, pendiente y cobro deben distinguirse antes de sumar.',
+    nota: 'Vista de cuotas: para incorporarlas al negocio debes relacionarlas con Contratos y Valor_UF del mismo periodo.',
   },
   valor_uf: {
     titulo: 'Valor UF de referencia',
-    nota: 'Serie temporal para conversiones declaradas. Nunca se interpreta como ingreso.',
+    nota: 'Esta hoja no contiene ingreso. Es una referencia temporal para convertir Cuotas_Contrato expresadas en UF.',
   },
   items: {
     titulo: 'Artículos e insumos',
-    nota: 'Maestra de ítems y valores unitarios de referencia; no representa ventas realizadas.',
+    nota: 'Esta hoja no contiene ingreso. Relaciónala con Detalle_OT para calcular costo y rentabilidad de materiales por familia.',
   },
 }
 

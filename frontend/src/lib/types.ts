@@ -466,6 +466,11 @@ export interface RelationshipCatalog {
   relationships: CatalogRelationship[]
   discarded_count: number
   message: string | null
+  relationship_plan?: Array<{
+    order: number
+    relation: string
+    unlocks: string
+  }>
 }
 
 export type KpiFormat = 'currency' | 'number' | 'percent' | 'integer' | 'text' | 'days'
@@ -764,10 +769,94 @@ export interface NominalCollectionAnalysis {
   notas: string[]
 }
 
+export interface ServiceBusinessGroupRow {
+  nombre: string
+  registros: number
+  ingresos: number
+  costo: number
+  utilidad: number
+  margen_pct: number | null
+}
+
+export interface ServiceBusinessAnalysis {
+  kpis: {
+    ventas_netas: number
+    costo_directo: number
+    utilidad_bruta: number
+    margen_bruto_pct: number
+    gastos_estructura: number
+    utilidad_operacional: number
+    margen_operacional_pct: number
+    ebitda: number
+    margen_ebitda_pct: number
+    utilizacion_pct: number
+    costo_horas_no_facturables: number
+    backlog: number
+    ot_perdida: number
+    ingreso_recurrente: number
+  }
+  composicion_ingresos: Array<{ nombre: string; valor: number }>
+  composicion_costos: Array<{ nombre: string; valor: number }>
+  cascada: Array<{ nombre: string; valor: number }>
+  evolucion: Array<{
+    mes: string
+    ingresos: number
+    costo_directo: number
+    utilidad_bruta: number
+    gastos: number
+    utilidad_operacional: number
+    margen_bruto_pct: number | null
+    margen_operacional_pct: number | null
+    utilizacion_pct: number | null
+    horas: number
+    horas_facturables: number
+    ot: number
+    parcial: boolean
+    cobertura_hasta_dia: number
+    dias_del_mes: number
+  }>
+  ot_dispersion: Array<{
+    ot: string
+    ingresos: number
+    utilidad: number
+    tipo: string
+    margen_pct: number | null
+    perdida: boolean
+  }>
+  por_tipo_ot: ServiceBusinessGroupRow[]
+  por_segmento: ServiceBusinessGroupRow[]
+  por_familia: ServiceBusinessGroupRow[]
+  operacion: {
+    ot_total: number
+    ot_cerradas: number
+    ot_abiertas: number
+    ot_perdida: number
+    ot_perdida_operacional: number
+    perdida_ot_negativas: number
+    horas_totales: number
+    horas_facturables: number
+    horas_no_facturables: number
+    contratos: number
+    contratos_uf: number
+    cuotas_pendientes: number
+    punto_equilibrio: number
+    margen_seguridad_pct: number | null
+    apalancamiento_operativo: number | null
+  }
+  relaciones: Array<{ orden: number; relacion: string; desbloquea: string }>
+  trazabilidad: {
+    fuentes_ingreso: string[]
+    fuentes_costo: string[]
+    moneda: string
+    mes_parcial: string | null
+  }
+}
+
 export interface BusinessAnalysis {
   version: number
   perfil?: 'negocio' | 'cobranza_nominal' | string
   cobranza?: NominalCollectionAnalysis
+  servicios?: ServiceBusinessAnalysis
   filtros?: {
     disponibles: Partial<Record<BusinessFilterKey, string[]>>
     aplicados: BusinessFilters

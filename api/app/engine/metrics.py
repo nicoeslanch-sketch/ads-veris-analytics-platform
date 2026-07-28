@@ -1032,6 +1032,31 @@ def compute_metrics(
     )
 
     amounts_all = _numeric_series(df, roles.get("monto")).where(indicator_row_mask)
+    if line_sales.confirmed and line_sales.line_dimension_column in df.columns:
+        # Una hoja de detalle de servicios puede mezclar líneas vendidas y
+        # costos directos. ``Subcontrato`` es costo de la OT, no una venta.
+        # La fórmula valida los materiales; no autoriza a sumar cualquier otro
+        # MONTO presente en la misma tabla.
+        line_semantics = (
+            df[line_sales.line_dimension_column]
+            .astype(str)
+            .map(strip_accents_lower)
+            .str.strip()
+        )
+        direct_cost_rows = line_semantics.str.contains(
+            r"\bsub\s*contrat|\bsubcontrat",
+            regex=True,
+            na=False,
+        )
+        if direct_cost_rows.any():
+            indicator_row_mask &= ~direct_cost_rows
+            amounts_all = _numeric_series(df, roles.get("monto")).where(
+                indicator_row_mask
+            )
+            warnings.append(
+                f"Se excluyeron {int(direct_cost_rows.sum())} línea(s) de "
+                "Subcontrato de Ventas netas: son costos directos de la OT."
+            )
     costs_all = _numeric_series(df, roles.get("costo")).where(indicator_row_mask)
     cost_column_normalized = (
         strip_accents_lower(str(roles["costo"])).replace("_", " ")

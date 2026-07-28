@@ -247,9 +247,9 @@ def build_audit_dataframe(
             json.dumps(original_record, ensure_ascii=False, default=str),
             "",
             removed.get("regla", "duplicado_exacto_original"),
-            "fila_eliminada",
+            removed.get("accion", "fila_eliminada"),
             float(removed.get("confianza", 1.0)),
-            "confirmada_por_usuario",
+            removed.get("confirmacion", "confirmada_por_usuario"),
             {"motivo": removed.get("motivo")},
         )
 

@@ -23,6 +23,7 @@ from .quality import (
     structural_total_mask,
 )
 from .standardize import map_unique, parse_date, physical_missing_mask
+from .service_model import analyze_service_business
 
 BUSINESS_FILTER_KEYS = (
     "sucursal",
@@ -1683,6 +1684,19 @@ def analyze_business_workbook(
     filters: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Build an executive and diagnostic view without mixing table grains."""
+
+    service_profile = analyze_service_business(frames)
+    if service_profile is not None:
+        return service_profile
+    if any(
+        normalized_header(name) == "detalle ot"
+        or _sheet_kind(name, frame) == "detalle_ot"
+        for name, frame in frames.items()
+    ):
+        # Detalle_OT permite explorar ventas de materiales por sí sola, pero
+        # no representa el negocio completo: faltan horas, contratos, tarifas,
+        # estructura e Items. Visión del negocio se habilita solo con la red.
+        return None
 
     collection_profile = _analyze_nominal_collection(
         frames,

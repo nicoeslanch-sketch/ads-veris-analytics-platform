@@ -66,6 +66,18 @@ export default function ActiveSheetSelector({
       Object.fromEntries(cleanedSheets.map((name) => [name, sheetSessions[name]?.cleaning])),
     )
   }, [cleanedSheets, sheetSessions])
+  const serviceWorkbook = useMemo(() => {
+    const normalized = new Set(
+      cleanedSheets.map((name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '_')),
+    )
+    return [
+      'ordenes_trabajo',
+      'detalle_ot',
+      'horas_tecnicos',
+      'tarifas_tecnicos',
+      'cuotas_contrato',
+    ].every((name) => normalized.has(name))
+  }, [cleanedSheets])
   const pendingSelectedCount = availableSheets.length === 0 && cleaning
     ? 0
     : selectedSheets.filter((name) => !(
@@ -381,7 +393,9 @@ export default function ActiveSheetSelector({
       ? {
           append: compatibleSheets.length === 1
             ? 'Solo detectamos un periodo de venta. Se necesitan al menos dos para unirlos.'
-            : 'No detectamos periodos de venta seguros en este archivo.',
+            : serviceWorkbook
+              ? 'Este libro no tiene periodos con el mismo esquema. Compartir ID_OT no basta para apilar: usa Relación manual.'
+              : 'No detectamos periodos de venta seguros en este archivo.',
         }
       : {}
 

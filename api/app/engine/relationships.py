@@ -523,6 +523,20 @@ def detect_relationship_catalog(
     }
     kinds = {name: _sheet_kind(name, frames[name]) for name in frames}
     sales_names = [name for name, kind in kinds.items() if kind == "ventas"]
+    service_kinds = {
+        "ordenes_trabajo",
+        "detalle_ot",
+        "horas_tecnicos",
+        "tarifas_tecnicos",
+        "tecnicos",
+        "items",
+        "clientes",
+        "contratos",
+        "cuotas_contrato",
+        "valor_uf",
+        "gastos",
+    }
+    is_service_workbook = service_kinds.issubset(set(kinds.values()))
 
     supported_orientations = {
         ("ventas", "productos"),
@@ -718,4 +732,22 @@ def detect_relationship_catalog(
         "relationships": relationships,
         "discarded_count": discarded,
         "message": message,
+        "relationship_plan": (
+            [
+                {"order": 1, "relation": "Detalle_OT → Ordenes_Trabajo", "unlocks": "Ingreso y costo por OT"},
+                {"order": 2, "relation": "Horas_Tecnicos → Ordenes_Trabajo", "unlocks": "Horas e ingreso de mano de obra por OT"},
+                {"order": 3, "relation": "Detalle_OT → Items", "unlocks": "Costo y familia de materiales"},
+                {"order": 4, "relation": "Horas_Tecnicos → Tarifas_Tecnicos (vigencia)", "unlocks": "Costo y venta real de horas"},
+                {"order": 5, "relation": "Cuotas_Contrato → Valor_UF (periodo)", "unlocks": "Cuotas UF convertidas a CLP"},
+                {"order": 6, "relation": "Cuotas_Contrato → Contratos", "unlocks": "Ingreso recurrente y estado contractual"},
+                {"order": 7, "relation": "Ordenes_Trabajo → Clientes", "unlocks": "Rentabilidad por cliente y segmento"},
+                {"order": 8, "relation": "Ordenes_Trabajo → Contratos", "unlocks": "OT asociadas a contratos"},
+                {"order": 9, "relation": "Ordenes_Trabajo → Tecnicos", "unlocks": "Supervisión y cumplimiento de SLA"},
+                {"order": 10, "relation": "Horas_Tecnicos → Tecnicos", "unlocks": "Productividad y utilización por técnico"},
+                {"order": 11, "relation": "Contratos → Clientes", "unlocks": "Cartera contractual por cliente"},
+                {"order": 12, "relation": "Gastos_Estructura → Periodo", "unlocks": "Resultado operacional mensual"},
+            ]
+            if is_service_workbook
+            else []
+        ),
     }

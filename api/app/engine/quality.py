@@ -189,8 +189,14 @@ def line_sales_evidence(
     quantity = roles.get("cantidad") or find_column(frame.columns, "cantidad")
     unit_price = find_column(
         frame.columns, "precio", "unitario", excluded=("costo",)
+    ) or find_column(
+        frame.columns, "precio", "unit", excluded=("costo",)
     )
-    discount = find_column(frame.columns, "descuento")
+    discount = (
+        find_column(frame.columns, "descuento")
+        or find_column(frame.columns, "dcto")
+        or find_column(frame.columns, "desc", "pct")
+    )
     line_dimension = (
         find_column(frame.columns, "tipo", "linea")
         or find_column(frame.columns, "producto")

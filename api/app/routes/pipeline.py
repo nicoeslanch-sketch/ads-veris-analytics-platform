@@ -35,6 +35,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from uuid import UUID
 
+import pandas as pd
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -95,6 +96,7 @@ from ..engine.multi_sheet import (
 )
 from ..engine.relationships import detect_relationship_catalog
 from ..engine.relationship_dashboard import build_relationship_dashboard
+from ..engine.service_model import apply_service_transform_to_result
 from ..engine.standardize import normalize_headers, standardize_dataframe
 from ..restore_cache import (
     RestoreSnapshotUnavailable,
@@ -1194,6 +1196,8 @@ def _analyze_uncached(
         "filas_titulo_omitidas": load_report.get("filas_titulo_omitidas", 0),
         "formulas": load_report.get("formulas"),
     }
+    if apply:
+        result = apply_service_transform_to_result(result)
 
     # Costura de refinado IA (§5.13): preparada, apagada por flag.
     settings = get_settings()
@@ -2362,7 +2366,10 @@ def _build_export_audit(
         mapping=result.get("mapeo", mapping or {}),
         rules=rules,
         scope=scope,
-        removed_rows=result.get("_filas_duplicadas_eliminadas", []),
+        removed_rows=[
+            *result.get("_filas_duplicadas_eliminadas", []),
+            *result.get("_filas_estructurales_eliminadas", []),
+        ],
         detected_duplicate_rows=result.get("_filas_duplicadas_detectadas", []),
         source_sha256=hashlib.sha256(content).hexdigest(),
         original_headers=original_headers,

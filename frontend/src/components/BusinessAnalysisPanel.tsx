@@ -32,6 +32,7 @@ import KpiCarousel from './ui/KpiCarousel'
 import KpiValue from './ui/KpiValue'
 import AdaptiveIndicatorCatalog from './AdaptiveIndicatorCatalog'
 import NominalCollectionDashboard from './NominalCollectionDashboard'
+import ServiceBusinessPanel from './ServiceBusinessPanel'
 import {
   AXIS_INK,
   CATEGORICAL,
@@ -949,6 +950,9 @@ export default function BusinessAnalysisPanel({
 }) {
   if (analysis.perfil === 'cobranza_nominal' && analysis.cobranza) {
     return <NominalCollectionDashboard analysis={analysis} variant={variant} />
+  }
+  if (analysis.perfil === 'servicios_tecnicos' && analysis.servicios) {
+    return <ServiceBusinessPanel analysis={analysis.servicios} />
   }
   return variant === 'summary'
     ? <ExecutiveSummary analysis={analysis} />

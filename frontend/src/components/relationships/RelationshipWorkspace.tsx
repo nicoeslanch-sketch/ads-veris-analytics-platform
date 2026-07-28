@@ -365,6 +365,40 @@ export default function RelationshipWorkspace() {
       aria-label="Relaciones entre hojas"
       className="@container"
     >
+      {catalog?.relationship_plan && catalog.relationship_plan.length > 0 && (
+        <div className="mb-4 rounded-xl border border-teal/20 bg-teal/[0.05] p-4">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-teal">
+                Ruta recomendada · 12 pasos
+              </p>
+              <h3 className="mt-1 text-sm font-semibold text-navy">
+                Primero montos, luego agrupaciones y finalmente cortes operativos
+              </h3>
+            </div>
+            <span className="text-[11px] text-navy/50">
+              Compartir ID_OT no significa que dos hojas se puedan apilar.
+            </span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {catalog.relationship_plan.map((step) => (
+              <div key={step.order} className="rounded-lg border border-navy/10 bg-white px-3 py-2.5">
+                <div className="flex items-start gap-2">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-teal text-[10px] font-bold text-white">
+                    {step.order}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-navy">{step.relation}</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-navy/55">
+                      Desbloquea: {step.unlocks}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid gap-4 @min-[880px]:grid-cols-[250px_minmax(0,1fr)]">
         <RelationshipCatalogPanel
           relationships={relationships}

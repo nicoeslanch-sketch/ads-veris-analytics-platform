@@ -155,34 +155,27 @@ def test_detalle_ot_confirma_ventas_por_formula_sin_relaciones():
         "etiqueta_total": "Ventas netas",
         "etiqueta_promedio": "Venta promedio por línea",
     }
-    assert metrics["kpis"]["ingresos_totales"]["valor"] == 1_769_408
-    assert metrics["kpis"]["transacciones"] == 10
-    assert metrics["kpis"]["unidades_totales"] == 27
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 1_161_408
+    assert metrics["kpis"]["transacciones"] == 5
+    assert metrics["kpis"]["unidades_totales"] == 11
     assert metrics["kpis"]["gastos_totales"] is None
     assert metrics["kpis"]["ganancia_neta"] is None
     assert metrics["trazabilidad_ventas"]["columna"] == "MONTO"
-    assert metrics["trazabilidad_ventas"]["fechas_validas"] == 9
-    assert metrics["trazabilidad_ventas"]["fechas_invalidas"] == 1
+    assert metrics["trazabilidad_ventas"]["fechas_validas"] == 5
+    assert metrics["trazabilidad_ventas"]["fechas_invalidas"] == 0
     assert metrics["trazabilidad_ventas"]["relaciones_utilizadas"] == []
     assert any("1 línea(s) no coinciden" in warning for warning in metrics["advertencias"])
+    assert any("Subcontrato" in warning for warning in metrics["advertencias"])
 
     business = analyze_business_workbook(
         {"Detalle_OT": cleaned["_df_limpio"]},
         {"Detalle_OT": cleaned["mapeo"]},
         {"Detalle_OT": cleaned},
     )
-    assert business is not None
-    indicators = {
-        indicator["id"]: indicator
-        for category in business["catalogo_indicadores"]["categorias"]
-        for indicator in category["indicadores"]
-    }
-    assert indicators["ventas_netas"]["valor"] == 1_769_408
-    assert indicators["ticket_promedio_documento"]["nombre"] == "Venta promedio por línea"
-    assert indicators["ticket_promedio_documento"]["unidad"] == "CLP/línea"
-    assert indicators["costo_venta"]["valor"] is None
-    assert indicators["utilidad_bruta"]["valor"] is None
-    assert indicators["clientes_con_compra"]["valor"] is None
+    # Analizar una hoja sí reconoce las ventas de Material. La Visión del
+    # negocio se reserva para la red completa (horas, tarifas, contratos,
+    # gastos e Items), por lo que no inventa un estado de resultados parcial.
+    assert business is None
 
 
 def test_monto_generico_sin_evidencia_comercial_no_es_venta():
