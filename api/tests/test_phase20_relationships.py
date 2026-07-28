@@ -776,6 +776,113 @@ def test_null_ids_do_not_crash_dashboard():
 
 
 # ── Camino del endpoint (sync) con XLSX + manifiesto real ────────────────────
+def test_service_hours_tariffs_dashboard_uses_rate_valid_on_work_date():
+    hours = pd.DataFrame(
+        {
+            "N° OT": ["OT-1", "OT-2"],
+            "Cod Tecnico": ["TEC-1", "TEC-1"],
+            "Fecha": ["2025-03-10", "2025-09-10"],
+            "Horas": [10, 5],
+            "¿Factura?": ["Sí", "No"],
+        }
+    )
+    tariffs = pd.DataFrame(
+        {
+            "Cod Tecnico": ["TEC-1", "TEC-1"],
+            "Vigente Desde": ["2025-01-01", "2025-07-01"],
+            "Vigente Hasta": ["2025-06-30", "2025-12-31"],
+            "COSTO HORA": [8, 10],
+            "Valor Hora Venta": [15, 20],
+        }
+    )
+    relationship = {
+        **_relation(
+            "Horas_Tecnicos",
+            "Tarifas_Tecnicos",
+            ["Cod Tecnico", "Fecha"],
+            ["Cod Tecnico", "Vigente Desde"],
+        ),
+        "join_strategy": "vigencia_por_fecha",
+    }
+    dashboard = build_relationship_dashboard(
+        {"Horas_Tecnicos": hours, "Tarifas_Tecnicos": tariffs},
+        {},
+        {},
+        relationship,
+    )
+    kpis = {kpi["id"]: kpi["value"] for kpi in dashboard["kpis"]}
+    assert dashboard["available"] is True
+    assert dashboard["quality"]["rows_before"] == dashboard["quality"]["rows_after"] == 2
+    assert kpis["ingreso_horas"] == 150
+    assert kpis["costo_horas"] == 130
+    assert kpis["utilizacion"] == 66.67
+
+
+def test_service_uf_dashboard_converts_only_uf_installments():
+    installments = pd.DataFrame(
+        {
+            "Cod Contrato": ["CT-1", "CT-2"],
+            "Periodo": ["2025-01", "2025-01"],
+            "Monto": [2, 100_000],
+            "MONEDA": ["UF", "CLP"],
+        }
+    )
+    uf = pd.DataFrame({"Periodo": ["2025-01"], "Valor UF (CLP)": [38_000]})
+    relationship = {
+        **_relation(
+            "Cuotas_Contrato",
+            "Valor_UF",
+            ["Periodo"],
+            ["Periodo"],
+        ),
+        "join_strategy": "periodo_moneda_uf",
+    }
+    dashboard = build_relationship_dashboard(
+        {"Cuotas_Contrato": installments, "Valor_UF": uf},
+        {},
+        {},
+        relationship,
+    )
+    kpis = {kpi["id"]: kpi["value"] for kpi in dashboard["kpis"]}
+    assert dashboard["available"] is True
+    assert kpis["ingreso_recurrente"] == 176_000
+    assert kpis["cuotas_uf"] == 1
+
+
+def test_service_orders_contracts_dashboard_excludes_uncontracted_orders_from_sla():
+    orders = pd.DataFrame(
+        {
+            "N° OT": ["OT-1", "OT-2", "OT-3"],
+            "Cod Contrato": ["CT-1", "CT-1", None],
+            "Tiempo Respuesta (h)": [3, 7, 100],
+        }
+    )
+    contracts = pd.DataFrame(
+        {
+            "Cod Contrato": ["CT-1"],
+            "Tipo Contrato": ["Mantención"],
+            "SLA (h)": [4],
+        }
+    )
+    dashboard = build_relationship_dashboard(
+        {"Ordenes_Trabajo": orders, "Contratos": contracts},
+        {},
+        {},
+        _relation(
+            "Ordenes_Trabajo",
+            "Contratos",
+            ["Cod Contrato"],
+            ["Cod Contrato"],
+        ),
+    )
+    kpis = {kpi["id"]: kpi["value"] for kpi in dashboard["kpis"]}
+    assert dashboard["available"] is True
+    assert dashboard["quality"]["rows_before"] == dashboard["quality"]["rows_after"] == 3
+    assert dashboard["quality"]["matched_rows"] == 2
+    assert kpis["cumplimiento_sla"] == 50
+    assert kpis["ot_incumplen"] == 1
+
+
 def _multi_sheet_book() -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:

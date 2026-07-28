@@ -714,8 +714,13 @@ def analyze_service_business(
     ].sum(axis=1)
     monthly["utilidad_bruta"] = monthly["ingresos"] - monthly["costo_directo"]
     monthly["utilidad_operacional"] = monthly["utilidad_bruta"] - monthly["gastos"]
+    monthly["ingresos_ot"] = monthly["ingreso_material"] + monthly["ingreso_horas"]
+    monthly["utilidad_ot"] = monthly["ingresos_ot"] - monthly["costo_directo"]
     monthly["margen_bruto_pct"] = monthly["utilidad_bruta"].div(
         monthly["ingresos"].replace(0, pd.NA)
+    ) * 100
+    monthly["margen_ot_pct"] = monthly["utilidad_ot"].div(
+        monthly["ingresos_ot"].replace(0, pd.NA)
     ) * 100
     monthly["margen_operacional_pct"] = monthly["utilidad_operacional"].div(
         monthly["ingresos"].replace(0, pd.NA)
@@ -743,12 +748,14 @@ def analyze_service_business(
                 **{
                     column: _round_money(row[column])
                     for column in (
+                        "ingreso_material", "ingreso_horas", "ingreso_contratos",
                         "ingresos", "costo_directo", "utilidad_bruta",
                         "gastos", "utilidad_operacional", "horas",
                         "horas_facturables", "ot",
                     )
                 },
                 "margen_bruto_pct": rounded_percent(row["margen_bruto_pct"]),
+                "margen_ot_pct": rounded_percent(row["margen_ot_pct"]),
                 "margen_operacional_pct": rounded_percent(
                     row["margen_operacional_pct"]
                 ),
@@ -772,8 +779,14 @@ def analyze_service_business(
     client_key_order = _column(orders, ("cod", "cliente"), ("id", "cliente"))
     client_key_master = _column(clients, ("cod", "cliente"), ("id", "cliente"))
     client_segment = _column(clients, ("segmento",))
+    client_name = _column(clients, ("razon", "social"), ("nombre", "cliente"))
     if client_key_order and client_key_master and client_segment:
-        client_lookup = clients[[client_key_master, client_segment]].drop_duplicates(client_key_master)
+        client_columns = [
+            client_key_master,
+            client_segment,
+            *([client_name] if client_name else []),
+        ]
+        client_lookup = clients[client_columns].drop_duplicates(client_key_master)
         ot = ot.merge(
             orders[[order_id, client_key_order]],
             on=order_id,
@@ -793,13 +806,204 @@ def analyze_service_business(
         if client_segment and client_segment in ot.columns
         else []
     )
+    client_rows: list[dict[str, Any]] = []
+    if client_key_order and client_key_order in ot.columns:
+        grouped_clients = ot.groupby(client_key_order, dropna=False).agg(
+            registros=(order_id, "nunique"),
+            ingresos=("ingresos", "sum"),
+            costo=("costo", "sum"),
+        )
+        grouped_clients["utilidad"] = (
+            grouped_clients["ingresos"] - grouped_clients["costo"]
+        )
+        grouped_clients = grouped_clients.sort_values("utilidad", ascending=False)
+        positive_utility = float(
+            grouped_clients.loc[grouped_clients["utilidad"] > 0, "utilidad"].sum()
+        )
+        cumulative = 0.0
+        client_names = {}
+        if client_key_master and client_name:
+            client_names = dict(
+                zip(
+                    clients[client_key_master].astype(str),
+                    clients[client_name].astype(str),
+                )
+            )
+        for key, row in grouped_clients.head(12).iterrows():
+            utility = float(row["utilidad"])
+            if utility > 0:
+                cumulative += utility
+            client_rows.append(
+                {
+                    "nombre": str(key),
+                    "razon_social": client_names.get(str(key)),
+                    "registros": int(row["registros"]),
+                    "ingresos": _round_money(row["ingresos"]),
+                    "costo": _round_money(row["costo"]),
+                    "utilidad": _round_money(utility),
+                    "margen_pct": (
+                        round(utility / float(row["ingresos"]) * 100, 2)
+                        if row["ingresos"]
+                        else None
+                    ),
+                    "acumulado_pct": (
+                        round(cumulative / positive_utility * 100, 2)
+                        if positive_utility
+                        else None
+                    ),
+                }
+            )
     family_rows: list[dict[str, Any]] = []
     if family and family in detail.columns:
         material_rows = detail.loc[material].copy()
-        material_rows["__costo"] = material_rows["__costo_material"]
-        family_rows = _group_rows(
-            material_rows, family, "__ingreso_material", "__costo", limit=10
+        grouped_family = material_rows.groupby(family, dropna=False).agg(
+            registros=(family, "size"),
+            unidades=("__cantidad", "sum"),
+            ingresos=("__ingreso_material", "sum"),
+            costo=("__costo_material", "sum"),
         )
+        grouped_family["utilidad"] = grouped_family["ingresos"] - grouped_family["costo"]
+        grouped_family = grouped_family.sort_values("utilidad", ascending=False).head(10)
+        family_rows = [
+            {
+                "nombre": str(index),
+                "registros": int(row["registros"]),
+                "unidades": _round_money(row["unidades"]),
+                "ingresos": _round_money(row["ingresos"]),
+                "costo": _round_money(row["costo"]),
+                "utilidad": _round_money(row["utilidad"]),
+                "margen_pct": (
+                    round(float(row["utilidad"]) / float(row["ingresos"]) * 100, 2)
+                    if row["ingresos"]
+                    else None
+                ),
+                "utilidad_unitaria": (
+                    _round_money(float(row["utilidad"]) / float(row["unidades"]))
+                    if row["unidades"]
+                    else None
+                ),
+            }
+            for index, row in grouped_family.iterrows()
+        ]
+
+    technician_name = _column(technicians, ("nombre",))
+    technician_category = _column(technicians, ("categoria",))
+    technician_key = _column(
+        technicians, ("cod", "tecnico"), ("id", "tecnico")
+    )
+    technician_rows: list[dict[str, Any]] = []
+    if technician_key:
+        tech_lookup_columns = [
+            technician_key,
+            *([technician_name] if technician_name else []),
+            *([technician_category] if technician_category else []),
+        ]
+        tech_lookup = technicians[tech_lookup_columns].copy()
+        tech_lookup["__tecnico"] = (
+            tech_lookup[technician_key].astype(str).str.strip().str.upper()
+        )
+        tech_lookup = tech_lookup.drop_duplicates("__tecnico", keep="last")
+        tech_group = matched.groupby("__tecnico").agg(
+            horas=("__horas", "sum"),
+            horas_facturables=(
+                "__horas",
+                lambda values: float(
+                    values[matched.loc[values.index, "__facturable"]].sum()
+                ),
+            ),
+            ingresos=("__ingreso_hh", "sum"),
+            costo=("__costo_hh", "sum"),
+        )
+        tech_group["utilidad"] = tech_group["ingresos"] - tech_group["costo"]
+        tech_group["utilizacion_pct"] = (
+            tech_group["horas_facturables"]
+            .div(tech_group["horas"].replace(0, pd.NA))
+            * 100
+        )
+        tech_group["utilidad_hora"] = tech_group["utilidad"].div(
+            tech_group["horas"].replace(0, pd.NA)
+        )
+        tech_group = tech_group.reset_index().merge(
+            tech_lookup,
+            on="__tecnico",
+            how="left",
+            validate="one_to_one",
+        )
+        tech_group = tech_group.sort_values("utilidad_hora", ascending=False)
+        technician_rows = [
+            {
+                "codigo": str(row["__tecnico"]),
+                "nombre": (
+                    str(row[technician_name]).title()
+                    if technician_name and pd.notna(row[technician_name])
+                    else str(row["__tecnico"])
+                ),
+                "categoria": (
+                    str(row[technician_category])
+                    if technician_category and pd.notna(row[technician_category])
+                    else None
+                ),
+                "horas": _round_money(row["horas"]),
+                "horas_facturables": _round_money(row["horas_facturables"]),
+                "utilizacion_pct": rounded_percent(row["utilizacion_pct"]),
+                "ingresos": _round_money(row["ingresos"]),
+                "costo": _round_money(row["costo"]),
+                "utilidad": _round_money(row["utilidad"]),
+                "utilidad_hora": _round_money(row["utilidad_hora"]),
+            }
+            for _, row in tech_group.iterrows()
+        ]
+
+    expense_area = _column(expenses, ("id", "area"), ("area",))
+    expense_heatmap: list[dict[str, Any]] = []
+    if expense_area:
+        heatmap = (
+            expenses.groupby([expense_area, "__periodo"], dropna=False)["__monto"]
+            .sum()
+            .reset_index()
+        )
+        expense_heatmap = [
+            {
+                "area": str(row[expense_area]),
+                "mes": str(row["__periodo"]),
+                "monto": _round_money(row["__monto"]),
+            }
+            for _, row in heatmap.iterrows()
+        ]
+
+    sla_compliance = None
+    sla_evaluated = 0
+    contract_order_key = _column(
+        orders, ("cod", "contrato"), ("id", "contrato")
+    )
+    response_hours = _column(
+        orders, ("resp", "h"), ("hora", "respuesta"), ("respuesta",)
+    )
+    contract_sla = _column(contracts, ("sla",))
+    if contract_order_key and response_hours and contract_key and contract_sla:
+        sla_orders = orders[
+            [contract_order_key, response_hours]
+        ].copy()
+        sla_orders["__respuesta_h"] = _hours(sla_orders[response_hours])
+        sla_contracts = contracts[[contract_key, contract_sla]].copy()
+        sla_contracts["__sla_h"] = _hours(sla_contracts[contract_sla])
+        sla_joined = sla_orders.merge(
+            sla_contracts[[contract_key, "__sla_h"]],
+            left_on=contract_order_key,
+            right_on=contract_key,
+            how="inner",
+            validate="many_to_one",
+        )
+        evaluable = sla_joined["__respuesta_h"].notna() & sla_joined["__sla_h"].notna()
+        sla_evaluated = int(evaluable.sum())
+        if sla_evaluated:
+            sla_compliance = float(
+                (
+                    sla_joined.loc[evaluable, "__respuesta_h"]
+                    <= sla_joined.loc[evaluable, "__sla_h"]
+                ).mean()
+                * 100
+            )
 
     operating_leverage = (
         gross_profit / operating_profit if operating_profit else None
@@ -807,6 +1011,12 @@ def analyze_service_business(
     break_even = (
         structure_expense / (gross_profit / revenue_total)
         if revenue_total and gross_profit
+        else None
+    )
+    average_revenue_per_ot = revenue_total / len(ot) if len(ot) else None
+    break_even_ot = (
+        break_even / average_revenue_per_ot
+        if break_even is not None and average_revenue_per_ot
         else None
     )
     safety_margin = (
@@ -860,6 +1070,19 @@ def analyze_service_business(
             "backlog": _round_money(ot.loc[open_mask, "ingresos"].sum()),
             "ot_perdida": int(negative.sum()),
             "ingreso_recurrente": _round_money(revenue_contracts),
+            "ingreso_recurrente_pct": round(
+                revenue_contracts / revenue_total * 100, 2
+            ) if revenue_total else None,
+            "ot_total": int(len(ot)),
+            "ot_abiertas": int(open_mask.sum()),
+            "ot_perdida_pct": round(float(negative.mean()) * 100, 2),
+            "cumplimiento_sla_pct": (
+                round(float(sla_compliance), 2)
+                if sla_compliance is not None
+                else None
+            ),
+            "punto_equilibrio": _round_money(break_even or 0),
+            "punto_equilibrio_ot": int(round(break_even_ot or 0)),
         },
         "composicion_ingresos": [
             {"nombre": "Materiales", "valor": _round_money(revenue_material)},
@@ -874,18 +1097,55 @@ def analyze_service_business(
             {"nombre": "Estructura variable", "valor": _round_money(variable_expense)},
         ],
         "cascada": [
-            {"nombre": "Ingresos", "valor": _round_money(revenue_total)},
-            {"nombre": "Costo directo", "valor": -_round_money(direct_cost)},
-            {"nombre": "Utilidad bruta", "valor": _round_money(gross_profit)},
-            {"nombre": "Gastos estructura", "valor": -_round_money(structure_expense)},
-            {"nombre": "Utilidad operacional", "valor": _round_money(operating_profit)},
-            {"nombre": "EBITDA", "valor": _round_money(ebitda)},
+            {
+                "nombre": "Ingresos",
+                "valor": _round_money(revenue_total),
+                "tipo": "total",
+            },
+            {
+                "nombre": "Materiales",
+                "valor": -_round_money(cost_material),
+                "tipo": "deduccion",
+            },
+            {
+                "nombre": "Mano de obra",
+                "valor": -_round_money(cost_hours),
+                "tipo": "deduccion",
+            },
+            {
+                "nombre": "Subcontratos",
+                "valor": -_round_money(cost_subcontract),
+                "tipo": "deduccion",
+            },
+            {
+                "nombre": "Utilidad bruta",
+                "valor": _round_money(gross_profit),
+                "tipo": "subtotal",
+            },
+            {
+                "nombre": "Gastos estructura",
+                "valor": -_round_money(structure_expense),
+                "tipo": "deduccion",
+            },
+            {
+                "nombre": "Utilidad operacional",
+                "valor": _round_money(operating_profit),
+                "tipo": "subtotal",
+            },
+            {
+                "nombre": "EBITDA",
+                "valor": _round_money(ebitda),
+                "tipo": "total",
+            },
         ],
         "evolucion": monthly_rows,
         "ot_dispersion": ot_points,
         "por_tipo_ot": type_rows,
         "por_segmento": segment_rows,
         "por_familia": family_rows,
+        "por_cliente": client_rows,
+        "por_tecnico": technician_rows,
+        "gastos_mapa": expense_heatmap,
         "operacion": {
             "ot_total": int(len(ot)),
             "ot_cerradas": int(closed.sum()),
@@ -908,6 +1168,12 @@ def analyze_service_business(
             "apalancamiento_operativo": round(float(operating_leverage), 2)
             if operating_leverage is not None
             else None,
+            "cumplimiento_sla_pct": (
+                round(float(sla_compliance), 2)
+                if sla_compliance is not None
+                else None
+            ),
+            "ot_sla_evaluadas": sla_evaluated,
         },
         "relaciones": [
             {"orden": order, "relacion": relation, "desbloquea": unlock}
@@ -932,6 +1198,31 @@ def analyze_service_business(
                 < calendar.monthrange(last_order_date.year, last_order_date.month)[1]
                 else None
             ),
+            "advertencias": [
+                warning
+                for warning in (
+                    (
+                        f"{last_order_date.strftime('%Y-%m')} está parcial: "
+                        f"solo incluye hasta el día {last_order_date.day} de "
+                        f"{calendar.monthrange(last_order_date.year, last_order_date.month)[1]}."
+                    )
+                    if pd.notna(last_order_date)
+                    and last_order_date.day
+                    < calendar.monthrange(last_order_date.year, last_order_date.month)[1]
+                    else None,
+                    (
+                        "Los contratos muestran ingreso sin costo directo propio; "
+                        "no debe interpretarse como margen contractual de 100%."
+                    ),
+                    (
+                        f"{round(100 - sla_compliance, 1)}% de las OT con contrato "
+                        "incumplieron el SLA comprometido."
+                    )
+                    if sla_compliance is not None
+                    else None,
+                )
+                if warning is not None
+            ],
         },
     }
 

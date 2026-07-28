@@ -1,6 +1,9 @@
 import pandas as pd
 
 from app.engine.service_model import analyze_service_business, transform_service_sheet
+from app.engine.metrics import compute_metrics
+from app.engine.mapping import resolve_mapping
+from app.routes.pipeline import _metrics_multi_from_processed
 
 
 def test_service_structural_cleaning_fill_down_subtotals_hours_and_unpivot():
@@ -51,6 +54,13 @@ def test_service_structural_cleaning_fill_down_subtotals_hours_and_unpivot():
         {"Periodo": "2025-01", "Monto": 10.0},
         {"Periodo": "2025-02", "Monto": 20.0},
     ]
+    expense_metrics = compute_metrics(
+        expense_result.frame,
+        resolve_mapping(list(expense_result.frame.columns), None),
+    )
+    assert expense_metrics["kpis"]["ingresos_totales"] is None
+    assert expense_metrics["analisis_generico"]["subtipo"] == "gastos_estructura"
+    assert expense_metrics["analisis_generico"]["numericas"][0]["total"] == 30.0
 
 
 def test_service_business_requires_relations_and_separates_revenue_from_cost():
@@ -145,6 +155,13 @@ def test_service_business_requires_relations_and_separates_revenue_from_cost():
         "backlog": 0.0,
         "ot_perdida": 0,
         "ingreso_recurrente": 100.0,
+        "ingreso_recurrente_pct": 28.57,
+        "ot_total": 1,
+        "ot_abiertas": 0,
+        "ot_perdida_pct": 0.0,
+        "cumplimiento_sla_pct": None,
+        "punto_equilibrio": 92.0,
+        "punto_equilibrio_ot": 0,
     }
     assert len(analysis["servicios"]["relaciones"]) == 12
     assert analysis["servicios"]["composicion_ingresos"] == [
@@ -152,3 +169,38 @@ def test_service_business_requires_relations_and_separates_revenue_from_cost():
         {"nombre": "Horas facturables", "valor": 150.0},
         {"nombre": "Contratos", "valor": 100.0},
     ]
+    assert len(analysis["servicios"]["cascada"]) == 8
+    assert analysis["servicios"]["evolucion"][0]["margen_ot_pct"] == 36.0
+    assert analysis["servicios"]["por_tecnico"][0]["utilidad_hora"] == 7.0
+
+    scope = {
+        "mode": "append_join",
+        "sheets": list(frames),
+        "append_sheets": ["Detalle_OT"],
+        "active_sheet": "Detalle_OT",
+        "join": {
+            "left_sheet": "Detalle_OT",
+            "right_sheet": "Items",
+            "left_keys": ["Cod Item"],
+            "right_keys": ["Cod Item"],
+            "type": "left",
+        },
+    }
+    metrics = _metrics_multi_from_processed(
+        "servicios.xlsx",
+        frames,
+        {name: {} for name in frames},
+        {
+            name: {
+                "resumen": {"calidad_despues": 100.0},
+                "_moneda": None,
+            }
+            for name in frames
+        },
+        scope,
+        None,
+        None,
+    )
+    assert metrics["analysis_provenance"]["mode"] == "service_network"
+    assert metrics["analisis_negocio"]["perfil"] == "servicios_tecnicos"
+    assert metrics["analisis_negocio"]["servicios"]["kpis"]["ventas_netas"] == 350.0

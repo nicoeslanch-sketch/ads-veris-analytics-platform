@@ -447,7 +447,7 @@ export interface CatalogRelationship extends AnalysisJoin {
   id: string
   /** Hojas transaccionales compatibles que se apilan antes de relacionar. */
   append_sheets?: string[]
-  join_strategy?: 'vigencia_por_fecha'
+  join_strategy?: 'vigencia_por_fecha' | 'periodo_moneda_uf'
   template: RelationshipTemplate
   label: string
   purpose: string
@@ -470,6 +470,10 @@ export interface RelationshipCatalog {
     order: number
     relation: string
     unlocks: string
+    available?: boolean
+    status?: 'ejecutable' | 'integrada_en_modelo' | 'no_disponible'
+    relationship_id?: string | null
+    strategy?: string | null
   }>
 }
 
@@ -772,10 +776,12 @@ export interface NominalCollectionAnalysis {
 export interface ServiceBusinessGroupRow {
   nombre: string
   registros: number
+  unidades?: number
   ingresos: number
   costo: number
   utilidad: number
   margen_pct: number | null
+  utilidad_unitaria?: number | null
 }
 
 export interface ServiceBusinessAnalysis {
@@ -794,18 +800,33 @@ export interface ServiceBusinessAnalysis {
     backlog: number
     ot_perdida: number
     ingreso_recurrente: number
+    ingreso_recurrente_pct: number | null
+    ot_total: number
+    ot_abiertas: number
+    ot_perdida_pct: number
+    cumplimiento_sla_pct: number | null
+    punto_equilibrio: number
+    punto_equilibrio_ot: number
   }
   composicion_ingresos: Array<{ nombre: string; valor: number }>
   composicion_costos: Array<{ nombre: string; valor: number }>
-  cascada: Array<{ nombre: string; valor: number }>
+  cascada: Array<{
+    nombre: string
+    valor: number
+    tipo: 'total' | 'subtotal' | 'deduccion'
+  }>
   evolucion: Array<{
     mes: string
+    ingreso_material: number
+    ingreso_horas: number
+    ingreso_contratos: number
     ingresos: number
     costo_directo: number
     utilidad_bruta: number
     gastos: number
     utilidad_operacional: number
     margen_bruto_pct: number | null
+    margen_ot_pct: number | null
     margen_operacional_pct: number | null
     utilizacion_pct: number | null
     horas: number
@@ -826,6 +847,23 @@ export interface ServiceBusinessAnalysis {
   por_tipo_ot: ServiceBusinessGroupRow[]
   por_segmento: ServiceBusinessGroupRow[]
   por_familia: ServiceBusinessGroupRow[]
+  por_cliente: Array<ServiceBusinessGroupRow & {
+    razon_social: string | null
+    acumulado_pct: number | null
+  }>
+  por_tecnico: Array<{
+    codigo: string
+    nombre: string
+    categoria: string | null
+    horas: number
+    horas_facturables: number
+    utilizacion_pct: number | null
+    ingresos: number
+    costo: number
+    utilidad: number
+    utilidad_hora: number
+  }>
+  gastos_mapa: Array<{ area: string; mes: string; monto: number }>
   operacion: {
     ot_total: number
     ot_cerradas: number
@@ -842,6 +880,8 @@ export interface ServiceBusinessAnalysis {
     punto_equilibrio: number
     margen_seguridad_pct: number | null
     apalancamiento_operativo: number | null
+    cumplimiento_sla_pct: number | null
+    ot_sla_evaluadas: number
   }
   relaciones: Array<{ orden: number; relacion: string; desbloquea: string }>
   trazabilidad: {
@@ -849,6 +889,7 @@ export interface ServiceBusinessAnalysis {
     fuentes_costo: string[]
     moneda: string
     mes_parcial: string | null
+    advertencias: string[]
   }
 }
 

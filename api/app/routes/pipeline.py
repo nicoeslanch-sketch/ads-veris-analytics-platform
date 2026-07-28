@@ -118,7 +118,7 @@ from ..storage import (
     normalize_user_storage_path,
     upload_export_cache,
 )
-from ..version import ENGINE_VERSION
+from ..version import ENGINE_VERSION, SERVICE_MODEL_VERSION
 
 router = APIRouter()
 
@@ -367,6 +367,7 @@ def _analysis_cache_key(
         user_id,
         dataset_id or "",
         ENGINE_VERSION,
+        SERVICE_MODEL_VERSION,
         hashlib.sha256(content).digest(),
         os.path.splitext(filename)[1].lower(),
         *encoded_parts,
@@ -955,6 +956,7 @@ def _export_cache_identity(
     canonical = json.dumps(
         {
             "engine": ENGINE_VERSION,
+            "service_model": SERVICE_MODEL_VERSION,
             "source_sha256": hashlib.sha256(content).hexdigest(),
             "format": export_format,
             "manifest": manifest,
@@ -1099,6 +1101,7 @@ def _cache_key(
     effective_rules = {**DEFAULT_RULES, **(rules or {})}
     return (
         ENGINE_VERSION,
+        SERVICE_MODEL_VERSION,
         cache_dataset_id or "",
         int(cache_revision or 0),
         hashlib.sha1(content).digest(),
@@ -3057,6 +3060,74 @@ def _metrics_multi_from_processed(
 ) -> dict:
     business_view = analysis_scope["mode"] == "append_join"
     _validate_scope_currencies(analysis_scope, mappings, results, business_filters)
+
+    # Los libros de servicios no son una tabla de ventas más una maestra de
+    # costos: sus ingresos viven en Detalle, Horas y Cuotas, y los costos se
+    # resuelven con Items, Tarifas y Gastos. Intentar materializar primero un
+    # join genérico bloqueaba la visión aun cuando las 11 fuentes estaban
+    # completas. El modelo controlado valida toda la red antes de publicar KPI.
+    service_business = (
+        analyze_business_workbook(
+            frames,
+            mappings,
+            results,
+            date_from=date_from,
+            date_to=date_to,
+            filters=business_filters,
+        )
+        if business_view
+        else None
+    )
+    if (
+        isinstance(service_business, dict)
+        and service_business.get("perfil") == "servicios_tecnicos"
+    ):
+        base_name = next(
+            (
+                name
+                for name in frames
+                if re.sub(
+                    r"[^a-z0-9]+",
+                    "_",
+                    strip_accents_lower(name),
+                ).strip("_")
+                == "ordenes_trabajo"
+            ),
+            next(iter(frames)),
+        )
+        computed = compute_metrics(
+            frames[base_name],
+            mappings.get(base_name),
+            date_from=date_from,
+            date_to=date_to,
+            currency_hint=results[base_name].get("_moneda"),
+        )
+        computed["archivo"] = filename
+        computed["analysis_scope"] = analysis_scope
+        computed["analysis_provenance"] = {
+            "mode": "service_network",
+            "rows": sum(len(frame) for frame in frames.values()),
+            "sheets": sorted(frames),
+            "join": {
+                **analysis_scope["join"],
+                "materializada_en_resumen_generico": False,
+                "motivo": (
+                    "El modelo de servicios integra fuentes con claves y "
+                    "vigencias distintas sin construir una tabla plana."
+                ),
+            },
+        }
+        qualities = [
+            results[name]["resumen"]["calidad_despues"]
+            for name in analysis_scope["sheets"]
+            if name in results
+        ]
+        computed["calidad_datos"] = round(
+            sum(qualities) / max(len(qualities), 1), 1
+        )
+        computed["analisis_negocio"] = service_business
+        return computed
+
     try:
         if business_view:
             # Mantener las tarjetas genéricas de costo cuando el maestro admite
@@ -3481,6 +3552,68 @@ def _relationships_sync(
         "manual": manual_result,
         "message": None if safe else "No encontramos una conexion segura entre estas hojas. Puedes analizarlas por separado.",
     }
+    if manual is None:
+        service_business = analyze_business_workbook(
+            all_frames,
+            all_mappings,
+            all_results,
+        )
+        if (
+            isinstance(service_business, dict)
+            and service_business.get("perfil") == "servicios_tecnicos"
+        ):
+            catalog = detect_relationship_catalog(
+                all_frames, all_mappings, all_results
+            )
+            executable = [
+                relation
+                for relation in catalog.get("relationships", [])
+                if relation.get("safe") and relation.get("overlap", 0) > 0
+            ]
+            anchor = next(
+                (
+                    relation
+                    for relation in executable
+                    if re.sub(
+                        r"[^a-z0-9]+",
+                        "_",
+                        strip_accents_lower(str(relation.get("left_sheet", ""))),
+                    ).strip("_")
+                    == "detalle_ot"
+                    and re.sub(
+                        r"[^a-z0-9]+",
+                        "_",
+                        strip_accents_lower(str(relation.get("right_sheet", ""))),
+                    ).strip("_")
+                    == "items"
+                ),
+                executable[0] if executable else None,
+            )
+            if anchor is not None:
+                service_scope = {
+                    "mode": "append_join",
+                    "sheets": list(all_frames),
+                    "append_sheets": [anchor["left_sheet"]],
+                    "active_sheet": anchor["left_sheet"],
+                    "join": {
+                        "left_sheet": anchor["left_sheet"],
+                        "right_sheet": anchor["right_sheet"],
+                        "left_keys": anchor["left_keys"],
+                        "right_keys": anchor["right_keys"],
+                        "type": "left",
+                    },
+                }
+                response["analysis_scope"] = service_scope
+                response["metrics"] = _metrics_multi_from_processed(
+                    filename,
+                    all_frames,
+                    all_mappings,
+                    all_results,
+                    service_scope,
+                    None,
+                    None,
+                )
+                response["message"] = None
     if focused_transaction_order:
         automatic = next(
             (
@@ -5291,6 +5424,7 @@ def _validate_manual_relationship(raw: dict | None) -> dict:
         "right_keys",
         "type",
         "append_sheets",
+        "join_strategy",
     }
     if not isinstance(raw, dict) or set(raw) - allowed:
         raise HTTPException(status_code=422, detail="La relación no es válida.")
@@ -5318,6 +5452,11 @@ def _validate_manual_relationship(raw: dict | None) -> dict:
         or not isinstance(append_sheets, list)
         or not all(isinstance(name, str) and name.strip() for name in append_sheets)
         or (
+            raw.get("join_strategy") is not None
+            and raw.get("join_strategy")
+            not in {"vigencia_por_fecha", "periodo_moneda_uf"}
+        )
+        or (
             append_sheets
             and (
                 len(normalized_append_sheets) < 2
@@ -5334,6 +5473,9 @@ def _validate_manual_relationship(raw: dict | None) -> dict:
         "right_keys": [key.strip() for key in right_keys],
         "type": "left",
     }
+    join_strategy = raw.get("join_strategy")
+    if join_strategy in {"vigencia_por_fecha", "periodo_moneda_uf"}:
+        parsed["join_strategy"] = join_strategy
     if append_sheets:
         parsed["append_sheets"] = normalized_append_sheets
     return parsed
