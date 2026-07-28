@@ -1,6 +1,7 @@
 import { apiPost, buildDatasetForm } from './api'
 import { formatNumber } from './format'
 import type {
+  AnalysisScope,
   CatalogRelationship,
   KpiFormat,
   RelationshipCatalog,
@@ -9,6 +10,33 @@ import type {
   RelationshipTemplate,
   SheetManifest,
 } from './types'
+
+export function scopeForRelationship(relation: CatalogRelationship): AnalysisScope {
+  const join = {
+    left_sheet: relation.left_sheet,
+    right_sheet: relation.right_sheet,
+    left_keys: relation.left_keys,
+    right_keys: relation.right_keys,
+    type: 'left' as const,
+  }
+  if (relation.append_sheets?.length) {
+    return {
+      mode: 'append_join',
+      sheets: [...new Set([...relation.append_sheets, relation.right_sheet])],
+      active_sheet: relation.append_sheets[0],
+      append_sheets: [...relation.append_sheets],
+      join,
+      relationship_id: relation.id,
+    }
+  }
+  return {
+    mode: 'join',
+    sheets: [join.left_sheet, join.right_sheet],
+    active_sheet: join.left_sheet,
+    join,
+    relationship_id: relation.id,
+  }
+}
 
 // ── Etiquetas de plantilla (Parte 9) ─────────────────────────────────────────
 const TEMPLATE_LABELS: Record<RelationshipTemplate, string> = {

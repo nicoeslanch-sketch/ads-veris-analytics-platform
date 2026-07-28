@@ -379,6 +379,7 @@ export type AnalysisScope =
       append_sheets: string[]
       active_sheet: string
       join: AnalysisJoin
+      relationship_id?: string
     }
 
 export interface RelationshipCandidate extends AnalysisJoin {

@@ -137,6 +137,34 @@ def test_append_compatible_sheets_adds_origin_without_changing_rows():
     assert provenance["rows"] == 2
 
 
+def test_append_aligns_percent_pct_and_singular_plural_observation_headers():
+    frames = {
+        "S1": pd.DataFrame({
+            "Fecha": ["01/01/2025"],
+            "Monto Neto": [1000],
+            "Descuento %": [0.1],
+            "Observación": ["uno"],
+        }),
+        "S2": pd.DataFrame({
+            "FECHA": ["01/07/2025"],
+            "MONTO_NETO": [2000],
+            "descuento_pct": [0.2],
+            "Observaciones": ["dos"],
+        }),
+    }
+    mappings = {
+        "S1": {"fecha": "Fecha", "monto": "Monto Neto"},
+        "S2": {"fecha": "FECHA", "monto": "MONTO_NETO"},
+    }
+
+    combined, _, _ = append_compatible_frames(frames, mappings)
+
+    assert combined["Descuento %"].tolist() == [0.1, 0.2]
+    assert combined["Observación"].tolist() == ["uno", "dos"]
+    assert "descuento_pct" not in combined.columns
+    assert "Observaciones" not in combined.columns
+
+
 def test_append_accepts_auxiliary_column_present_in_only_one_period():
     frames = {
         "2024": pd.DataFrame({"Fecha": ["01/01/2024"], "Venta": [1000], "Observacion": ["ok"]}),

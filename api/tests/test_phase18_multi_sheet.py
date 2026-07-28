@@ -1369,6 +1369,83 @@ def test_cache_key_includes_dataset_revision_rules_mapping_sheet_and_engine():
     )
 
 
+def test_clean_export_survives_legacy_join_with_duplicate_reference_keys():
+    source = io.BytesIO()
+    with pd.ExcelWriter(source, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "ID_Producto": ["P1", "P2"],
+                "Cantidad": [2, 1],
+                "Monto": [1000, 800],
+            }
+        ).to_excel(writer, sheet_name="Ventas", index=False)
+        pd.DataFrame(
+            {
+                "ID_Producto": ["P1", "P1", "P2"],
+                "ID_Sucursal": ["S1", "S2", "S1"],
+                "Stock": [10, 8, 4],
+            }
+        ).to_excel(writer, sheet_name="Inventario", index=False)
+    manifest = {
+        "hojas": [
+            {
+                "nombre": "Ventas",
+                "procesar": True,
+                "rules": {},
+                "mapping": {
+                    "producto": "ID_Producto",
+                    "cantidad": "Cantidad",
+                    "monto": "Monto",
+                },
+                "scope": {},
+                "eliminar_duplicados": False,
+                "status": "limpia",
+                "error": "",
+            },
+            {
+                "nombre": "Inventario",
+                "procesar": True,
+                "rules": {},
+                "mapping": {"producto": "ID_Producto"},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "status": "limpia",
+                "error": "",
+            },
+        ]
+    }
+    legacy_scope = {
+        "mode": "join",
+        "sheets": ["Ventas", "Inventario"],
+        "active_sheet": "Ventas",
+        "join": {
+            "left_sheet": "Ventas",
+            "right_sheet": "Inventario",
+            "left_keys": ["ID_Producto"],
+            "right_keys": ["ID_Producto"],
+            "type": "left",
+        },
+    }
+
+    payload, _, _ = _clean_download_book_sync(
+        "legacy_inventory_join.xlsx",
+        source.getvalue(),
+        manifest,
+        "xlsx",
+        legacy_scope,
+    )
+    workbook = openpyxl.load_workbook(io.BytesIO(payload), data_only=False)
+
+    assert "Datos_relacionados" not in workbook.sheetnames
+    observations = [
+        str(cell.value)
+        for row in workbook["Observaciones"].iter_rows()
+        for cell in row
+        if cell.value is not None
+    ]
+    assert any("analisis_relacionado_omitido" in value for value in observations)
+
+
 def test_audit_records_duplicate_even_when_user_keeps_it():
     original = pd.DataFrame({"ID": ["A", "A"], "Monto": ["100", "100"]})
     cleaned = original.copy()

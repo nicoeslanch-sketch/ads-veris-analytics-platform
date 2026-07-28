@@ -451,10 +451,8 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         }]
       : []),
   ]
-  // Una tarjeta cuyo valor no se pudo calcular no se muestra: antes ocupaba
-  // sitio con "No disponible"/"Dato faltante" y obligaba a leer decenas de
-  // KPIs vacíos. Si el libro no trae con qué calcular cuentas por cobrar,
-  // inventario o EBITDA, esa tarjeta simplemente no existe.
+  // Las tarjetas faltantes se conservan: explican qué conexión o dato necesita
+  // el usuario y evitan que una ausencia parezca un resultado igual a cero.
   // El orden es de relevancia para una PyME: lo que se ve primero en la fila
   // es el resultado del negocio, no un dato de detalle.
   const cardPriority = [
@@ -469,7 +467,6 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
     'EBITDA',
   ]
   const visibleCards = cards
-    .filter((card) => card.value !== 'No disponible' && card.state !== 'Dato faltante')
     .sort((left, right) => {
       const rank = (label: string) => {
         const index = cardPriority.indexOf(label)

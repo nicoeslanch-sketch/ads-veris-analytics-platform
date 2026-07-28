@@ -29,6 +29,7 @@ export default function DatasetBootstrap() {
     file,
     datasetId,
     datasetRevision,
+    analysisScope,
     metricsStale,
     restoreDataset,
     setMetrics,
@@ -175,7 +176,16 @@ export default function DatasetBootstrap() {
   // reserva una revisión atómica y persiste el resultado nuevo; así la próxima
   // recarga no vuelve a ejecutar /metrics ni repite actividad de limpieza.
   useEffect(() => {
-    if (!user || !datasetId || !metricsStale || restoring) return
+    // Relación manual carga su propio dashboard. Recalcular a la vez todas las
+    // métricas restauradas duplica CPU y deja la pantalla esperando dos flujos.
+    if (
+      !user
+      || !datasetId
+      || !metricsStale
+      || restoring
+      || analysisScope?.mode === 'join'
+      || analysisScope?.mode === 'append_join'
+    ) return
     const attemptKey = `${datasetId}:${refreshRetry}`
     if (refreshAttemptRef.current === attemptKey) return
     refreshAttemptRef.current = attemptKey
@@ -210,7 +220,7 @@ export default function DatasetBootstrap() {
       active = false
       controller.abort()
     }
-  }, [datasetId, metricsStale, refreshRetry, restoring, setMetrics, user])
+  }, [analysisScope?.mode, datasetId, metricsStale, refreshRetry, restoring, setMetrics, user])
 
   if (!restoring && restoreError) {
     return (

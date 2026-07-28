@@ -6,6 +6,7 @@ import {
   isKpiVisible,
   pickRecommended,
   relationshipMatchesQuery,
+  scopeForRelationship,
   sortRelationships,
   templateLabel,
   usableRelationships,
@@ -109,6 +110,22 @@ describe('usableRelationships', () => {
       relation({ id: 'zero', safe: true, overlap: 0 }),
       relation({ id: 'unsafe', safe: false, overlap: 0.95 }),
     ]).map((item) => item.id)).toEqual(['ok'])
+  })
+})
+
+describe('scopeForRelationship', () => {
+  it('persiste una conexión consolidada como append_join', () => {
+    const scope = scopeForRelationship(relation({
+      id: 'all-sales-costs',
+      left_sheet: 'Ventas_2024',
+      right_sheet: 'Costos',
+      append_sheets: ['Ventas_2024', 'Ventas_2025', 'Ventas_2026'],
+    }))
+
+    expect(scope.mode).toBe('append_join')
+    if (scope.mode !== 'append_join') throw new Error('alcance incorrecto')
+    expect(scope.sheets).toEqual(['Ventas_2024', 'Ventas_2025', 'Ventas_2026', 'Costos'])
+    expect(scope.relationship_id).toBe('all-sales-costs')
   })
 })
 

@@ -179,26 +179,6 @@ export function computeBusinessInsights(m: MetricsResult): BusinessInsight[] {
     }
   }
 
-  // ── 8. Cola larga: muchos productos que casi no aportan ───────────────────
-  if (productos.length >= 5) {
-    const share = (row: typeof productos[number]) => row.participacion_bruta_pct ?? row.porcentaje ?? 0
-    const top3 = productos.slice(0, 3).reduce((sum, row) => sum + share(row), 0)
-    const resto = productos.slice(3)
-    const aporteResto = resto.reduce((sum, row) => sum + share(row), 0)
-    if (top3 >= 50 && aporteResto <= UMBRAL.colaLargaAporte && resto.length >= 3) {
-      insights.push({
-        id: 'cola-larga',
-        tone: 'oportunidad',
-        titulo: 'Pocos productos sostienen casi toda tu venta',
-        significado:
-          'El resto ocupa espacio, capital y tiempo de gestión sin devolver mucho a cambio. Mantener un producto que no rota cuesta plata aunque no se venda.',
-        accion:
-          'Revisa los de menor aporte: si llevan tiempo sin moverse, conviene liquidarlos y reinvertir ese dinero en los que sí rotan.',
-        evidencia: `Tus 3 principales concentran ${pct(top3)}; los otros ${resto.length} suman ${pct(aporteResto)}.`,
-      })
-    }
-  }
-
   // ── 9. Tendencia sostenida ────────────────────────────────────────────────
   const crecimiento = m.proyeccion?.crecimiento_pct
   if (crecimiento != null && completos.length >= 3) {

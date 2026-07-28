@@ -2529,13 +2529,28 @@ def _clean_download_book_uncached_sync(
     # En modo single las hojas procesadas ya son la salida. Crear una copia
     # adicional llamada Datos_relacionados era engañoso y duplicaba el peso.
     if analysis_scope and analysis_scope["mode"] != "single":
-        _validate_scope_currencies(analysis_scope, mappings, results)
         try:
+            _validate_scope_currencies(analysis_scope, mappings, results)
             analysis_frame, analysis_mapping, provenance = build_analysis_frame(
                 frames, mappings, analysis_scope
             )
-        except (KeyError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
+        except (HTTPException, KeyError, ValueError) as exc:
+            # La relación es una vista derivada opcional. Un alcance antiguo o
+            # inseguro no puede impedir descargar las hojas que ya están limpias.
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            provenance = {
+                "mode": analysis_scope["mode"],
+                "status": "omitida",
+                "reason": str(detail),
+            }
+            observations.append((
+                "-",
+                "Todas las hojas procesadas",
+                "*",
+                "analisis_relacionado_omitido",
+                "El libro limpio se exportó sin Datos_relacionados porque la "
+                f"conexión guardada ya no es segura: {detail}",
+            ))
     if analysis_scope and analysis_scope["mode"] == "append_join":
         # Las validaciones cruzadas de Visión del negocio (claves huérfanas,
         # documentos conflictivos, etc.) solo vivían en la respuesta JSON del

@@ -196,13 +196,16 @@ def classify_relationship_template(
     def build(template: str, purpose: str, pretty: str) -> tuple[str, str, str]:
         return template, pretty, purpose
 
+    # Inventario puede traer costo unitario, pero no es una maestra de costos:
+    # suele tener varias sucursales/snapshots por SKU. Clasificarlo primero evita
+    # ofrecerlo como una unión many-to-one que después falla por claves repetidas.
+    if left_sales and right_kind == "inventario":
+        return build("sales_inventory", "ventas_inventario", f"{left_name} ↔ {right_name}")
     # Ventas ↔ Costos: la maestra aporta costo unitario multiplicable por cantidad.
     if left_sales and _has_derived_unit_cost(right_mapping, left_mapping):
         return build("sales_costs", "ventas_costos", f"{left_name} ↔ {right_name}")
     if left_sales and right_kind in {"costos", "historial_costos"}:
         return build("sales_costs", "ventas_costos", f"{left_name} ↔ {right_name}")
-    if left_sales and right_kind == "inventario":
-        return build("sales_inventory", "ventas_inventario", f"{left_name} ↔ {right_name}")
     if left_sales and right_kind == "clientes":
         return build("sales_customers", "ventas_clientes", f"{left_name} ↔ {right_name}")
     if left_sales and right_kind == "vendedores":
@@ -272,7 +275,6 @@ def _consolidated_sales_relationships(
         "clientes",
         "vendedores",
         "sucursales",
-        "inventario",
         "cobranzas",
         "historial_costos",
     }
@@ -334,11 +336,7 @@ def _consolidated_sales_relationships(
                 }
             )
             continue
-        right_eval = (
-            collapse_inventory_snapshots(right, mapping=right_mapping)
-            if right_kind == "inventario"
-            else right
-        )
+        right_eval = right
         best, _ = _best_relationship_for_pair(
             sales_names[0],
             combined,
@@ -544,11 +542,10 @@ def detect_relationship_catalog(
         left = frames[left_name]
         right = frames[right_name]
         temporal_history = kinds[right_name] == "historial_costos"
-        # Un inventario con varios snapshots por producto se colapsa al último
-        # antes de evaluar: así la relación con ventas es segura (muchos_a_uno).
+        # El catálogo no inventa unicidad colapsando snapshots o sucursales.
+        # Si la referencia repite la clave elegida, la conexión no es ejecutable
+        # como muchos-a-uno y no debe aparecer como disponible.
         right_eval = right
-        if _sheet_kind(right_name, right) == "inventario":
-            right_eval = collapse_inventory_snapshots(right, mapping=resolved[right_name])
         if temporal_history:
             left_key = (
                 find_column(left.columns, "sku", "producto")

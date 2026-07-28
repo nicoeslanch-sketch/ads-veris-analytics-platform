@@ -174,6 +174,51 @@ def test_catalog_hides_inventory_costs_without_supported_template():
     assert catalog["discarded_count"] == 1
 
 
+def test_catalog_does_not_offer_sales_inventory_when_sku_is_not_unique():
+    inventory = pd.DataFrame(
+        {
+            "Fecha_Corte": ["2026-01-31", "2026-01-31", "2026-02-28"],
+            "SKU_Producto": ["0001", "0001", "0002"],
+            "ID_Sucursal": ["S1", "S2", "S1"],
+            "Stock_Disponible": [10, 8, 20],
+            "Costo_Unitario": [500, 500, 600],
+        }
+    )
+    catalog = detect_relationship_catalog(
+        {"Ventas": _ventas(), "Inventario": inventory},
+        {},
+        {},
+    )
+
+    assert catalog["relationships"] == []
+
+
+def test_consolidated_catalog_does_not_offer_duplicated_inventory_reference():
+    second = _ventas().assign(
+        ID_Venta=lambda frame: frame["ID_Venta"] + "-B",
+        Fecha="2026-01-05",
+    )
+    inventory = pd.DataFrame(
+        {
+            "SKU_Producto": ["0001", "0001", "0002", "0003"],
+            "ID_Sucursal": ["S1", "S2", "S1", "S1"],
+            "Stock_Disponible": [10, 8, 20, 4],
+            "Costo_Unitario": [500, 500, 600, 300],
+        }
+    )
+    catalog = detect_relationship_catalog(
+        {
+            "Ventas_2025": _ventas(),
+            "Ventas_2026": second,
+            "Inventario": inventory,
+        },
+        {},
+        {},
+    )
+
+    assert all(item["right_sheet"] != "Inventario" for item in catalog["relationships"])
+
+
 def test_catalog_adds_all_sales_periods_to_costs_without_replacing_individual_views():
     first = _ventas()
     second = _ventas().assign(

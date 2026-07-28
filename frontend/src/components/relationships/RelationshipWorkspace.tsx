@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Layers, Loader2, Link2, RefreshCw } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
 import { ApiError, apiPost } from '../../lib/api'
-import { joinScope } from '../../lib/multiSheet'
 import {
   fetchRelationshipCatalog,
   fetchRelationshipDashboard,
   pickRecommended,
+  scopeForRelationship,
   usableRelationships,
   validateManualRelationship,
   type RelationshipRequestParams,
@@ -48,24 +48,6 @@ function matchingCatalogId(
       ),
   )
   return match?.id ?? null
-}
-
-function scopeForRelationship(relation: CatalogRelationship) {
-  const join = {
-    left_sheet: relation.left_sheet,
-    right_sheet: relation.right_sheet,
-    left_keys: relation.left_keys,
-    right_keys: relation.right_keys,
-    type: 'left' as const,
-  }
-  const base = joinScope(join)
-  return {
-    ...base,
-    sheets: relation.append_sheets?.length
-      ? [...new Set([...relation.append_sheets, relation.right_sheet])]
-      : base.sheets,
-    relationship_id: relation.id,
-  }
 }
 
 function manualCatalogRelationship(

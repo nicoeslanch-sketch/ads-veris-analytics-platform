@@ -607,8 +607,12 @@ def _canonical_header(name: str) -> str:
     subestimando las ventas. La clave solo se usa para aparear: los nombres que
     ve el usuario se conservan tal cual los escribió.
     """
-    text = strip_accents_lower(str(name)).replace("_", " ")
-    return re.sub(r"\s+", " ", text).strip()
+    text = strip_accents_lower(str(name)).replace("%", " pct ").replace("_", " ")
+    text = re.sub(r"\bporcentaje\b", "pct", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if text in {"observacion", "observaciones"}:
+        return "observacion"
+    return text
 
 
 def _alignment_renames(frame: pd.DataFrame) -> dict[str, str]:

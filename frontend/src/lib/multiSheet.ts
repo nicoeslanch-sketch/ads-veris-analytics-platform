@@ -463,9 +463,12 @@ function canonicalHeader(name: string): string {
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
+    .replace(/%/g, ' pct ')
     .replace(/_/g, ' ')
+    .replace(/\bporcentaje\b/g, 'pct')
     .replace(/\s+/g, ' ')
     .trim()
+    .replace(/^observaciones$/, 'observacion')
 }
 
 export function compatibleAppendSheets(
