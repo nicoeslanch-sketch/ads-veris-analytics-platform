@@ -1,9 +1,9 @@
 # Relevo técnico — modelo de servicios y libro `Prueba_Servicios_SUCIO_v2`
 
-Fecha de corte: 28 de julio de 2026  
-Repositorio: `nicoeslanch-sketch/ads-veris-analytics-platform`  
-Rama de entrega: `main`  
-Commit funcional desplegado: `f47e475fc9407b8f9439f093783b28c43b817a54`  
+Fecha de corte: 28 de julio de 2026
+Repositorio: `nicoeslanch-sketch/ads-veris-analytics-platform`
+Rama de entrega: `main`
+Commit funcional desplegado: `f47e475fc9407b8f9439f093783b28c43b817a54`
 Motor declarado por `/version`: `0.25.0`
 
 ## Propósito de este documento
