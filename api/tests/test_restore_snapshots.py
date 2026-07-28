@@ -187,6 +187,42 @@ def test_snapshot_de_otro_motor_solo_se_admite_para_restauracion_transitoria():
     ) is None
 
 
+def test_snapshot_servicios_invalida_solo_el_modelo_derivado_anterior():
+    snapshot = _snapshot()
+    service_snapshot = {
+        **snapshot,
+        "service_model_version": 0,
+        "standardization": {
+            "carga": {
+                "hojas_disponibles": [
+                    "Ordenes_Trabajo",
+                    "Detalle_OT",
+                    "Horas_Tecnicos",
+                    "Tarifas_Tecnicos",
+                    "Cuotas_Contrato",
+                ]
+            }
+        },
+    }
+
+    assert valid_restore_snapshot(
+        service_snapshot,
+        "limpio",
+        **_expected(snapshot),
+    ) is None
+    assert valid_restore_snapshot(
+        service_snapshot,
+        "limpio",
+        **_expected(snapshot),
+        allow_engine_mismatch=True,
+    ) is service_snapshot
+    assert valid_restore_snapshot(
+        {**snapshot, "service_model_version": 0},
+        "limpio",
+        **_expected(snapshot),
+    ) is not None
+
+
 def test_restore_stale_devuelve_limpieza_sin_metricas_y_sin_descargar(monkeypatch):
     from app.routes import pipeline as pl
 

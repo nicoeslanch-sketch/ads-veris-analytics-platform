@@ -952,7 +952,7 @@ export default function BusinessAnalysisPanel({
     return <NominalCollectionDashboard analysis={analysis} variant={variant} />
   }
   if (analysis.perfil === 'servicios_tecnicos' && analysis.servicios) {
-    return <ServiceBusinessPanel analysis={analysis.servicios} />
+    return <ServiceBusinessPanel analysis={analysis.servicios} variant={variant} />
   }
   return variant === 'summary'
     ? <ExecutiveSummary analysis={analysis} />

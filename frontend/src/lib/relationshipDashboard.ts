@@ -276,6 +276,9 @@ export async function fetchRelationshipDashboard(
     left_keys: relationship.left_keys,
     right_keys: relationship.right_keys,
     type: 'left' as const,
+    ...(relationship.join_strategy
+      ? { join_strategy: relationship.join_strategy }
+      : {}),
     ...(relationship.append_sheets?.length
       ? { append_sheets: relationship.append_sheets }
       : {}),

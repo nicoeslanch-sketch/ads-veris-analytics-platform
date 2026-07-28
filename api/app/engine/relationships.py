@@ -698,6 +698,207 @@ def detect_relationship_catalog(
         _consolidated_sales_relationships(frames, resolved, results)
     )
 
+    # El libro de servicios declara relaciones de dominio que un detector
+    # genérico no debe adivinar por similitud de encabezados. Aquí se agregan
+    # solo cuando las hojas exactas existen y el left join conserva filas.
+    if is_service_workbook:
+        by_kind = {kind: name for name, kind in kinds.items()}
+
+        def existing(left_name: str, right_name: str) -> bool:
+            return any(
+                relation["left_sheet"] == left_name
+                and relation["right_sheet"] == right_name
+                for relation in relationships
+            )
+
+        def service_entry(
+            left_kind: str,
+            right_kind: str,
+            left_key: str | None,
+            right_key: str | None,
+            *,
+            join_strategy: str | None = None,
+            temporal: dict[str, str] | None = None,
+            allow_partial: bool = False,
+        ) -> None:
+            left_name = by_kind.get(left_kind)
+            right_name = by_kind.get(right_kind)
+            if (
+                not left_name
+                or not right_name
+                or not left_key
+                or not right_key
+                or existing(left_name, right_name)
+            ):
+                return
+            left = frames[left_name]
+            right = frames[right_name]
+            if join_strategy == "vigencia_por_fecha" and temporal:
+                if not all(temporal.values()):
+                    return
+                left_dates = _dates(left, temporal["left_date"])
+                starts = _dates(right, temporal["valid_from"])
+                ends = _dates(right, temporal["valid_to"])
+                right_tokens = right[right_key].map(_text_key)
+                matches = pd.Series(0, index=left.index, dtype="int64")
+                left_tokens = left[left_key].map(_text_key)
+                for token in set(left_tokens) - {""}:
+                    left_mask = left_tokens.eq(token)
+                    rate_mask = right_tokens.eq(token)
+                    for position in left.index[left_mask]:
+                        matches.at[position] = int(
+                            (
+                                rate_mask
+                                & starts.le(left_dates.at[position])
+                                & ends.ge(left_dates.at[position])
+                            ).sum()
+                        )
+                safe = bool((matches <= 1).all() and (matches == 1).any())
+                matched = int(matches.eq(1).sum())
+                coverage_left = matched / max(len(left), 1)
+                coverage_right = 1.0
+                overlap = coverage_left
+                cardinality = "muchos_a_uno_temporal"
+                reason = (
+                    None
+                    if safe
+                    else "Hay fechas sin tarifa única o tramos de vigencia superpuestos."
+                )
+                left_keys = [left_key, temporal["left_date"]]
+                right_keys = [right_key, temporal["valid_from"]]
+            else:
+                if allow_partial:
+                    missing = {"", "--", "-", "sin dato", "n/a", "na", "none", "null"}
+                    left_tokens = left[left_key].map(_text_key)
+                    right_tokens = right[right_key].map(_text_key)
+                    right_valid = right_tokens.loc[~right_tokens.isin(missing)]
+                    if right_valid.duplicated().any():
+                        return
+                    valid_left = ~left_tokens.isin(missing)
+                    matched_mask = valid_left & left_tokens.isin(set(right_valid))
+                    if not matched_mask.any():
+                        return
+                    safe = True
+                    coverage_left = float(matched_mask.mean())
+                    coverage_right = (
+                        left_tokens.loc[matched_mask].nunique()
+                        / max(right_valid.nunique(), 1)
+                    )
+                    overlap = float(
+                        matched_mask.sum() / max(int(valid_left.sum()), 1)
+                    )
+                    cardinality = "muchos_a_uno"
+                else:
+                    stats = relation_stats(left, [left_key], right, [right_key])
+                    safe = stats.cardinality in {"uno_a_uno", "muchos_a_uno"}
+                    if not safe:
+                        return
+                    try:
+                        join_related_frames(
+                            {left_name: left, right_name: right},
+                            {
+                                left_name: resolved[left_name],
+                                right_name: resolved[right_name],
+                            },
+                            {
+                                "left_sheet": left_name,
+                                "right_sheet": right_name,
+                                "left_keys": [left_key],
+                                "right_keys": [right_key],
+                                "type": "left",
+                            },
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        return
+                    coverage_left = stats.coverage_left
+                    coverage_right = stats.coverage_right
+                    overlap = stats.overlap
+                    cardinality = stats.cardinality
+                reason = None
+                left_keys = [left_key]
+                right_keys = [right_key]
+            relationships.append(
+                {
+                    "id": relationship_id(
+                        left_name, right_name, left_keys, right_keys
+                    ),
+                    "left_sheet": left_name,
+                    "right_sheet": right_name,
+                    "left_keys": left_keys,
+                    "right_keys": right_keys,
+                    "type": "left",
+                    "template": "generic",
+                    "label": f"{left_name} ↔ {right_name}",
+                    "purpose": "service_enrichment",
+                    "coverage_left": round(coverage_left, 4),
+                    "coverage_right": round(coverage_right, 4),
+                    "overlap": round(overlap, 4),
+                    "cardinality": cardinality,
+                    "safe": safe,
+                    "recommended": False,
+                    "source": "automatic",
+                    "currency_compatible": True,
+                    "reason": reason,
+                    **({"join_strategy": join_strategy} if join_strategy else {}),
+                }
+            )
+
+        hours_name = by_kind.get("horas_tecnicos")
+        tariffs_name = by_kind.get("tarifas_tecnicos")
+        if hours_name and tariffs_name:
+            service_entry(
+                "horas_tecnicos",
+                "tarifas_tecnicos",
+                find_column(frames[hours_name].columns, "cod", "tecnico"),
+                find_column(frames[tariffs_name].columns, "cod", "tecnico"),
+                join_strategy="vigencia_por_fecha",
+                temporal={
+                    "left_date": find_column(frames[hours_name].columns, "fecha"),
+                    "valid_from": find_column(
+                        frames[tariffs_name].columns, "vigente", "desde"
+                    ),
+                    "valid_to": find_column(
+                        frames[tariffs_name].columns, "vigente", "hasta"
+                    ),
+                },
+            )
+        installments_name = by_kind.get("cuotas_contrato")
+        uf_name = by_kind.get("valor_uf")
+        if installments_name and uf_name:
+            service_entry(
+                "cuotas_contrato",
+                "valor_uf",
+                find_column(frames[installments_name].columns, "periodo"),
+                find_column(frames[uf_name].columns, "periodo"),
+                join_strategy="periodo_moneda_uf",
+            )
+        orders_name = by_kind.get("ordenes_trabajo")
+        contracts_name = by_kind.get("contratos")
+        technicians_name = by_kind.get("tecnicos")
+        clients_name = by_kind.get("clientes")
+        if orders_name and contracts_name:
+            service_entry(
+                "ordenes_trabajo",
+                "contratos",
+                find_column(frames[orders_name].columns, "cod", "contrato"),
+                find_column(frames[contracts_name].columns, "cod", "contrato"),
+                allow_partial=True,
+            )
+        if orders_name and technicians_name:
+            service_entry(
+                "ordenes_trabajo",
+                "tecnicos",
+                find_column(frames[orders_name].columns, "supervisor"),
+                find_column(frames[technicians_name].columns, "cod", "tecnico"),
+            )
+        if contracts_name and clients_name:
+            service_entry(
+                "contratos",
+                "clientes",
+                find_column(frames[contracts_name].columns, "cod", "cliente"),
+                find_column(frames[clients_name].columns, "cod", "cliente"),
+            )
+
     # Orden de utilidad: costos primero, luego el resto por solapamiento.
     template_order = {
         "sales_costs": 0,
@@ -722,6 +923,64 @@ def detect_relationship_catalog(
     if relationships:
         relationships[0]["recommended"] = True
 
+    relationship_plan: list[dict[str, Any]] = []
+    if is_service_workbook:
+        plan_specs = [
+            (1, "Detalle_OT → Items", "detalle_ot", "items", "Costo de materiales y margen por familia"),
+            (2, "Horas_Tecnicos → Tarifas_Tecnicos (vigencia)", "horas_tecnicos", "tarifas_tecnicos", "Ingreso, costo y utilidad por hora"),
+            (3, "Cuotas_Contrato → Valor_UF (periodo, solo UF)", "cuotas_contrato", "valor_uf", "Cuotas UF convertidas a CLP"),
+            (4, "Detalle_OT → Ordenes_Trabajo", "detalle_ot", "ordenes_trabajo", "Rentabilidad por OT y tipo"),
+            (5, "Horas_Tecnicos → Ordenes_Trabajo", "horas_tecnicos", "ordenes_trabajo", "Horas y mano de obra por OT"),
+            (6, "Ordenes_Trabajo → Clientes", "ordenes_trabajo", "clientes", "Rentabilidad por cliente y segmento"),
+            (7, "Ordenes_Trabajo → Contratos", "ordenes_trabajo", "contratos", "Cumplimiento de SLA"),
+            (8, "Ordenes_Trabajo → Tecnicos", "ordenes_trabajo", "tecnicos", "Desempeño por supervisor"),
+            (9, "Horas_Tecnicos → Tecnicos", "horas_tecnicos", "tecnicos", "Utilización y utilidad por técnico"),
+            (10, "Cuotas_Contrato → Contratos", "cuotas_contrato", "contratos", "Ingreso recurrente por tipo de contrato"),
+            (11, "Contratos → Clientes", "contratos", "clientes", "Clientes recurrentes y cartera contractual"),
+            (12, "Gastos_Estructura → calendario", "gastos", None, "Resultado operacional mensual"),
+        ]
+        for order, label, left_kind, right_kind, unlocks in plan_specs:
+            matched_relation = next(
+                (
+                    relation
+                    for relation in relationships
+                    if kinds.get(relation["left_sheet"]) == left_kind
+                    and (
+                        right_kind is None
+                        or kinds.get(relation["right_sheet"]) == right_kind
+                    )
+                ),
+                None,
+            )
+            integrated = right_kind is None
+            relationship_plan.append(
+                {
+                    "order": order,
+                    "relation": label,
+                    "unlocks": unlocks,
+                    "available": bool(matched_relation) or integrated,
+                    "status": (
+                        "integrada_en_modelo"
+                        if integrated
+                        else "ejecutable"
+                        if matched_relation
+                        else "no_disponible"
+                    ),
+                    "relationship_id": (
+                        matched_relation.get("id")
+                        if matched_relation
+                        else None
+                    ),
+                    "strategy": (
+                        matched_relation.get("join_strategy", "clave_muchos_a_uno")
+                        if matched_relation
+                        else "alineacion_temporal"
+                        if integrated
+                        else None
+                    ),
+                }
+            )
+
     message = None
     if not relationships:
         message = (
@@ -732,22 +991,5 @@ def detect_relationship_catalog(
         "relationships": relationships,
         "discarded_count": discarded,
         "message": message,
-        "relationship_plan": (
-            [
-                {"order": 1, "relation": "Detalle_OT → Ordenes_Trabajo", "unlocks": "Ingreso y costo por OT"},
-                {"order": 2, "relation": "Horas_Tecnicos → Ordenes_Trabajo", "unlocks": "Horas e ingreso de mano de obra por OT"},
-                {"order": 3, "relation": "Detalle_OT → Items", "unlocks": "Costo y familia de materiales"},
-                {"order": 4, "relation": "Horas_Tecnicos → Tarifas_Tecnicos (vigencia)", "unlocks": "Costo y venta real de horas"},
-                {"order": 5, "relation": "Cuotas_Contrato → Valor_UF (periodo)", "unlocks": "Cuotas UF convertidas a CLP"},
-                {"order": 6, "relation": "Cuotas_Contrato → Contratos", "unlocks": "Ingreso recurrente y estado contractual"},
-                {"order": 7, "relation": "Ordenes_Trabajo → Clientes", "unlocks": "Rentabilidad por cliente y segmento"},
-                {"order": 8, "relation": "Ordenes_Trabajo → Contratos", "unlocks": "OT asociadas a contratos"},
-                {"order": 9, "relation": "Ordenes_Trabajo → Tecnicos", "unlocks": "Supervisión y cumplimiento de SLA"},
-                {"order": 10, "relation": "Horas_Tecnicos → Tecnicos", "unlocks": "Productividad y utilización por técnico"},
-                {"order": 11, "relation": "Contratos → Clientes", "unlocks": "Cartera contractual por cliente"},
-                {"order": 12, "relation": "Gastos_Estructura → Periodo", "unlocks": "Resultado operacional mensual"},
-            ]
-            if is_service_workbook
-            else []
-        ),
+        "relationship_plan": relationship_plan,
     }

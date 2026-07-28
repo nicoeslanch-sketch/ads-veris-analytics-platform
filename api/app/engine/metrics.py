@@ -543,6 +543,7 @@ def is_transaction_profile(
         "cuotas_contrato",
         "valor_uf",
         "items",
+        "gastos_estructura",
     }
     if non_sales_profile in explicit_operational_profiles:
         return False
@@ -650,6 +651,14 @@ def detect_non_sales_profile(
     ):
         return "valor_uf"
     if (
+        has_compact("idarea", "codarea")
+        and has_compact("conceptogasto")
+        and has_compact("tipogasto")
+        and has_compact("periodo")
+        and has_compact("monto")
+    ):
+        return "gastos_estructura"
+    if (
         has_compact("coditem", "iditem")
         and has_compact("descripcion", "nombreitem", "unidad")
         and not has_ot
@@ -736,6 +745,7 @@ def _operational_metric_label(subtype: str | None, normalized_name: str) -> str:
         "contratos": (("monto mensual", "Valor contractual mensual"),),
         "cuotas_contrato": (("monto", "Monto de cuotas contractuales"),),
         "valor_uf": (("valor uf", "Valor UF de referencia"),),
+        "gastos_estructura": (("monto", "Gasto de estructura"),),
         "items": (
             ("precio", "Precio unitario de referencia"),
             ("costo", "Costo unitario de referencia"),
@@ -2202,6 +2212,7 @@ def compute_metrics(
             "contratos": ("monto mensual",),
             "cuotas_contrato": ("monto",),
             "valor_uf": ("valor uf",),
+            "gastos_estructura": ("monto",),
             "items": ("precio", "costo"),
         }
 
@@ -2356,6 +2367,7 @@ def compute_metrics(
             "cuotas_contrato": "cuotas contractuales",
             "valor_uf": "referencia temporal de valor UF",
             "items": "maestra de artículos e insumos",
+            "gastos_estructura": "gastos de estructura",
         }
         label = profile_labels.get(subtype or "", "perfil estructural")
         warnings = [

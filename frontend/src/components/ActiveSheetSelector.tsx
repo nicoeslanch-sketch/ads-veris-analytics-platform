@@ -279,6 +279,23 @@ export default function ActiveSheetSelector({
         )
         cacheRelationships(cacheKey, response)
       }
+      const serviceAnalysis = response.metrics?.analisis_negocio
+      if (
+        serviceWorkbook
+        && response.metrics
+        && response.analysis_scope?.mode === 'append_join'
+        && serviceAnalysis?.perfil === 'servicios_tecnicos'
+        && serviceAnalysis.servicios
+      ) {
+        setSheet(response.analysis_scope.active_sheet)
+        setAnalysisScope(response.analysis_scope)
+        setMetrics(response.metrics)
+        setCandidates([])
+        setRelationMessage(
+          'Red validada: materiales, horas facturables, tarifas vigentes, cuotas en UF y gastos de estructura se integran sin apilar hojas incompatibles.',
+        )
+        return
+      }
       const costSelection = selectAppendJoinCostCandidates(response.candidates, appendSelection)
       setCandidates(costSelection.candidates)
       const recommended = costSelection.automatic ?? null
@@ -493,27 +510,42 @@ export default function ActiveSheetSelector({
       {mode === 'append_join' && (
         <div className="mt-3 rounded-lg border border-navy/10 bg-white p-3">
           <div className="mb-3 border-b border-navy/10 pb-3">
-            <p className="text-xs text-navy/55">Buscamos automáticamente una clave común (por ejemplo SKU o ID), apilamos las ventas compatibles y agregamos los costos sin cambiar filas ni ingresos. No necesitas elegir columnas.</p>
-            <p className="mt-2 text-xs font-semibold text-navy">Cambiar hojas de ventas</p>
-            <div className="mt-2 flex flex-wrap gap-3">
-              {compatibleSheets.map((name) => (
-                <label key={name} className="flex items-center gap-1.5 text-xs text-navy/70">
-                  <input
-                    type="checkbox"
-                    checked={appendSheets.includes(name)}
-                    disabled={detecting}
-                    title={detecting ? 'Espera a que termine la validación de la selección.' : undefined}
-                    onChange={(event) => chooseAppendJoin(
-                      event.target.checked
-                        ? [...appendSheets, name]
-                        : appendSheets.filter((item) => item !== name),
-                    )}
-                    className="h-4 w-4 accent-teal disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                  {name}
-                </label>
-              ))}
-            </div>
+            {serviceWorkbook ? (
+              <>
+                <p className="text-xs text-navy/55">
+                  Este libro no se apila. Validamos la red completa de 11 fuentes y
+                  aplicamos cruces muchos-a-uno y temporales por vigencia para
+                  construir una visión de negocio trazable.
+                </p>
+                <p className="mt-2 text-[11px] text-navy/50">
+                  Compartir ID_OT no convierte Detalle y Horas en periodos equivalentes.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-navy/55">Buscamos automáticamente una clave común (por ejemplo SKU o ID), apilamos las ventas compatibles y agregamos los costos sin cambiar filas ni ingresos. No necesitas elegir columnas.</p>
+                <p className="mt-2 text-xs font-semibold text-navy">Cambiar hojas de ventas</p>
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {compatibleSheets.map((name) => (
+                    <label key={name} className="flex items-center gap-1.5 text-xs text-navy/70">
+                      <input
+                        type="checkbox"
+                        checked={appendSheets.includes(name)}
+                        disabled={detecting}
+                        title={detecting ? 'Espera a que termine la validación de la selección.' : undefined}
+                        onChange={(event) => chooseAppendJoin(
+                          event.target.checked
+                            ? [...appendSheets, name]
+                            : appendSheets.filter((item) => item !== name),
+                        )}
+                        className="h-4 w-4 accent-teal disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                      {name}
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
           {detecting ? (
             <p className="flex items-center gap-2 text-xs text-navy/60">
@@ -553,17 +585,27 @@ export default function ActiveSheetSelector({
               <div className="flex items-start gap-2.5">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-navy">Ventas + costos activo</p>
+                  <p className="text-xs font-semibold text-navy">
+                    {serviceWorkbook ? 'Red de servicios integrada' : 'Ventas + costos activo'}
+                  </p>
                   <p className="mt-1 text-sm font-semibold text-navy">
-                    {activeAppendJoin.append_sheets.length === 1
-                      ? activeAppendJoin.append_sheets[0]
-                      : `${activeAppendJoin.append_sheets.length} hojas de ventas combinadas`}
-                    {' ↔ '}{activeAppendJoin.join.right_sheet}
+                    {serviceWorkbook ? (
+                      '11 fuentes · relaciones por clave, periodo y vigencia'
+                    ) : (
+                      <>
+                        {activeAppendJoin.append_sheets.length === 1
+                          ? activeAppendJoin.append_sheets[0]
+                          : `${activeAppendJoin.append_sheets.length} hojas de ventas combinadas`}
+                        {' ↔ '}{activeAppendJoin.join.right_sheet}
+                      </>
+                    )}
                   </p>
-                  <p className="mt-0.5 text-xs text-navy/60">
-                    Clave: {activeAppendJoin.join.left_keys.join(' + ')} ↔{' '}
-                    {activeAppendJoin.join.right_keys.join(' + ')}
-                  </p>
+                  {!serviceWorkbook && (
+                    <p className="mt-0.5 text-xs text-navy/60">
+                      Clave: {activeAppendJoin.join.left_keys.join(' + ')} ↔{' '}
+                      {activeAppendJoin.join.right_keys.join(' + ')}
+                    </p>
+                  )}
                   {(activeRows !== null || unmatchedRows !== null) && (
                     <p className="mt-1 text-[11px] text-navy/55">
                       {activeRows !== null ? `${activeRows.toLocaleString('es-CL')} filas` : null}
@@ -574,14 +616,16 @@ export default function ActiveSheetSelector({
                     </p>
                   )}
                   <p className="mt-1 text-[11px] text-navy/55">
-                    Los ingresos y el número de filas no cambiarán por agregar los costos.
+                    {serviceWorkbook
+                      ? 'Los montos unitarios solo se aplican en su relación válida; nunca se suman tarifas, UF ni costos de catálogo.'
+                      : 'Los ingresos y el número de filas no cambiarán por agregar los costos.'}
                   </p>
                   {activeRelationCandidate && (
                     <p className="mt-1 text-[11px] text-navy/50">
                       {relationshipPlainMessage(activeRelationCandidate)}
                     </p>
                   )}
-                  <div className="mt-3 flex flex-wrap gap-3">
+                  {!serviceWorkbook && <div className="mt-3 flex flex-wrap gap-3">
                     <button
                       type="button"
                       onClick={() => {
@@ -604,7 +648,7 @@ export default function ActiveSheetSelector({
                     >
                       La conexión detectada no corresponde
                     </button>
-                  </div>
+                  </div>}
                 </div>
               </div>
             </div>

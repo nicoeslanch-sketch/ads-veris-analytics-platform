@@ -19,7 +19,7 @@ from fastapi import HTTPException, status
 
 from .config import Settings, get_settings
 from .engine.clean import DEFAULT_RULES
-from .version import ENGINE_VERSION
+from .version import ENGINE_VERSION, SERVICE_MODEL_VERSION
 
 
 # Fase 16 — v3: las revisiones se reservan en PostgreSQL al RECIBIR la
@@ -376,6 +376,36 @@ def _stable_hash(payload: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()[:16]
 
 
+def _service_snapshot(raw: dict[str, Any]) -> bool:
+    """Detect snapshots whose cleaning/metrics depend on the service model.
+
+    This derived-model identity is intentionally separate from ENGINE_VERSION:
+    a service-model release can refresh the affected workbook once without
+    invalidating every unrelated dataset in the platform.
+    """
+
+    standardization = raw.get("standardization")
+    carga = (
+        standardization.get("carga")
+        if isinstance(standardization, dict)
+        else None
+    )
+    sheets = carga.get("hojas_disponibles") if isinstance(carga, dict) else None
+    if not isinstance(sheets, list):
+        return False
+    normalized = {
+        re.sub(r"[^a-z0-9]+", "_", str(name).casefold()).strip("_")
+        for name in sheets
+    }
+    return {
+        "ordenes_trabajo",
+        "detalle_ot",
+        "horas_tecnicos",
+        "tarifas_tecnicos",
+        "cuotas_contrato",
+    }.issubset(normalized)
+
+
 def build_restore_snapshot(
     standardization: dict,
     cleaning: dict | None,
@@ -398,6 +428,7 @@ def build_restore_snapshot(
     return {
         "version": RESTORE_SNAPSHOT_VERSION,
         "engine_version": ENGINE_VERSION,
+        "service_model_version": SERVICE_MODEL_VERSION,
         "generated_at": now.isoformat(),
         # Reservada por PostgreSQL al recibir la petición, no al finalizarla.
         "revision": revision,
@@ -432,6 +463,12 @@ def valid_restore_snapshot(
     # versiones). Cambios de archivo/mapeo/reglas producen dataset o snapshot
     # nuevos por diseño; esta es la última línea de defensa.
     if not allow_engine_mismatch and raw.get("engine_version") != ENGINE_VERSION:
+        return None
+    if (
+        not allow_engine_mismatch
+        and _service_snapshot(raw)
+        and raw.get("service_model_version") != SERVICE_MODEL_VERSION
+    ):
         return None
     if not isinstance(expected_revision, int) or expected_revision <= 0:
         return None

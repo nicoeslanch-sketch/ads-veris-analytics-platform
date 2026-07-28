@@ -164,6 +164,582 @@ def _date_filter_mask(
     return mask
 
 
+def _service_temporal_dashboard(
+    left_name: str,
+    left: pd.DataFrame,
+    right_name: str,
+    right: pd.DataFrame,
+    relationship: dict[str, Any],
+    currency: str,
+    date_from: str | None,
+    date_to: str | None,
+) -> dict[str, Any] | None:
+    """Dashboards auditables para los dos cruces temporales del modelo servicio."""
+
+    strategy = relationship.get("join_strategy")
+    if strategy == "vigencia_por_fecha":
+        tech_left = find_column(left.columns, "cod", "tecnico")
+        work_date = find_column(left.columns, "fecha")
+        hours_col = find_column(left.columns, "horas")
+        billable_col = find_column(left.columns, "factura")
+        hour_type = find_column(left.columns, "tipo")
+        tech_right = find_column(right.columns, "cod", "tecnico")
+        valid_from = find_column(right.columns, "vigente", "desde")
+        valid_to = find_column(right.columns, "vigente", "hasta")
+        cost_rate = find_column(right.columns, "costo", "hora")
+        sale_rate = find_column(right.columns, "valor", "hora", "venta")
+        if not all(
+            (
+                tech_left,
+                work_date,
+                hours_col,
+                billable_col,
+                tech_right,
+                valid_from,
+                valid_to,
+                cost_rate,
+                sale_rate,
+            )
+        ):
+            return _empty_dashboard(
+                relationship,
+                "generic",
+                currency,
+                "Faltan columnas para aplicar la vigencia de tarifas.",
+            )
+        work = left.copy()
+        work["__row"] = range(len(work))
+        work["__tech"] = work[tech_left].map(_text_key)
+        work["__date"] = _dates(work, work_date)
+        work["__hours"] = numeric_series(work, hours_col)
+        work["__billable"] = (
+            work[billable_col]
+            .astype(str)
+            .str.strip()
+            .str.casefold()
+            .isin({"sí", "si", "s", "1", "x", "true"})
+        )
+        work["__multiplier"] = (
+            work[hour_type]
+            .astype(str)
+            .str.casefold()
+            .str.contains("extra", na=False)
+            .map({True: 1.5, False: 1.0})
+            if hour_type
+            else 1.0
+        )
+        work = work.loc[
+            _date_filter_mask(work["__date"], date_from, date_to)
+        ].copy()
+        rates = right.copy()
+        rates["__tech"] = rates[tech_right].map(_text_key)
+        rates["__from"] = _dates(rates, valid_from)
+        rates["__to"] = _dates(rates, valid_to)
+        rates["__cost_rate"] = numeric_series(rates, cost_rate)
+        rates["__sale_rate"] = numeric_series(rates, sale_rate)
+        matched = work.merge(
+            rates[
+                [
+                    "__tech",
+                    "__from",
+                    "__to",
+                    "__cost_rate",
+                    "__sale_rate",
+                ]
+            ],
+            on="__tech",
+            how="left",
+        )
+        matched = matched.loc[
+            matched["__date"].between(
+                matched["__from"], matched["__to"], inclusive="both"
+            )
+        ].copy()
+        counts = matched.groupby("__row").size()
+        if (counts > 1).any():
+            return _empty_dashboard(
+                relationship,
+                "generic",
+                currency,
+                "Los tramos de tarifa se superponen y duplicarían horas.",
+            )
+        matched["ingreso"] = (
+            matched["__hours"]
+            * matched["__sale_rate"]
+            * matched["__multiplier"]
+        ).where(matched["__billable"], 0.0)
+        matched["costo"] = (
+            matched["__hours"]
+            * matched["__cost_rate"]
+            * matched["__multiplier"]
+        )
+        matched["utilidad"] = matched["ingreso"] - matched["costo"]
+        matched_rows = int(matched["__row"].nunique())
+        rows_before = len(work)
+        revenue = float(matched["ingreso"].sum())
+        cost = float(matched["costo"].sum())
+        utility = revenue - cost
+        total_hours = float(work["__hours"].sum())
+        billable_hours = float(
+            work.loc[work["__billable"], "__hours"].sum()
+        )
+        grouped = (
+            matched.groupby(tech_left)
+            .agg(
+                horas=("__hours", "sum"),
+                ingreso=("ingreso", "sum"),
+                costo=("costo", "sum"),
+                utilidad=("utilidad", "sum"),
+            )
+            .sort_values("utilidad", ascending=False)
+            .head(TOP_LIMIT)
+            .reset_index()
+        )
+        valid_dates = work["__date"].dropna()
+        months = sorted(
+            {value.strftime("%Y-%m") for value in valid_dates}
+        )
+        relation_meta = {
+            **relationship,
+            "template": "generic",
+            "label": f"{left_name} ↔ {right_name}",
+            "purpose": "service_rates_temporal",
+            "cardinality": "muchos_a_uno_temporal",
+            "safe": True,
+            "coverage_left": round(matched_rows / max(rows_before, 1), 4),
+            "coverage_right": 1.0,
+            "overlap": round(matched_rows / max(rows_before, 1), 4),
+        }
+        return {
+            "relation": relation_meta,
+            "template": "generic",
+            "period": {
+                "desde": date_from,
+                "hasta": date_to,
+                "referencia": _iso_or_none(_period_reference(valid_dates)),
+                "meses": months,
+            },
+            "currency": currency,
+            "quality": {
+                "rows_before": rows_before,
+                "rows_after": rows_before,
+                "matched_rows": matched_rows,
+                "unmatched_rows": rows_before - matched_rows,
+                "coverage_pct": round(matched_rows / max(rows_before, 1) * 100, 1),
+                "warnings": [
+                    "La tarifa se aplica por técnico y fecha dentro de su vigencia; unir solo por técnico duplicaría cada hora."
+                ],
+            },
+            "kpis": [
+                _kpi("ingreso_horas", "Ingreso por horas", _clean_number(revenue), "currency"),
+                _kpi("costo_horas", "Costo de horas", _clean_number(cost), "currency"),
+                _kpi("utilidad_horas", "Utilidad de horas", _clean_number(utility), "currency"),
+                _kpi(
+                    "margen_horas",
+                    "Margen de horas",
+                    _clean_number(utility / revenue * 100) if revenue else None,
+                    "percent",
+                ),
+                _kpi("horas", "Horas registradas", _clean_number(total_hours), "number"),
+                _kpi(
+                    "utilizacion",
+                    "Utilización",
+                    _clean_number(billable_hours / total_hours * 100)
+                    if total_hours
+                    else None,
+                    "percent",
+                ),
+            ],
+            "charts": [
+                {
+                    "id": "utilidad_tecnico",
+                    "kind": "bar",
+                    "title": "Ingreso, costo y utilidad por técnico",
+                    "help": "Montos calculados con la tarifa vigente en la fecha de cada registro.",
+                    "category_key": "tecnico",
+                    "orientation": "horizontal",
+                    "series": [
+                        {"key": "ingreso", "label": "Ingreso", "format": "currency"},
+                        {"key": "costo", "label": "Costo", "format": "currency", "color_role": "cost"},
+                        {"key": "utilidad", "label": "Utilidad", "format": "currency", "color_role": "profit"},
+                    ],
+                    "data": [
+                        {
+                            "tecnico": str(row[tech_left]),
+                            "ingreso": _clean_number(row["ingreso"]),
+                            "costo": _clean_number(row["costo"]),
+                            "utilidad": _clean_number(row["utilidad"]),
+                        }
+                        for _, row in grouped.iterrows()
+                    ],
+                }
+            ],
+            "table": {
+                "id": "tecnicos_tarifa",
+                "title": "Rentabilidad por técnico",
+                "columns": [
+                    {"key": "tecnico", "label": "Técnico", "format": "text"},
+                    {"key": "horas", "label": "Horas", "format": "number"},
+                    {"key": "ingreso", "label": "Ingreso", "format": "currency"},
+                    {"key": "costo", "label": "Costo", "format": "currency"},
+                    {"key": "utilidad", "label": "Utilidad", "format": "currency"},
+                ],
+                "rows": [
+                    {
+                        "tecnico": str(row[tech_left]),
+                        "horas": _clean_number(row["horas"]),
+                        "ingreso": _clean_number(row["ingreso"]),
+                        "costo": _clean_number(row["costo"]),
+                        "utilidad": _clean_number(row["utilidad"]),
+                    }
+                    for _, row in grouped.iterrows()
+                ],
+                "total_rows": int(matched[tech_left].nunique()),
+                "matched_rows": matched_rows,
+                "unmatched_rows": rows_before - matched_rows,
+            },
+            "findings": [],
+            "alerts": [],
+            "actions": [],
+            "available": True,
+            "message": None,
+        }
+
+    if strategy == "periodo_moneda_uf":
+        period_left = find_column(left.columns, "periodo")
+        amount_col = find_column(left.columns, "monto")
+        currency_col = find_column(left.columns, "moneda")
+        period_right = find_column(right.columns, "periodo")
+        uf_value = find_column(right.columns, "valor", "uf")
+        if not all(
+            (period_left, amount_col, currency_col, period_right, uf_value)
+        ):
+            return _empty_dashboard(
+                relationship,
+                "generic",
+                currency,
+                "Faltan columnas para convertir las cuotas en UF.",
+            )
+        work = left.copy()
+        work["__period"] = (
+            work[period_left].astype(str).str.replace("/", "-", regex=False).str[:7]
+        )
+        work["__amount"] = numeric_series(work, amount_col)
+        work["__currency"] = (
+            work[currency_col].astype(str).str.casefold().str.replace(".", "", regex=False).str.strip()
+        )
+        uf_rows = right.copy()
+        uf_rows["__period"] = (
+            uf_rows[period_right].astype(str).str.replace("/", "-", regex=False).str[:7]
+        )
+        uf_rows["__uf"] = numeric_series(uf_rows, uf_value)
+        if uf_rows["__period"].duplicated().any():
+            return _empty_dashboard(
+                relationship,
+                "generic",
+                currency,
+                "Valor_UF repite periodos y no puede usarse como referencia única.",
+            )
+        merged = work.merge(
+            uf_rows[["__period", "__uf"]],
+            on="__period",
+            how="left",
+            validate="many_to_one",
+        )
+        is_uf = merged["__currency"].eq("uf")
+        converted_mask = is_uf & merged["__uf"].notna()
+        merged["__clp"] = merged["__amount"].where(
+            ~is_uf,
+            merged["__amount"] * merged["__uf"],
+        ).round()
+        grouped = (
+            merged.groupby("__period")
+            .agg(
+                cuotas=("__amount", "size"),
+                ingreso_clp=("__clp", "sum"),
+                cuotas_uf=("__currency", lambda values: int(values.eq("uf").sum())),
+            )
+            .reset_index()
+            .sort_values("__period")
+        )
+        total = float(merged["__clp"].sum())
+        uf_total = float(merged.loc[is_uf, "__clp"].sum())
+        matched_rows = int(converted_mask.sum())
+        relation_meta = {
+            **relationship,
+            "template": "generic",
+            "label": f"{left_name} ↔ {right_name}",
+            "purpose": "service_uf_period",
+            "cardinality": "muchos_a_uno",
+            "safe": True,
+            "coverage_left": round(matched_rows / max(int(is_uf.sum()), 1), 4),
+            "coverage_right": 1.0,
+            "overlap": round(matched_rows / max(int(is_uf.sum()), 1), 4),
+        }
+        months = grouped["__period"].astype(str).tolist()
+        return {
+            "relation": relation_meta,
+            "template": "generic",
+            "period": {
+                "desde": date_from,
+                "hasta": date_to,
+                "referencia": None,
+                "meses": months,
+            },
+            "currency": "CLP",
+            "quality": {
+                "rows_before": len(work),
+                "rows_after": len(work),
+                "matched_rows": matched_rows,
+                "unmatched_rows": int(is_uf.sum()) - matched_rows,
+                "coverage_pct": round(matched_rows / max(int(is_uf.sum()), 1) * 100, 1),
+                "warnings": [
+                    "Valor UF es una referencia mensual: se multiplica por cada cuota en UF y nunca se suma como monto."
+                ],
+            },
+            "kpis": [
+                _kpi("ingreso_recurrente", "Ingreso recurrente", _clean_number(total), "currency"),
+                _kpi("ingreso_uf", "Cuotas UF convertidas", _clean_number(uf_total), "currency"),
+                _kpi("cuotas_uf", "Cuotas en UF", int(is_uf.sum()), "integer"),
+                _kpi("periodos", "Periodos con UF", int(uf_rows["__period"].nunique()), "integer"),
+            ],
+            "charts": [
+                {
+                    "id": "cuotas_periodo",
+                    "kind": "bar",
+                    "title": "Ingreso recurrente convertido por periodo",
+                    "help": "Cuotas CLP más cuotas UF convertidas con el valor del mismo periodo.",
+                    "category_key": "periodo",
+                    "series": [
+                        {"key": "ingreso_clp", "label": "Ingreso CLP", "format": "currency"}
+                    ],
+                    "data": [
+                        {
+                            "periodo": str(row["__period"]),
+                            "ingreso_clp": _clean_number(row["ingreso_clp"]),
+                        }
+                        for _, row in grouped.iterrows()
+                    ],
+                }
+            ],
+            "table": {
+                "id": "cuotas_periodo",
+                "title": "Cuotas por periodo",
+                "columns": [
+                    {"key": "periodo", "label": "Periodo", "format": "text"},
+                    {"key": "cuotas", "label": "Cuotas", "format": "integer"},
+                    {"key": "cuotas_uf", "label": "Cuotas UF", "format": "integer"},
+                    {"key": "ingreso_clp", "label": "Ingreso CLP", "format": "currency"},
+                ],
+                "rows": [
+                    {
+                        "periodo": str(row["__period"]),
+                        "cuotas": int(row["cuotas"]),
+                        "cuotas_uf": int(row["cuotas_uf"]),
+                        "ingreso_clp": _clean_number(row["ingreso_clp"]),
+                    }
+                    for _, row in grouped.iterrows()
+                ],
+                "total_rows": len(grouped),
+                "matched_rows": matched_rows,
+                "unmatched_rows": int(is_uf.sum()) - matched_rows,
+            },
+            "findings": [],
+            "alerts": [],
+            "actions": [],
+            "available": True,
+            "message": None,
+        }
+
+    if (
+        strategy is None
+        and _sheet_kind(left_name, left) == "ordenes_trabajo"
+        and _sheet_kind(right_name, right) == "contratos"
+    ):
+        contract_left = find_column(left.columns, "cod", "contrato")
+        response_col = (
+            find_column(left.columns, "resp", "h")
+            or find_column(left.columns, "hora", "respuesta")
+        )
+        contract_right = find_column(right.columns, "cod", "contrato")
+        sla_col = find_column(right.columns, "sla")
+        contract_type = find_column(right.columns, "tipo")
+        if not all((contract_left, response_col, contract_right, sla_col)):
+            return None
+        if right[contract_right].map(_text_key).replace("", pd.NA).dropna().duplicated().any():
+            return _empty_dashboard(
+                relationship,
+                "generic",
+                currency,
+                "Contratos repite claves y podría multiplicar órdenes.",
+            )
+        contract_columns = [
+            contract_right,
+            sla_col,
+            *([contract_type] if contract_type else []),
+        ]
+        merged = left.merge(
+            right[contract_columns],
+            left_on=contract_left,
+            right_on=contract_right,
+            how="left",
+            validate="many_to_one",
+        )
+        response_hours = pd.to_numeric(
+            merged[response_col]
+            .astype(str)
+            .str.replace(",", ".", regex=False)
+            .str.extract(r"([-+]?\d+(?:\.\d+)?)", expand=False),
+            errors="coerce",
+        )
+        sla_hours = numeric_series(merged, sla_col)
+        matched = merged[contract_right].notna()
+        evaluable = matched & response_hours.notna() & sla_hours.notna()
+        compliance = response_hours.le(sla_hours)
+        compliance_pct = (
+            float(compliance.loc[evaluable].mean() * 100)
+            if evaluable.any()
+            else None
+        )
+        grouped_rows: list[dict[str, Any]] = []
+        if contract_type:
+            grouped = pd.DataFrame(
+                {
+                    "tipo": merged[contract_type],
+                    "evaluada": evaluable,
+                    "cumple": compliance & evaluable,
+                }
+            ).loc[evaluable]
+            if not grouped.empty:
+                summary = grouped.groupby("tipo").agg(
+                    ordenes=("evaluada", "size"),
+                    cumplen=("cumple", "sum"),
+                )
+                summary["cumplimiento_pct"] = (
+                    summary["cumplen"] / summary["ordenes"] * 100
+                )
+                grouped_rows = [
+                    {
+                        "tipo": str(index),
+                        "ordenes": int(row["ordenes"]),
+                        "cumplen": int(row["cumplen"]),
+                        "cumplimiento_pct": _clean_number(row["cumplimiento_pct"]),
+                    }
+                    for index, row in summary.sort_values(
+                        "ordenes", ascending=False
+                    ).iterrows()
+                ]
+        matched_rows = int(matched.sum())
+        relation_meta = {
+            **relationship,
+            "template": "generic",
+            "label": f"{left_name} ↔ {right_name}",
+            "purpose": "service_contract_sla",
+            "cardinality": "muchos_a_uno",
+            "safe": True,
+            "coverage_left": round(matched_rows / max(len(left), 1), 4),
+            "coverage_right": 1.0,
+            "overlap": 1.0,
+        }
+        return {
+            "relation": relation_meta,
+            "template": "generic",
+            "period": {
+                "desde": date_from,
+                "hasta": date_to,
+                "referencia": None,
+                "meses": [],
+            },
+            "currency": currency,
+            "quality": {
+                "rows_before": len(left),
+                "rows_after": len(left),
+                "matched_rows": matched_rows,
+                "unmatched_rows": len(left) - matched_rows,
+                "coverage_pct": round(matched_rows / max(len(left), 1) * 100, 1),
+                "warnings": [
+                    "La relación es opcional: las OT sin contrato se conservan y no participan del KPI de SLA."
+                ],
+            },
+            "kpis": [
+                _kpi("ot_contrato", "OT con contrato", matched_rows, "integer"),
+                _kpi(
+                    "cumplimiento_sla",
+                    "Cumplimiento de SLA",
+                    _clean_number(compliance_pct),
+                    "percent",
+                ),
+                _kpi(
+                    "respuesta_media",
+                    "Respuesta media",
+                    _clean_number(float(response_hours.loc[evaluable].mean()))
+                    if evaluable.any()
+                    else None,
+                    "number",
+                    help_text="Horas reales de respuesta en OT con SLA evaluable.",
+                ),
+                _kpi(
+                    "ot_incumplen",
+                    "OT que incumplen",
+                    int((~compliance.loc[evaluable]).sum())
+                    if evaluable.any()
+                    else None,
+                    "integer",
+                    tone="risk",
+                ),
+            ],
+            "charts": (
+                [
+                    {
+                        "id": "sla_tipo_contrato",
+                        "kind": "bar",
+                        "title": "Cumplimiento de SLA por tipo de contrato",
+                        "help": "Porcentaje de OT cuya respuesta real no supera el SLA.",
+                        "category_key": "tipo",
+                        "series": [
+                            {
+                                "key": "cumplimiento_pct",
+                                "label": "Cumplimiento",
+                                "format": "percent",
+                            }
+                        ],
+                        "data": grouped_rows,
+                    }
+                ]
+                if grouped_rows
+                else []
+            ),
+            "table": (
+                {
+                    "id": "sla_tipo_contrato",
+                    "title": "SLA por tipo de contrato",
+                    "columns": [
+                        {"key": "tipo", "label": "Tipo", "format": "text"},
+                        {"key": "ordenes", "label": "OT", "format": "integer"},
+                        {"key": "cumplen", "label": "Cumplen", "format": "integer"},
+                        {
+                            "key": "cumplimiento_pct",
+                            "label": "Cumplimiento",
+                            "format": "percent",
+                        },
+                    ],
+                    "rows": grouped_rows,
+                    "total_rows": len(grouped_rows),
+                    "matched_rows": matched_rows,
+                    "unmatched_rows": len(left) - matched_rows,
+                }
+                if grouped_rows
+                else None
+            ),
+            "findings": [],
+            "alerts": [],
+            "actions": [],
+            "available": True,
+            "message": None,
+        }
+    return None
+
+
 def _group_sum(
     labels: pd.Series,
     values: pd.Series,
@@ -236,6 +812,19 @@ def build_relationship_dashboard(
         ),
         "purpose": purpose,
     }
+
+    temporal_dashboard = _service_temporal_dashboard(
+        left_name,
+        left,
+        right_name,
+        right,
+        relationship,
+        currency,
+        date_from,
+        date_to,
+    )
+    if temporal_dashboard is not None:
+        return temporal_dashboard
 
     # El inventario multi-snapshot se colapsa al último por clave para el JOIN
     # (así no multiplica ventas). El frame ORIGINAL se conserva para el stock.

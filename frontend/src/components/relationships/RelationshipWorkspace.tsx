@@ -388,10 +388,38 @@ export default function RelationshipWorkspace() {
                     {step.order}
                   </span>
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold text-navy">{step.relation}</p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="text-xs font-semibold text-navy">{step.relation}</p>
+                      {step.status && (
+                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
+                          step.status === 'ejecutable'
+                            ? 'bg-green/10 text-green'
+                            : step.status === 'integrada_en_modelo'
+                              ? 'bg-teal/10 text-teal'
+                              : 'bg-gold/15 text-gold'
+                        }`}>
+                          {step.status === 'ejecutable'
+                            ? 'Disponible'
+                            : step.status === 'integrada_en_modelo'
+                              ? 'Integrada'
+                              : 'No disponible'}
+                        </span>
+                      )}
+                    </div>
                     <p className="mt-0.5 text-[11px] leading-relaxed text-navy/55">
                       Desbloquea: {step.unlocks}
                     </p>
+                    {step.strategy && (
+                      <p className="mt-1 text-[10px] text-navy/40">
+                        {step.strategy === 'vigencia_por_fecha'
+                          ? 'Cruce temporal: técnico + fecha dentro de vigencia'
+                          : step.strategy === 'periodo_moneda_uf'
+                            ? 'Cruce por periodo; solo convierte cuotas en UF'
+                            : step.strategy === 'alineacion_temporal'
+                              ? 'Serie mensual después del unpivot'
+                              : 'Cruce muchos-a-uno por clave'}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
