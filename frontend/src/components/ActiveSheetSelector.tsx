@@ -518,6 +518,12 @@ export default function ActiveSheetSelector({
                     descuentos y tipo de línea. Costos, clientes, contratos y
                     técnicos solo aparecerán después de validar sus relaciones.
                   </p>
+                  {relationMessage && (
+                    <p className="mt-2 flex items-start gap-1.5 rounded-md border border-gold/30 bg-gold/[0.08] px-2.5 py-2 text-[11px] text-navy/70">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+                      <span>{relationMessage}</span>
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={() => selectMode('join')}

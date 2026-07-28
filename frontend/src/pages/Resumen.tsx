@@ -705,6 +705,23 @@ export default function Resumen() {
         />
       ) : metrics?.analisis_negocio ? (
         <>
+          {(metrics.duplicados?.conservados ?? 0) > 0 && (
+            <div className="mb-4 flex flex-wrap items-start gap-2 rounded-lg border border-gold/40 bg-gold/[0.07] px-4 py-2.5 text-xs text-navy/75">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+              <p className="min-w-0 flex-1">
+                Se detectaron <strong>{formatNumber(metrics.duplicados?.detectados ?? 0)}</strong>{' '}
+                duplicados exactos y se conservaron{' '}
+                <strong>{formatNumber(metrics.duplicados?.conservados ?? 0)}</strong> porque no
+                confirmaste su eliminación. Los totales actuales los incluyen.
+              </p>
+              <Link
+                to="/limpieza?revision=1"
+                className="ml-5 inline-flex shrink-0 rounded-md border border-gold/45 bg-white px-2.5 py-1.5 font-semibold text-navy hover:bg-gold/[0.06] sm:ml-0"
+              >
+                Ver detalle y ajustar
+              </Link>
+            </div>
+          )}
           {metrics.trazabilidad_ventas && (
             <SalesTraceability trace={metrics.trazabilidad_ventas} />
           )}
