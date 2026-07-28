@@ -440,6 +440,48 @@ function looksLikeProductCatalog(result: AppendCompatibilityResult | null | unde
   return Boolean(mapping.producto && mapping.costo && !mapping.fecha && hasListPrice)
 }
 
+const OPERATIONAL_SHEET_PATTERN = new RegExp(
+  [
+    'orden(?:es)?[_\\s-]*(?:de[_\\s-]*)?trabajo',
+    'detalle[_\\s-]*ot',
+    'horas?[_\\s-]*(?:de[_\\s-]*)?tecnic',
+    'tarifas?[_\\s-]*(?:de[_\\s-]*)?tecnic',
+    '^tecnicos?$',
+    '^items?$',
+    'contratos?',
+    'cuotas?[_\\s-]*(?:de[_\\s-]*)?contrato',
+    'valor[_\\s-]*uf',
+    'gastos?',
+    'inventario',
+    'compras?',
+    'cobranzas?',
+    'clientes?',
+    'productos?',
+    'proveedores?',
+    'sucursales?',
+    'vendedores?',
+    'historial[_\\s-]*costos?',
+  ].join('|'),
+  'i',
+)
+
+const OPERATIONAL_COLUMN_PATTERN = /(^|_)(id_ot|folio_ot|tipo_hora|horas|tarifa_hora|id_contrato|numero_cuota|valor_uf|rut_tecnico)($|_)/i
+
+/** A date, quantity and generic amount are not enough to call a sheet sales.
+ * Service workbooks use that exact shape for work-order lines, technician
+ * hours, contracts and indexed values. These explicit operational signals
+ * keep such sheets out of the sales-period switcher without weakening real
+ * sales sheets named Enero/Febrero. */
+function looksLikeOperationalSheet(
+  name: string,
+  result: AppendCompatibilityResult | null | undefined,
+): boolean {
+  if (OPERATIONAL_SHEET_PATTERN.test(normalizedColumnName(name))) return true
+  return Boolean(result?.preview.columnas.some(
+    (column) => OPERATIONAL_COLUMN_PATTERN.test(normalizedColumnName(column)),
+  ))
+}
+
 function transactionGroupScore(
   group: string[],
   results: Record<string, AppendCompatibilityResult | null | undefined>,
@@ -450,7 +492,8 @@ function transactionGroupScore(
     return Boolean(
       mapping.monto &&
       (mapping.cantidad || mapping.fecha) &&
-      !looksLikeProductCatalog(result),
+      !looksLikeProductCatalog(result) &&
+      !looksLikeOperationalSheet(name, result),
     )
   }).length
 }
@@ -512,7 +555,7 @@ export function compatibleAppendSheets(
     if (scoreDifference !== 0) return scoreDifference
     return right.length - left.length
   })
-  return candidates[0] ?? []
+  return candidates.find((group) => transactionGroupScore(group, results) > 0) ?? []
 }
 
 type AppendJoinScope = Extract<AnalysisScope, { mode: 'append_join' }>

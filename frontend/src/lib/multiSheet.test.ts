@@ -441,7 +441,10 @@ describe('estado multihoja', () => {
     const result = (columns: string[]) => ({
       preview: { columnas: columns },
       column_types: Object.fromEntries(columns.map((column) => [column, 'texto'])),
-      mapeo: { monto: columns[columns.length - 1] },
+      mapeo: {
+        ...(columns.includes('Fecha') ? { fecha: 'Fecha' } : {}),
+        monto: columns[columns.length - 1],
+      },
       moneda: 'CLP',
     })
     expect(compatibleAppendSheets(
@@ -519,6 +522,35 @@ describe('estado multihoja', () => {
       ['Ventas', 'Productos'],
       { Ventas: sales, Productos: catalog },
     )).toEqual(['Ventas'])
+  })
+
+  it('no ofrece unir periodos cuando un libro operacional tiene fecha, cantidad y monto', () => {
+    const operational = (columns: string[], mapping: Record<string, string>) => ({
+      preview: { columnas: columns },
+      column_types: Object.fromEntries(columns.map((column) => [
+        column,
+        column.toLowerCase().includes('fecha') ? 'fecha' : 'numero',
+      ])),
+      mapeo: mapping,
+      moneda: 'CLP',
+    })
+    expect(compatibleAppendSheets(
+      ['Ordenes_Trabajo', 'Detalle_OT', 'Horas_Tecnicos'],
+      {
+        Ordenes_Trabajo: operational(
+          ['ID_OT', 'Fecha_Apertura', 'Monto_Presupuestado'],
+          { fecha: 'Fecha_Apertura', monto: 'Monto_Presupuestado' },
+        ),
+        Detalle_OT: operational(
+          ['ID_OT', 'Cantidad', 'Precio_Unitario', 'Monto'],
+          { cantidad: 'Cantidad', monto: 'Monto' },
+        ),
+        Horas_Tecnicos: operational(
+          ['ID_OT', 'Fecha', 'Horas', 'Tarifa_Hora'],
+          { fecha: 'Fecha', cantidad: 'Horas', monto: 'Tarifa_Hora' },
+        ),
+      },
+    )).toEqual([])
   })
 
   it('sincroniza los checkboxes de append_join con el alcance real', () => {

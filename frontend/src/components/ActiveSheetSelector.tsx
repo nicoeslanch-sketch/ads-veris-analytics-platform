@@ -137,6 +137,14 @@ export default function ActiveSheetSelector({
     })
   }, [compatibleSheets])
 
+  useEffect(() => {
+    if (mode !== 'append' || compatibleSheets.length >= 2 || cleanedSheets.length === 0) return
+    const fallbackSheet = sheet && cleanedSheets.includes(sheet) ? sheet : cleanedSheets[0]
+    setMode('single')
+    setSheet(fallbackSheet)
+    setAnalysisScope({ mode: 'single', sheets: [fallbackSheet], active_sheet: fallbackSheet })
+  }, [cleanedSheets, compatibleSheets.length, mode, setAnalysisScope, setSheet, sheet])
+
   const activeAppendJoin = mode === 'append_join' && analysisScope?.mode === 'append_join'
     ? analysisScope
     : null
@@ -311,6 +319,7 @@ export default function ActiveSheetSelector({
 
   const selectMode = (next: Mode) => {
     if (detecting || (next !== 'single' && pendingSelectedCount > 0)) return
+    if (next === 'append' && compatibleSheets.length < 2) return
     manualModeSelected.current = true
     setMode(next)
     if (next === 'single') chooseSingle(sheet && cleanedSheets.includes(sheet) ? sheet : cleanedSheets[0])
@@ -349,7 +358,13 @@ export default function ActiveSheetSelector({
         append_join: 'Espera a que termine la limpieza de todas las hojas seleccionadas.',
         join: 'Espera a que termine la limpieza de todas las hojas seleccionadas.',
       }
-    : {}
+    : compatibleSheets.length < 2
+      ? {
+          append: compatibleSheets.length === 1
+            ? 'Solo detectamos un periodo de venta. Se necesitan al menos dos para unirlos.'
+            : 'No detectamos periodos de venta seguros en este archivo.',
+        }
+      : {}
 
   return (
     <section
