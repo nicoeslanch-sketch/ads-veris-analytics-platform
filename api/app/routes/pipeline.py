@@ -924,6 +924,7 @@ def _validate_scope_currencies(
 
 _CACHE_LOCK = threading.Lock()
 _CLEAN_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
+_CLEAN_INFLIGHT: dict[tuple, threading.Event] = {}
 _CACHE_TOTAL_CELL_BUDGET = 2_400_000
 # Una entrada individual jamás puede superar el presupuesto completo
 # (el loader ya limita a 200.000 filas).
@@ -960,6 +961,52 @@ def _cache_store(key: tuple, result: dict, apply: bool) -> None:
             _CLEAN_CACHE.popitem(last=False)
 
 
+def _clean_cache_compute(key: tuple, apply: bool, producer) -> dict:
+    """Calcula una limpieza una sola vez aunque lleguen solicitudes simultáneas.
+
+    Resumen, Explorar, el catálogo de relaciones y la exportación pueden pedir
+    la misma hoja al restaurar un libro. La caché anterior solo ayudaba después
+    de terminar el primer cálculo; durante ese intervalo Render ejecutaba el
+    mismo trabajo varias veces y todas las solicitudes se volvían lentas.
+    """
+    started = time.monotonic()
+    while True:
+        with _CACHE_LOCK:
+            cached = _CLEAN_CACHE.get(key)
+            if cached is not None:
+                _CLEAN_CACHE.move_to_end(key)
+                return cached
+            event = _CLEAN_INFLIGHT.get(key)
+            if event is None:
+                event = threading.Event()
+                _CLEAN_INFLIGHT[key] = event
+                owns_work = True
+            else:
+                owns_work = False
+        if owns_work:
+            break
+        # No inicia un cálculo duplicado. El timeout HTTP del consumidor sigue
+        # siendo el límite visible y un reintento reutilizará el resultado.
+        event.wait(timeout=300)
+
+    try:
+        sheet_label = key[-2] if len(key) >= 2 else "(test)"
+        logger.info("clean_cache_compute_start sheet=%s", sheet_label or "(default)")
+        result = producer()
+        _cache_store(key, result, apply)
+        logger.info(
+            "clean_cache_compute_done sheet=%s duration_ms=%d",
+            sheet_label or "(default)",
+            round((time.monotonic() - started) * 1000),
+        )
+        return result
+    finally:
+        with _CACHE_LOCK:
+            finished = _CLEAN_INFLIGHT.pop(key, None)
+            if finished is not None:
+                finished.set()
+
+
 def _cache_key(
     content: bytes,
     rules: dict | None,
@@ -986,7 +1033,7 @@ def _cache_key(
     )
 
 
-def _analyze_cached(
+def _analyze_uncached(
     filename: str,
     content: bytes,
     rules: dict | None,
@@ -1082,6 +1129,50 @@ def _analyze_cached(
 
     _cache_store(key, result, apply)
     return result
+
+
+def _analyze_cached(
+    filename: str,
+    content: bytes,
+    rules: dict | None,
+    apply: bool,
+    mapping: dict | None = None,
+    scope: dict | None = None,
+    sheet: str | None = None,
+    eliminar_duplicados: bool = False,
+    cache_dataset_id: str | None = None,
+    cache_revision: int | None = None,
+    preloaded: tuple[object, dict] | None = None,
+) -> dict:
+    """Versión coordinada: una sola limpieza activa por clave de caché."""
+    key = _cache_key(
+        content,
+        rules,
+        apply,
+        mapping,
+        scope,
+        sheet,
+        eliminar_duplicados,
+        cache_dataset_id,
+        cache_revision,
+    )
+    return _clean_cache_compute(
+        key,
+        apply,
+        lambda: _analyze_uncached(
+            filename,
+            content,
+            rules,
+            apply,
+            mapping,
+            scope,
+            sheet,
+            eliminar_duplicados,
+            cache_dataset_id,
+            cache_revision,
+            preloaded,
+        ),
+    )
 
 
 def _public_clean_response(result: dict, filename: str, extra: dict | None = None) -> dict:

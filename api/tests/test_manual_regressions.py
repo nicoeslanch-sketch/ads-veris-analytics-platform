@@ -1,6 +1,8 @@
 """Regresiones de las pruebas manuales de estado, perfiles y exportación."""
 
 import io
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import openpyxl
 import pandas as pd
@@ -219,6 +221,36 @@ def test_identical_export_requests_reuse_one_job(monkeypatch):
     second = pipeline._clean_download_book_sync("x.xlsx", b"same", manifest, "xlsx", None, "d1")
     assert first == second
     assert calls == 1
+
+
+def test_concurrent_clean_requests_share_one_calculation():
+    pipeline._CLEAN_CACHE.clear()
+    pipeline._CLEAN_INFLIGHT.clear()
+    calls = 0
+
+    def produce():
+        nonlocal calls
+        calls += 1
+        time.sleep(0.05)
+        return {
+            "resumen": {
+                "filas_despues": 1,
+                "columnas_despues": 1,
+                "aplicado": True,
+            }
+        }
+
+    key = ("test-single-flight",)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(
+            executor.map(
+                lambda _index: pipeline._clean_cache_compute(key, True, produce),
+                range(4),
+            )
+        )
+
+    assert calls == 1
+    assert all(result["resumen"]["filas_despues"] == 1 for result in results)
 
 
 def test_exported_workbook_requests_formula_recalculation():
