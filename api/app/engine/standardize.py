@@ -48,7 +48,9 @@ PLACEHOLDERS_BY_ROLE = {
 
 DATE_HINTS = ("fecha", "date", "periodo", "emision", "vencimiento")
 _DATE_SHAPE = re.compile(r"^\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\s*$")
-_NUMBER_SHAPE = re.compile(r"^\s*-?\s*\$?\s*-?[\d.,]+\s*$")
+_NUMBER_SHAPE = re.compile(
+    r"^\s*-?\s*\$?\s*-?(?:[\d.,]+|(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+)\s*$"
+)
 _BOOLEAN_HEADER_RE = re.compile(r"(?i)(?:^|[\s_])(?:activo|activa|vigente|habilitado|habilitada)(?:$|[\s_])")
 _CURRENCY_HEADER_RE = re.compile(r"(?i)(?:^|[\s_])(?:moneda|currency|divisa)(?:$|[\s_])")
 _BOOLEAN_EQUIVALENCES = {
@@ -78,7 +80,8 @@ def is_percentage_column(column: str) -> bool:
 # planillas reales de Chile/LatAm: "$ 1.200.000", "CLP 850.000", "US$1.500",
 # "1.200 USD", "€200", "12%", y negativos contables "(1.500)".
 _CURRENCY_TOKEN_RE = re.compile(r"(?i)(us\$|s/\.?|clp|usd|eur|ars|pen|cop|mxn|uf|[$€£])")
-_BARE_NUMBER_RE = re.compile(r"^-?[\d.,]+$")
+_BARE_NUMBER_RE = re.compile(r"^-?(?:[\d.,]+|(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+)$")
+_SCIENTIFIC_NUMBER_RE = re.compile(r"^-?(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+$")
 
 
 def _strip_number_decorations(value: str) -> tuple[str, bool]:
@@ -367,6 +370,14 @@ def parse_date(value: str, dayfirst: bool = True) -> pd.Timestamp | None:
     text = str(value).strip()
     if is_missing(text):
         return None
+    # ISO 8601 exportado por ERPs: la parte temporal no cambia el día y no
+    # debe impedir que una columna Fecha sea reconocida.
+    iso_datetime = re.match(
+        r"^(\d{4}-\d{2}-\d{2})[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$",
+        text,
+    )
+    if iso_datetime:
+        text = iso_datetime.group(1)
     text_month = _parse_text_month_date(text)
     if text_month is not None:
         return text_month
@@ -524,6 +535,12 @@ def parse_number(
         return None
     negative = paren_negative or text.startswith("-")
     text = text.lstrip("-")
+    if _SCIENTIFIC_NUMBER_RE.fullmatch(text):
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+        return -number if negative else number
     if "," in text and "." in text:
         # Fase 11 §10.2: con AMBOS separadores, el que aparece AL FINAL es el
         # decimal — regla universal que cubre el formato chileno/europeo

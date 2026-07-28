@@ -491,12 +491,42 @@ def _detect_header_row(raw: pd.DataFrame) -> int:
     if total_cols <= 1:
         return 0
     limit = min(_HEADER_SCAN_ROWS, len(raw))
+    candidates: list[tuple[float, int]] = []
+    header_terms = re.compile(
+        r"(?i)\b(?:id|cod(?:igo)?|fecha|estado|monto|cantidad|precio|cliente|"
+        r"producto|tecnico|contrato|periodo|moneda|descripcion|tipo|horas?)\b"
+    )
+    numeric_value = re.compile(
+        r"^\s*[()$]?\s*-?(?:\d[\d.,]*|(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+)\s*%?\s*\)?$"
+    )
+    date_value = re.compile(r"^\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}(?:[T ]|$)")
     for idx in range(limit):
         values = [str(v).strip() for v in raw.iloc[idx].tolist()]
-        non_empty = sum(1 for v in values if v)
-        if non_empty >= 2 and non_empty / total_cols >= 0.6:
-            return idx
-    return 0
+        populated = [value for value in values if value]
+        non_empty = len(populated)
+        if non_empty < 2 or non_empty / total_cols < 0.6:
+            continue
+        unique_ratio = len({value.casefold() for value in populated}) / non_empty
+        data_like = sum(
+            bool(numeric_value.match(value) or date_value.match(value))
+            for value in populated
+        ) / non_empty
+        header_hits = sum(
+            bool(header_terms.search(re.sub(r"[_-]+", " ", value)))
+            for value in populated
+        )
+        # Un encabezado inferior con nombres únicos supera a una banda superior
+        # repetida ("OT | OT | Costos | Costos"). Las filas de datos pierden
+        # puntuación por sus números y fechas aunque sus valores sean únicos.
+        score = unique_ratio * 3 + header_hits / non_empty * 2 - data_like * 3
+        candidates.append((score, idx))
+        # Tras dos filas candidatas consecutivas ya tenemos evidencia suficiente
+        # para resolver encabezados de dos niveles sin inspeccionar datos lejanos.
+        if len(candidates) >= 2 and candidates[-1][1] == candidates[-2][1] + 1:
+            break
+    if not candidates:
+        return 0
+    return max(candidates, key=lambda candidate: (candidate[0], -candidate[1]))[1]
 
 
 def _load_excel(

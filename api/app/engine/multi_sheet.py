@@ -338,7 +338,7 @@ def _relation_stats_from_series(
 
 def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str, str]]:
     def identifier_domain(column: str) -> str | None:
-        compact = norm_key(column)
+        compact = re.sub(r"[^a-z0-9]+", "", norm_key(column))
         aliases = {
             "producto": ("producto", "product", "sku", "articulo", "item"),
             "cliente": ("cliente", "customer", "comprador"),
@@ -352,6 +352,10 @@ def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str,
             "sucursal": ("sucursal", "tienda", "local", "branch"),
             "proveedor": ("proveedor", "supplier", "vendor"),
             "documento": ("documento", "factura", "boleta", "invoice", "folio"),
+            "orden_trabajo": ("ordentrabajo", "numeroot", "nroot", "not"),
+            "contrato": ("contrato",),
+            "tecnico": ("tecnico",),
+            "item": ("item", "articulo", "insumo"),
         }
         for domain, markers in aliases.items():
             if any(marker in compact for marker in markers):
@@ -369,9 +373,10 @@ def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str,
             word for word in re.split(r"[^a-z0-9]+", _text_key(left_name)) if word
         }
         normalized_name = norm_key(left_name)
+        left_domain = identifier_domain(left_name)
         looks_identifier = bool(words & IDENTIFIER_MARKERS) or normalized_name.startswith(
             ("id", "codigo", "sku", "rut", "folio", "uuid", "clave")
-        ) or normalized_name.endswith(("id", "codigo", "sku", "rut", "folio", "uuid"))
+        ) or normalized_name.endswith(("id", "codigo", "sku", "rut", "folio", "uuid")) or left_domain is not None
         left_match = left_extended.get(left_name)
         if right_name and (
             looks_identifier or (left_match is not None and left_match.grupo == "identificador")
@@ -379,11 +384,8 @@ def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str,
             pairs.append((left_name, right_name))
             continue
         if not left_match or left_match.grupo != "identificador":
-            left_domain = identifier_domain(left_name)
             if not looks_identifier or not left_domain:
                 continue
-        else:
-            left_domain = identifier_domain(left_name)
         if left_domain:
             domain_candidate = next(
                 (

@@ -145,6 +145,42 @@ const GENERIC_TITLES: Record<string, { titulo: string; nota: string }> = {
     titulo: 'Instrucciones del libro',
     nota: 'Esta hoja es auxiliar: se muestra como referencia y nunca alimenta ventas, clientes ni indicadores.',
   },
+  ordenes_trabajo: {
+    titulo: 'Órdenes de trabajo',
+    nota: 'Actividad operacional por estado, cliente y responsable. No representa ventas ni facturación.',
+  },
+  detalle_ot: {
+    titulo: 'Detalle de órdenes de trabajo',
+    nota: 'Los montos corresponden a líneas OT. No se reconocen como ingresos hasta validar una regla de facturación.',
+  },
+  horas_tecnicos: {
+    titulo: 'Horas técnicas',
+    nota: 'Horas normales, extra y facturables como actividad operacional; no se convierten en dinero sin una tarifa vigente validada.',
+  },
+  tarifas_tecnicos: {
+    titulo: 'Tarifas de técnicos',
+    nota: 'Valores unitarios y margen potencial de tarifa. No representan ingresos ni utilidad realizada.',
+  },
+  tecnicos: {
+    titulo: 'Equipo técnico',
+    nota: 'Maestra de técnicos, especialidades y estado. No representa ventas.',
+  },
+  contratos: {
+    titulo: 'Contratos',
+    nota: 'Valores y vigencias contractuales. Un monto contratado no equivale a una venta realizada.',
+  },
+  cuotas_contrato: {
+    titulo: 'Cuotas contractuales',
+    nota: 'Estado de cuotas por moneda y periodo. Facturación, pendiente y cobro deben distinguirse antes de sumar.',
+  },
+  valor_uf: {
+    titulo: 'Valor UF de referencia',
+    nota: 'Serie temporal para conversiones declaradas. Nunca se interpreta como ingreso.',
+  },
+  items: {
+    titulo: 'Artículos e insumos',
+    nota: 'Maestra de ítems y valores unitarios de referencia; no representa ventas realizadas.',
+  },
 }
 
 export default function AdaptiveProfileSummary({
@@ -419,7 +455,9 @@ export default function AdaptiveProfileSummary({
               >
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />
-                  <p className="truncate text-xs text-navy/55" title={item.columna}>{item.columna}</p>
+                  <p className="truncate text-xs text-navy/55" title={item.columna}>
+                    {item.etiqueta ?? item.columna}
+                  </p>
                 </div>
                 <p className="mt-2 text-lg font-bold text-navy">{formatMetric(item, highlighted)}</p>
                 <p className="mt-1 text-[11px] text-navy/55">
@@ -440,7 +478,8 @@ export default function AdaptiveProfileSummary({
       {evolution && evolution.valores.length > 1 && (
         <Card>
           <h3 className="text-sm font-semibold text-navy">
-            {evolution.operacion === 'promedio' ? 'Promedio' : 'Total'} mensual · {evolution.columna}
+            {evolution.operacion === 'promedio' ? 'Promedio' : 'Total'} mensual ·{' '}
+            {numericas.find((item) => item.columna === evolution.columna)?.etiqueta ?? evolution.columna}
           </h3>
           <p className="mt-1 text-xs text-navy/55">
             {isExplore

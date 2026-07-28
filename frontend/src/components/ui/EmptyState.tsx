@@ -12,6 +12,7 @@ interface EmptyStateProps {
   ctaLabel?: string
   ctaTo?: string
   ctaState?: unknown
+  onCta?: () => void
   /** Acciones extra bajo el CTA (Fase 14: demo ficticia / prueba gratuita). */
   children?: ReactNode
 }
@@ -27,6 +28,7 @@ export default function EmptyState({
   ctaLabel,
   ctaTo,
   ctaState,
+  onCta,
   children,
 }: EmptyStateProps) {
   return (
@@ -47,6 +49,15 @@ export default function EmptyState({
           <UploadCloud className="h-4 w-4" />
           {ctaLabel}
         </Link>
+      )}
+      {ctaLabel && onCta && !ctaTo && (
+        <button
+          type="button"
+          onClick={onCta}
+          className="mt-2 inline-flex items-center gap-2 rounded-lg bg-teal px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal/90"
+        >
+          {ctaLabel}
+        </button>
       )}
       {children}
     </Card>

@@ -559,10 +559,22 @@ export default function ActiveSheetSelector({
               ))}
             </div>
           ) : (
-            <p className="flex items-start gap-2 text-xs text-navy/60">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-gold" />
-              {relationMessage ?? 'No encontramos una conexion segura entre estas hojas. Puedes analizarlas por separado.'}
-            </p>
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gold/25 bg-gold/[0.06] p-3">
+              <p className="flex min-w-0 flex-1 items-start gap-2 text-xs text-navy/70">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-gold" />
+                <span>
+                  <strong className="block text-navy">No existen conexiones seguras entre las hojas.</strong>
+                  {relationMessage && <span className="mt-1 block">{relationMessage}</span>}
+                </span>
+              </p>
+              <button
+                type="button"
+                onClick={() => selectMode('join')}
+                className="rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-navy/90"
+              >
+                Relacionar hojas a mano
+              </button>
+            </div>
           )}
         </div>
       )}

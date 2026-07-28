@@ -247,6 +247,10 @@ export default function Resumen() {
     analysisScope?.mode ?? 'single',
   )
   const relationshipMode = selectorMode === 'join'
+  const businessUnavailable = (
+    selectorMode === 'append_join'
+    && analysisScope?.mode !== 'append_join'
+  )
   // Una relación guardada que ya no sirve para este libro bloquea el análisis;
   // reintentar reproduce el error, así que se ofrece la salida real.
   const [openRelationsNonce, setOpenRelationsNonce] = useState(0)
@@ -661,7 +665,15 @@ export default function Resumen() {
         </div>
       )}
 
-      {loading && !metrics ? (
+      {businessUnavailable ? (
+        <EmptyState
+          icon={LayoutDashboard}
+          title="No existen conexiones seguras entre las hojas."
+          description="No mostraremos ventas, costos, utilidad, margen ni tendencias hasta validar una fuente comercial o una red de relaciones compatible."
+          ctaLabel="Relacionar hojas a mano"
+          onCta={() => setOpenRelationsNonce((nonce) => nonce + 1)}
+        />
+      ) : loading && !metrics ? (
         <AnalysisLoadingPanel
           operation={`Calculando indicadores${sheet ? ` de ${sheet}` : ''}`}
           detail="Reutilizamos la limpieza y las relaciones ya procesadas. Puedes cancelar sin perder el archivo."

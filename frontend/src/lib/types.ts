@@ -1133,6 +1133,15 @@ export interface MetricsResult {
       | 'cobranzas'
       | 'historial_costos'
       | 'auxiliar'
+      | 'ordenes_trabajo'
+      | 'detalle_ot'
+      | 'horas_tecnicos'
+      | 'tarifas_tecnicos'
+      | 'tecnicos'
+      | 'contratos'
+      | 'cuotas_contrato'
+      | 'valor_uf'
+      | 'items'
       | null
     distribuciones?: Array<{
       columna: string
@@ -1141,6 +1150,8 @@ export interface MetricsResult {
     }>
     numericas?: Array<{
       columna: string
+      /** Etiqueta semántica segura para montos operacionales. */
+      etiqueta?: string
       total: number | null
       promedio: number
       mediana: number

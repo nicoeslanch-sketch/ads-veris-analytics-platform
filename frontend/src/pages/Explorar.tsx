@@ -384,6 +384,10 @@ export default function Explorar() {
     analysisScope?.mode ?? 'single',
   )
   const relationshipMode = selectorMode === 'join'
+  const businessUnavailable = (
+    selectorMode === 'append_join'
+    && analysisScope?.mode !== 'append_join'
+  )
   const [openRelationsNonce, setOpenRelationsNonce] = useState(0)
   const ready = Boolean(file && cleaning) || demo.active
 
@@ -596,6 +600,25 @@ export default function Explorar() {
           {/* Fase 14: conocer la plataforma sin datos propios */}
           <DemoEmptyActions />
         </EmptyState>
+      </>
+    )
+  }
+
+  if (businessUnavailable) {
+    return (
+      <>
+        <PageHeader
+          title="Explorar datos"
+          subtitle="Analiza cada hoja según su contenido o construye una relación validada."
+        />
+        <ActiveSheetSelector onModeChange={setSelectorMode} openRelationsNonce={openRelationsNonce} />
+        <EmptyState
+          icon={Search}
+          title="No existen conexiones seguras entre las hojas."
+          description="No construiremos análisis financieros multihoja con coincidencias de nombres ni montos operacionales. Puedes relacionar las fuentes y revisar cobertura, cardinalidad y duplicados."
+          ctaLabel="Relacionar hojas a mano"
+          onCta={() => setOpenRelationsNonce((nonce) => nonce + 1)}
+        />
       </>
     )
   }

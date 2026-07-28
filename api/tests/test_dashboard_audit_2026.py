@@ -3,14 +3,150 @@ import json
 import pandas as pd
 
 from app.engine.clean import analyze_and_clean
-from app.engine.loader import _classify_sheet_sample
+from app.engine.loader import _classify_sheet_sample, _detect_header_row
 from app.engine.mapping import detect_column_roles
 from app.engine.metrics import compute_metrics
+from app.engine.relationships import detect_relationship_catalog
+from app.engine.standardize import parse_date, parse_number
 
 
 def _metrics(frame: pd.DataFrame) -> dict:
     cleaned = analyze_and_clean(frame, None, apply=True)["_df_limpio"]
     return compute_metrics(cleaned)
+
+
+def test_excel_servicios_no_inventa_ventas_en_hojas_operacionales():
+    fixtures = [
+        (
+            "detalle_ot",
+            pd.DataFrame(
+                {
+                    "N° OT": ["OT-00001", "OT-00002"],
+                    "Fecha": ["2025-01-01", "2025-01-02"],
+                    "Tipo de Línea": ["Material", "Subcontrato"],
+                    "Cod Item": ["I-1", ""],
+                    "Cantidad": [2, 1],
+                    "Precio Unitario": [4_000, 7_000],
+                    "MONTO": [8_000, 7_000],
+                }
+            ),
+            "Monto total de líneas OT",
+        ),
+        (
+            "horas_tecnicos",
+            pd.DataFrame(
+                {
+                    "N° OT": ["OT-1", "OT-2"],
+                    "Fecha": ["2025-01-01", "2025-01-02"],
+                    "Cod Tecnico": ["T-1", "T-2"],
+                    "Horas": [8, 3],
+                    "Tipo": ["Normal", "Extra"],
+                    "¿Factura?": ["Sí", "No"],
+                }
+            ),
+            "Horas registradas",
+        ),
+        (
+            "tarifas_tecnicos",
+            pd.DataFrame(
+                {
+                    "Cod Tecnico": ["T-1", "T-2"],
+                    "Vigente Desde": ["2025-01-01", "2025-01-01"],
+                    "Vigente Hasta": ["2025-06-30", "2025-06-30"],
+                    "Valor Hora Venta": [20_000, 25_000],
+                    "Costo Hora": [12_000, 15_000],
+                }
+            ),
+            "Tarifa de venta promedio",
+        ),
+        (
+            "contratos",
+            pd.DataFrame(
+                {
+                    "Cod Contrato": ["C-1", "C-2"],
+                    "Cod Cliente": ["CL-1", "CL-2"],
+                    "Vigencia Desde": ["2025-01-01", "2025-02-01"],
+                    "Vigencia Hasta": ["2025-12-31", "2025-12-31"],
+                    "Monto Mensual": [10, 500_000],
+                    "Moneda": ["UF", "CLP"],
+                }
+            ),
+            "Valor contractual mensual",
+        ),
+        (
+            "valor_uf",
+            pd.DataFrame(
+                {
+                    "Periodo": ["2025-01", "2025-02"],
+                    "Valor UF (CLP)": [38_400, 38_600],
+                }
+            ),
+            "Valor UF de referencia",
+        ),
+    ]
+    for subtype, frame, expected_label in fixtures:
+        metrics = _metrics(frame)
+        assert metrics.get("tipo_analisis") == "generico", subtype
+        assert metrics["analisis_generico"]["subtipo"] == subtype
+        assert metrics["kpis"]["ingresos_totales"] is None
+        labels = {
+            item.get("etiqueta")
+            for item in metrics["analisis_generico"]["numericas"]
+        }
+        assert expected_label in labels
+
+
+def test_parser_admite_cientificos_iso_t_y_encabezado_inferior_multinivel():
+    assert parse_number("8.520000E+03") == 8_520
+    assert parse_number("2.935600E+05") == 293_560
+    assert parse_number("1.059000E+06") == 1_059_000
+    assert parse_date("2025-01-01T00:00:00") == pd.Timestamp("2025-01-01")
+    assert parse_date("2025-08-28T00:00:00") == pd.Timestamp("2025-08-28")
+    raw = pd.DataFrame(
+        [
+            ["OT", "OT", "Costos", "Costos"],
+            ["N° OT", "Fecha", "Cantidad", "MONTO"],
+            ["OT-1", "2025-01-01T00:00:00", "2", "8.520000E+03"],
+        ]
+    )
+    assert _detect_header_row(raw) == 1
+
+
+def test_red_operacional_detecta_relaciones_reales_y_bloquea_maestra_duplicada():
+    frames = {
+        "Ordenes_Trabajo": pd.DataFrame(
+            {
+                "N° OT": ["OT-00001", "OT-00002"],
+                "Cod. Cliente": ["CL-1", "CL-2"],
+                "Estado": ["Abierta", "Cerrada"],
+            }
+        ),
+        "Detalle_OT": pd.DataFrame(
+            {
+                "N° OT": ["OT-00001", "OT-00001", "OT-00002"],
+                "Tipo de Línea": ["Material", "Subcontrato", "Material"],
+                "Cod Item": ["I-1", "", "I-2"],
+                "Cantidad": [1, 1, 2],
+                "MONTO": [100, 200, 300],
+            }
+        ),
+        "Clientes": pd.DataFrame(
+            {
+                "Cod Cliente": ["CL-1", "CL-1", "CL-2"],
+                "Cliente": ["Uno", "Uno duplicado", "Dos"],
+            }
+        ),
+    }
+    catalog = detect_relationship_catalog(frames)
+    pairs = {
+        (item["left_sheet"], item["right_sheet"])
+        for item in catalog["relationships"]
+    }
+    assert ("Detalle_OT", "Ordenes_Trabajo") in pairs
+    # La referencia Clientes repite CL-1: nunca se publica como conexión
+    # ejecutable porque multiplicaría la orden correspondiente.
+    assert ("Ordenes_Trabajo", "Clientes") not in pairs
+    assert catalog["discarded_count"] >= 1
 
 
 def test_parametros_se_recomienda_conservar_y_no_procesar_como_datos():

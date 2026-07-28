@@ -113,6 +113,49 @@ def _sheet_kind(name: str, frame: pd.DataFrame) -> str:
     sheet = normalized_header(name)
     sheet_tokens = set(sheet.split())
     headers = " | ".join(normalized_header(column) for column in frame.columns)
+    # Dominios operacionales de servicios. Deben resolverse antes de buscar
+    # palabras monetarias: MONTO, tarifa o valor no convierten una OT en venta.
+    if "detalle ot" in sheet or (
+        ("n ot" in headers or "numero ot" in headers)
+        and "tipo linea" in headers
+    ):
+        return "detalle_ot"
+    if "horas tecnicos" in sheet or (
+        ("n ot" in headers or "numero ot" in headers)
+        and "cod tecnico" in headers
+        and "horas" in headers
+    ):
+        return "horas_tecnicos"
+    if "tarifas tecnicos" in sheet or (
+        "cod tecnico" in headers
+        and "valor hora venta" in headers
+        and "costo hora" in headers
+    ):
+        return "tarifas_tecnicos"
+    if "ordenes trabajo" in sheet or (
+        ("n ot" in headers or "numero ot" in headers)
+        and "estado" in headers
+        and "cod cliente" in headers
+    ):
+        return "ordenes_trabajo"
+    if "cuotas contrato" in sheet or (
+        "cod contrato" in headers and "periodo" in headers and "moneda" in headers
+    ):
+        return "cuotas_contrato"
+    if sheet == "contratos" or (
+        "cod contrato" in headers and "monto mensual" in headers
+    ):
+        return "contratos"
+    if "valor uf" in sheet or ("valor uf" in headers and "periodo" in headers):
+        return "valor_uf"
+    if sheet == "items" or (
+        "cod item" in headers and ("descripcion" in headers or "unidad" in headers)
+    ):
+        return "items"
+    if sheet == "tecnicos" or (
+        "cod tecnico" in headers and "nombre tecnico" in headers
+    ):
+        return "tecnicos"
     if sheet_tokens & {"venta", "ventas"} or (
         "id documento" in headers and "monto venta" in headers
     ):

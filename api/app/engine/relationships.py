@@ -144,6 +144,18 @@ def _is_sales_transaction(
     kind = _sheet_kind(name, frame)
     if kind == "ventas":
         return True
+    if kind in {
+        "detalle_ot",
+        "horas_tecnicos",
+        "tarifas_tecnicos",
+        "ordenes_trabajo",
+        "contratos",
+        "cuotas_contrato",
+        "valor_uf",
+        "items",
+        "tecnicos",
+    }:
+        return False
     sheet_tokens = set(_slug(name).split("-"))
     non_sales_tokens = {
         "compra",
@@ -168,6 +180,20 @@ def _is_sales_transaction(
         "sucursales",
         "vendedor",
         "vendedores",
+        "orden",
+        "ordenes",
+        "detalle",
+        "horas",
+        "tecnico",
+        "tecnicos",
+        "tarifa",
+        "tarifas",
+        "contrato",
+        "contratos",
+        "cuota",
+        "cuotas",
+        "uf",
+        "items",
     }
     if sheet_tokens & non_sales_tokens:
         return False
@@ -516,6 +542,18 @@ def detect_relationship_catalog(
         ("vendedores", "sucursales"),
         ("metas", "sucursales"),
         ("campanas", "sucursales"),
+        # Servicios técnicos: el hecho queda a la izquierda y la maestra
+        # única a la derecha. Así una clave repetida en la referencia bloquea
+        # la unión antes de que pueda multiplicar OT, horas o cuotas.
+        ("detalle_ot", "ordenes_trabajo"),
+        ("horas_tecnicos", "ordenes_trabajo"),
+        ("ordenes_trabajo", "clientes"),
+        ("ordenes_trabajo", "contratos"),
+        ("cuotas_contrato", "contratos"),
+        ("cuotas_contrato", "valor_uf"),
+        ("detalle_ot", "items"),
+        ("horas_tecnicos", "tecnicos"),
+        ("tarifas_tecnicos", "tecnicos"),
     }
 
     def orient_pair(first: str, second: str) -> tuple[str, str] | None:

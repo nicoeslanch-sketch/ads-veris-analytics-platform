@@ -487,6 +487,9 @@ def is_transaction_profile(
     Precio_Lista/Stock no se conviertan en ventas ficticias.
     """
 
+    # Una fecha, cantidad y una columna llamada MONTO no demuestran una venta.
+    # OT, contratos, cuotas, horas, tarifas y tablas UF cumplen varias de esas
+    # señales y deben conservar primero su semántica operacional.
     if not roles.get("monto") or is_product_catalog_profile(columns, roles):
         return False
     normalized_columns = {
@@ -526,6 +529,27 @@ def is_transaction_profile(
             "sales",
         }
     )
+    non_sales_profile = detect_non_sales_profile(columns, roles)
+    explicit_operational_profiles = {
+        "ordenes_trabajo",
+        "detalle_ot",
+        "horas_tecnicos",
+        "tarifas_tecnicos",
+        "tecnicos",
+        "contratos",
+        "cuotas_contrato",
+        "valor_uf",
+        "items",
+    }
+    if non_sales_profile in explicit_operational_profiles:
+        return False
+    # Una maestra de clientes puede coexistir con una venta sin ID_Venta.
+    # Cuando la propia medida se llama Venta/Monto/Ingreso, esa evidencia
+    # transaccional prevalece; sin ella, el perfil maestro permanece no venta.
+    if non_sales_profile is not None and not (
+        has_transaction_id or clear_transaction_amount
+    ):
+        return False
     return bool(
         roles.get("fecha")
         or (roles.get("cantidad") and roles.get("producto"))
@@ -558,6 +582,67 @@ def detect_non_sales_profile(
 
     if len(normalized) <= 3 and "columna" in compact and has_compact("rut"):
         return "auxiliar"
+
+    # Perfiles de servicios técnicos. Se evalúan antes que los perfiles
+    # genéricos porque pueden contener fecha, cantidad, precio y MONTO sin que
+    # exista evidencia de venta, factura o cobro realizado.
+    has_ot = "not" in compact or has_compact("numeroot", "nroot", "ordentrabajo")
+    if (
+        has_ot
+        and has_compact("tipolinea", "tipodelinea", "tipodetalle")
+        and has_compact("cantidad", "preciounitario", "monto")
+    ):
+        return "detalle_ot"
+    if (
+        has_ot
+        and has_compact("codtecnico", "idtecnico")
+        and has_compact("horas", "horanormal", "horaextra")
+    ):
+        return "horas_tecnicos"
+    if (
+        has_compact("codtecnico", "idtecnico")
+        and has_compact("valorhoraventa", "tarifaventa")
+        and has_compact("costohora", "costohorario")
+    ):
+        return "tarifas_tecnicos"
+    if (
+        has_compact("codtecnico", "idtecnico")
+        and has_compact("nombretecnico", "especialidad", "tecnico")
+        and not has_ot
+    ):
+        return "tecnicos"
+    if (
+        has_ot
+        and has_compact("estado")
+        and has_compact("cliente", "codcliente", "supervisor", "fechaapertura")
+        and not has_compact("tipolinea", "horas")
+    ):
+        return "ordenes_trabajo"
+    if (
+        has_compact("codcontrato", "idcontrato")
+        and has_compact("periodo")
+        and has_compact("monto")
+        and has_compact("estado", "moneda")
+    ):
+        return "cuotas_contrato"
+    if (
+        has_compact("codcontrato", "idcontrato")
+        and has_compact("montomensual", "valorcontrato")
+        and has_compact("vigenciadesde", "fechadesde", "vigenciahasta", "fechahasta")
+    ):
+        return "contratos"
+    if (
+        has_compact("valoruf", "ufclp")
+        and has_compact("periodo", "fecha")
+        and len(normalized) <= 6
+    ):
+        return "valor_uf"
+    if (
+        has_compact("coditem", "iditem")
+        and has_compact("descripcion", "nombreitem", "unidad")
+        and not has_ot
+    ):
+        return "items"
 
     # Orden deliberado: una compra y un gasto también traen proveedor; una
     # cobranza también trae cliente. Primero se detecta el hecho operacional.
@@ -605,7 +690,8 @@ def detect_non_sales_profile(
     ):
         return "trabajadores"
     if has_compact("idcliente") and not has_compact(
-        "idventa", "idpago", "fechaventa", "montoventa", "tipomovimiento"
+        "idventa", "idpago", "fechaventa", "montoventa", "tipomovimiento",
+        "venta", "ingreso", "facturacion"
     ):
         return "clientes"
     if has_compact("idsucursal") and not has_compact(
@@ -617,6 +703,36 @@ def detect_non_sales_profile(
     ):
         return "productos"
     return None
+
+
+def _operational_metric_label(subtype: str | None, normalized_name: str) -> str:
+    """Etiqueta verificable para medidas que no representan ventas."""
+
+    rules: dict[str, tuple[tuple[str, str], ...]] = {
+        "detalle_ot": (
+            ("monto", "Monto total de líneas OT"),
+            ("cantidad", "Unidades registradas"),
+            ("precio unitario", "Precio unitario promedio"),
+            ("descuento", "Descuento registrado"),
+        ),
+        "horas_tecnicos": (("horas", "Horas registradas"),),
+        "tarifas_tecnicos": (
+            ("valor hora venta", "Tarifa de venta promedio"),
+            ("tarifa venta", "Tarifa de venta promedio"),
+            ("costo hora", "Costo por hora promedio"),
+        ),
+        "contratos": (("monto mensual", "Valor contractual mensual"),),
+        "cuotas_contrato": (("monto", "Monto de cuotas contractuales"),),
+        "valor_uf": (("valor uf", "Valor UF de referencia"),),
+        "items": (
+            ("precio", "Precio unitario de referencia"),
+            ("costo", "Costo unitario de referencia"),
+        ),
+    }
+    for marker, label in rules.get(subtype or "", ()):
+        if marker in normalized_name:
+            return label
+    return normalized_name.replace("_", " ").strip().title()
 
 
 def _pct_change(current: float, previous: float | None) -> float | None:
@@ -1472,13 +1588,14 @@ def compute_metrics(
         priority_tokens = (
             "sucursal", "region", "comuna", "zona", "ciudad", "pais",
             "plataforma", "segmento", "tipo", "canal", "metodo", "forma",
+            "hoja origen",
         )
         skip_tokens = ("comentario", "observa", "nota", "descripcion", "email", "telefono", "direccion")
         id_prefixes = ("id", "codigo", "sku", "folio", "uuid", "rut", "numero", "nro")
         candidates: list[tuple[int, str]] = []
         for column in selection.columns:
             name = str(column)
-            if name in used_columns or name == "hoja_origen":
+            if name in used_columns:
                 continue
             normalized = strip_accents_lower(name).replace("_", " ")
             compact = re.sub(r"[^a-z0-9]", "", normalized)
@@ -1966,6 +2083,14 @@ def compute_metrics(
             "productos": ("precio lista", "stock minimo", "costo unitario"),
             "clientes": ("limite credito", "condicion pago"),
             "trabajadores": ("comision", "sueldo", "salario"),
+            "ordenes_trabajo": (),
+            "detalle_ot": ("monto", "cantidad", "precio unitario", "descuento"),
+            "horas_tecnicos": ("horas",),
+            "tarifas_tecnicos": ("valor hora venta", "costo hora"),
+            "contratos": ("monto mensual",),
+            "cuotas_contrato": ("monto",),
+            "valor_uf": ("valor uf",),
+            "items": ("precio", "costo"),
         }
 
         def _priority(name: str) -> int:
@@ -1979,6 +2104,12 @@ def compute_metrics(
             if _is_percentage_column(name):
                 return "porcentaje", "promedio"
             if "ticket" in name and "promedio" in name:
+                return "moneda", "promedio"
+            if subtype == "tarifas_tecnicos" and any(
+                token in name for token in ("valor hora", "costo hora", "tarifa")
+            ):
+                return "moneda", "promedio"
+            if subtype == "valor_uf" and "valor uf" in name:
                 return "moneda", "promedio"
             if any(token in name for token in ("costo unitario", "costo ultima compra", "precio lista", "comision")):
                 return "moneda" if "comision" not in name else "porcentaje", "promedio"
@@ -2014,6 +2145,7 @@ def compute_metrics(
                     )
                 item = {
                     "columna": name,
+                    "etiqueta": _operational_metric_label(subtype, normalized),
                     "total": (
                         round(float(valid.sum()), 2)
                         if destacado == "total"
@@ -2103,6 +2235,15 @@ def compute_metrics(
             "sucursales": "maestra de sucursales",
             "trabajadores": "equipo de trabajo",
             "auxiliar": "hoja auxiliar de instrucciones",
+            "ordenes_trabajo": "órdenes de trabajo",
+            "detalle_ot": "detalle de órdenes de trabajo",
+            "horas_tecnicos": "registro de horas técnicas",
+            "tarifas_tecnicos": "tarifas unitarias de técnicos",
+            "tecnicos": "maestra de técnicos",
+            "contratos": "contratos y valores contractuales",
+            "cuotas_contrato": "cuotas contractuales",
+            "valor_uf": "referencia temporal de valor UF",
+            "items": "maestra de artículos e insumos",
         }
         label = profile_labels.get(subtype or "", "perfil estructural")
         warnings = [
