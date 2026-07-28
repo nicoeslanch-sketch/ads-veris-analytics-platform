@@ -514,7 +514,9 @@ export default function Explorar() {
       (signal) => apiPost<MetricsResult>(
         '/metrics',
         buildDatasetForm(file, storagePath, fields),
-        { signal, timeoutMs: 120_000 },
+        // Mismo contrato que Resumen: una sola operación compartida y
+        // cancelable, con margen suficiente para un arranque frío de Render.
+        { signal, timeoutMs: 240_000 },
       ),
       controller.signal,
     )

@@ -374,7 +374,11 @@ export default function Resumen() {
       (signal) => apiPost<MetricsResult>(
         '/metrics',
         buildDatasetForm(file, storagePath, fields),
-        { signal, timeoutMs: 120_000 },
+        // Un cálculo frío multihoja en Render puede superar 120 s aunque el
+        // trabajo siga avanzando y quede cacheado. El motor evita duplicados;
+        // este margen permite recibir ese único resultado sin mostrar un falso
+        // timeout. El usuario conserva el botón Cancelar.
+        { signal, timeoutMs: 240_000 },
       ),
       controller.signal,
     )

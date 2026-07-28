@@ -95,7 +95,7 @@ export function useSessionMetrics(): {
       (signal) => apiPost<MetricsResult>(
         '/metrics',
         buildDatasetForm(file, storagePath, fields),
-        { signal, timeoutMs: 120_000 },
+        { signal, timeoutMs: 240_000 },
       ),
       controller.signal,
     )
