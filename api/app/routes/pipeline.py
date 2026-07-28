@@ -1199,6 +1199,25 @@ def _request_excel_recalculation(workbook) -> None:
     calculation.forceFullCalc = True
 
 
+def _save_workbook_fast(workbook, output: io.BytesIO) -> None:
+    """Guarda XLSX con compresión rápida para no convertir ZIP en el cuello de botella.
+
+    El contenido y la estructura XLSX son los mismos; solo cambia el nivel de
+    compresión DEFLATE. En Render, comprimir al nivel predeterminado un libro
+    auditado de cientos de miles de celdas consumía gran parte del timeout.
+    """
+    from openpyxl.writer.excel import ExcelWriter
+
+    with zipfile.ZipFile(
+        output,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=1,
+        allowZip64=True,
+    ) as archive:
+        ExcelWriter(workbook, archive).save()
+
+
 # ── Trabajo pesado con pandas: SIEMPRE fuera del event loop ─────────────────
 
 
@@ -2467,7 +2486,7 @@ def _clean_download_sync(
     _write_audit_sheet(wb, audit)
     output = io.BytesIO()
     _request_excel_recalculation(wb)
-    wb.save(output)
+    _save_workbook_fast(wb, output)
     output.seek(0)
     return (
         output.getvalue(),
@@ -2803,7 +2822,7 @@ def _clean_download_book_uncached_sync(
     _write_manifest_sheet(wb, [*records, book_record], _safe_excel_sheet_name("Manifest", used_names))
     output = io.BytesIO()
     _request_excel_recalculation(wb)
-    wb.save(output)
+    _save_workbook_fast(wb, output)
     return (
         output.getvalue(),
         f"{stem}_multihoja_limpio.xlsx",
