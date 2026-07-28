@@ -236,6 +236,55 @@ def upload_export_cache(storage_path: str, content: bytes) -> None:
         )
 
 
+def create_export_cache_signed_url(storage_path: str, filename: str) -> str:
+    """Crea una URL GET temporal para que el navegador descargue sin pasar por Render."""
+    settings = get_settings()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servidor no tiene configurado Supabase Storage.",
+        )
+    encoded_path = "/".join(quote(part, safe="") for part in storage_path.split("/"))
+    url = (
+        f"{settings.supabase_url.rstrip('/')}/storage/v1/object/sign/"
+        f"{settings.supabase_storage_bucket}/{encoded_path}"
+    )
+    headers = {
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        "apikey": settings.supabase_service_role_key,
+        "Content-Type": "application/json",
+    }
+    try:
+        response = httpx.post(
+            url,
+            json={"expiresIn": 300},
+            headers=headers,
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"No se pudo contactar a Supabase Storage: {exc.__class__.__name__}",
+        )
+    if response.status_code not in {200, 201}:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Supabase Storage respondió {response.status_code} "
+            "al firmar la exportación.",
+        )
+    payload = response.json()
+    signed = payload.get("signedURL") or payload.get("signedUrl")
+    if not isinstance(signed, str) or not signed:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Supabase Storage no devolvió una URL de descarga.",
+        )
+    if signed.startswith("/"):
+        signed = f"{settings.supabase_url.rstrip('/')}{signed}"
+    separator = "&" if "?" in signed else "?"
+    return f"{signed}{separator}download={quote(filename, safe='')}"
+
+
 def delete_from_storage(storage_path: str) -> None:
     """Elimina un objeto de forma idempotente; una ausencia ya cumple el objetivo."""
     settings = get_settings()

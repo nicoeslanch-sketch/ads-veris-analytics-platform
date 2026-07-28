@@ -323,3 +323,23 @@ def test_export_cache_storage_uploads_with_upsert_and_reads_404_as_miss(monkeypa
     assert captured["content"] == b"durable"
     assert captured["headers"]["x-upsert"] == "true"
     assert captured["headers"]["Content-Type"] == "application/octet-stream"
+
+    class SignedResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"signedURL": "/storage/v1/object/sign/datasets/file?token=abc"}
+
+    def fake_sign(url, json, headers, timeout):
+        captured.update({"sign_url": url, "sign_json": json})
+        return SignedResponse()
+
+    monkeypatch.setattr(storage.httpx, "post", fake_sign)
+    signed = storage.create_export_cache_signed_url(
+        "user/.exports/dataset/xlsx.bin", "Ventas limpio.xlsx"
+    )
+
+    assert captured["sign_json"] == {"expiresIn": 300}
+    assert signed.startswith("https://cache-test.supabase.co/")
+    assert "download=Ventas%20limpio.xlsx" in signed

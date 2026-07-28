@@ -46,7 +46,7 @@ from fastapi import (
     status,
 )
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,7 @@ from ..restore_cache import (
     valid_restore_snapshot,
 )
 from ..storage import (
+    create_export_cache_signed_url,
     download_export_cache,
     download_from_storage,
     normalize_user_storage_path,
@@ -941,7 +942,6 @@ _EXPORT_CACHE_LOCK = threading.Lock()
 _EXPORT_CACHE: "OrderedDict[tuple, tuple[bytes, str, str]]" = OrderedDict()
 _EXPORT_INFLIGHT: dict[tuple, threading.Event] = {}
 _EXPORT_CACHE_MAX_ENTRIES = 3
-_EXPORT_CACHE_MAGIC = b"ADSVERIS_EXPORT_CACHE_V1\n"
 
 
 def _export_cache_identity(
@@ -976,38 +976,29 @@ def _export_cache_storage_path(
         or not safe_component.fullmatch(dataset_id)
     ):
         return None
-    return f"{user_id}/.exports/{dataset_id}/{export_format}.cache"
+    return f"{user_id}/.exports/{dataset_id}/{export_format}"
 
 
-def _pack_export_cache(identity: str, exported: tuple[bytes, str, str]) -> bytes:
-    payload, name, media_type = exported
-    metadata = json.dumps(
-        {"name": name, "media_type": media_type},
+def _pack_export_cache_metadata(
+    identity: str, exported: tuple[bytes, str, str]
+) -> bytes:
+    _, name, media_type = exported
+    return json.dumps(
+        {"identity": identity, "name": name, "media_type": media_type},
         separators=(",", ":"),
         ensure_ascii=False,
     ).encode("utf-8")
-    return (
-        _EXPORT_CACHE_MAGIC
-        + identity.encode("ascii")
-        + b"\n"
-        + metadata
-        + b"\n\n"
-        + payload
-    )
 
 
-def _unpack_export_cache(
+def _unpack_export_cache_metadata(
     stored: bytes | None, expected_identity: str
-) -> tuple[bytes, str, str] | None:
-    if not stored or not stored.startswith(_EXPORT_CACHE_MAGIC):
+) -> tuple[str, str] | None:
+    if not stored:
         return None
-    remainder = stored[len(_EXPORT_CACHE_MAGIC):]
     try:
-        identity_raw, remainder = remainder.split(b"\n", 1)
-        metadata_raw, payload = remainder.split(b"\n\n", 1)
-        if identity_raw.decode("ascii") != expected_identity:
+        metadata = json.loads(stored.decode("utf-8"))
+        if metadata.get("identity") != expected_identity:
             return None
-        metadata = json.loads(metadata_raw.decode("utf-8"))
         name = metadata["name"]
         media_type = metadata["media_type"]
         if not isinstance(name, str) or not name or len(name) > 255:
@@ -1018,7 +1009,7 @@ def _unpack_export_cache(
             "text/csv",
         }:
             return None
-        return payload, name, media_type
+        return name, media_type
     except (KeyError, TypeError, ValueError, UnicodeError):
         return None
 
@@ -2950,10 +2941,18 @@ def _clean_download_book_sync(
     try:
         if persistent_path:
             try:
-                persistent = _unpack_export_cache(
-                    download_export_cache(persistent_path), identity
+                metadata = _unpack_export_cache_metadata(
+                    download_export_cache(f"{persistent_path}.json"), identity
                 )
-                if persistent is not None:
+                if metadata is not None:
+                    name, media_type = metadata
+                    payload = download_export_cache(f"{persistent_path}.bin")
+                    if payload is None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail="La exportación guardada no está disponible.",
+                        )
+                    persistent = (payload, name, media_type)
                     with _EXPORT_CACHE_LOCK:
                         _EXPORT_CACHE[key] = persistent
                         _EXPORT_CACHE.move_to_end(key)
@@ -2977,8 +2976,10 @@ def _clean_download_book_sync(
         )
         if persistent_path:
             try:
+                upload_export_cache(f"{persistent_path}.bin", exported[0])
                 upload_export_cache(
-                    persistent_path, _pack_export_cache(identity, exported)
+                    f"{persistent_path}.json",
+                    _pack_export_cache_metadata(identity, exported),
                 )
                 logger.info(
                     "export_cache_stored dataset=%s format=%s bytes=%s",
@@ -3003,6 +3004,38 @@ def _clean_download_book_sync(
             finished = _EXPORT_INFLIGHT.pop(key, None)
             if finished is not None:
                 finished.set()
+
+
+def _cached_export_signed_download(
+    content: bytes,
+    manifest: dict,
+    export_format: str,
+    analysis_scope: dict | None,
+    cache_dataset_id: str | None,
+    cache_user_id: str | None,
+) -> tuple[str, str] | None:
+    """Devuelve una URL temporal sin transferir el XLSX guardado por Render."""
+    persistent_path = _export_cache_storage_path(
+        cache_user_id, cache_dataset_id, export_format
+    )
+    if not persistent_path:
+        return None
+    identity = _export_cache_identity(content, manifest, export_format, analysis_scope)
+    try:
+        metadata = _unpack_export_cache_metadata(
+            download_export_cache(f"{persistent_path}.json"), identity
+        )
+        if metadata is None:
+            return None
+        name, _media_type = metadata
+        return create_export_cache_signed_url(f"{persistent_path}.bin", name), name
+    except HTTPException as exc:
+        logger.warning(
+            "export_cache_redirect_failed dataset=%s status=%s",
+            cache_dataset_id,
+            exc.status_code,
+        )
+        return None
 
 
 def _metrics_multi_from_processed(
@@ -4970,27 +5003,59 @@ async def clean_download(
                 status_code=422,
                 detail="La descarga multihoja solo está disponible en formato XLSX.",
             )
+        resolved_analysis_scope = (
+            _parse_analysis_scope(
+                analysis_scope,
+                [entry["nombre"] for entry in sheet_manifest["hojas"]],
+            )
+            if analysis_scope
+            else (
+                validate_analysis_scope(
+                    {
+                        "mode": "append",
+                        "sheets": [
+                            entry["nombre"]
+                            for entry in sheet_manifest["hojas"]
+                            if entry["procesar"]
+                        ],
+                        "active_sheet": next(
+                            entry["nombre"]
+                            for entry in sheet_manifest["hojas"]
+                            if entry["procesar"]
+                        ),
+                    },
+                    [entry["nombre"] for entry in sheet_manifest["hojas"]],
+                )
+                if combinar_hojas
+                else None
+            )
+        )
+        signed_download = await run_in_threadpool(
+            _cached_export_signed_download,
+            content,
+            sheet_manifest,
+            export_format,
+            resolved_analysis_scope,
+            dataset_id,
+            user.id,
+        )
+        if signed_download is not None:
+            signed_url, out_name = signed_download
+            return RedirectResponse(
+                signed_url,
+                status_code=status.HTTP_303_SEE_OTHER,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{out_name}"',
+                    "Cache-Control": "private, no-store",
+                },
+            )
         file_bytes, out_name, media_type = await run_in_threadpool(
             _clean_download_book_sync,
             filename,
             content,
             sheet_manifest,
             export_format,
-            _parse_analysis_scope(
-                analysis_scope,
-                [entry["nombre"] for entry in sheet_manifest["hojas"]],
-            ) if analysis_scope else (
-                validate_analysis_scope(
-                    {
-                        "mode": "append",
-                        "sheets": [entry["nombre"] for entry in sheet_manifest["hojas"] if entry["procesar"]],
-                        "active_sheet": next(
-                            entry["nombre"] for entry in sheet_manifest["hojas"] if entry["procesar"]
-                        ),
-                    },
-                    [entry["nombre"] for entry in sheet_manifest["hojas"]],
-                ) if combinar_hojas else None
-            ),
+            resolved_analysis_scope,
             dataset_id,
             user.id,
         )

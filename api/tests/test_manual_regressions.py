@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import openpyxl
 import pandas as pd
+import pytest
 
 from app.engine.business import _attribute_consistency
 from app.engine.mapping import detect_column_roles
@@ -268,7 +269,9 @@ def test_export_persistent_cache_survives_process_memory_reset(monkeypatch):
     assert calls == 1
     assert list(stored) == [
         "11111111-1111-1111-1111-111111111111/.exports/"
-        "22222222-2222-2222-2222-222222222222/xlsx.cache"
+        "22222222-2222-2222-2222-222222222222/xlsx.bin",
+        "11111111-1111-1111-1111-111111111111/.exports/"
+        "22222222-2222-2222-2222-222222222222/xlsx.json",
     ]
 
 
@@ -314,6 +317,45 @@ def test_export_persistent_cache_is_invalidated_by_revision(monkeypatch):
     assert first[0] == b"xlsx-1"
     assert second[0] == b"xlsx-2"
     assert calls == 2
+
+
+def test_cached_export_returns_signed_direct_download(monkeypatch):
+    manifest = {"hojas": [{"nombre": "Ventas", "revision": 4}]}
+    content = b"same"
+    identity = pipeline._export_cache_identity(content, manifest, "xlsx", None)
+    metadata = pipeline._pack_export_cache_metadata(
+        identity,
+        (
+            b"payload",
+            "ventas_limpio.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "download_export_cache",
+        lambda path: metadata if path.endswith(".json") else pytest.fail(
+            "El redirect no debe descargar el XLSX en Render"
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "create_export_cache_signed_url",
+        lambda path, name: f"https://storage.test/{path}?download={name}",
+    )
+
+    result = pipeline._cached_export_signed_download(
+        content,
+        manifest,
+        "xlsx",
+        None,
+        "22222222-2222-2222-2222-222222222222",
+        "11111111-1111-1111-1111-111111111111",
+    )
+
+    assert result is not None
+    assert result[1] == "ventas_limpio.xlsx"
+    assert result[0].startswith("https://storage.test/")
 
 
 def test_concurrent_clean_requests_share_one_calculation():
