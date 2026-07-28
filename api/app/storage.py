@@ -20,6 +20,7 @@ from fastapi import HTTPException, status
 from .config import get_settings
 
 MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
+MAX_EXPORT_CACHE_BYTES = 64 * 1024 * 1024
 _CACHE_TTL_SECONDS = 5 * 60
 _CACHE_MAX_BYTES = 45 * 1024 * 1024
 _CACHE_LOCK = threading.Lock()
@@ -156,6 +157,82 @@ def download_from_storage(storage_path: str) -> bytes:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"No se pudo contactar a Supabase Storage: {exc.__class__.__name__}",
+        )
+
+
+def download_export_cache(storage_path: str) -> bytes | None:
+    """Lee un artefacto interno de exportación; 404 significa caché ausente."""
+    settings = get_settings()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        return None
+    url = _storage_object_url(storage_path)
+    headers = {
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        "apikey": settings.supabase_service_role_key,
+    }
+    try:
+        with httpx.stream("GET", url, headers=headers, timeout=90) as response:
+            if response.status_code == 404:
+                return None
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Supabase Storage respondió {response.status_code} "
+                    "al recuperar la exportación guardada.",
+                )
+            content_length = response.headers.get("content-length")
+            if content_length and int(content_length) > MAX_EXPORT_CACHE_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="La exportación guardada supera el límite interno.",
+                )
+            chunks: list[bytes] = []
+            received = 0
+            for chunk in response.iter_bytes():
+                received += len(chunk)
+                if received > MAX_EXPORT_CACHE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="La exportación guardada supera el límite interno.",
+                    )
+                chunks.append(chunk)
+            return b"".join(chunks)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"No se pudo contactar a Supabase Storage: {exc.__class__.__name__}",
+        )
+
+
+def upload_export_cache(storage_path: str, content: bytes) -> None:
+    """Guarda o reemplaza un artefacto interno de exportación."""
+    if len(content) > MAX_EXPORT_CACHE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="La exportación supera el límite de caché persistente.",
+        )
+    settings = get_settings()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        return
+    url = _storage_object_url(storage_path)
+    headers = {
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+        "apikey": settings.supabase_service_role_key,
+        "Content-Type": "application/octet-stream",
+        "x-upsert": "true",
+    }
+    try:
+        response = httpx.post(url, content=content, headers=headers, timeout=120)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"No se pudo contactar a Supabase Storage: {exc.__class__.__name__}",
+        )
+    if response.status_code not in {200, 201}:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Supabase Storage respondió {response.status_code} "
+            "al guardar la exportación.",
         )
 
 

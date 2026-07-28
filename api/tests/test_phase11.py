@@ -284,3 +284,42 @@ def test_cache_storage_tiene_ttl_y_se_invalida_al_eliminar(monkeypatch):
     storage.invalidate_storage_cache(path)
     assert storage.download_from_storage(path) == b"data"
     assert calls["stream"] == 2
+
+
+def test_export_cache_storage_uploads_with_upsert_and_reads_404_as_miss(monkeypatch):
+    from app import storage
+    from app.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "supabase_url", "https://cache-test.supabase.co")
+    monkeypatch.setattr(settings, "supabase_service_role_key", "service-role-test")
+    captured: dict = {}
+
+    class MissingResponse:
+        status_code = 404
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(storage.httpx, "stream", lambda *args, **kwargs: MissingResponse())
+    assert storage.download_export_cache("user/.exports/dataset/xlsx.cache") is None
+
+    class CreatedResponse:
+        status_code = 201
+
+    def fake_post(url, content, headers, timeout):
+        captured.update(
+            {"url": url, "content": content, "headers": headers, "timeout": timeout}
+        )
+        return CreatedResponse()
+
+    monkeypatch.setattr(storage.httpx, "post", fake_post)
+    storage.upload_export_cache("user/.exports/dataset/xlsx.cache", b"durable")
+
+    assert captured["content"] == b"durable"
+    assert captured["headers"]["x-upsert"] == "true"
+    assert captured["headers"]["Content-Type"] == "application/octet-stream"

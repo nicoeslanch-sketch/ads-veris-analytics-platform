@@ -109,7 +109,12 @@ from ..restore_cache import (
     store_restore_snapshot,
     valid_restore_snapshot,
 )
-from ..storage import download_from_storage, normalize_user_storage_path
+from ..storage import (
+    download_export_cache,
+    download_from_storage,
+    normalize_user_storage_path,
+    upload_export_cache,
+)
 from ..version import ENGINE_VERSION
 
 router = APIRouter()
@@ -936,6 +941,86 @@ _EXPORT_CACHE_LOCK = threading.Lock()
 _EXPORT_CACHE: "OrderedDict[tuple, tuple[bytes, str, str]]" = OrderedDict()
 _EXPORT_INFLIGHT: dict[tuple, threading.Event] = {}
 _EXPORT_CACHE_MAX_ENTRIES = 3
+_EXPORT_CACHE_MAGIC = b"ADSVERIS_EXPORT_CACHE_V1\n"
+
+
+def _export_cache_identity(
+    content: bytes,
+    manifest: dict,
+    export_format: str,
+    analysis_scope: dict | None,
+) -> str:
+    canonical = json.dumps(
+        {
+            "engine": ENGINE_VERSION,
+            "source_sha256": hashlib.sha256(content).hexdigest(),
+            "format": export_format,
+            "manifest": manifest,
+            "analysis_scope": analysis_scope or {},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _export_cache_storage_path(
+    user_id: str | None, dataset_id: str | None, export_format: str
+) -> str | None:
+    safe_component = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+    if (
+        not user_id
+        or not dataset_id
+        or not safe_component.fullmatch(user_id)
+        or not safe_component.fullmatch(dataset_id)
+    ):
+        return None
+    return f"{user_id}/.exports/{dataset_id}/{export_format}.cache"
+
+
+def _pack_export_cache(identity: str, exported: tuple[bytes, str, str]) -> bytes:
+    payload, name, media_type = exported
+    metadata = json.dumps(
+        {"name": name, "media_type": media_type},
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return (
+        _EXPORT_CACHE_MAGIC
+        + identity.encode("ascii")
+        + b"\n"
+        + metadata
+        + b"\n\n"
+        + payload
+    )
+
+
+def _unpack_export_cache(
+    stored: bytes | None, expected_identity: str
+) -> tuple[bytes, str, str] | None:
+    if not stored or not stored.startswith(_EXPORT_CACHE_MAGIC):
+        return None
+    remainder = stored[len(_EXPORT_CACHE_MAGIC):]
+    try:
+        identity_raw, remainder = remainder.split(b"\n", 1)
+        metadata_raw, payload = remainder.split(b"\n\n", 1)
+        if identity_raw.decode("ascii") != expected_identity:
+            return None
+        metadata = json.loads(metadata_raw.decode("utf-8"))
+        name = metadata["name"]
+        media_type = metadata["media_type"]
+        if not isinstance(name, str) or not name or len(name) > 255:
+            return None
+        if media_type not in {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/zip",
+            "text/csv",
+        }:
+            return None
+        return payload, name, media_type
+    except (KeyError, TypeError, ValueError, UnicodeError):
+        return None
 
 
 def _cache_entry_cells(result: dict, apply: bool) -> int:
@@ -2837,16 +2922,14 @@ def _clean_download_book_sync(
     export_format: str,
     analysis_scope: dict | None,
     cache_dataset_id: str | None = None,
+    cache_user_id: str | None = None,
 ) -> tuple[bytes, str, str]:
     """Una sola exportación por contenido+revisión+alcance; clics repetidos reutilizan bytes."""
-    key = (
-        ENGINE_VERSION,
-        hashlib.sha256(content).digest(),
-        export_format,
-        json.dumps(manifest, sort_keys=True, separators=(",", ":")),
-        json.dumps(analysis_scope or {}, sort_keys=True, separators=(",", ":")),
-        cache_dataset_id or "",
+    identity = _export_cache_identity(content, manifest, export_format, analysis_scope)
+    persistent_path = _export_cache_storage_path(
+        cache_user_id, cache_dataset_id, export_format
     )
+    key = (identity, cache_dataset_id or "", cache_user_id or "")
     while True:
         with _EXPORT_CACHE_LOCK:
             cached = _EXPORT_CACHE.get(key)
@@ -2865,9 +2948,50 @@ def _clean_download_book_sync(
         event.wait(timeout=120)
 
     try:
+        if persistent_path:
+            try:
+                persistent = _unpack_export_cache(
+                    download_export_cache(persistent_path), identity
+                )
+                if persistent is not None:
+                    with _EXPORT_CACHE_LOCK:
+                        _EXPORT_CACHE[key] = persistent
+                        _EXPORT_CACHE.move_to_end(key)
+                        while len(_EXPORT_CACHE) > _EXPORT_CACHE_MAX_ENTRIES:
+                            _EXPORT_CACHE.popitem(last=False)
+                    logger.info(
+                        "export_cache_hit dataset=%s format=%s bytes=%s",
+                        cache_dataset_id,
+                        export_format,
+                        len(persistent[0]),
+                    )
+                    return persistent
+            except HTTPException as exc:
+                logger.warning(
+                    "export_cache_read_failed dataset=%s status=%s",
+                    cache_dataset_id,
+                    exc.status_code,
+                )
         exported = _clean_download_book_uncached_sync(
             filename, content, manifest, export_format, analysis_scope, cache_dataset_id
         )
+        if persistent_path:
+            try:
+                upload_export_cache(
+                    persistent_path, _pack_export_cache(identity, exported)
+                )
+                logger.info(
+                    "export_cache_stored dataset=%s format=%s bytes=%s",
+                    cache_dataset_id,
+                    export_format,
+                    len(exported[0]),
+                )
+            except HTTPException as exc:
+                logger.warning(
+                    "export_cache_write_failed dataset=%s status=%s",
+                    cache_dataset_id,
+                    exc.status_code,
+                )
         with _EXPORT_CACHE_LOCK:
             _EXPORT_CACHE[key] = exported
             _EXPORT_CACHE.move_to_end(key)
@@ -4675,6 +4799,7 @@ async def clean_batch(
             "xlsx",
             parsed_scope,
             dataset_id,
+            user.id,
         )
     return response
 
@@ -4867,6 +4992,7 @@ async def clean_download(
                 ) if combinar_hojas else None
             ),
             dataset_id,
+            user.id,
         )
         return StreamingResponse(
             iter([file_bytes]),

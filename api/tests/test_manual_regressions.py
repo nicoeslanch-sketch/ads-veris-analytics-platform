@@ -223,6 +223,99 @@ def test_identical_export_requests_reuse_one_job(monkeypatch):
     assert calls == 1
 
 
+def test_export_persistent_cache_survives_process_memory_reset(monkeypatch):
+    pipeline._EXPORT_CACHE.clear()
+    pipeline._EXPORT_INFLIGHT.clear()
+    stored: dict[str, bytes] = {}
+    calls = 0
+
+    def fake_export(*_args):
+        nonlocal calls
+        calls += 1
+        return (
+            b"xlsx-durable",
+            "out.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    monkeypatch.setattr(pipeline, "_clean_download_book_uncached_sync", fake_export)
+    monkeypatch.setattr(
+        pipeline,
+        "download_export_cache",
+        lambda path: stored.get(path),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "upload_export_cache",
+        lambda path, content: stored.__setitem__(path, content),
+    )
+    manifest = {"hojas": [{"nombre": "Ventas", "revision": 4}]}
+    args = (
+        "x.xlsx",
+        b"same",
+        manifest,
+        "xlsx",
+        None,
+        "22222222-2222-2222-2222-222222222222",
+        "11111111-1111-1111-1111-111111111111",
+    )
+
+    first = pipeline._clean_download_book_sync(*args)
+    pipeline._EXPORT_CACHE.clear()  # simula el reinicio del proceso de Render
+    second = pipeline._clean_download_book_sync(*args)
+
+    assert first == second
+    assert calls == 1
+    assert list(stored) == [
+        "11111111-1111-1111-1111-111111111111/.exports/"
+        "22222222-2222-2222-2222-222222222222/xlsx.cache"
+    ]
+
+
+def test_export_persistent_cache_is_invalidated_by_revision(monkeypatch):
+    pipeline._EXPORT_CACHE.clear()
+    pipeline._EXPORT_INFLIGHT.clear()
+    stored: dict[str, bytes] = {}
+    calls = 0
+
+    def fake_export(*_args):
+        nonlocal calls
+        calls += 1
+        return (
+            f"xlsx-{calls}".encode(),
+            "out.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    monkeypatch.setattr(pipeline, "_clean_download_book_uncached_sync", fake_export)
+    monkeypatch.setattr(pipeline, "download_export_cache", lambda path: stored.get(path))
+    monkeypatch.setattr(
+        pipeline,
+        "upload_export_cache",
+        lambda path, content: stored.__setitem__(path, content),
+    )
+    common = (
+        "x.xlsx",
+        b"same",
+        "xlsx",
+        None,
+        "22222222-2222-2222-2222-222222222222",
+        "11111111-1111-1111-1111-111111111111",
+    )
+
+    first = pipeline._clean_download_book_sync(
+        common[0], common[1], {"hojas": [{"revision": 4}]}, *common[2:]
+    )
+    pipeline._EXPORT_CACHE.clear()
+    second = pipeline._clean_download_book_sync(
+        common[0], common[1], {"hojas": [{"revision": 5}]}, *common[2:]
+    )
+
+    assert first[0] == b"xlsx-1"
+    assert second[0] == b"xlsx-2"
+    assert calls == 2
+
+
 def test_concurrent_clean_requests_share_one_calculation():
     pipeline._CLEAN_CACHE.clear()
     pipeline._CLEAN_INFLIGHT.clear()
