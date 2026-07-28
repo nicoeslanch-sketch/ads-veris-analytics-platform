@@ -80,7 +80,10 @@ test('Fase 20: botonera de 4 modos y workspace de relaciones', async ({ page }, 
   const catalog = page.getByLabel('Catálogo de relaciones')
   await expect(catalog).toBeVisible()
   await expect(catalog).toHaveCSS('background-color', 'rgb(26, 58, 82)')
-  await expect(page.getByText('Todas las ventas ↔ Productos', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', {
+    name: 'Todas las ventas ↔ Productos',
+    exact: true,
+  })).toBeVisible()
   await expect(page.getByText('Conexión no disponible')).toHaveCount(0)
   // El dashboard consolidado recomendado se calcula solo y conserva las tres
   // medidas con escalas independientes.

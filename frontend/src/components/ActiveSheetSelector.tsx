@@ -99,6 +99,11 @@ export default function ActiveSheetSelector({
       setMode('join')
       return
     }
+    // La relación elegida dentro del workspace persiste un alcance append_join,
+    // pero eso no significa que el usuario haya abandonado "Relación manual".
+    // Mantener la elección visual evita desmontar el workspace al seleccionar
+    // automáticamente su primera conexión segura.
+    if (manualModeSelected.current) return
     if (analysisScope) {
       setMode(analysisScope.mode)
       return
