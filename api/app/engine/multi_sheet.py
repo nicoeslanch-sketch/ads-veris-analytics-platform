@@ -18,7 +18,12 @@ import pandas as pd
 
 from .mapping import detect_columns_extended, norm_key, resolve_mapping, strip_accents_lower
 from .metrics import detect_currency, is_transaction_profile
-from .standardize import NUMERIC_CANONICAL_ATTR, detect_value_type_confidence, parse_number
+from .standardize import (
+    MISSING_TOKENS,
+    NUMERIC_CANONICAL_ATTR,
+    detect_value_type_confidence,
+    parse_number,
+)
 
 # Se permite una relacion parcial controlada desde 60%: las filas sin clave o
 # sin correspondencia permanecen en el left join y se informan. El archivo de
@@ -189,7 +194,13 @@ def _text_key(value: Any) -> str:
             return ""
     except (TypeError, ValueError):
         pass
-    text = unicodedata.normalize("NFKD", str(value).strip().lower())
+    raw = str(value).strip().lower()
+    # El dato se conserva literalmente en la hoja, pero un placeholder no es
+    # una clave empresarial. Varias filas "None"/"null"/"N/A" no convierten
+    # una maestra por lo demás única en una relación muchos-a-muchos.
+    if raw in MISSING_TOKENS:
+        return ""
+    text = unicodedata.normalize("NFKD", raw)
     return "".join(char for char in text if not unicodedata.combining(char))
 
 
@@ -765,7 +776,11 @@ def join_related_frames(
         for column in right.columns
         if str(column) not in right_keys and str(column) not in right_metric_columns
     ]
-    right_subset = right[right_keys + enrich_columns].copy()
+    # Las claves ausentes se conservan en la maestra y en su auditoría, pero no
+    # pueden participar en el índice del join. Si se dejaran como texto literal
+    # ("None", "null", etc.), pandas las trataría como duplicados coincidentes.
+    right_joinable = _key_series(right, right_keys).notna()
+    right_subset = right.loc[right_joinable, right_keys + enrich_columns].copy()
     rename: dict[str, str] = {}
     for column in enrich_columns:
         if column in left.columns:

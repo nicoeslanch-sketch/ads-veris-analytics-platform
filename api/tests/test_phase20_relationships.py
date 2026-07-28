@@ -302,6 +302,37 @@ def test_duplicate_right_key_is_blocked():
     assert stats.unmatched_rows == 0
 
 
+def test_repeated_missing_placeholders_do_not_make_reference_many_to_many():
+    left = pd.DataFrame(
+        {
+            "K": ["a", "a", "b", "none"],
+            "Monto_Venta": [10, 15, 20, 30],
+            "Fecha": ["2025-01-01"] * 4,
+        }
+    )
+    right = pd.DataFrame(
+        {
+            "K": ["a", "b", "c", "None", "null"],
+            "Attr": ["A", "B", "C", "sin clave 1", "sin clave 2"],
+        }
+    )
+
+    stats = relation_stats(left, ["K"], right, ["K"])
+    assert stats.safe is True
+    assert stats.right_duplicate_keys == 0
+    assert stats.cardinality == "muchos_a_uno"
+
+    merged, _mapping, provenance = join_related_frames(
+        {"Ventas": left, "Referencia": right},
+        {},
+        _relation("Ventas", "Referencia", ["K"], ["K"]),
+    )
+    assert len(merged) == len(left)
+    assert merged["Attr"].tolist()[:3] == ["A", "A", "B"]
+    assert pd.isna(merged["Attr"].iloc[3])
+    assert provenance["filas_sin_correspondencia"] == 0
+
+
 def test_join_that_multiplies_rows_is_blocked():
     left = pd.DataFrame({"K": ["a", "b"], "Monto_Venta": [10, 20], "Fecha": ["2025-01-01", "2025-01-02"]})
     right = pd.DataFrame({"K": ["a", "a", "b"], "Attr": ["x", "y", "z"]})
