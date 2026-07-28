@@ -2924,7 +2924,7 @@ def _clean_download_book_sync(
     cache_dataset_id: str | None = None,
     cache_user_id: str | None = None,
 ) -> tuple[bytes, str, str]:
-    """Una sola exportación por contenido+revisión+alcance; clics repetidos reutilizan bytes."""
+    """Reutiliza la exportación por contenido, revisión y alcance incluso tras reinicios."""
     identity = _export_cache_identity(content, manifest, export_format, analysis_scope)
     persistent_path = _export_cache_storage_path(
         cache_user_id, cache_dataset_id, export_format
