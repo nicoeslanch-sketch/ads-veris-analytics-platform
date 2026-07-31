@@ -69,12 +69,12 @@ export default function RelationshipCatalog({
 
   return (
     <aside
-      className="flex min-w-0 flex-col gap-3 rounded-lg border border-navy bg-navy p-3 shadow-sm"
+      className="flex min-w-0 flex-col gap-3.5 overflow-hidden rounded-xl border border-navy bg-navy p-4 shadow-sm"
       aria-label="Catálogo de relaciones"
     >
       <div>
-        <h3 className="text-sm font-semibold text-white">Selecciona una conexión</h3>
-        <p className="mt-0.5 text-[11px] text-white/60">
+        <h3 className="text-base font-bold leading-6 text-white">Selecciona una conexión</h3>
+        <p className="mt-1 text-xs leading-relaxed text-white/80">
           {relationships.filter((relation) => relation.source === 'automatic').length}{' '}
           conexión(es) segura(s) detectada(s).
         </p>
@@ -112,7 +112,7 @@ export default function RelationshipCatalog({
         ))}
       </div>
 
-      <ul className="flex max-h-[34rem] flex-col gap-2 overflow-y-auto pr-1">
+      <ul className="flex max-h-[42rem] min-w-0 flex-col gap-2.5 overflow-y-auto pr-1">
         {visible.map((relation) => {
           const active = relation.id === selectedId
           const Icon = TEMPLATE_ICON[relation.template] ?? Boxes
@@ -125,39 +125,39 @@ export default function RelationshipCatalog({
                 aria-pressed={active}
                 onClick={() => onSelect(relation)}
                 className={[
-                  'w-full rounded-lg border p-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60',
+                  'w-full min-w-0 overflow-hidden rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60',
                   active
                     ? 'border-teal bg-white shadow-md ring-1 ring-teal/30'
                     : 'border-white/10 bg-white/[0.07] hover:border-white/25 hover:bg-white/10',
                 ].join(' ')}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-start gap-2.5">
                   <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
                     active ? 'bg-navy/[0.06]' : 'bg-white/10'
                   }`}>
                     <Icon className={`h-4 w-4 ${accent}`} aria-hidden />
                   </span>
-                  <span className={`min-w-0 flex-1 text-xs font-semibold ${
+                  <span className={`min-w-0 flex-1 break-words text-[13px] font-semibold leading-5 [overflow-wrap:anywhere] ${
                     active ? 'text-navy' : 'text-white'
                   }`}>
                     {relation.label}
                   </span>
                   {active && (
-                    <span className="rounded-full bg-teal px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                    <span className="shrink-0 rounded-full bg-teal px-2 py-0.5 text-[10px] font-semibold text-white">
                       Activa
                     </span>
                   )}
                 </div>
-                <p className={`mt-1 text-[10px] ${active ? 'text-navy/55' : 'text-white/55'}`}>
+                <p className={`mt-1.5 break-words text-[11px] leading-4 [overflow-wrap:anywhere] ${active ? 'text-navy/70' : 'text-white/80'}`}>
                   {relation.append_sheets?.length
                     ? `${relation.append_sheets.length} hojas de ventas apiladas`
                     : `${relation.left_sheet} + ${relation.right_sheet}`}
                 </p>
-                <p className={`mt-0.5 truncate text-[10px] ${active ? 'text-navy/55' : 'text-white/55'}`}>
+                <p className={`mt-1 break-words text-[11px] leading-4 [overflow-wrap:anywhere] ${active ? 'text-navy/65' : 'text-white/75'}`}>
                   {relation.left_keys.join(' + ')} ↔ {relation.right_keys.join(' + ')}
                 </p>
-                <div className={`mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] ${
-                  active ? 'text-navy/55' : 'text-white/60'
+                <div className={`mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] leading-4 ${
+                  active ? 'text-navy/70' : 'text-white/75'
                 }`}>
                   <span className="inline-flex items-center gap-0.5 text-green">
                     <ShieldCheck className="h-3 w-3" aria-hidden /> Segura
@@ -191,7 +191,7 @@ export default function RelationshipCatalog({
         <Plus className="h-3.5 w-3.5" aria-hidden /> Crear conexión personalizada
       </button>
       {discardedCount > 0 && (
-        <p className="rounded-lg bg-black/10 px-2.5 py-2 text-[10px] leading-relaxed text-white/55">
+        <p className="rounded-lg bg-black/10 px-3 py-2.5 text-[11px] leading-relaxed text-white/75">
           {discardedCount} cruce(s) se ocultaron porque tenían 0% de correspondencia,
           duplicaban filas o no tenían una plantilla empresarial válida.
         </p>

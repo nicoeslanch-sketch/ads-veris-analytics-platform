@@ -365,69 +365,7 @@ export default function RelationshipWorkspace() {
       aria-label="Relaciones entre hojas"
       className="@container"
     >
-      {catalog?.relationship_plan && catalog.relationship_plan.length > 0 && (
-        <div className="mb-4 rounded-xl border border-teal/20 bg-teal/[0.05] p-4">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-teal">
-                Ruta recomendada · 12 pasos
-              </p>
-              <h3 className="mt-1 text-sm font-semibold text-navy">
-                Primero montos, luego agrupaciones y finalmente cortes operativos
-              </h3>
-            </div>
-            <span className="text-[11px] text-navy/50">
-              Compartir ID_OT no significa que dos hojas se puedan apilar.
-            </span>
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {catalog.relationship_plan.map((step) => (
-              <div key={step.order} className="rounded-lg border border-navy/10 bg-white px-3 py-2.5">
-                <div className="flex items-start gap-2">
-                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-teal text-[10px] font-bold text-white">
-                    {step.order}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <p className="text-xs font-semibold text-navy">{step.relation}</p>
-                      {step.status && (
-                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
-                          step.status === 'ejecutable'
-                            ? 'bg-green/10 text-green'
-                            : step.status === 'integrada_en_modelo'
-                              ? 'bg-teal/10 text-teal'
-                              : 'bg-gold/15 text-gold'
-                        }`}>
-                          {step.status === 'ejecutable'
-                            ? 'Disponible'
-                            : step.status === 'integrada_en_modelo'
-                              ? 'Integrada'
-                              : 'No disponible'}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 text-[11px] leading-relaxed text-navy/55">
-                      Desbloquea: {step.unlocks}
-                    </p>
-                    {step.strategy && (
-                      <p className="mt-1 text-[10px] text-navy/40">
-                        {step.strategy === 'vigencia_por_fecha'
-                          ? 'Cruce temporal: técnico + fecha dentro de vigencia'
-                          : step.strategy === 'periodo_moneda_uf'
-                            ? 'Cruce por periodo; solo convierte cuotas en UF'
-                            : step.strategy === 'alineacion_temporal'
-                              ? 'Serie mensual después del unpivot'
-                              : 'Cruce muchos-a-uno por clave'}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="grid gap-4 @min-[880px]:grid-cols-[250px_minmax(0,1fr)]">
+      <div className="grid gap-4 @min-[880px]:grid-cols-[300px_minmax(0,1fr)]">
         <RelationshipCatalogPanel
           relationships={relationships}
           selectedId={selectedId}

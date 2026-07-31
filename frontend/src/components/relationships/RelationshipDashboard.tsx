@@ -49,7 +49,7 @@ export default function RelationshipDashboardView({ dashboard }: RelationshipDas
   return (
     <div className="@container space-y-3">
       {/* Encabezado compacto de la relación */}
-      <div className="rounded-lg border border-navy/10 bg-white p-3.5 shadow-sm">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-navy/10 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -58,19 +58,19 @@ export default function RelationshipDashboardView({ dashboard }: RelationshipDas
                 {templateLabel(relation.template)}
               </span>
             </div>
-            <h2 className="mt-1.5 text-lg font-bold text-navy">{relation.label}</h2>
+            <h2 className="mt-1.5 break-words text-lg font-bold leading-7 text-navy [overflow-wrap:anywhere]">{relation.label}</h2>
             <p className="mt-0.5 text-xs text-navy/60">{templateDescription(relation.template)}</p>
-            <p className="mt-1 text-[11px] text-navy/50">
+            <p className="mt-1 break-words text-xs leading-5 text-navy/65 [overflow-wrap:anywhere]">
               Clave: {relation.left_keys.join(' + ')} ↔ {relation.right_keys.join(' + ')}
             </p>
-            <p className="mt-0.5 text-[11px] text-navy/45">
+            <p className="mt-0.5 break-words text-xs leading-5 text-navy/60 [overflow-wrap:anywhere]">
               {relation.append_sheets?.length
                 ? `${relation.append_sheets.join(', ')} apiladas antes de relacionar con ${relation.right_sheet}`
                 : `${relation.left_sheet} relacionada con ${relation.right_sheet}`}
               {' · '}{(relation.cardinality ?? 'relación validada').replace(/_/g, ' ')}
             </p>
           </div>
-          <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+          <div className={`flex min-w-[11rem] shrink-0 items-center gap-2 rounded-lg border px-3.5 py-2.5 ${
             dashboard.available
               ? 'border-green/30 bg-green/[0.07]'
               : 'border-coral/30 bg-coral/[0.07]'
