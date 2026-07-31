@@ -20,13 +20,13 @@ export default function RelationshipKpis({ kpis, currency }: RelationshipKpisPro
   const available = kpis.filter((kpi) => kpi.available)
   if (!available.length) return null
   return (
-    <div className="grid grid-cols-2 gap-2 @min-[680px]:grid-cols-3 @min-[980px]:grid-cols-6">
+    <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-2.5">
       {available.slice(0, 7).map((kpi) => {
         const accent = TONE_ACCENT[kpi.tone ?? 'default']
         return (
           <div
             key={kpi.id}
-            className="rounded-lg border border-navy/10 bg-white p-3 shadow-sm"
+            className="min-w-0 overflow-hidden rounded-lg border border-navy/10 bg-white p-3.5 shadow-sm"
             style={{ background: `linear-gradient(135deg, ${accent}0d, #ffffff 60%)` }}
           >
             <div className="flex items-center gap-1.5">
@@ -41,9 +41,11 @@ export default function RelationshipKpis({ kpis, currency }: RelationshipKpisPro
               )}
             </div>
             <p
-              className="mt-1.5 text-lg font-bold text-navy"
+              className="mt-2 break-words text-base font-bold leading-6 text-navy [overflow-wrap:anywhere]"
             >
-              {formatKpiValue(kpi.value, kpi.format, currency)}
+              {kpi.id === 'cardinalidad'
+                ? formatKpiValue(kpi.value, kpi.format, currency).replace(/_/g, ' ')
+                : formatKpiValue(kpi.value, kpi.format, currency)}
             </p>
           </div>
         )

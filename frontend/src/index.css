@@ -22,6 +22,16 @@ body,
 body {
   @apply bg-work font-sans text-navy antialiased;
 }
+
+/* Las superficies de datos reciben nombres y valores que vienen del archivo.
+ * Nunca deben recortarse por un identificador largo o una palabra sin espacios. */
+main :where(h1, h2, h3, h4, p, dt, dd, button, a) {
+  overflow-wrap: anywhere;
+}
+
+main :where(button, a) {
+  min-width: 0;
+}
 @keyframes loading-slide {
   0% { transform: translateX(-120%); }
   50% { transform: translateX(200%); }
