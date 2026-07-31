@@ -1,0 +1,60 @@
+{
+  "version": "demre-2026-v1",
+  "cohort": 2026,
+  "aliases": {
+    "archivo_b": {"ID_RBD": "RBD"},
+    "historica": {"Estudió_ES": "ESTUDIÓ_ES"}
+  },
+  "precedence": {
+    "rbd": ["archivo_b", "archivo_c"],
+    "tipo_de_enseñanza": ["archivo_c", "archivo_b"],
+    "rama_educacional": ["archivo_c", "archivo_b"],
+    "rindio_prueba": ["archivo_b", "archivo_c"]
+  },
+  "direct_mappings": [
+    {"target": "id_aux", "source": "matricula", "column": "ID_aux"},
+    {"target": "preferencia2", "source": "matricula", "column": "PREFERENCIA"},
+    {"target": "codigo_carrera", "source": "matricula", "column": "CODIGO"},
+    {"target": "puntaje_ponderado", "source": "matricula", "column": "PTJE_POND"},
+    {"target": "sexo", "source": "archivo_b", "column": "SEXO"},
+    {"target": "anyo_egreso", "source": "archivo_b", "column": "ANYO_EGRESO"},
+    {"target": "rbd", "source": "archivo_b", "column": "RBD"},
+    {"target": "region", "source": "archivo_b", "column": "CODIGO_REGION_D"},
+    {"target": "comuna", "source": "archivo_b", "column": "CODIGO_COMUNA_D"},
+    {"target": "ingreso_percapita", "source": "archivo_b", "column": "INGRESO_PERCAPITA_GRUPO_FA"},
+    {"target": "rindio_prueba", "source": "archivo_b", "column": "RINDIO_PROCESO_ACTUAL"},
+    {"target": "nem", "source": "archivo_c", "column": "PROMEDIO_NOTAS"},
+    {"target": "puntaje_nem", "source": "archivo_c", "column": "PTJE_NEM"},
+    {"target": "puntaje_ranking", "source": "archivo_c", "column": "PTJE_RANKING"},
+    {"target": "rbd", "source": "archivo_c", "column": "RBD"},
+    {"target": "nombre_carrera", "source": "oferta", "column": "Nombre Carrera"},
+    {"target": "institucion", "source": "oferta", "column": "Nombre IES"},
+    {"target": "cod_institucion", "source": "oferta", "column": "Código IES"},
+    {"target": "nombre_de_la_sede", "source": "oferta", "column": "Nombre Sede"},
+    {"target": "region_sede", "source": "oferta", "column": "Región Sede"},
+    {"target": "comuna_sede", "source": "oferta", "column": "Comuna Sede"},
+    {"target": "area_conocimiento", "source": "oferta", "column": "Área del conocimiento"},
+    {"target": "grado_academico", "source": "oferta", "column": "Grado Académico"},
+    {"target": "duracion_estudios", "source": "oferta", "column": "Duración Estudios"},
+    {"target": "modalidad", "source": "oferta", "column": "Modalidad"},
+    {"target": "tipo_carrera", "source": "oferta", "column": "Tipo Carrera"},
+    {"target": "tipo_institucion", "source": "oferta", "column": "Tipo de institución"},
+    {"target": "ponderacion_nem", "source": "oferta", "column": "Ponderación Notas"},
+    {"target": "ponderacion_ranking", "source": "oferta", "column": "Ponderación Ranking Notas"},
+    {"target": "ponderacion_lenguaje", "source": "oferta", "column": "Ponderación Lenguaje"},
+    {"target": "ponderacion_matematicas", "source": "oferta", "column": "Ponderación Matemáticas"},
+    {"target": "ponderacion_historia", "source": "oferta", "column": "Ponderación Historia"},
+    {"target": "ponderacion_ciencias", "source": "oferta", "column": "Ponderación Ciencias"},
+    {"target": "vacantes", "source": "oferta", "column": "Vacantes Semestre Uno"}
+  ],
+  "recodings": [
+    {"source": "archivo_b", "variable": "COD_ENS", "book": "codebook_b", "sheet": "Anexo - COD_ENS", "code_column": "Código", "label_column": "Descripción", "target": "tipo_de_enseñanza"},
+    {"source": "archivo_c", "variable": "COD_ENS", "book": "codebook_c", "sheet": "Anexo - COD_ENS", "code_column": "Código", "label_column": "Descripción", "target": "tipo_de_enseñanza"}
+  ],
+  "assumptions": [
+    "RBD del Archivo B corresponde al ID_RBD descrito por su libro; el alias se audita.",
+    "cohorte_id usa el fallback determinístico cohorte:id_aux porque el histórico real no contiene esa columna.",
+    "Las ofertas ambiguas quedan sin enriquecer; no se selecciona una fila arbitraria.",
+    "Las columnas sin fuente quedan vacías y reciben reason_code en la auditoría."
+  ]
+}

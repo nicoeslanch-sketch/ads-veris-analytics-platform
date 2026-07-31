@@ -49,6 +49,15 @@ class Settings(BaseSettings):
     # Preparado pero APAGADO — mismo criterio que las costuras de la Fase 7.
     ai_classifier_enabled: bool = False
 
+    # Dominio aislado de consolidación. Siempre apagado por defecto y limitado
+    # inicialmente a administradores. No modifica el límite clásico de 15 MB.
+    consolidation_enabled: bool = False
+    consolidation_admin_only: bool = True
+    consolidation_max_source_mb: int = 512
+    consolidation_csv_chunk_rows: int = 100_000
+    consolidation_preview_rows: int = 50
+    consolidation_worker_poll_seconds: float = 2.0
+
     # ── Fase 10: cuenta administradora de respaldo ──
     # El panel /admin acepta también a este correo aunque profiles.is_admin
     # no esté marcado todavía (bootstrap robusto: la migración 0010 depende
