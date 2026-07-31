@@ -13,6 +13,9 @@ from app.consolidation.pipeline import run_local_pipeline, stable_hash
 from app.consolidation.resolvers.offer import resolve_offer_frame
 from app.consolidation.resolvers.preferences_d import resolve_preferences_frame, selected_status_codes
 from app.consolidation.target_schema import TARGET_COLUMNS, resolve_target_columns
+from app.consolidation.repository import MemoryConsolidationRepository
+from app.consolidation.worker import ConsolidationWorker
+from app.config import Settings
 
 
 def _write_csv(path: Path, frame: pd.DataFrame) -> Path:
@@ -198,3 +201,21 @@ def test_exports_are_separate_and_do_not_overwrite(synthetic_sources, tmp_path):
     assert json.loads(artifacts["manifest"].read_text(encoding="utf-8"))["input_hash"]
     with pytest.raises(FileExistsError):
         write_pipeline_artifacts(output, tmp_path / "out")
+
+
+def test_local_worker_completes_and_is_idempotent(synthetic_sources, tmp_path):
+    repo = MemoryConsolidationRepository()
+    project = repo.create_project("user", {
+        "name": "P", "config": {"cohort": 2026, "target_columns": list(TARGET_COLUMNS)},
+        "config_hash": "a" * 64, "engine_version": "test",
+    })
+    repo.replace_sources(project["id"], "user", [
+        {"role": role.value, "dataset_id": str(index), "local_path": str(path), "profile": {}}
+        for index, (role, path) in enumerate(synthetic_sources.items())
+    ])
+    run = repo.enqueue_run(repo.get_project(project["id"], "user"), "b" * 64)
+    worker = ConsolidationWorker(repo, Settings(), output_root=tmp_path / "worker")
+    assert worker.run_once() is True
+    completed = repo.get_run(run["id"], "user")
+    assert completed["status"] == "valid_with_warnings"
+    assert {item["kind"] for item in completed["artifacts"]} == {"annual", "audit", "manifest"}

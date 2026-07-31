@@ -21,6 +21,7 @@ from .routes.pipeline import router as pipeline_router
 from .routes.plans import router as plans_router
 from .routes.retention import router as retention_router
 from .routes.support import router as support_router
+from .consolidation.router import router as consolidation_router
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -126,3 +127,4 @@ app.include_router(plans_router)
 app.include_router(admin_router)
 app.include_router(support_router)
 app.include_router(retention_router)
+app.include_router(consolidation_router)

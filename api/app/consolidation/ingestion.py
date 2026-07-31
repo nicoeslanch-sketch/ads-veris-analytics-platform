@@ -163,3 +163,32 @@ def safe_local_acceptance_path(path: str | os.PathLike[str]) -> Path:
     if resolved.suffix.lower() not in {".csv", ".xlsx"}:
         raise ValueError("Formato de fuente no soportado.")
     return resolved
+
+
+def upload_consolidation_artifact(
+    local_path: Path,
+    storage_path: str,
+    user_id: str,
+    settings: Settings | None = None,
+) -> None:
+    """Sube un artefacto inmutable; un objeto existente no se reemplaza."""
+    cfg = settings or get_settings()
+    normalized = normalize_user_storage_path(storage_path, user_id)
+    encoded = "/".join(quote(part, safe="") for part in normalized.split("/"))
+    url = f"{cfg.supabase_url.rstrip('/')}/storage/v1/object/{cfg.supabase_storage_bucket}/{encoded}"
+    headers = {
+        "Authorization": f"Bearer {cfg.supabase_service_role_key}",
+        "apikey": cfg.supabase_service_role_key,
+        "Content-Type": "application/octet-stream",
+        "x-upsert": "false",
+        "Content-Length": str(local_path.stat().st_size),
+    }
+    with local_path.open("rb") as content:
+        try:
+            response = httpx.post(url, headers=headers, content=content, timeout=300)
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, f"No se pudo guardar el artefacto: {exc.__class__.__name__}.") from exc
+    if response.status_code == 409:
+        raise HTTPException(409, "El artefacto inmutable ya existe.")
+    if response.status_code not in {200, 201}:
+        raise HTTPException(502, "Storage no pudo guardar el artefacto de consolidación.")

@@ -67,3 +67,42 @@ def annual_shape(path: Path) -> tuple[int, int]:
         return count, len(header)
     finally:
         workbook.close()
+
+
+def write_historical_consolidated(
+    historical_path: Path,
+    annual: pd.DataFrame,
+    output_path: Path,
+    *,
+    sheet_name: str = "BASE DE DATOS",
+    cohort: int = 2026,
+) -> tuple[Path | None, str | None]:
+    """Copia por streaming solo si el contrato histórico es exactamente compatible."""
+    source = load_workbook(historical_path, read_only=True, data_only=False)
+    try:
+        if sheet_name not in source.sheetnames:
+            return None, "historical_sheet_missing"
+        rows = source[sheet_name].iter_rows(values_only=True)
+        header = [str(value).strip() if value is not None else "" for value in next(rows)]
+        if header != list(annual.columns):
+            return None, "historical_schema_incompatible"
+        cohort_index = header.index("cohorte") if "cohorte" in header else -1
+        workbook = Workbook(write_only=True)
+        target = workbook.create_sheet(sheet_name)
+        target.append(header)
+        historical_count = 0
+        for row in rows:
+            if not row or row[0] in (None, ""):
+                continue
+            if cohort_index >= 0 and str(row[cohort_index]).strip() == str(cohort):
+                return None, "historical_already_contains_cohort"
+            target.append([_safe_cell(value) for value in row])
+            historical_count += 1
+        for row in annual.itertuples(index=False, name=None):
+            target.append([_safe_cell(value) for value in row])
+        if output_path.exists():
+            raise FileExistsError(output_path.name)
+        workbook.save(output_path)
+        return output_path, f"historical_rows_preserved={historical_count}"
+    finally:
+        source.close()
