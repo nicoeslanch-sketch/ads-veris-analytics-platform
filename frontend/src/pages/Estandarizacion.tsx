@@ -29,6 +29,10 @@ import {
   withSheetSelection,
 } from '../lib/multiSheet'
 import type { StandardizeResult } from '../lib/types'
+import { useAccess } from '../lib/access'
+import ConsolidationWizard from '../consolidation/ConsolidationWizard'
+import { ConsolidationProvider } from '../consolidation/ConsolidationContext'
+import { consolidationModeVisible } from '../consolidation/state'
 
 const BENEFITS = [
   'Unifica nombres y textos duplicados',
@@ -69,7 +73,7 @@ interface StandardizeBatchResponse {
   persistencia_errores: Record<string, string>
 }
 
-export default function Estandarizacion() {
+function ClassicStandardization() {
   const {
     file,
     datasetId,
@@ -882,6 +886,30 @@ export default function Estandarizacion() {
           </div>
         </Card>
       </div>
+    </>
+  )
+}
+
+const CONSOLIDATION_ENABLED = import.meta.env.VITE_CONSOLIDATION_ENABLED === 'true'
+
+export default function Estandarizacion() {
+  const { access } = useAccess()
+  const canConsolidate = consolidationModeVisible(CONSOLIDATION_ENABLED, Boolean(access?.is_admin))
+  const [mode, setMode] = useState<'classic' | 'consolidation'>('classic')
+
+  return (
+    <>
+      {canConsolidate ? (
+        <div className="mb-6 grid gap-2 rounded-xl border border-navy/10 bg-white p-2 sm:grid-cols-2" role="group" aria-label="Modo de estandarización">
+          <button type="button" aria-pressed={mode === 'classic'} onClick={() => setMode('classic')} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold ${mode === 'classic' ? 'bg-navy text-white' : 'text-navy hover:bg-navy/5'}`}>Estandarizar archivos<span className="mt-0.5 block text-xs font-normal opacity-75">Flujo clásico de preparación y limpieza.</span></button>
+          <button type="button" aria-pressed={mode === 'consolidation'} onClick={() => setMode('consolidation')} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold ${mode === 'consolidation' ? 'bg-teal text-white' : 'text-navy hover:bg-teal/5'}`}>Consolidar y recodificar bases<span className="mt-0.5 block text-xs font-normal opacity-75">Une fuentes relacionadas con auditoría.</span></button>
+        </div>
+      ) : null}
+      {mode === 'consolidation' && canConsolidate ? (
+        <ConsolidationProvider><ConsolidationWizard /></ConsolidationProvider>
+      ) : (
+        <ClassicStandardization />
+      )}
     </>
   )
 }

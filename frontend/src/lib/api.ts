@@ -321,6 +321,43 @@ export async function apiPostJson<T>(
   }
 }
 
+/** PUT con body JSON para configuraciones reemplazables e idempotentes. */
+export async function apiPutJson<T>(
+  path: string,
+  body: unknown,
+  options?: number | ApiRequestOptions,
+): Promise<T> {
+  const { timeoutMs, signal } = normalizeOptions(options, JSON_TIMEOUT_MS)
+  const token = await getAccessToken()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+  let response: Response
+  try {
+    response = await fetchWithTimeout(
+      `${requireBase()}${path}`,
+      { method: 'PUT', headers, body: JSON.stringify(body) },
+      timeoutMs,
+      signal,
+    )
+  } catch (err) {
+    throw connectionError(err, 'No se pudo contactar al servidor.')
+  }
+  const rawBody = await response.text()
+  if (!response.ok) {
+    let detail = `Error ${response.status} del servidor.`
+    try {
+      const parsed = JSON.parse(rawBody)
+      if (typeof parsed.detail === 'string') detail = parsed.detail
+    } catch { }
+    throw new ApiError(response.status, detail)
+  }
+  try {
+    return JSON.parse(rawBody) as T
+  } catch {
+    throw new ApiError(response.status, 'Respuesta inesperada del servidor.')
+  }
+}
+
 /**
  * POST con body JSON y lectura de SSE (para /ai/chat).
  * Llama `onChunk` por cada fragmento de texto recibido.
