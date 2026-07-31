@@ -1,5 +1,10 @@
 # Estado del proyecto por fases — ADS Veris
 
+> **Trabajo no desplegado en rama:** el dominio de consolidación multi-fuente y
+> la migración aditiva 0022 están implementados detrás de flags apagados. La
+> migración no fue aplicada; por eso 0021 sigue siendo la última migración
+> operativa y no se modifica el contrato del motor actualmente desplegado.
+
 **Fase 20 — Botonera del Resumen + workspace de relaciones.** Rediseña la
 sección "Datos que estás analizando" como un selector segmentado accesible (los
 cuatro modos con su lógica intacta) y desarrolla el workspace "Relaciones entre
