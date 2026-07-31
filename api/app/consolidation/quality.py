@@ -31,8 +31,9 @@ def validate_annual_contract(
 def null_reason_summary(annual: pd.DataFrame, source_targets: set[str]) -> list[dict[str, object]]:
     summary: list[dict[str, object]] = []
     for column in annual.columns:
-        null_count = int(annual[column].isna().sum() + annual[column].astype("string").fillna("").str.strip().eq("").sum())
+        values = annual[column]
+        null_count = int((values.isna() | values.astype("string").fillna("").str.strip().eq("")).sum())
         if null_count:
             reason = "source_value_missing" if column in source_targets else "unsupported_in_2026"
-            summary.append({"column": column, "reason_code": reason, "count": min(null_count, len(annual))})
+            summary.append({"column": column, "reason_code": reason, "count": null_count})
     return summary

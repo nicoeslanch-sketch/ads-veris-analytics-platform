@@ -46,8 +46,10 @@ class ConsolidationWorker:
                     local_sources[role] = path
                 output = run_local_pipeline(
                     local_sources,
+                    mapping_override=project.get("config", {}).get("mapping_manifest"),
                     target_columns=project.get("config", {}).get("target_columns"),
                     cohort=int(project.get("config", {}).get("cohort", 2026)),
+                    cohort_id_strategy=project.get("config", {}).get("cohort_id_strategy", "cohort_and_id"),
                 )
                 previous = self.repository.find_completed(str(run["user_id"]), output.manifest.input_hash, output.manifest.config_hash)
                 if previous and str(previous["id"]) != run_id:

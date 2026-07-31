@@ -100,6 +100,7 @@ def test_pipeline_keeps_grain_and_target(synthetic_sources):
     assert tuple(output.annual.columns) == TARGET_COLUMNS
     assert output.annual["id_aux"].nunique() == 10
     assert output.manifest.status is ConsolidationStatus.VALID_WITH_WARNINGS
+    assert 0 <= output.manifest.recoding_coverage["tipo_de_enseñanza"] <= 1
 
 
 def test_missing_b_is_partial_and_keeps_schema(synthetic_sources):
@@ -184,10 +185,43 @@ def test_historical_incompatible_returns_warning():
     assert warnings == ["historical_schema_incompatible"]
 
 
+def test_historical_existing_cohort_is_not_overwritten():
+    frame = pd.DataFrame({"id_aux": ["1"], "cohorte": ["2026"]})
+    combined, warnings = append_historical(frame, frame)
+    assert combined is None
+    assert warnings == ["historical_already_contains_cohort"]
+
+
 def test_custom_target_is_validated():
-    assert resolve_target_columns(["id_aux", "cohorte"]) == ("id_aux", "cohorte")
+    custom = ["id_aux", "cohorte", "codigo_carrera", "cohorte_id", "cohorte_id_repetido"]
+    assert resolve_target_columns(custom) == tuple(custom)
     with pytest.raises(ValueError, match="duplicadas"):
         resolve_target_columns(["id_aux", "id_aux"])
+
+
+def test_empty_target_is_rejected():
+    with pytest.raises(ValueError, match="vacías"):
+        resolve_target_columns(["id_aux", ""])
+
+
+def test_cohort_fallback_rejects_empty_id():
+    with pytest.raises(ValueError, match="vacío"):
+        build_cohort_ids(["1", ""], 2026)
+
+
+def test_offer_without_requested_code_remains_unresolved():
+    frame = pd.DataFrame([{"Año": "OFE_2026", "Demre": "10", "Vigencia": "Vigente", "Nombre": "A"}])
+    resolved, _counts = resolve_offer_frame(frame, ["Nombre"])
+    assert "99" not in set(resolved["codigo_carrera"])
+
+
+def test_duplicate_c_keys_are_excluded_without_losing_matricula(synthetic_sources):
+    frame = pd.read_csv(synthetic_sources[SourceRole.ARCHIVO_C], sep=";", dtype="string")
+    frame = pd.concat([frame, frame.iloc[[0]]], ignore_index=True)
+    _write_csv(synthetic_sources[SourceRole.ARCHIVO_C], frame)
+    output = run_local_pipeline(synthetic_sources)
+    assert len(output.annual) == 10
+    assert any(issue.code == "archivo_c_duplicate_keys" for issue in output.manifest.issues)
 
 
 def test_manifest_hash_is_stable():

@@ -66,12 +66,16 @@ def run_local_pipeline(
     sources: dict[SourceRole, Path],
     *,
     mapping_path: Path | None = None,
+    mapping_override: dict[str, Any] | None = None,
     target_columns: list[str] | tuple[str, ...] | None = None,
     cohort: int = 2026,
+    cohort_id_strategy: str = "cohort_and_id",
 ) -> PipelineOutput:
     """Entrada local solo para worker/tests; la API usa paths temporales de Storage."""
     started = time.perf_counter()
     mapping = load_mapping_manifest(mapping_path)
+    if mapping_override:
+        mapping = {**mapping, **mapping_override}
     target = resolve_target_columns(target_columns)
     if SourceRole.MATRICULA not in sources:
         raise ValueError("Matrícula es obligatoria.")
@@ -80,6 +84,7 @@ def run_local_pipeline(
     config_hash = stable_hash({"mapping": mapping, "target": target, "cohort": cohort})
     issues: list[QualityIssue] = []
     audit: dict[str, list[dict[str, Any]]] = {"relations": [], "recoding": [], "null_reasons": [], "assumptions": []}
+    recoded_targets: set[str] = set()
 
     matricula_columns = _source_columns(mapping, "matricula")
     matricula = read_csv_selected(sources[SourceRole.MATRICULA], matricula_columns)
@@ -109,7 +114,7 @@ def run_local_pipeline(
         frame = read_csv_selected(sources[role], selected)
         frame, ambiguous = _unique_dimension(frame, role.value)
         source_frames[role.value] = frame
-        audit["relations"].append({"source": role.value, "cardinality": "one_to_one", "ambiguous_keys_excluded": ambiguous})
+        audit["relations"].append({"source": role.value, "rows_read": len(frame) + ambiguous, "cardinality": "one_to_one", "ambiguous_keys_excluded": ambiguous})
         if ambiguous:
             issues.append(QualityIssue(code=f"{role.value}_duplicate_keys", severity=IssueSeverity.WARNING, message=f"{role.value} contiene claves duplicadas; no se enriquecieron.", count=ambiguous))
 
@@ -144,10 +149,18 @@ def run_local_pipeline(
         current = annual[rule["target"]]
         annual[rule["target"]] = current.where(current.notna() & current.astype("string").str.strip().ne(""), values)
         direct_targets.add(rule["target"])
-        audit["recoding"].append({"target": rule["target"], **counts, "book_conflicts": len(book.conflicts)})
+        recoded_targets.add(rule["target"])
+        target_populated = int(annual[rule["target"]].astype("string").fillna("").str.strip().ne("").sum())
+        audit["recoding"].append({"target": rule["target"], **counts, "target_populated": target_populated, "book_conflicts": len(book.conflicts)})
 
     if SourceRole.ARCHIVO_D in sources and SourceRole.CODEBOOK_D in sources:
-        d_book = parse_codebook(sources[SourceRole.CODEBOOK_D], sheet_name="Anexo -  Estado Preferencia", code_column="CÓD.", label_column="DESCRIPCIÓN")
+        d_config = mapping.get("resolvers", {}).get("archivo_d", {})
+        d_book = parse_codebook(
+            sources[SourceRole.CODEBOOK_D],
+            sheet_name=d_config.get("sheet", "Anexo -  Estado Preferencia"),
+            code_column=d_config.get("code_column", "CÓD."),
+            label_column=d_config.get("label_column", "DESCRIPCIÓN"),
+        )
         allowed = selected_status_codes(d_book)
         _resolved_d, d_counts = resolve_preferences_csv(matricula, sources[SourceRole.ARCHIVO_D], allowed)
         audit["relations"].append({"source": "archivo_d", **d_counts, "selected_status_codes": sorted(allowed)})
@@ -157,8 +170,14 @@ def run_local_pipeline(
     offer_rules = [rule for rule in mapping["direct_mappings"] if rule["source"] == "oferta" and rule["target"] in annual.columns]
     if SourceRole.OFERTA in sources and offer_rules:
         offer_columns = list(dict.fromkeys(["Año", "Demre", "Vigencia", *[rule["column"] for rule in offer_rules]]))
-        offer = read_xlsx_selected(sources[SourceRole.OFERTA], sheet_name="in", usecols=offer_columns, filter_equals=("Año", "OFE_2026"))
+        offer_sheet = mapping.get("sheets", {}).get("oferta", "in")
+        offer = read_xlsx_selected(sources[SourceRole.OFERTA], sheet_name=offer_sheet, usecols=offer_columns, filter_equals=("Año", f"OFE_{cohort}"))
         resolved_offer, offer_counts = resolve_offer_frame(offer, [rule["column"] for rule in offer_rules])
+        offer_counts["offer_scoped_rows"] = len(offer)
+        resolved_codes = set(resolved_offer["codigo_carrera"].astype("string")) if not resolved_offer.empty else set()
+        annual_codes = annual["codigo_carrera"].astype("string").fillna("").str.strip()
+        offer_counts["offer_matched_rows"] = int(annual_codes.isin(resolved_codes).sum())
+        offer_counts["offer_unmatched_rows"] = int((~annual_codes.isin(resolved_codes)).sum())
         audit["relations"].append({"source": "oferta", **offer_counts})
         for rule in offer_rules:
             dimension = resolved_offer[["codigo_carrera", rule["column"]]].rename(columns={rule["column"]: "__value"}) if not resolved_offer.empty else pd.DataFrame(columns=["codigo_carrera", "__value"])
@@ -169,7 +188,7 @@ def run_local_pipeline(
         if offer_counts.get("offer_ambiguous"):
             issues.append(QualityIssue(code="offer_ambiguous", severity=IssueSeverity.WARNING, message="Ofertas ambiguas quedaron sin enriquecer.", count=offer_counts["offer_ambiguous"]))
 
-    cohort_ids, cohort_method = build_cohort_ids(annual["id_aux"], cohort)
+    cohort_ids, cohort_method = build_cohort_ids(annual["id_aux"], cohort, cohort_id_strategy)
     annual["cohorte_id"] = cohort_ids
     annual["cohorte_id_repetido"] = "0"
     direct_targets.update({"cohorte_id", "cohorte_id_repetido"})
@@ -193,7 +212,23 @@ def run_local_pipeline(
         config_hash=config_hash, input_hash=input_hash, status=status,
         source_hashes=source_hashes,
         row_counts={"matricula": len(matricula), "annual": len(annual), "unique_ids": int(annual["id_aux"].nunique())},
-        recoding_coverage={item["target"]: item["mapped"] / max(1, len(annual)) for item in audit["recoding"]},
+        recoding_coverage={
+            target_name: float(annual[target_name].astype("string").fillna("").str.strip().ne("").mean())
+            for target_name in sorted(recoded_targets)
+        },
         issues=issues, timings_ms={"total": elapsed_ms},
+        target_columns=list(target),
+        relationship_summary=audit["relations"],
+        null_reasons=audit["null_reasons"],
+        assumptions=[item["assumption"] for item in audit["assumptions"]],
+        cohort_id_method=cohort_method,
+        preview=annual[
+            [column for column in ("codigo_carrera", "nombre_carrera", "institucion", "modalidad") if column in annual.columns]
+        ].head(20).fillna("").to_dict(orient="records"),
+        memory_bytes_estimate=int(
+            annual.memory_usage(index=True, deep=True).sum()
+            + matricula.memory_usage(index=True, deep=True).sum()
+            + sum(frame.memory_usage(index=True, deep=True).sum() for frame in source_frames.values())
+        ),
     )
     return PipelineOutput(annual=annual, manifest=manifest, audit_tables=audit)

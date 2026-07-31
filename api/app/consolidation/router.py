@@ -31,6 +31,8 @@ class CreateProjectRequest(BaseModel):
     target_columns: list[str] | None = None
     aliases: dict[str, str] = Field(default_factory=dict)
     precedence: dict[str, list[str]] = Field(default_factory=dict)
+    cohort_id_strategy: str = "cohort_and_id"
+    mapping_manifest: dict[str, Any] | None = None
 
 
 class SourcesRequest(BaseModel):

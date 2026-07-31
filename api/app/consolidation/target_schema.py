@@ -48,4 +48,8 @@ def resolve_target_columns(template: list[str] | tuple[str, ...] | None = None) 
         raise ValueError("La plantilla objetivo contiene columnas vacías.")
     if len(columns) != len(set(columns)):
         raise ValueError("La plantilla objetivo contiene columnas duplicadas.")
+    required = {"id_aux", "cohorte", "codigo_carrera", "cohorte_id", "cohorte_id_repetido"}
+    missing = sorted(required - set(columns))
+    if missing:
+        raise ValueError(f"La plantilla no contiene el grano mínimo: {', '.join(missing)}")
     return columns

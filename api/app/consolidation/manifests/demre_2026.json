@@ -1,6 +1,14 @@
 {
   "version": "demre-2026-v1",
   "cohort": 2026,
+  "sheets": {"oferta": "in", "historica": "BASE DE DATOS"},
+  "resolvers": {
+    "archivo_d": {
+      "sheet": "Anexo -  Estado Preferencia",
+      "code_column": "CÓD.",
+      "label_column": "DESCRIPCIÓN"
+    }
+  },
   "aliases": {
     "archivo_b": {"ID_RBD": "RBD"},
     "historica": {"Estudió_ES": "ESTUDIÓ_ES"}

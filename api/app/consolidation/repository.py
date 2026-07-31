@@ -57,7 +57,13 @@ class MemoryConsolidationRepository:
 
     def get_run(self, run_id: str, user_id: str) -> dict[str, Any] | None:
         run = self.runs.get(run_id)
-        return dict(run) if run and run["user_id"] == user_id else None
+        if not run or run["user_id"] != user_id:
+            return None
+        result = dict(run)
+        reused = self.runs.get(str(run.get("reused_run_id"))) if run.get("reused_run_id") else None
+        if reused:
+            result["artifacts"] = reused.get("artifacts", [])
+        return result
 
     def claim_next(self) -> dict[str, Any] | None:
         with self._lock:
@@ -139,7 +145,8 @@ class SupabaseConsolidationRepository:
         if not rows:
             return None
         run = rows[0]
-        run["artifacts"] = self._rows(httpx.get(self._url("consolidation_artifacts"), headers=self.headers, params={"run_id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "select": "*"}, timeout=20))
+        artifact_run_id = str(run.get("reused_run_id") or run_id)
+        run["artifacts"] = self._rows(httpx.get(self._url("consolidation_artifacts"), headers=self.headers, params={"run_id": f"eq.{artifact_run_id}", "user_id": f"eq.{user_id}", "select": "*"}, timeout=20))
         return run
 
     def claim_next(self) -> dict[str, Any] | None:

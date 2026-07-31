@@ -146,6 +146,13 @@ class ConsolidationManifest(BaseModel):
     recoding_coverage: dict[str, float] = Field(default_factory=dict)
     issues: list[QualityIssue] = Field(default_factory=list)
     timings_ms: dict[str, int] = Field(default_factory=dict)
+    target_columns: list[str] = Field(default_factory=list)
+    relationship_summary: list[dict[str, Any]] = Field(default_factory=list)
+    null_reasons: list[dict[str, Any]] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    cohort_id_method: str | None = None
+    preview: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    memory_bytes_estimate: int | None = None
 
 
 class ConsolidationPreview(BaseModel):

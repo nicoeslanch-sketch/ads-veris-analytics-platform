@@ -56,3 +56,10 @@ def test_run_requires_matricula_assignment():
     project = client.post("/consolidation/projects", json={"name": "Prueba"}).json()
     response = client.post(f"/consolidation/projects/{project['id']}/runs")
     assert response.status_code == 422
+
+
+def test_memory_run_enqueue_is_idempotent():
+    project = MEMORY_REPOSITORY.create_project("dev-user", {"name": "P", "config": {}, "config_hash": "a" * 64, "engine_version": "x"})
+    first = MEMORY_REPOSITORY.enqueue_run(project, "b" * 64)
+    second = MEMORY_REPOSITORY.enqueue_run(project, "b" * 64)
+    assert first["id"] == second["id"]

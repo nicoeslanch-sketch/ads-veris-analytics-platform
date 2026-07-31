@@ -50,3 +50,25 @@ def test_project_rejects_duplicate_roles():
     source = SourceAssignment(dataset_id=uuid4(), role=SourceRole.MATRICULA)
     with pytest.raises(ValidationError):
         ConsolidationProjectConfig(name="Admisión", sources=[source, source])
+
+
+def test_alias_can_satisfy_project_specific_schema():
+    validation = validate_source_schema(
+        SourceRole.ARCHIVO_B,
+        ["ID_aux", "SEXO", "ANYO_EGRESO", "CODIGO_REGION_D", "RINDIO_PROCESO_ACTUAL", "RBD"],
+        aliases={"RBD": "ID_RBD"},
+    )
+    assert validation.valid is True
+
+
+def test_extra_columns_do_not_prevent_detection():
+    columns = ["ID_aux", "VIA", "CODIGO", "PREFERENCIA", "PTJE_POND", "CODIGO_UNIV", "TIPO_MATRICULA", "EXTRA"]
+    assert detect_source_role(columns) is SourceRole.MATRICULA
+
+
+def test_d_detector_does_not_confuse_generic_id_table():
+    assert detect_source_role(["ID_aux", "ESTADO_PREF"]) is None
+
+
+def test_historical_detector_accepts_real_schema_without_cohort_id():
+    assert detect_source_role(["id_aux", "cohorte", "preferencia2", "ptje_pond"]) is SourceRole.HISTORICA
