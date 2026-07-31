@@ -48,6 +48,8 @@ export interface ConsolidationRun {
     recoding_coverage?: Record<string, number>
     issues?: QualityIssue[]
     timings_ms?: Record<string, number>
+    preview?: Array<Record<string, string>>
+    relationship_summary?: Array<Record<string, string | number>>
   }
   artifacts?: Array<{ kind: string; bytes: number; storage_path: string }>
   error_message?: string
