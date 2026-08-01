@@ -43,6 +43,8 @@ export default defineConfig({
         SUPABASE_URL: '',
         SUPABASE_SERVICE_ROLE_KEY: '',
         SUPABASE_JWT_SECRET: '',
+        CONSOLIDATION_ENABLED: 'true',
+        CONSOLIDATION_ADMIN_ONLY: 'true',
       },
     },
     {
@@ -56,6 +58,8 @@ export default defineConfig({
         VITE_API_BASE_URL: 'http://127.0.0.1:8000',
         VITE_SUPABASE_URL: '',
         VITE_SUPABASE_ANON_KEY: '',
+        VITE_CONSOLIDATION_ENABLED: 'true',
+        VITE_DEV_ADMIN: 'true',
       },
     },
   ],

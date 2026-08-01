@@ -6,6 +6,7 @@ import type {
   ConsolidationRun,
   DatasetInspection,
   DatasetOption,
+  DetectionProposal,
   SourceAssignment,
   ValidationResult,
 } from './types'
@@ -27,6 +28,9 @@ export const getConsolidationStatus = () =>
 
 export const inspectDataset = (datasetId: string) =>
   apiGet<DatasetInspection>(`/consolidation/datasets/${datasetId}/inspect`)
+
+export const detectDatasets = (datasetIds: string[]) =>
+  apiPostJson<DetectionProposal>('/consolidation/detect', { dataset_ids: datasetIds })
 
 export const createProject = (
   name: string,

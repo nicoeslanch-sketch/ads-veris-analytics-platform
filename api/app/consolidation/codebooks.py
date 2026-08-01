@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from openpyxl import load_workbook
@@ -85,6 +86,59 @@ def parse_codebook(
             if len(labels) == 1
         }
         return CodebookResult(mapping, conflicts, sheet_name, code_column, label_column)
+    finally:
+        workbook.close()
+
+
+def parse_inline_codebook(
+    path: Path,
+    *,
+    sheet_name: str,
+    variable: str,
+    variable_column: str = "Variable",
+    detail_column: str = "Detalle",
+) -> CodebookResult:
+    """Lee catálogos escritos debajo de una variable como ``1. Etiqueta``.
+
+    Es el formato real del Libro Matrícula y de varias hojas descriptivas
+    DEMRE. La sección termina al encontrar la siguiente variable; las etiquetas
+    siempre provienen del libro y nunca del código de la aplicación.
+    """
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if sheet_name not in workbook.sheetnames:
+            raise ValueError(f"No existe la hoja declarada '{sheet_name}'.")
+        rows = workbook[sheet_name].iter_rows(values_only=True)
+        header = next(rows, None)
+        if header is None:
+            raise ValueError("El libro de códigos está vacío.")
+        names = [str(value).strip() if value is not None else "" for value in header]
+        variable_index = _find_column(names, variable_column)
+        detail_index = _find_column(names, detail_column)
+        requested = normalize_header(variable)
+        active = False
+        labels_by_code: dict[str, set[str]] = {}
+        pattern = re.compile(r"^\s*([^\s.)-]+)\s*[.)-]\s*(.+?)\s*$")
+        for row in rows:
+            raw_variable = row[variable_index] if variable_index < len(row) else None
+            current = normalize_header(raw_variable)
+            if current:
+                if active and current != requested:
+                    break
+                active = current == requested
+            if not active:
+                continue
+            detail = str(row[detail_index]).strip() if detail_index < len(row) and row[detail_index] is not None else ""
+            match = pattern.match(detail)
+            if match:
+                labels_by_code.setdefault(normalize_code(match.group(1)), set()).add(match.group(2).strip())
+        if not active and not labels_by_code:
+            raise ValueError(f"No se encontró la variable declarada '{variable}'.")
+        conflicts = {code: tuple(sorted(labels)) for code, labels in labels_by_code.items() if len(labels) > 1}
+        mapping = {code: next(iter(labels)) for code, labels in labels_by_code.items() if len(labels) == 1}
+        if not mapping and not conflicts:
+            raise ValueError(f"La variable '{variable}' no contiene códigos legibles.")
+        return CodebookResult(mapping, conflicts, sheet_name, variable_column, detail_column)
     finally:
         workbook.close()
 

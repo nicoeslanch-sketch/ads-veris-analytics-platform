@@ -21,10 +21,9 @@ def validate_annual_contract(
         issues.append(QualityIssue(code="target_schema_mismatch", severity=IssueSeverity.BLOCKING, message="La salida no respeta la plantilla objetivo."))
     if annual["id_aux"].astype("string").str.strip().duplicated().any():
         issues.append(QualityIssue(code="duplicate_id_aux", severity=IssueSeverity.BLOCKING, message="La salida contiene id_aux repetidos.", count=int(annual["id_aux"].duplicated().sum())))
-    if not annual["cohorte"].astype("string").str.strip().eq(str(cohort)).all():
+    cohort_values = pd.to_numeric(annual["cohorte"], errors="coerce")
+    if cohort_values.isna().any() or not cohort_values.eq(cohort).all():
         issues.append(QualityIssue(code="invalid_cohort", severity=IssueSeverity.BLOCKING, message="La cohorte de salida no es uniforme."))
-    if annual["cohorte_id"].astype("string").str.strip().duplicated().any():
-        issues.append(QualityIssue(code="duplicate_cohort_id", severity=IssueSeverity.BLOCKING, message="cohorte_id no es único."))
     return issues
 
 

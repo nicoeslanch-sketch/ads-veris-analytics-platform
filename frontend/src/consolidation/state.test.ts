@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { canActivateResult, consolidationModeVisible, TERMINAL_RUN_STATUSES, upsertSource } from './state'
+import { CONSOLIDATION_STEPS } from './GeneralConsolidationWizard'
 
 describe('consolidation gating and state', () => {
+  it('uses exactly the four user-facing steps', () => {
+    expect(CONSOLIDATION_STEPS).toEqual(['Cargar', 'Revisar', 'Comprobar', 'Obtener resultado'])
+  })
   it('stays hidden unless both flag and admin are true', () => {
     expect(consolidationModeVisible(false, true)).toBe(false)
     expect(consolidationModeVisible(true, false)).toBe(false)

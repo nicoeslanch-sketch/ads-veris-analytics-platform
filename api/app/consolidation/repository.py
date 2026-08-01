@@ -20,6 +20,7 @@ class MemoryConsolidationRepository:
     def __init__(self) -> None:
         self.projects: dict[str, dict[str, Any]] = {}
         self.runs: dict[str, dict[str, Any]] = {}
+        self.events: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
     def create_project(self, user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -63,7 +64,17 @@ class MemoryConsolidationRepository:
         reused = self.runs.get(str(run.get("reused_run_id"))) if run.get("reused_run_id") else None
         if reused:
             result["artifacts"] = reused.get("artifacts", [])
+        result["events"] = [dict(event) for event in self.events if event["run_id"] == run_id]
         return result
+
+    def record_event(self, run_id: str, user_id: str, stage: str, status: str, detail: dict[str, Any]) -> None:
+        with self._lock:
+            self.events.append({
+                "run_id": run_id, "user_id": user_id, "stage": stage, "status": status,
+                "duration_ms": detail.get("duration_ms"), "memory_bytes": detail.get("peak_rss_bytes"),
+                "detail": {"rows_read": detail.get("rows_read", 0), "rows_generated": detail.get("rows_generated", 0)},
+                "created_at": _now(),
+            })
 
     def claim_next(self) -> dict[str, Any] | None:
         with self._lock:
@@ -161,7 +172,19 @@ class SupabaseConsolidationRepository:
         run = rows[0]
         artifact_run_id = str(run.get("reused_run_id") or run_id)
         run["artifacts"] = self._rows(httpx.get(self._url("consolidation_artifacts"), headers=self.headers, params={"run_id": f"eq.{artifact_run_id}", "user_id": f"eq.{user_id}", "select": "*"}, timeout=20))
+        run["events"] = self._rows(httpx.get(self._url("consolidation_run_events"), headers=self.headers, params={"run_id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "select": "stage,status,duration_ms,memory_bytes,detail,created_at", "order": "created_at.asc"}, timeout=20))
         return run
+
+    def record_event(self, run_id: str, user_id: str, stage: str, status: str, detail: dict[str, Any]) -> None:
+        payload = {
+            "run_id": run_id, "user_id": user_id, "stage": stage, "status": status,
+            "row_count": detail.get("rows_generated") or detail.get("rows_read") or None,
+            "duration_ms": detail.get("duration_ms") or None,
+            "memory_bytes": detail.get("peak_rss_bytes") or None,
+            "detail": {"rows_read": detail.get("rows_read", 0), "rows_generated": detail.get("rows_generated", 0)},
+        }
+        response = httpx.post(self._url("consolidation_run_events"), headers=self.headers, json=payload, timeout=20)
+        response.raise_for_status()
 
     def claim_next(self) -> dict[str, Any] | None:
         rows = self._rows(httpx.get(self._url("consolidation_runs"), headers=self.headers, params={"status": "eq.queued", "order": "created_at.asc", "limit": "1", "select": "*"}, timeout=20))

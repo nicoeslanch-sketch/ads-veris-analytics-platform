@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from app.config import Settings, get_settings
+from app.auth import AuthenticatedUser, get_current_user
 from app.main import app
 from app.consolidation.repository import MEMORY_REPOSITORY
 
@@ -19,6 +21,7 @@ def _settings(enabled: bool) -> Settings:
 def setup_function():
     MEMORY_REPOSITORY.projects.clear()
     MEMORY_REPOSITORY.runs.clear()
+    MEMORY_REPOSITORY.events.clear()
 
 
 def teardown_function():
@@ -83,3 +86,25 @@ def test_memory_run_enqueue_is_idempotent():
     first = MEMORY_REPOSITORY.enqueue_run(project, "b" * 64)
     second = MEMORY_REPOSITORY.enqueue_run(project, "b" * 64)
     assert first["id"] == second["id"]
+
+
+def test_non_admin_cannot_open_consolidation():
+    settings = _settings(True).model_copy(update={"dev_auth_bypass": False})
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(id="ordinary-user", email="user@example.test", claims={})
+    response = TestClient(app).post("/consolidation/projects", json={"name": "Prueba"})
+    assert response.status_code == 403
+
+
+def test_detection_rejects_foreign_dataset(monkeypatch):
+    app.dependency_overrides[get_settings] = lambda: _settings(True)
+
+    def reject_foreign(*_args, **_kwargs):
+        raise HTTPException(403, "Una o más fuentes no pertenecen al usuario.")
+
+    monkeypatch.setattr("app.consolidation.router.owned_dataset_metadata", reject_foreign)
+    response = TestClient(app).post(
+        "/consolidation/detect",
+        json={"dataset_ids": ["00000000-0000-0000-0000-000000000001"]},
+    )
+    assert response.status_code == 403

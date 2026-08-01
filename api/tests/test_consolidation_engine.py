@@ -5,8 +5,9 @@ import pandas as pd
 import pytest
 from openpyxl import Workbook
 
-from app.consolidation.codebooks import CodebookResult, parse_codebook, recode_values
+from app.consolidation.codebooks import CodebookResult, parse_codebook, parse_inline_codebook, recode_values
 from app.consolidation.exports import annual_shape, write_pipeline_artifacts
+from app.consolidation.exports import write_historical_consolidated
 from app.consolidation.historical import append_historical, build_cohort_ids
 from app.consolidation.models import ConsolidationStatus, SourceRole
 from app.consolidation.pipeline import run_local_pipeline, stable_hash
@@ -41,7 +42,7 @@ def synthetic_sources(tmp_path: Path) -> dict[SourceRole, Path]:
         "ID_aux": ids, "CODIGO_UNIV": ["11"] * 10,
         "CODIGO": [f"1{i:03}" for i in range(10)], "VIA": ["1"] * 10,
         "PREFERENCIA": ["1"] * 10, "PTJE_POND": ["600"] * 10,
-        "TIPO_MATRICULA": ["REGULAR"] * 10,
+        "TIPO_MATRICULA": ["1"] * 10,
     })
     b = pd.DataFrame({
         "ID_aux": ids, "SEXO": ["1", "2"] * 5, "ANYO_EGRESO": ["2025"] * 10,
@@ -81,6 +82,7 @@ def synthetic_sources(tmp_path: Path) -> dict[SourceRole, Path]:
         SourceRole.ARCHIVO_C: _write_csv(tmp_path / "c.csv", c),
         SourceRole.ARCHIVO_D: _write_csv(tmp_path / "d.csv", pd.DataFrame(d_rows)),
         SourceRole.OFERTA: _write_book(tmp_path / "offer.xlsx", {"in": [list(offer_rows[0]), *[list(row.values()) for row in offer_rows]]}),
+        SourceRole.CODEBOOK_MATRICULA: _write_book(tmp_path / "book_m.xlsx", {"Matrícula": [["Variable", "Detalle"], ["VIA", "Matrícula vía"], [None, "1. Regular"], ["TIPO_MATRICULA", "Tipo"], [None, "1. Postulación regular"]]}),
         SourceRole.CODEBOOK_B: _write_book(tmp_path / "book_b.xlsx", {"Anexo - COD_ENS": [["Código", "Descripción"], ["310", "Media HC"]]}),
         SourceRole.CODEBOOK_C: _write_book(tmp_path / "book_c.xlsx", {"Anexo - COD_ENS": [["Código", "Descripción"], ["310", "Media HC"]]}),
         SourceRole.CODEBOOK_D: _write_book(tmp_path / "book_d.xlsx", {"Anexo -  Estado Preferencia": [["CÓD.", "DESCRIPCIÓN"], ["24", "ESTÁS SELECCIONADA/O PARA ESTA CARRERA"], ["25", "LISTA DE ESPERA"]]}),
@@ -91,7 +93,7 @@ def synthetic_sources(tmp_path: Path) -> dict[SourceRole, Path]:
 def test_ids_and_codes_preserve_leading_zero(synthetic_sources):
     output = run_local_pipeline(synthetic_sources)
     assert output.annual.loc[0, "id_aux"] == "000"
-    assert output.annual.loc[0, "rbd"] == "00"
+    assert output.annual.loc[0, "rbdx"] == "00"
 
 
 def test_pipeline_keeps_grain_and_target(synthetic_sources):
@@ -100,7 +102,8 @@ def test_pipeline_keeps_grain_and_target(synthetic_sources):
     assert tuple(output.annual.columns) == TARGET_COLUMNS
     assert output.annual["id_aux"].nunique() == 10
     assert output.manifest.status is ConsolidationStatus.VALID_WITH_WARNINGS
-    assert 0 <= output.manifest.recoding_coverage["tipo_de_enseñanza"] <= 1
+    assert output.manifest.recoding_coverage["via2"] == 1
+    assert any(row["variable"] == "TIPO_MATRICULA" and row["mapped"] == 10 for row in output.audit_tables["recoding"])
 
 
 def test_missing_b_is_partial_and_keeps_schema(synthetic_sources):
@@ -128,6 +131,12 @@ def test_codebook_unknown_and_conflict(tmp_path):
     values, counts = recode_values(["01", "02", "03", ""], result)
     assert values == ["Uno", None, None, None]
     assert counts == {"mapped": 1, "unmapped": 1, "conflict": 1, "empty": 1}
+
+
+def test_inline_matricula_codebook_uses_real_labels(tmp_path):
+    path = _write_book(tmp_path / "matricula.xlsx", {"Matrícula": [["Variable", "Detalle"], ["VIA", "Vía"], [None, "1. Regular"], [None, "2. BEA"], ["TIPO_MATRICULA", "Tipo"], [None, "1. Postulación regular"]]})
+    result = parse_inline_codebook(path, sheet_name="Matrícula", variable="VIA")
+    assert result.mapping == {"1": "Regular", "2": "BEA"}
 
 
 def test_d_unique_no_match_and_ambiguous():
@@ -192,8 +201,22 @@ def test_historical_existing_cohort_is_not_overwritten():
     assert warnings == ["historical_already_contains_cohort"]
 
 
+def test_historical_export_splits_before_excel_row_limit(tmp_path, monkeypatch):
+    historical_path = _write_book(tmp_path / "historical.xlsx", {"BASE DE DATOS": [
+        list(TARGET_COLUMNS),
+        *[[f"old-{index}", 2025, *([None] * 90)] for index in range(4)],
+    ]})
+    annual = pd.DataFrame([["new", 2026, *([None] * 90)]], columns=TARGET_COLUMNS)
+    monkeypatch.setattr("app.consolidation.exports.EXCEL_MAX_ROWS", 4)
+    output_path, detail = write_historical_consolidated(historical_path, annual, tmp_path / "combined.xlsx")
+    assert output_path is not None
+    workbook = pd.ExcelFile(output_path)
+    assert workbook.sheet_names == ["BASE DE DATOS", "BASE DE DATOS 2"]
+    assert detail == "historical_rows_preserved=4;sheets=2"
+
+
 def test_custom_target_is_validated():
-    custom = ["id_aux", "cohorte", "codigo_carrera", "cohorte_id", "cohorte_id_repetido"]
+    custom = ["id_aux", "cohorte", "CódigoCarrera"]
     assert resolve_target_columns(custom) == tuple(custom)
     with pytest.raises(ValueError, match="duplicadas"):
         resolve_target_columns(["id_aux", "id_aux"])
@@ -254,3 +277,4 @@ def test_local_worker_completes_and_is_idempotent(synthetic_sources, tmp_path):
     assert completed["status"] == "valid_with_warnings"
     assert {item["kind"] for item in completed["artifacts"]} == {"annual", "audit", "manifest"}
     assert len(completed["report"]["resource_metrics"]["artifacts"]["annual"]["logical_sha256"]) == 64
+    assert any(event["stage"] == "read_matricula" and event["status"] == "completed" for event in completed["events"])

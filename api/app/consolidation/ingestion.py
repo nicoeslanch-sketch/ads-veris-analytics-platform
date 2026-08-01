@@ -111,6 +111,65 @@ def tabular_headers(path: Path) -> dict[str, list[str]]:
     raise ValueError("Formato no soportado. Usa CSV o XLSX.")
 
 
+def tabular_structure(path: Path, sample_rows: int = 1000) -> dict[str, object]:
+    """Perfila estructura con una muestra acotada, sin devolver valores de filas."""
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        encoding, delimiter = detect_csv_dialect(path)
+        with path.open("rb") as source:
+            raw = source.read(1_048_576)
+        line_count = max(1, raw.count(b"\n"))
+        average_line_bytes = max(1, len(raw) / line_count)
+        approximate_rows = max(0, int(path.stat().st_size / average_line_bytes) - 1)
+        sample = pd.read_csv(
+            path, sep=delimiter, dtype="string", nrows=max(1, sample_rows),
+            keep_default_na=False, na_values=[], encoding=encoding,
+        )
+        return {
+            "kind": "CSV", "sheets": [{
+                "name": "Datos", "columns": [str(column) for column in sample.columns],
+                "approximate_rows": approximate_rows,
+                "sample_rows": len(sample),
+                "unique_ratio": {
+                    str(column): float(sample[column].astype("string").str.strip().replace("", pd.NA).nunique(dropna=True) / max(1, len(sample)))
+                    for column in sample.columns
+                },
+            }],
+        }
+    if suffix != ".xlsx":
+        raise ValueError("Formato no soportado. Usa CSV o XLSX.")
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheets: list[dict[str, object]] = []
+        for sheet in workbook.worksheets:
+            rows = sheet.iter_rows(values_only=True)
+            header: list[str] = []
+            for row in rows:
+                header = [str(value).strip() if value is not None else "" for value in row]
+                if any(header):
+                    break
+            samples: list[tuple[object, ...]] = []
+            for index, row in enumerate(rows):
+                if index >= sample_rows:
+                    break
+                if any(value is not None and str(value).strip() for value in row):
+                    samples.append(tuple(row[:len(header)]))
+            frame = pd.DataFrame.from_records(samples, columns=header) if header else pd.DataFrame()
+            # max_row is an estimate only; formatted workbooks can report excess rows.
+            approximate_rows = max(len(frame), int(sheet.max_row or 1) - 1)
+            sheets.append({
+                "name": sheet.title, "columns": header,
+                "approximate_rows": approximate_rows, "sample_rows": len(frame),
+                "unique_ratio": {
+                    str(column): float(frame[column].astype("string").str.strip().replace("", pd.NA).nunique(dropna=True) / max(1, len(frame)))
+                    for column in frame.columns if column
+                },
+            })
+        return {"kind": "Excel", "sheets": sheets}
+    finally:
+        workbook.close()
+
+
 def read_tabular_source(
     path: Path,
     *,

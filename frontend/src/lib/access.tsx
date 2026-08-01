@@ -65,7 +65,7 @@ export const EMPTY_TRIAL: TrialState = {
 const DEV_OPEN_ACCESS: AccessInfo = {
   paid_plan: 'basico',
   plan_display: 'Básico',
-  is_admin: false,
+  is_admin: import.meta.env.VITE_DEV_ADMIN === 'true',
   enforcement: false,
   trial: EMPTY_TRIAL,
   capabilities: [

@@ -16,10 +16,11 @@ from ..auth import AuthenticatedUser, get_current_user
 from ..config import Settings, get_settings
 from ..storage import create_export_cache_signed_url
 from ..version import ENGINE_VERSION
-from .ingestion import storage_source_file, tabular_headers
+from .ingestion import storage_source_file, tabular_structure
 from .models import SourceAssignment, SourceRole
 from .repository import repository_for
 from .service import idempotency_key, owned_dataset_metadata, require_consolidation_access
+from .source_detection import build_detection_proposal
 from .target_schema import TARGET_COLUMNS, resolve_target_columns
 
 router = APIRouter(prefix="/consolidation", tags=["consolidation"])
@@ -40,6 +41,10 @@ class CreateProjectRequest(BaseModel):
 
 class SourcesRequest(BaseModel):
     sources: list[SourceAssignment]
+
+
+class DetectRequest(BaseModel):
+    dataset_ids: list[UUID] = Field(min_length=1, max_length=20)
 
 
 class ActivateRequest(BaseModel):
@@ -76,10 +81,10 @@ async def consolidation_status(
 def _inspect_owned_dataset(dataset_id: UUID, user: AuthenticatedUser, settings: Settings) -> dict[str, Any]:
     metadata = owned_dataset_metadata([str(dataset_id)], user.id, settings)[str(dataset_id)]
     with storage_source_file(metadata["storage_path"], user.id, settings) as (path, digest):
-        sheets = tabular_headers(path)
+        structure = tabular_structure(path)
     return {
         "dataset_id": str(dataset_id), "name": metadata["name"], "sha256": digest,
-        "sheets": [{"name": name, "columns": columns} for name, columns in sheets.items()],
+        "kind": structure["kind"], "sheets": structure["sheets"],
     }
 
 
@@ -96,6 +101,36 @@ async def inspect_dataset(
         raise HTTPException(422, str(exc)) from exc
 
 
+def _detect_owned_datasets(dataset_ids: list[UUID], user: AuthenticatedUser, settings: Settings) -> dict[str, Any]:
+    ids = [str(dataset_id) for dataset_id in dataset_ids]
+    metadata = owned_dataset_metadata(ids, user.id, settings)
+    items: list[dict[str, Any]] = []
+    for dataset_id in ids:
+        row = metadata[dataset_id]
+        with storage_source_file(row["storage_path"], user.id, settings) as (path, digest):
+            structure = tabular_structure(path)
+        items.append({
+            "dataset_id": dataset_id, "name": row["name"], "sha256": digest,
+            "kind": structure["kind"], "sheets": structure["sheets"],
+        })
+    return build_detection_proposal(items)
+
+
+@router.post("/detect")
+async def detect_datasets(
+    body: DetectRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    _access(user, settings)
+    if len(body.dataset_ids) != len(set(body.dataset_ids)):
+        raise HTTPException(422, "Cada archivo debe seleccionarse una sola vez.")
+    try:
+        return await run_in_threadpool(_detect_owned_datasets, body.dataset_ids, user, settings)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/projects")
 async def create_project(
     body: CreateProjectRequest,
@@ -106,7 +141,7 @@ async def create_project(
     config = body.model_dump()
     if body.template == "demre_2026":
         config["target_columns"] = list(resolve_target_columns(body.target_columns))
-        config["mapping_version"] = "demre-2026-v1"
+        config["mapping_version"] = "demre-2026-historico-real-v2"
     else:
         if body.target_columns:
             raise HTTPException(422, "El modo general construye las columnas desde los archivos; no usa una plantilla DEMRE.")

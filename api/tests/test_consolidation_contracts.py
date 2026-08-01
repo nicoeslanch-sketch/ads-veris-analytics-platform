@@ -40,10 +40,11 @@ def test_schema_validation_reports_names_not_declared_counts():
 def test_target_has_exact_92_columns_and_order():
     assert len(TARGET_COLUMNS) == 92
     assert TARGET_COLUMNS[:5] == (
-        "id_aux", "cohorte", "sexo", "tipo_de_enseñanza", "rama_educacional"
+        "id_aux", "cohorte", "nac_rec", "nac", "region_domicilio"
     )
-    assert TARGET_COLUMNS[-1] == "RETENIDO_JULIO_PLATAFORMA"
-    assert TARGET_COLUMNS[82] == "IPO_TIPO CARRERA"
+    assert TARGET_COLUMNS[-1] == "Edad_Q4"
+    assert TARGET_COLUMNS[83] == "cuartiles_Nem"
+    assert "RETENIDO_SIES" not in TARGET_COLUMNS
 
 
 def test_project_rejects_duplicate_roles():
@@ -61,6 +62,19 @@ def test_alias_can_satisfy_project_specific_schema():
     assert validation.valid is True
 
 
+def test_real_b_structure_matches_its_declared_book_contract():
+    columns = [
+        "ID_aux", "ANYO_PROCESO", "FECHA_NACIMIENTO", "RBD", "COD_ENS", "REGIMEN",
+        "RAMA_EDUCACIONAL", "GRUPO_DEPENDENCIA", "ANYO_EGRESO", "CODIGO_REGION",
+        "CODIGO_PROVINCIA", "CODIGO_COMUNA", "CODIGO_REGION_D", "CODIGO_COMUNA_D",
+        "SITUACION_EGRESO", "BEA", "PACE", "PAIS_NACIMIENTO", "SEXO",
+        "INGRESO_PERCAPITA_GRUPO_FA", "RINDIO_PROCESO_ANTERIOR", "RINDIO_PROCESO_ACTUAL",
+    ]
+    validation = validate_source_schema(SourceRole.ARCHIVO_B, columns, aliases={"ID_RBD": "RBD"})
+    assert validation.valid is True
+    assert validation.warnings == []
+
+
 def test_extra_columns_do_not_prevent_detection():
     columns = ["ID_aux", "VIA", "CODIGO", "PREFERENCIA", "PTJE_POND", "CODIGO_UNIV", "TIPO_MATRICULA", "EXTRA"]
     assert detect_source_role(columns) is SourceRole.MATRICULA
@@ -72,3 +86,8 @@ def test_d_detector_does_not_confuse_generic_id_table():
 
 def test_historical_detector_accepts_real_schema_without_cohort_id():
     assert detect_source_role(["id_aux", "cohorte", "preferencia2", "ptje_pond"]) is SourceRole.HISTORICA
+
+
+def test_historical_detector_wins_when_it_also_contains_c_scores():
+    columns = ["id_aux", "cohorte", "preferencia2", "ptje_pond", "PROMEDIO_NOTAS", "PTJE_NEM", "PTJE_RANKING", "CLEC_REG_ACTUAL", "MATE1_REG_ACTUAL", "CIEN_REG_ACTUAL"]
+    assert detect_source_role(columns) is SourceRole.HISTORICA

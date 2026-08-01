@@ -14,6 +14,8 @@ from .ingestion import read_tabular_source
 from .pipeline import PipelineOutput
 from .resources import ResourceMonitor
 
+EXCEL_MAX_ROWS = 1_048_576
+
 
 def _safe_cell(value: Any) -> Any:
     if isinstance(value, (dict, list, tuple, set)):
@@ -172,22 +174,36 @@ def write_historical_consolidated(
             return None, "historical_schema_incompatible"
         cohort_index = header.index("cohorte") if "cohorte" in header else -1
         workbook = Workbook(write_only=True)
+        sheet_number = 1
         target = workbook.create_sheet(sheet_name)
         target.append(header)
+        rows_in_sheet = 1
+
+        def append_row(values: list[Any]) -> None:
+            nonlocal target, sheet_number, rows_in_sheet
+            if rows_in_sheet >= EXCEL_MAX_ROWS:
+                sheet_number += 1
+                suffix = f" {sheet_number}"
+                target = workbook.create_sheet(f"{sheet_name[:31 - len(suffix)]}{suffix}")
+                target.append(header)
+                rows_in_sheet = 1
+            target.append(values)
+            rows_in_sheet += 1
+
         historical_count = 0
         for row in rows:
             if not row or row[0] in (None, ""):
                 continue
             if cohort_index >= 0 and str(row[cohort_index]).strip() == str(cohort):
                 return None, "historical_already_contains_cohort"
-            target.append([_safe_cell(value) for value in row])
+            append_row([_safe_cell(value) for value in row])
             historical_count += 1
         for row in annual.itertuples(index=False, name=None):
-            target.append([_safe_cell(value) for value in row])
+            append_row([_safe_cell(value) for value in row])
         if output_path.exists():
             raise FileExistsError(output_path.name)
         workbook.save(output_path)
-        return output_path, f"historical_rows_preserved={historical_count}"
+        return output_path, f"historical_rows_preserved={historical_count};sheets={sheet_number}"
     finally:
         source.close()
 
