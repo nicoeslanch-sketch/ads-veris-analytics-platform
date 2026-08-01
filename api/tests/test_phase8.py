@@ -300,6 +300,8 @@ def test_parse_number_con_moneda_y_porcentaje():
     assert parse_number("€200") == 200
     assert parse_number("12%") == 12
     assert parse_number("12,5%") == 12.5
+    assert parse_number("139 un") == 139
+    assert parse_number("42 unidades") == 42
 
 
 def test_parse_number_negativo_contable():

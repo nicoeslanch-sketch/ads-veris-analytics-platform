@@ -333,7 +333,9 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
     {
       label: 'Ventas netas observadas',
       value: money(result.ventas_observadas),
-      detail: analysis.alcance.documentos_repetidos > 0
+      detail: (result.devoluciones_aceptadas ?? 0) > 0
+        ? `${money(result.ventas_brutas)} brutas − ${money(result.devoluciones_aceptadas)} en devoluciones aceptadas`
+        : analysis.alcance.documentos_repetidos > 0
         ? `${formatNumber(analysis.alcance.documentos_repetidos)} línea(s) repetida(s) señaladas, sin alterar el total`
         : `${formatNumber(analysis.alcance.filas_indicadores)} filas incluidas`,
       icon: CircleDollarSign,

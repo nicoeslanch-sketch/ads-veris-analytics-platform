@@ -201,7 +201,19 @@ def _text_key(value: Any) -> str:
     if raw in MISSING_TOKENS:
         return ""
     text = unicodedata.normalize("NFKD", raw)
-    return "".join(char for char in text if not unicodedata.combining(char))
+    normalized = "".join(char for char in text if not unicodedata.combining(char))
+    # Claves operacionales suelen mezclar relleno de ceros entre hojas
+    # (SUC-1/SUC-01, VEN-7/VEN-007). Para relacionar se compara el sufijo
+    # numerico por su valor, sin modificar el dato que se muestra o exporta.
+    code = re.fullmatch(r"([a-z][a-z0-9 ._/-]*?[-_/ ]?)(0*\d+)", normalized)
+    if code:
+        normalized = f"{code.group(1)}{int(code.group(2))}"
+    # Los periodos mensuales equivalentes tambien son claves: 2025/03 y
+    # 2025-03 deben relacionarse sin convertir otras fechas arbitrariamente.
+    period = re.fullmatch(r"(\d{4})[-/](\d{1,2})", normalized)
+    if period and 1 <= int(period.group(2)) <= 12:
+        normalized = f"{period.group(1)}-{int(period.group(2)):02d}"
+    return normalized
 
 
 def _key_series(frame: pd.DataFrame, keys: list[str]) -> pd.Series:
@@ -621,11 +633,28 @@ def _canonical_header(name: str) -> str:
     ve el usuario se conservan tal cual los escribió.
     """
     text = strip_accents_lower(str(name)).replace("%", " pct ").replace("_", " ")
-    text = re.sub(r"\bporcentaje\b", "pct", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    if text in {"observacion", "observaciones"}:
-        return "observacion"
-    return text
+    tokens = re.findall(r"[a-z0-9]+", text)
+    aliases = {
+        "cant": "cantidad",
+        "dcto": "descuento",
+        "dto": "descuento",
+        "unit": "unitario",
+        "prov": "proveedor",
+        "suc": "sucursal",
+        "min": "minimo",
+        "obs": "observacion",
+        "observaciones": "observacion",
+        "porcentaje": "pct",
+    }
+    tokens = [aliases.get(token, token) for token in tokens]
+    # Cod/ID/Nro describen el formato de la clave, no su entidad. Se eliminan
+    # solo al inicio y cuando queda otro token, evitando vaciar una columna ID.
+    if len(tokens) > 1 and tokens[0] in {
+        "cod", "codigo", "id", "nro", "n", "num", "numero",
+    }:
+        tokens = tokens[1:]
+    tokens = [token for token in tokens if token not in {"de", "del", "la", "el"}]
+    return " ".join(tokens)
 
 
 def _alignment_renames(frame: pd.DataFrame) -> dict[str, str]:
@@ -781,8 +810,10 @@ def join_related_frames(
     # Las claves ausentes se conservan en la maestra y en su auditoría, pero no
     # pueden participar en el índice del join. Si se dejaran como texto literal
     # ("None", "null", etc.), pandas las trataría como duplicados coincidentes.
-    right_joinable = _key_series(right, right_keys).notna()
-    right_subset = right.loc[right_joinable, right_keys + enrich_columns].copy()
+    left_join_key = _key_series(left, left_keys)
+    right_join_key = _key_series(right, right_keys)
+    right_joinable = right_join_key.notna()
+    right_subset = right.loc[right_joinable, enrich_columns].copy()
     rename: dict[str, str] = {}
     for column in enrich_columns:
         if column in left.columns:
@@ -803,23 +834,20 @@ def join_related_frames(
             _numeric_values(right_subset, right_cost_column)
         )
         right_subset[right_cost_column] = sanitized_cost
+    join_column = "__adsveris_join_key"
+    while join_column in left.columns or join_column in right_subset.columns:
+        join_column = f"_{join_column}"
+    left[join_column] = left_join_key
+    right_subset[join_column] = right_join_key.loc[right_joinable]
     merged = left.merge(
         right_subset,
         how="left",
-        left_on=left_keys,
-        right_on=right_keys,
+        on=join_column,
         validate="many_to_one",
         sort=False,
-    )
+    ).drop(columns=[join_column])
     if left.attrs.get(NUMERIC_CANONICAL_ATTR):
         merged.attrs[NUMERIC_CANONICAL_ATTR] = True
-    redundant_right_keys = [
-        right_key
-        for left_key, right_key in zip(left_keys, right_keys, strict=True)
-        if right_key != left_key and right_key in merged.columns
-    ]
-    if redundant_right_keys:
-        merged = merged.drop(columns=redundant_right_keys)
     derived_cost: dict[str, Any] | None = None
     quantity_column = left_mapping.get("cantidad")
     amount_column = left_mapping.get("monto")

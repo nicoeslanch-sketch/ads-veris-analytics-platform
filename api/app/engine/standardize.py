@@ -82,6 +82,9 @@ def is_percentage_column(column: str) -> bool:
 _CURRENCY_TOKEN_RE = re.compile(r"(?i)(us\$|s/\.?|clp|usd|eur|ars|pen|cop|mxn|uf|[$€£])")
 _BARE_NUMBER_RE = re.compile(r"^-?(?:[\d.,]+|(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+)$")
 _SCIENTIFIC_NUMBER_RE = re.compile(r"^-?(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+$")
+_NUMBER_UNIT_SUFFIX_RE = re.compile(
+    r"(?i)\s*(?:un|ud|uds|unidad|unidades)\.?\s*$"
+)
 
 
 def _strip_number_decorations(value: str) -> tuple[str, bool]:
@@ -93,6 +96,10 @@ def _strip_number_decorations(value: str) -> tuple[str, bool]:
         negative = True
         text = text[1:-1].strip()
     text = _CURRENCY_TOKEN_RE.sub("", text)
+    # Inventarios reales suelen guardar cantidades como "139 un". Solo se
+    # quitan unidades inequívocas al final; textos como "caja 12" siguen sin
+    # convertirse en números.
+    text = _NUMBER_UNIT_SUFFIX_RE.sub("", text)
     return text.replace("%", "").replace(" ", "").strip(), negative
 
 
@@ -1061,6 +1068,121 @@ def _normalize_text_column(
     }, fuzzy_examples, mojibake_audit, suggestions
 
 
+def _repair_shifted_semantic_columns(frame: pd.DataFrame) -> list[dict[str, str]]:
+    """Realinea una permutación inequívoca entre porcentaje, mínimo y booleano.
+
+    Algunos XLSX llegan con los últimos valores de la fila corridos respecto de
+    sus encabezados. Solo se corrige cuando tres columnas semánticas distintas
+    forman una permutación perfecta con al menos 90% de evidencia por perfil.
+    Si la evidencia no es única, no se modifica nada.
+    """
+
+    def values(series: pd.Series) -> list[str]:
+        return [
+            str(value).strip()
+            for value in series.dropna()
+            if str(value).strip() and not is_missing(str(value))
+        ]
+
+    def boolean_score(series: pd.Series) -> float:
+        sample = values(series)
+        if not sample:
+            return 0.0
+        matches = sum(
+            strip_accents_lower(value).strip() in _BOOLEAN_EQUIVALENCES
+            for value in sample
+        )
+        return matches / len(sample)
+
+    def percentage_score(series: pd.Series) -> float:
+        sample = values(series)
+        if not sample:
+            return 0.0
+        matches = 0
+        for value in sample:
+            number = parse_number(value)
+            decimal_fraction = bool(re.fullmatch(r"-?0[.,]\d+", value))
+            if number is not None and (
+                "%" in value or decimal_fraction or abs(number) <= 1
+            ):
+                matches += 1
+        return matches / len(sample)
+
+    def count_score(series: pd.Series) -> float:
+        sample = values(series)
+        if not sample:
+            return 0.0
+        matches = 0
+        for value in sample:
+            number = parse_number(value)
+            if (
+                number is not None
+                and number >= 0
+                and float(number).is_integer()
+                and "%" not in value
+            ):
+                matches += 1
+        return matches / len(sample)
+
+    boolean_columns = [
+        str(column) for column in frame.columns if _BOOLEAN_HEADER_RE.search(str(column))
+    ]
+    percentage_columns = [
+        str(column) for column in frame.columns if is_percentage_column(str(column))
+    ]
+    minimum_columns = [
+        str(column)
+        for column in frame.columns
+        if "minimo" in strip_accents_lower(str(column)).replace("_", " ")
+    ]
+    if not (
+        len(boolean_columns) == len(percentage_columns) == len(minimum_columns) == 1
+    ):
+        return []
+
+    targets = {
+        "booleano": boolean_columns[0],
+        "porcentaje": percentage_columns[0],
+        "minimo": minimum_columns[0],
+    }
+    scorers = {
+        "booleano": boolean_score,
+        "porcentaje": percentage_score,
+        "minimo": count_score,
+    }
+    source_for_target: dict[str, str] = {}
+    for profile, scorer in scorers.items():
+        scores = sorted(
+            ((scorer(frame[column]), column) for column in targets.values()),
+            reverse=True,
+        )
+        if scores[0][0] < 0.9 or (len(scores) > 1 and scores[0][0] == scores[1][0]):
+            return []
+        source_for_target[profile] = scores[0][1]
+    if len(set(source_for_target.values())) != 3:
+        return []
+    if all(source_for_target[profile] == target for profile, target in targets.items()):
+        return []
+    if any(
+        scorers[profile](frame[target]) >= 0.9
+        for profile, target in targets.items()
+    ):
+        # Una columna ya coherente no se desplaza para arreglar las demás.
+        return []
+
+    originals = {column: frame[column].copy() for column in targets.values()}
+    for profile, target in targets.items():
+        frame[target] = originals[source_for_target[profile]]
+    return [
+        {
+            "columna": target,
+            "valores_desde": source_for_target[profile],
+            "perfil": profile,
+        }
+        for profile, target in targets.items()
+    ]
+
+
 # ── Pipeline de estandarización ──────────────────────────────────────────────
 
 
@@ -1075,6 +1197,7 @@ def standardize_dataframe(
     source_attrs = dict(result.attrs)
     result.attrs = {}
     renamed_headers = normalize_headers(result)
+    semantic_repairs = _repair_shifted_semantic_columns(result)
     roles = resolve_mapping(list(result.columns), mapping)
     roles_by_col = {column: role for role, column in roles.items()}
 
@@ -1087,6 +1210,11 @@ def standardize_dataframe(
     fuzzy_examples: list[list[str]] = []
     fuzzy_suggestions: list[dict] = []
     date_avisos: list[str] = []
+    if semantic_repairs:
+        date_avisos.append(
+            "Se realinearon columnas desplazadas con evidencia inequívoca de "
+            "porcentaje, mínimo y booleano; la corrección quedó registrada."
+        )
     mojibake_audit: list[dict] = []
     text_changes = date_changes = number_changes = 0
     text_detail = {
@@ -1298,8 +1426,10 @@ def standardize_dataframe(
         "fusiones_texto": {"total": fuzzy_total, "ejemplos": fuzzy_examples},
         "sugerencias_fusion": fuzzy_suggestions,
         "mojibake_auditoria": mojibake_audit,
+        "correcciones_semanticas_columnas": semantic_repairs,
         "cambios": {
             "encabezados_normalizados": renamed_headers,
+            "columnas_semanticas_realineadas": len(semantic_repairs),
             "textos_normalizados": text_changes,
             "fechas_estandarizadas": date_changes,
             "numeros_estandarizados": number_changes,

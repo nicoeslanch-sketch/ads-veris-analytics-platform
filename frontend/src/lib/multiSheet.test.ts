@@ -418,6 +418,42 @@ describe('estado multihoja', () => {
     )).toEqual(['Ventas_2025_S1', 'Ventas_2025_S2'])
   })
 
+  it('reconoce seis periodos retail con prefijos y abreviaciones equivalentes', () => {
+    const first = {
+      preview: { columnas: ['FECHA', 'Cod Sucursal', 'Cod Vendedor', 'Cod Cliente', 'Cod Producto', 'cantidad', 'Precio Unit.', 'Dcto %', 'MONTO NETO'] },
+      column_types: {
+        FECHA: 'fecha', 'Cod Sucursal': 'texto', 'Cod Vendedor': 'texto',
+        'Cod Cliente': 'texto', 'Cod Producto': 'texto', cantidad: 'numero',
+        'Precio Unit.': 'numero', 'Dcto %': 'numero', 'MONTO NETO': 'numero',
+      },
+      mapeo: {
+        fecha: 'FECHA', sucursal: 'Cod Sucursal', vendedor: 'Cod Vendedor',
+        cliente: 'Cod Cliente', producto: 'Cod Producto', cantidad: 'cantidad',
+        monto: 'MONTO NETO',
+      },
+      moneda: 'CLP',
+    }
+    const alternate = {
+      preview: { columnas: ['Fecha', 'ID_SUCURSAL', 'Id Vendedor', 'ID CLIENTE', 'Id_Producto', 'CANTIDAD', 'precio_unitario', 'descuento_pct', 'Monto_Neto'] },
+      column_types: {
+        Fecha: 'fecha', ID_SUCURSAL: 'texto', 'Id Vendedor': 'texto',
+        'ID CLIENTE': 'texto', Id_Producto: 'texto', CANTIDAD: 'numero',
+        precio_unitario: 'numero', descuento_pct: 'numero', Monto_Neto: 'numero',
+      },
+      mapeo: {
+        fecha: 'Fecha', sucursal: 'ID_SUCURSAL', vendedor: 'Id Vendedor',
+        cliente: 'ID CLIENTE', producto: 'Id_Producto', cantidad: 'CANTIDAD',
+        monto: 'Monto_Neto',
+      },
+      moneda: 'CLP',
+    }
+    const names = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6']
+    expect(compatibleAppendSheets(
+      names,
+      Object.fromEntries(names.map((name, index) => [name, index === 0 ? first : alternate])),
+    )).toEqual(names)
+  })
+
   it('sigue separando hojas cuyos roles tienen tipos distintos', () => {
     const conMonto = {
       preview: { columnas: ['Fecha', 'Monto'] },

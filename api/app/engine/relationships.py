@@ -31,6 +31,7 @@ from .metrics import (
 from .multi_sheet import (
     MAX_RELATION_KEYS,
     _candidate_pairs,
+    append_compatible_frames,
     is_unit_cost_column,
     join_related_frames,
     relation_stats,
@@ -194,6 +195,12 @@ def _is_sales_transaction(
         "cuotas",
         "uf",
         "items",
+        "devolucion",
+        "devoluciones",
+        "retorno",
+        "retornos",
+        "refund",
+        "refunds",
     }
     if sheet_tokens & non_sales_tokens:
         return False
@@ -289,11 +296,15 @@ def _consolidated_sales_relationships(
     if len(sales_names) < 2:
         return []
 
-    combined = pd.concat(
-        [frames[name].copy() for name in sales_names],
-        ignore_index=True,
-        sort=False,
-    )
+    try:
+        combined, combined_mapping, _ = append_compatible_frames(
+            {name: frames[name] for name in sales_names},
+            resolved,
+        )
+    except ValueError:
+        # No se inventa una consolidacion cuando las tablas de venta tienen
+        # granos o esquemas realmente incompatibles.
+        return []
     consolidated: list[dict[str, Any]] = []
     supported_right_kinds = {
         "costos",
@@ -311,10 +322,6 @@ def _consolidated_sales_relationships(
         right_mapping = resolved[right_name]
         if right_kind not in supported_right_kinds:
             continue
-        combined_mapping = resolve_mapping(
-            [str(column) for column in combined.columns],
-            resolved[sales_names[0]],
-        )
         if right_kind == "historial_costos":
             left_key = (
                 find_column(combined.columns, "sku", "producto")
