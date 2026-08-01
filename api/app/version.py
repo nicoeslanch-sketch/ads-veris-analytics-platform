@@ -11,9 +11,9 @@ Actualizar ENGINE_VERSION en cada release que cambie resultados del motor
 
 import os
 
-ENGINE_VERSION = "0.25.1"
+ENGINE_VERSION = "0.26.0"
 SERVICE_MODEL_VERSION = 1
-LATEST_MIGRATION = "0022"
+LATEST_MIGRATION = "0023"
 
 
 def commit_sha() -> str:

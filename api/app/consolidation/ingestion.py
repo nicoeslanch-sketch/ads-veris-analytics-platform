@@ -82,6 +82,109 @@ def csv_columns(path: Path, delimiter: str = ";") -> list[str]:
         return [str(value).strip() for value in next(csv.reader(source, delimiter=delimiter))]
 
 
+def detect_csv_dialect(path: Path) -> tuple[str, str]:
+    """Detecta encoding y separador sin depender del nombre del archivo."""
+    raw = path.read_bytes()[:65_536]
+    encoding = "utf-8-sig"
+    try:
+        sample = raw.decode(encoding)
+    except UnicodeDecodeError:
+        encoding = "latin-1"
+        sample = raw.decode(encoding)
+    try:
+        delimiter = csv.Sniffer().sniff(sample, delimiters=";,\t|").delimiter
+    except csv.Error:
+        delimiter = ";"
+    return encoding, delimiter
+
+
+def tabular_headers(path: Path) -> dict[str, list[str]]:
+    """Devuelve hojas y columnas para configurar una fuente genérica."""
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        encoding, delimiter = detect_csv_dialect(path)
+        with path.open("r", encoding=encoding, newline="") as source:
+            header = [str(value).strip() for value in next(csv.reader(source, delimiter=delimiter))]
+        return {"Datos": header}
+    if suffix == ".xlsx":
+        return workbook_headers(path)
+    raise ValueError("Formato no soportado. Usa CSV o XLSX.")
+
+
+def read_tabular_source(
+    path: Path,
+    *,
+    sheet_name: str | None = None,
+    usecols: Sequence[str] | None = None,
+    chunk_rows: int | None = None,
+    checkpoint: Callable[[], None] | None = None,
+    metrics: dict[str, int] | None = None,
+) -> pd.DataFrame:
+    """Lee una tabla genérica conservando los valores como texto."""
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        encoding, delimiter = detect_csv_dialect(path)
+        rows = max(1, chunk_rows or get_settings().consolidation_csv_chunk_rows)
+        chunks: list[pd.DataFrame] = []
+        for chunk in pd.read_csv(
+            path,
+            sep=delimiter,
+            usecols=list(usecols) if usecols else None,
+            dtype="string",
+            chunksize=rows,
+            keep_default_na=False,
+            na_values=[],
+            encoding=encoding,
+        ):
+            if checkpoint:
+                checkpoint()
+            chunks.append(chunk)
+        if metrics is not None:
+            metrics.update({"rows_read": sum(len(chunk) for chunk in chunks), "chunks": len(chunks)})
+        if not chunks:
+            return pd.DataFrame(columns=list(usecols or []), dtype="string")
+        return pd.concat(chunks, ignore_index=True, copy=False).astype("string")
+
+    if suffix != ".xlsx":
+        raise ValueError("Formato no soportado. Usa CSV o XLSX.")
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        selected_sheet = sheet_name or workbook.sheetnames[0]
+        if selected_sheet not in workbook.sheetnames:
+            raise ValueError(f"No existe la hoja '{selected_sheet}'.")
+        rows_iter = workbook[selected_sheet].iter_rows(values_only=True)
+        header: list[str] | None = None
+        for row in rows_iter:
+            candidate = [str(value).strip() if value is not None else "" for value in row]
+            if any(candidate):
+                header = candidate
+                break
+        if header is None:
+            return pd.DataFrame(dtype="string")
+        selected = list(usecols) if usecols else list(header)
+        missing = [column for column in selected if column not in header]
+        if missing:
+            raise ValueError(f"Faltan columnas en '{selected_sheet}': {', '.join(missing)}")
+        indexes = [header.index(column) for column in selected]
+        records: list[tuple[object, ...]] = []
+        rows_read = chunks = 0
+        batch = max(1, chunk_rows or get_settings().consolidation_chunk_size)
+        for row in rows_iter:
+            rows_read += 1
+            if (rows_read - 1) % batch == 0:
+                chunks += 1
+                if checkpoint:
+                    checkpoint()
+            values = tuple(row[index] if index < len(row) else None for index in indexes)
+            if any(value is not None and str(value).strip() for value in values):
+                records.append(values)
+        if metrics is not None:
+            metrics.update({"rows_read": rows_read, "chunks": chunks})
+        return pd.DataFrame.from_records(records, columns=selected).astype("string")
+    finally:
+        workbook.close()
+
+
 def iter_csv_chunks(
     path: Path,
     usecols: Sequence[str] | None = None,

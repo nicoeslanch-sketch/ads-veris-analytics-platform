@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 
+from .ingestion import read_tabular_source
 from .pipeline import PipelineOutput
 from .resources import ResourceMonitor
 
@@ -69,8 +70,9 @@ def write_pipeline_artifacts(
     chunk_size: int = 100_000,
 ) -> dict[str, Path]:
     directory.mkdir(parents=True, exist_ok=True)
-    annual_path = directory / "DEMRE_2026_COMPATIBLE.xlsx"
-    audit_path = directory / "AUDITORIA_CONSOLIDACION_DEMRE_2026.xlsx"
+    generic = output.manifest.mapping_version.startswith("general")
+    annual_path = directory / ("BASE_CONSOLIDADA.xlsx" if generic else "DEMRE_2026_COMPATIBLE.xlsx")
+    audit_path = directory / ("AUDITORIA_CONSOLIDACION.xlsx" if generic else "AUDITORIA_CONSOLIDACION_DEMRE_2026.xlsx")
     manifest_path = directory / "manifest.json"
     if monitor:
         with monitor.stage("export_annual") as stage:
@@ -188,3 +190,19 @@ def write_historical_consolidated(
         return output_path, f"historical_rows_preserved={historical_count}"
     finally:
         source.close()
+
+
+def write_historical_generic(
+    historical_path: Path,
+    annual: pd.DataFrame,
+    output_path: Path,
+    *,
+    sheet_name: str | None = None,
+) -> tuple[Path | None, str | None]:
+    """Apila un histórico CSV/XLSX solo cuando el esquema coincide exactamente."""
+    historical = read_tabular_source(historical_path, sheet_name=sheet_name)
+    if list(historical.columns) != list(annual.columns):
+        return None, "historical_schema_incompatible"
+    combined = pd.concat([historical, annual], ignore_index=True, copy=False)
+    write_dataframe(output_path, combined, sheet_name="BASE DE DATOS")
+    return output_path, f"historical_rows_preserved={len(historical)}"

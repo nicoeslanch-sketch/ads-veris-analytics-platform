@@ -1,5 +1,18 @@
 # Changelog — ADS Veris Plataforma de Análisis de Datos
 
+## [0.26.0] — 2026-08-01 — Consolidación general para Excel y CSV
+
+- Agrega un modo general sin nombres ni reglas educativas: archivo principal,
+  hasta cuatro fuentes complementarias, dos tablas de equivalencias y un
+  histórico opcional.
+- Cada unión exige claves elegidas por el usuario, conserva exactamente las
+  filas del archivo principal y excluye claves ambiguas antes de enriquecer.
+- Mantiene DEMRE 2026 como plantilla especializada opcional y retrocompatible.
+- La pantalla inicial explica qué crea el proyecto, qué significa combinar
+  periodos y comprueba la disponibilidad real del backend antes de habilitar el
+  botón.
+- La migración `0023` agrega roles genéricos sin eliminar los existentes.
+
 ## [0.25.1] — 2026-08-01 — Cierre operativo de consolidación
 
 - Agrega un dominio aislado, protegido por JWT, ownership, administrador y dos

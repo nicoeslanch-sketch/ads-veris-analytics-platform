@@ -902,7 +902,7 @@ export default function Estandarizacion() {
       {canConsolidate ? (
         <div className="mb-6 grid gap-2 rounded-xl border border-navy/10 bg-white p-2 sm:grid-cols-2" role="group" aria-label="Modo de estandarización">
           <button type="button" aria-pressed={mode === 'classic'} onClick={() => setMode('classic')} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold ${mode === 'classic' ? 'bg-navy text-white' : 'text-navy hover:bg-navy/5'}`}>Estandarizar archivos<span className="mt-0.5 block text-xs font-normal opacity-75">Flujo clásico de preparación y limpieza.</span></button>
-          <button type="button" aria-pressed={mode === 'consolidation'} onClick={() => setMode('consolidation')} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold ${mode === 'consolidation' ? 'bg-teal text-white' : 'text-navy hover:bg-teal/5'}`}>Consolidar y recodificar bases<span className="mt-0.5 block text-xs font-normal opacity-75">Une fuentes relacionadas con auditoría.</span></button>
+          <button type="button" aria-pressed={mode === 'consolidation'} onClick={() => setMode('consolidation')} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold ${mode === 'consolidation' ? 'bg-teal text-white' : 'text-navy hover:bg-teal/5'}`}>Consolidar y recodificar archivos<span className="mt-0.5 block text-xs font-normal opacity-75">Une Excel o CSV mediante las claves que tú elijas.</span></button>
         </div>
       ) : null}
       {mode === 'consolidation' && canConsolidate ? (

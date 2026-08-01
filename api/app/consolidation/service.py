@@ -55,5 +55,18 @@ def owned_dataset_metadata(dataset_ids: list[str], user_id: str, settings: Setti
 
 
 def idempotency_key(project_id: str, config_hash: str, sources: list[dict[str, Any]]) -> str:
-    payload = {"project_id": project_id, "config_hash": config_hash, "datasets": sorted((source["role"], str(source["dataset_id"])) for source in sources)}
+    normalized_sources = [
+        {
+            "role": source["role"],
+            "dataset_id": str(source["dataset_id"]),
+            "selected_sheet": source.get("selected_sheet"),
+            "configuration": source.get("profile", {}).get("configuration", {}),
+        }
+        for source in sources
+    ]
+    payload = {
+        "project_id": project_id,
+        "config_hash": config_hash,
+        "sources": sorted(normalized_sources, key=lambda source: (source["role"], source["dataset_id"])),
+    }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

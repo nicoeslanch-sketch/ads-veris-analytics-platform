@@ -23,7 +23,7 @@ CHANGELOG [0.20.0].)
 
 1. CI verde (pytest + Vitest + build + job de seguridad).
 2. Migraciones nuevas ejecutadas en STAGING y smoke test ahí. La secuencia
-   actual termina con `0022_consolidation_domain.sql` después de `0021`.
+   actual termina con `0023_general_consolidation.sql`, después de `0022`.
 3. Migraciones en producción (Supabase → SQL Editor, en orden).
 4. Deploy backend (Render) → `GET /version` coincide con el SHA.
 5. Deploy frontend (Vercel).

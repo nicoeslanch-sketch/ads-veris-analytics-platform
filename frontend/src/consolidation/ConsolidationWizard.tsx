@@ -15,6 +15,7 @@ import {
 import { useConsolidation } from './ConsolidationContext'
 import type { DatasetOption, SourceRole } from './types'
 import { canActivateResult, TERMINAL_RUN_STATUSES, upsertSource } from './state'
+import GeneralConsolidationWizard from './GeneralConsolidationWizard'
 
 const STEPS = ['Proyecto', 'Fuentes', 'Validación', 'Relaciones', 'Recodificación', 'Previsualización', 'Control de calidad', 'Exportación']
 const ROLES: Array<{ role: SourceRole; label: string; required: boolean }> = [
@@ -37,7 +38,7 @@ function statusBadge(status: string) {
   return <Badge tone="teal">{status}</Badge>
 }
 
-export default function ConsolidationWizard() {
+export function DemreConsolidationWizard({ onUseGeneral }: { onUseGeneral?: () => void }) {
   const { project, setProject, sources, setSources, validation, setValidation, run, setRun } = useConsolidation()
   const [step, setStep] = useState(0)
   const [name, setName] = useState('Consolidación admisión 2026')
@@ -89,7 +90,8 @@ export default function ConsolidationWizard() {
 
   return (
     <div>
-      <PageHeader title="Consolidar y recodificar bases" subtitle="Relaciona varias fuentes sin multiplicar registros, con trazabilidad y controles auditables." />
+      <PageHeader title="Plantilla Educación / DEMRE 2026" subtitle="Flujo especializado que conserva las reglas de Matrícula, archivos B/C/D y Oferta." />
+      {onUseGeneral ? <Button variant="ghost" onClick={onUseGeneral}>Volver al modo general</Button> : null}
       <ol className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8" aria-label="Pasos de consolidación">
         {STEPS.map((label, index) => (
           <li key={label}>
@@ -112,7 +114,7 @@ export default function ConsolidationWizard() {
           <div className="max-w-xl space-y-4">
             <label className="block text-sm font-semibold text-navy">Nombre del proyecto<input value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full rounded-lg border border-navy/20 px-3 py-2 font-normal" /></label>
             <label className="flex items-start gap-2 text-sm text-navy/75"><input type="checkbox" checked={includeHistorical} onChange={(event) => setIncludeHistorical(event.target.checked)} className="mt-1 accent-teal" /><span><strong className="block text-navy">Intentar consolidación histórica</strong>Si el esquema no coincide, se conservará la base anual y se informará la advertencia.</span></label>
-            <Button disabled={busy || !name.trim()} onClick={() => void perform(async () => { const created = await createProject(name.trim(), includeHistorical); setProject(created); setStep(1) })}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCog className="h-4 w-4" />}Crear proyecto</Button>
+            <Button disabled={busy || !name.trim()} onClick={() => void perform(async () => { const created = await createProject(name.trim(), 'demre_2026', includeHistorical, '2026'); setProject(created); setStep(1) })}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCog className="h-4 w-4" />}Crear proyecto</Button>
           </div>
         ) : null}
 
@@ -150,4 +152,11 @@ export default function ConsolidationWizard() {
       <div className="mt-4 flex justify-between gap-3"><Button variant="ghost" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}><ChevronLeft className="h-4 w-4" />Anterior</Button><Button variant="ghost" disabled={step === STEPS.length - 1} onClick={() => setStep((value) => Math.min(STEPS.length - 1, value + 1))}>Siguiente<ChevronRight className="h-4 w-4" /></Button></div>
     </div>
   )
+}
+
+export default function ConsolidationWizard() {
+  const [specialized, setSpecialized] = useState(false)
+  return specialized
+    ? <DemreConsolidationWizard onUseGeneral={() => setSpecialized(false)} />
+    : <GeneralConsolidationWizard onUseDemre={() => setSpecialized(true)} />
 }

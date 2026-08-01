@@ -18,8 +18,17 @@ export function upsertSource(
   datasetId: string,
   required: boolean,
 ): SourceAssignment[] {
+  const previous = sources.find((source) => source.role === role)
   return [
     ...sources.filter((source) => source.role !== role),
-    ...(datasetId ? [{ role, dataset_id: datasetId, required }] : []),
+    ...(datasetId ? [{ ...previous, role, dataset_id: datasetId, required }] : []),
   ]
+}
+
+export function updateSource(
+  sources: SourceAssignment[],
+  role: SourceRole,
+  patch: Partial<SourceAssignment>,
+): SourceAssignment[] {
+  return sources.map((source) => source.role === role ? { ...source, ...patch } : source)
 }

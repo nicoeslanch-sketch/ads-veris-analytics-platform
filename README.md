@@ -36,7 +36,7 @@ La estandarización y limpieza de varias hojas se ejecutan por lote. La
 restauración muestra primero el último estado válido y actualiza en segundo
 plano cuando cambia el motor; la exportación auditada se precalienta y reutiliza
 el resultado para evitar reconstrucciones idénticas. El dominio durable de
-consolidación usa la migración aditiva `0022`.
+consolidación usa el dominio aditivo `0022` y los roles generales de `0023`.
 
 ## Requisitos
 
@@ -106,6 +106,11 @@ consolidación usa la migración aditiva `0022`.
    - `supabase/migrations/0021_multi_sheet_analysis.sql` (**Fase 17**: agrega
      selección de hojas, errores por hoja y alcance de análisis confirmado al
      snapshot v3; aplicar antes del backend 0.20.0+. Esta rama no la ejecuta)
+   - `supabase/migrations/0022_consolidation_domain.sql` (proyectos, fuentes,
+     ejecuciones y artefactos privados del consolidador)
+   - `supabase/migrations/0023_general_consolidation.sql` (roles genéricos para
+     archivo principal, complementos, equivalencias e histórico; conserva la
+     plantilla DEMRE)
 3. **Política de contraseñas** (Fase 13/14 — la validación del formulario es
    solo UX; la política REAL vive aquí): en **Authentication → Providers →
    Email → Password requirements**, exige mínimo **8 caracteres** con
@@ -297,20 +302,22 @@ Si el usuario no ha cargado y limpiado datos, la plataforma no muestra dashboard
   global (`AI_REFINE_ENABLED`, apagado). La IA decide y corrige residuos con
   JSON validable; el motor determinista transforma.
 
-## Consolidar y recodificar bases (feature flag)
+## Consolidar y recodificar archivos (feature flag)
 
-El dominio `api/app/consolidation/` implementa proyectos multi-fuente, detección
-por esquema, libros de códigos, reducción de relaciones one-to-many, mapping
-declarativo, controles de calidad, artefactos inmutables y un worker local. No
-modifica `/standardize`, `/clean`, `/metrics`, snapshots ni relaciones genéricas.
+El dominio `api/app/consolidation/` incluye un modo General para unir cualquier
+CSV/XLSX por claves elegidas por el usuario, recodificar con equivalencias y
+combinar periodos compatibles. La plantilla DEMRE 2026 queda como opción
+especializada. Incluye controles de cardinalidad, artefactos inmutables y un
+worker separado. No modifica `/standardize`, `/clean` ni `/metrics`.
 
-La función está apagada por defecto. En producción la migración `0022` ya fue
-aplicada y `/version` la declara. Antes de habilitar otro entorno:
+La función está apagada por defecto. La versión general requiere `0022` y
+`0023`; `/version` declara la última esperada. Antes de habilitar otro entorno:
 
 1. comprobar que `supabase/migrations/0022_consolidation_domain.sql` esté aplicada;
-2. arrancar el worker con `python -m app.consolidation.worker` desde `api/`;
-3. configurar `CONSOLIDATION_ENABLED=true` y `VITE_CONSOLIDATION_ENABLED=true`;
-4. mantener `CONSOLIDATION_ADMIN_ONLY=true` durante el piloto.
+2. aplicar `supabase/migrations/0023_general_consolidation.sql`;
+3. arrancar el worker con `python -m app.consolidation.worker` desde `api/`;
+4. configurar `CONSOLIDATION_ENABLED=true` y `VITE_CONSOLIDATION_ENABLED=true`;
+5. mantener `CONSOLIDATION_ADMIN_ONLY=true` durante el piloto.
 
 La aceptación local puede ejecutarse con `api/scripts/run_consolidation_local.py`.
 Solo ese CLI admite rutas locales; la API acepta exclusivamente `dataset_id` y

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import httpx
@@ -16,6 +16,7 @@ from ..auth import AuthenticatedUser, get_current_user
 from ..config import Settings, get_settings
 from ..storage import create_export_cache_signed_url
 from ..version import ENGINE_VERSION
+from .ingestion import storage_source_file, tabular_headers
 from .models import SourceAssignment, SourceRole
 from .repository import repository_for
 from .service import idempotency_key, owned_dataset_metadata, require_consolidation_access
@@ -26,7 +27,9 @@ router = APIRouter(prefix="/consolidation", tags=["consolidation"])
 
 class CreateProjectRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    template: Literal["general", "demre_2026"] = "general"
     cohort: int = Field(default=2026, ge=2000, le=2100)
+    period_label: str | None = Field(default=None, max_length=80)
     include_historical_output: bool = False
     target_columns: list[str] | None = None
     aliases: dict[str, str] = Field(default_factory=dict)
@@ -55,6 +58,44 @@ def _project_or_404(project_id: UUID, user: AuthenticatedUser, settings: Setting
     return repo, project
 
 
+@router.get("/status")
+async def consolidation_status(
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Permite que la interfaz detecte flags incoherentes antes de crear."""
+    if not settings.consolidation_enabled:
+        return {"available": False, "reason": "backend_disabled", "admin_only": settings.consolidation_admin_only}
+    try:
+        require_consolidation_access(user, settings)
+    except HTTPException as exc:
+        return {"available": False, "reason": "admin_required" if exc.status_code == 403 else "access_check_failed", "admin_only": settings.consolidation_admin_only}
+    return {"available": True, "reason": None, "admin_only": settings.consolidation_admin_only}
+
+
+def _inspect_owned_dataset(dataset_id: UUID, user: AuthenticatedUser, settings: Settings) -> dict[str, Any]:
+    metadata = owned_dataset_metadata([str(dataset_id)], user.id, settings)[str(dataset_id)]
+    with storage_source_file(metadata["storage_path"], user.id, settings) as (path, digest):
+        sheets = tabular_headers(path)
+    return {
+        "dataset_id": str(dataset_id), "name": metadata["name"], "sha256": digest,
+        "sheets": [{"name": name, "columns": columns} for name, columns in sheets.items()],
+    }
+
+
+@router.get("/datasets/{dataset_id}/inspect")
+async def inspect_dataset(
+    dataset_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    _access(user, settings)
+    try:
+        return await run_in_threadpool(_inspect_owned_dataset, dataset_id, user, settings)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/projects")
 async def create_project(
     body: CreateProjectRequest,
@@ -62,9 +103,15 @@ async def create_project(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     _access(user, settings)
-    target = resolve_target_columns(body.target_columns)
     config = body.model_dump()
-    config["target_columns"] = list(target)
+    if body.template == "demre_2026":
+        config["target_columns"] = list(resolve_target_columns(body.target_columns))
+        config["mapping_version"] = "demre-2026-v1"
+    else:
+        if body.target_columns:
+            raise HTTPException(422, "El modo general construye las columnas desde los archivos; no usa una plantilla DEMRE.")
+        config["target_columns"] = []
+        config["mapping_version"] = "general-v1"
     config_hash = hashlib.sha256(json.dumps(config, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
     repo = repository_for(settings)
     return await run_in_threadpool(repo.create_project, user.id, {"name": body.name, "config": config, "config_hash": config_hash, "engine_version": ENGINE_VERSION})
@@ -99,7 +146,21 @@ async def set_sources(
         {
             "dataset_id": str(source.dataset_id), "role": source.role.value,
             "required": source.required, "selected_sheet": source.selected_sheet,
-            "profile": {"name": metadata[str(source.dataset_id)]["name"], "storage_path": metadata[str(source.dataset_id)]["storage_path"]},
+            "profile": {
+                "name": metadata[str(source.dataset_id)]["name"],
+                "storage_path": metadata[str(source.dataset_id)]["storage_path"],
+                "configuration": {
+                    "label": source.label,
+                    "primary_key": source.primary_key,
+                    "source_key": source.source_key,
+                    "target_column": source.target_column,
+                    "value_column": source.value_column,
+                    "output_column": source.output_column,
+                    "prefix": source.prefix,
+                    "include_columns": source.include_columns,
+                    "selected_sheet": source.selected_sheet,
+                },
+            },
             "status": "draft",
         }
         for source in body.sources
@@ -115,17 +176,37 @@ async def validate_project(
 ) -> dict[str, Any]:
     _access(user, settings)
     _repo, project = await run_in_threadpool(_project_or_404, project_id, user, settings)
+    config = project.get("config", {})
     roles = {source["role"] for source in project.get("sources", [])}
-    blocking = [] if SourceRole.MATRICULA.value in roles else ["matricula_missing"]
-    warnings = [] if SourceRole.ARCHIVO_B.value in roles else ["archivo_b_missing"]
-    return {"status": "blocked" if blocking else "valid_with_warnings" if warnings else "valid", "blocking": blocking, "warnings": warnings, "source_count": len(roles), "target_columns": len(project.get("config", {}).get("target_columns", TARGET_COLUMNS))}
+    if config.get("template") == "general":
+        blocking: list[str] = []
+        primary = next((source for source in project.get("sources", []) if source["role"] == SourceRole.PRIMARY.value), None)
+        if not primary:
+            blocking.append("Selecciona un archivo principal.")
+        elif not primary.get("profile", {}).get("configuration", {}).get("primary_key"):
+            blocking.append("Selecciona la columna clave del archivo principal.")
+        for source in project.get("sources", []):
+            source_config = source.get("profile", {}).get("configuration", {})
+            if source["role"].startswith("supplement_") and not source_config.get("source_key"):
+                blocking.append(f"Falta la clave de {source_config.get('label') or source['role']}.")
+            if source["role"].startswith("equivalence_") and not all(source_config.get(key) for key in ("target_column", "source_key", "value_column")):
+                blocking.append(f"Falta configurar la equivalencia {source_config.get('label') or source['role']}.")
+        return {
+            "status": "blocked" if blocking else "valid", "blocking": blocking, "warnings": [],
+            "source_count": len(roles), "target_columns": 0,
+        }
+    blocking = [] if SourceRole.MATRICULA.value in roles else ["Falta Matrícula (archivo ancla)."]
+    warnings = [] if SourceRole.ARCHIVO_B.value in roles else ["Archivo B no fue asignado."]
+    return {"status": "blocked" if blocking else "valid_with_warnings" if warnings else "valid", "blocking": blocking, "warnings": warnings, "source_count": len(roles), "target_columns": len(config.get("target_columns", TARGET_COLUMNS))}
 
 
 async def _enqueue(project_id: UUID, user: AuthenticatedUser, settings: Settings, purpose: str) -> dict[str, Any]:
     repo, project = await run_in_threadpool(_project_or_404, project_id, user, settings)
     sources = project.get("sources", [])
-    if not any(source["role"] == SourceRole.MATRICULA.value for source in sources):
-        raise HTTPException(422, "Asigna Matrícula antes de ejecutar.")
+    required_role = SourceRole.PRIMARY if project.get("config", {}).get("template") == "general" else SourceRole.MATRICULA
+    if not any(source["role"] == required_role.value for source in sources):
+        message = "Selecciona un archivo principal antes de ejecutar." if required_role is SourceRole.PRIMARY else "Asigna Matrícula antes de ejecutar."
+        raise HTTPException(422, message)
     key = idempotency_key(str(project_id), project["config_hash"], sources + [{"role": "purpose", "dataset_id": purpose}])
     return await run_in_threadpool(repo.enqueue_run, project, key)
 

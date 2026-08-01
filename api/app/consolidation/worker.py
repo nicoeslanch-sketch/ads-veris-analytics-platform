@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Settings, get_settings
-from .exports import write_historical_consolidated, write_pipeline_artifacts
+from .exports import write_historical_consolidated, write_historical_generic, write_pipeline_artifacts
+from .generic_pipeline import run_general_pipeline
 from .ingestion import sha256_file, storage_source_file, upload_consolidation_artifact
 from .models import ConsolidationStatus, IssueSeverity, QualityIssue, SourceRole
 from .pipeline import run_local_pipeline
@@ -82,6 +83,18 @@ class ConsolidationWorker:
                         cohort_id_strategy=project.get("config", {}).get("cohort_id_strategy", "cohort_and_id"),
                         settings=self.settings,
                         monitor=monitor,
+                    ) if project.get("config", {}).get("template") != "general" else run_general_pipeline(
+                        local_sources,
+                        source_configs={
+                            SourceRole(source["role"]): {
+                                **source.get("profile", {}).get("configuration", {}),
+                                "selected_sheet": source.get("selected_sheet") or source.get("profile", {}).get("configuration", {}).get("selected_sheet"),
+                            }
+                            for source in project.get("sources", [])
+                        },
+                        settings=self.settings,
+                        monitor=monitor,
+                        period_label=project.get("config", {}).get("period_label"),
                     )
                     previous = self.repository.find_completed(str(run["user_id"]), output.manifest.input_hash, output.manifest.config_hash)
                     if previous and str(previous["id"]) != run_id:
@@ -102,13 +115,31 @@ class ConsolidationWorker:
                         artifact_dir = workspace / "artifacts"
                     artifact_dir.mkdir(parents=True, exist_ok=False)
                     extra_paths: dict[str, Path] = {}
-                    historical = local_sources.get(SourceRole.HISTORICA)
+                    generic = project.get("config", {}).get("template") == "general"
+                    historical = local_sources.get(SourceRole.HISTORICAL if generic else SourceRole.HISTORICA)
                     if historical and project.get("config", {}).get("include_historical_output"):
-                        historical_path, warning = write_historical_consolidated(
-                            historical,
-                            output.annual,
-                            artifact_dir / "DEMRE_2020_2026_CONSOLIDADA.xlsx",
+                        selected_historical_sheet = next(
+                            (
+                                source.get("selected_sheet")
+                                or source.get("profile", {}).get("configuration", {}).get("selected_sheet")
+                                for source in project.get("sources", [])
+                                if source["role"] == (SourceRole.HISTORICAL.value if generic else SourceRole.HISTORICA.value)
+                            ),
+                            None,
                         )
+                        if generic:
+                            historical_path, warning = write_historical_generic(
+                                historical, output.annual,
+                                artifact_dir / "BASE_HISTORICA_CONSOLIDADA.xlsx",
+                                sheet_name=selected_historical_sheet,
+                            )
+                        else:
+                            historical_path, warning = write_historical_consolidated(
+                                historical, output.annual,
+                                artifact_dir / "DEMRE_2020_2026_CONSOLIDADA.xlsx",
+                                sheet_name=selected_historical_sheet or "BASE DE DATOS",
+                                cohort=int(project.get("config", {}).get("cohort", 2026)),
+                            )
                         if historical_path:
                             extra_paths["historical"] = historical_path
                         elif warning:

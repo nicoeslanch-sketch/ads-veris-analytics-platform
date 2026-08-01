@@ -3,6 +3,26 @@
 Implementación aislada dentro de Estandarización. No sustituye ni modifica el
 pipeline clásico.
 
+El modo predeterminado es **General** y no presupone un sector ni nombres de
+columnas. El usuario elige el archivo principal, la clave de cada unión y las
+tablas de equivalencias. **Educación / DEMRE 2026** se conserva como plantilla
+especializada opcional para los proyectos anteriores.
+
+## Modo general
+
+- El archivo principal conserva todas sus filas y columnas. Su clave puede
+  repetirse (por ejemplo, varias ventas del mismo producto).
+- Hasta cuatro archivos complementarios aportan columnas mediante una relación
+  muchos-a-uno. La clave del complemento debe ser única; las claves ambiguas se
+  excluyen y se informan, nunca multiplican filas.
+- Hasta dos tablas de equivalencias traducen códigos a una columna nueva sin
+  borrar el valor original.
+- CSV detecta separador entre coma, punto y coma, tabulador y barra vertical;
+  XLSX permite elegir la hoja.
+- El histórico opcional se apila solo si sus columnas coinciden exactamente.
+- Los artefactos se llaman `BASE_CONSOLIDADA.xlsx`,
+  `AUDITORIA_CONSOLIDACION.xlsx` y `manifest.json`.
+
 ## Seguridad y límites
 
 - JWT y ownership de todos los `dataset_id` en cada proyecto.
@@ -19,6 +39,8 @@ pipeline clásico.
 
 ## API
 
+- `GET /consolidation/status`
+- `GET /consolidation/datasets/{dataset_id}/inspect`
 - `POST /consolidation/projects`
 - `GET /consolidation/projects/{project_id}`
 - `PUT /consolidation/projects/{project_id}/sources`
@@ -63,7 +85,8 @@ FKs, checks, índices e idempotencia. El 1 de agosto de 2026 se comprobó que:
 - `/version` declara entorno `production`, motor `0.25.0`, migración `0022` y
   el SHA `aba2d5a8639b7be2f39a1ee23923bbbdc0a06b81`.
 
-La release `0.25.1` conserva la misma migración. El worker y los flags del
+La release `0.26.0` requiere además `0023_general_consolidation.sql`, que amplía
+los roles permitidos sin eliminar los roles DEMRE. El worker y los flags del
 backend se aceptan observando una ejecución autenticada pasar de `queued` a
 `running` y a un estado terminal; no se infieren solo desde el frontend.
 
@@ -152,27 +175,29 @@ Resultados y mediciones reales: [CONSOLIDATION_PERFORMANCE_2026.md](./CONSOLIDAT
 Use una cuenta administradora y fuentes de prueba que ya estén cargadas en el
 Historial. No use datos personales reales para el primer smoke test.
 
-1. Abra **Estandarización** y seleccione **Consolidar y recodificar bases**.
-2. Cree un proyecto sin salida histórica para que la primera prueba sea corta.
-3. En **Fuentes**, asigne al menos Matrícula. Agregue B, C, D, Oferta y libros de
-   códigos si están disponibles; guarde las fuentes.
-4. Valide. Sin B se espera `valid_with_warnings`; sin Matrícula debe bloquear.
+1. Abra **Estandarización** y seleccione **Consolidar y recodificar archivos**.
+2. Cree un trabajo en modo General, sin histórico para que la primera prueba sea corta.
+3. Seleccione un archivo principal y su clave. Agregue un complemento pequeño
+   con una clave única equivalente y, si corresponde, una tabla de equivalencias.
+4. Valide. Sin archivo principal o sin una clave elegida debe bloquear.
 5. Prepare la previsualización. El run debe abandonar `queued`, pasar por
    `running` y terminar en `valid_with_warnings`, `partial` o `certified`.
    Si permanece en `queued` más de 30 segundos, revise el servicio worker.
-6. Compruebe que la muestra no exponga más de 100 filas y que el número de filas
-   e IDs únicos coincida con Matrícula.
+6. Compruebe que la muestra no exponga más de 100 filas y que las filas finales
+   coincidan exactamente con las filas del archivo principal.
 7. Genere los artefactos y descargue `annual`, `audit` y `manifest`. El Excel
-   anual debe conservar una fila por `ID_aux` y 92 columnas en el orden objetivo.
+   anual debe conservar todas las filas originales y agregar solo las columnas
+   relacionadas o recodificadas.
 8. Pulse **Usar resultado en la plataforma** solo después de revisar esos tres
    archivos. Debe aparecer un dataset derivado en el Historial.
 9. En Supabase deben existir, para ese usuario, un proyecto, sus fuentes, dos
    runs como máximo (preview/full; el segundo puede reutilizar el primero) y
    artefactos inmutables bajo `.consolidation`.
 
-Pruebe después tres fallos controlados: Matrícula con ID duplicado, código no
-encontrado en un libro y ausencia de Archivo B. Ninguno debe multiplicar filas
-ni producir una descarga certificada silenciosamente.
+Pruebe después tres fallos controlados: clave vacía en el principal, clave
+duplicada en el complemento y código sin equivalencia. Ninguno debe multiplicar
+filas ni producir una descarga certificada silenciosamente. La plantilla DEMRE
+mantiene su checklist sectorial anterior y sus 92 columnas.
 
 ## Rollback
 

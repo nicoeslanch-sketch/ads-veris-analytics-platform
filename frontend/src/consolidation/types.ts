@@ -1,4 +1,6 @@
 export type SourceRole =
+  | 'primary' | 'supplement_1' | 'supplement_2' | 'supplement_3' | 'supplement_4'
+  | 'equivalence_1' | 'equivalence_2' | 'historical'
   | 'matricula' | 'archivo_b' | 'archivo_c' | 'archivo_d' | 'oferta' | 'historica'
   | 'codebook_matricula' | 'codebook_b' | 'codebook_c' | 'codebook_d'
 
@@ -14,14 +16,41 @@ export interface SourceAssignment {
   role: SourceRole
   required: boolean
   selected_sheet?: string | null
+  label?: string | null
+  primary_key?: string | null
+  source_key?: string | null
+  target_column?: string | null
+  value_column?: string | null
+  output_column?: string | null
+  prefix?: string | null
+  include_columns?: string[]
 }
 
 export interface ConsolidationProject {
   id: string
   name: string
   status: string
-  config: { cohort: number; target_columns: string[]; include_historical_output: boolean }
+  config: {
+    template: 'general' | 'demre_2026'
+    cohort: number
+    period_label?: string | null
+    target_columns: string[]
+    include_historical_output: boolean
+  }
   sources?: Array<SourceAssignment & { profile?: { name?: string } }>
+}
+
+export interface ConsolidationAvailability {
+  available: boolean
+  reason: 'backend_disabled' | 'admin_required' | 'access_check_failed' | null
+  admin_only: boolean
+}
+
+export interface DatasetInspection {
+  dataset_id: string
+  name: string
+  sha256: string
+  sheets: Array<{ name: string; columns: string[] }>
 }
 
 export interface ValidationResult {

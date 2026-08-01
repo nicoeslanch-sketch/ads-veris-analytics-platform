@@ -38,9 +38,28 @@ def test_admin_local_can_create_and_read_project_when_flag_on():
     assert created.status_code == 200
     project = created.json()
     assert project["status"] == "draft"
-    assert len(project["config"]["target_columns"]) == 92
+    assert project["config"]["template"] == "general"
+    assert project["config"]["target_columns"] == []
     read = client.get(f"/consolidation/projects/{project['id']}")
     assert read.status_code == 200
+
+
+def test_demre_template_keeps_92_column_contract():
+    app.dependency_overrides[get_settings] = lambda: _settings(True)
+    response = TestClient(app).post(
+        "/consolidation/projects",
+        json={"name": "Admisión", "template": "demre_2026"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["config"]["target_columns"]) == 92
+
+
+def test_status_explains_backend_flag_instead_of_failing_on_create():
+    app.dependency_overrides[get_settings] = lambda: _settings(False)
+    response = TestClient(app).get("/consolidation/status")
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["reason"] == "backend_disabled"
 
 
 def test_foreign_project_is_not_revealed():
@@ -50,12 +69,13 @@ def test_foreign_project_is_not_revealed():
     assert response.status_code == 404
 
 
-def test_run_requires_matricula_assignment():
+def test_general_run_requires_primary_assignment():
     app.dependency_overrides[get_settings] = lambda: _settings(True)
     client = TestClient(app)
     project = client.post("/consolidation/projects", json={"name": "Prueba"}).json()
     response = client.post(f"/consolidation/projects/{project['id']}/runs")
     assert response.status_code == 422
+    assert "principal" in response.json()["detail"]
 
 
 def test_memory_run_enqueue_is_idempotent():

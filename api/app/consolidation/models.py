@@ -11,6 +11,19 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class SourceRole(StrEnum):
+    # Roles genéricos. Los nombres internos son estables; el usuario puede
+    # asignar una etiqueta clara a cada fuente dentro del proyecto.
+    PRIMARY = "primary"
+    SUPPLEMENT_1 = "supplement_1"
+    SUPPLEMENT_2 = "supplement_2"
+    SUPPLEMENT_3 = "supplement_3"
+    SUPPLEMENT_4 = "supplement_4"
+    EQUIVALENCE_1 = "equivalence_1"
+    EQUIVALENCE_2 = "equivalence_2"
+    HISTORICAL = "historical"
+
+    # Plantilla especializada DEMRE 2026. Se conserva para no romper los
+    # proyectos creados antes de que existiera el modo general.
     MATRICULA = "matricula"
     ARCHIVO_B = "archivo_b"
     ARCHIVO_C = "archivo_c"
@@ -46,11 +59,21 @@ class SourceAssignment(BaseModel):
     role: SourceRole
     selected_sheet: str | None = None
     required: bool = True
+    label: str | None = Field(default=None, max_length=80)
+    primary_key: str | None = Field(default=None, max_length=200)
+    source_key: str | None = Field(default=None, max_length=200)
+    target_column: str | None = Field(default=None, max_length=200)
+    value_column: str | None = Field(default=None, max_length=200)
+    output_column: str | None = Field(default=None, max_length=200)
+    prefix: str | None = Field(default=None, max_length=80)
+    include_columns: list[str] = Field(default_factory=list, max_length=500)
 
 
 class ConsolidationProjectConfig(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    template: str = "general"
     cohort: int = Field(default=2026, ge=2000, le=2100)
+    period_label: str | None = Field(default=None, max_length=80)
     sources: list[SourceAssignment] = Field(default_factory=list)
     include_historical_output: bool = False
     mapping_version: str = "demre-2026-v1"

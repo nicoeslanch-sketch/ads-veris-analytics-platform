@@ -2,7 +2,9 @@ import { apiGet, apiPostJson, apiPutJson } from '../lib/api'
 import { supabase } from '../lib/supabase'
 import type {
   ConsolidationProject,
+  ConsolidationAvailability,
   ConsolidationRun,
+  DatasetInspection,
   DatasetOption,
   SourceAssignment,
   ValidationResult,
@@ -20,12 +22,25 @@ export async function listDatasets(): Promise<DatasetOption[]> {
   return (data ?? []) as DatasetOption[]
 }
 
-export const createProject = (name: string, includeHistorical: boolean) =>
+export const getConsolidationStatus = () =>
+  apiGet<ConsolidationAvailability>('/consolidation/status')
+
+export const inspectDataset = (datasetId: string) =>
+  apiGet<DatasetInspection>(`/consolidation/datasets/${datasetId}/inspect`)
+
+export const createProject = (
+  name: string,
+  template: 'general' | 'demre_2026',
+  includeHistorical: boolean,
+  periodLabel?: string,
+) =>
   apiPostJson<ConsolidationProject>('/consolidation/projects', {
     name,
+    template,
     cohort: 2026,
+    period_label: periodLabel || null,
     include_historical_output: includeHistorical,
-    aliases: { ID_RBD: 'RBD' },
+    aliases: template === 'demre_2026' ? { ID_RBD: 'RBD' } : {},
   })
 
 export const saveSources = (projectId: string, sources: SourceAssignment[]) =>
