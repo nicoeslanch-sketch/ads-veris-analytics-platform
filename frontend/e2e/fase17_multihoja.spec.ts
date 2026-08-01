@@ -262,7 +262,7 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
       await expect(selectedSheets.nth(index)).toBeChecked()
     }
     await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(3, { timeout: 90_000 })
-    await expect(page.getByRole('button', { name: /preparación|Preparar hojas/ })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Actualizar preparación|Preparar hojas seleccionadas/ })).toHaveCount(0)
     await expect(page.getByText('Enero', { exact: true })).toHaveCount(1)
     await expect(page.getByText('Febrero', { exact: true })).toHaveCount(1)
     await expect(page.getByText('Productos', { exact: true })).toHaveCount(1)

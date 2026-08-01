@@ -50,7 +50,38 @@ export interface DatasetInspection {
   dataset_id: string
   name: string
   sha256: string
-  sheets: Array<{ name: string; columns: string[] }>
+  kind?: string
+  sheets: Array<{
+    name: string
+    columns: string[]
+    approximate_rows?: number
+    sample_rows?: number
+  }>
+}
+
+export interface DetectionFile {
+  dataset_id: string
+  name: string
+  kind: string
+  sheet?: string | null
+  columns: string[]
+  column_count: number
+  approximate_rows?: number | null
+  sha256: string
+  detected_role?: SourceRole | null
+  suggested_role?: SourceRole | null
+  role_label: string
+  confidence: number
+  suggested_keys: Array<{ base: string; related: string }>
+  warnings: string[]
+}
+
+export interface DetectionProposal {
+  template: 'general' | 'demre_2026'
+  confidence: number
+  message: string
+  files: DetectionFile[]
+  questions: string[]
 }
 
 export interface ValidationResult {
@@ -81,5 +112,11 @@ export interface ConsolidationRun {
     relationship_summary?: Array<Record<string, string | number>>
   }
   artifacts?: Array<{ kind: string; bytes: number; storage_path: string }>
+  events?: Array<{
+    stage: string
+    status: 'started' | 'completed' | 'warning' | 'failed'
+    duration_ms?: number | null
+    created_at: string
+  }>
   error_message?: string
 }

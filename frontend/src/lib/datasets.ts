@@ -5,7 +5,7 @@ sesión, no hacen nada y devuelven null. El pipeline funciona igual en memoria;
 la persistencia agrega historial y permite retomar archivos después.
 */
 
-import { supabase } from './supabase'
+import { supabase, supabaseAnonKey, supabaseUrl } from './supabase'
 import {
   DEFAULT_CLEANING_OPTIONS,
   type CleanResult,
@@ -35,6 +35,67 @@ export async function uploadToStorage(file: File): Promise<string | null> {
     return null
   }
   return path
+}
+
+export interface ConsolidationUploadOptions {
+  onProgress?: (percent: number) => void
+  signal?: AbortSignal
+}
+
+export interface UploadedDataset {
+  id: string
+  name: string
+  status: string
+  created_at: string
+}
+
+/** Carga aislada del asistente: conserva el mismo bucket, ownership y tabla. */
+export async function uploadConsolidationDataset(
+  file: File,
+  options: ConsolidationUploadOptions = {},
+): Promise<UploadedDataset> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey) throw new Error('La carga de archivos no está configurada.')
+  if (!/\.(csv|xlsx)$/i.test(file.name)) throw new Error('Usa un archivo CSV o Excel (.xlsx).')
+  const { data: sessionData } = await supabase.auth.getSession()
+  const session = sessionData.session
+  if (!session) throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.')
+  const safeName = file.name.replace(/[^\w.\-]+/g, '_')
+  const path = `${session.user.id}/${Date.now()}_${crypto.randomUUID()}_${safeName}`
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/')
+  await new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    const abort = () => request.abort()
+    request.open('POST', `${supabaseUrl}/storage/v1/object/${BUCKET}/${encodedPath}`)
+    request.setRequestHeader('Authorization', `Bearer ${session.access_token}`)
+    request.setRequestHeader('apikey', supabaseAnonKey!)
+    request.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    request.setRequestHeader('x-upsert', 'false')
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) options.onProgress?.(Math.round((event.loaded / event.total) * 100))
+    }
+    request.onerror = () => reject(new Error('La conexión se interrumpió durante la carga.'))
+    request.onabort = () => reject(new DOMException('Carga cancelada.', 'AbortError'))
+    request.onload = () => request.status >= 200 && request.status < 300
+      ? resolve()
+      : reject(new Error('Storage rechazó el archivo. Revisa el tamaño y vuelve a intentar.'))
+    options.signal?.addEventListener('abort', abort, { once: true })
+    request.onloadend = () => options.signal?.removeEventListener('abort', abort)
+    request.send(file)
+  })
+  const { data, error } = await supabase.from('datasets').insert({
+    user_id: session.user.id,
+    name: file.name,
+    source: 'excel_csv',
+    storage_path: path,
+    status: 'cargado',
+  }).select('id,name,status,created_at').single()
+  if (error || !data) {
+    await supabase.storage.from(BUCKET).remove([path]).catch(() => undefined)
+    throw new Error('El archivo subió, pero no pudo registrarse. Inténtalo nuevamente.')
+  }
+  options.onProgress?.(100)
+  void logActivity('carga', `Archivo cargado: ${file.name}`, data.id).catch(() => undefined)
+  return data as UploadedDataset
 }
 
 export async function insertDataset(
