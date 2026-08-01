@@ -253,3 +253,4 @@ def test_local_worker_completes_and_is_idempotent(synthetic_sources, tmp_path):
     completed = repo.get_run(run["id"], "user")
     assert completed["status"] == "valid_with_warnings"
     assert {item["kind"] for item in completed["artifacts"]} == {"annual", "audit", "manifest"}
+    assert len(completed["report"]["resource_metrics"]["artifacts"]["annual"]["logical_sha256"]) == 64
