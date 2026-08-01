@@ -1,16 +1,22 @@
 # Changelog — ADS Veris Plataforma de Análisis de Datos
 
-## [Unreleased] — Consolidación y recodificación multi-fuente
+## [0.25.1] — 2026-08-01 — Cierre operativo de consolidación
 
 - Agrega un dominio aislado, protegido por JWT, ownership, administrador y dos
   feature flags apagados por defecto.
 - Incorpora mapping y aliases declarativos, codebooks auditables, reducción de
   Archivo D, resolución conservadora de Oferta, `cohorte_id` configurable,
   salida anual, auditoría, manifest, worker durable e idempotencia.
-- Crea la migración aditiva pendiente `0022_consolidation_domain.sql`. No fue
-  aplicada y la versión desplegada continúa esperando 0021.
+- Registra que la migración aditiva `0022_consolidation_domain.sql` ya está
+  aplicada en producción y que `/version` la declara como versión esperada.
 - Añade un wizard de ocho pasos dentro de Estandarización sin crear ruta ni
   opción nueva en la barra lateral.
+- El monitor de recursos usa `psutil` como fuente principal y cae de forma
+  conservadora al high-water mark del sistema cuando el runtime no permite
+  inspeccionar el proceso. El worker ya no aborta antes de comenzar en esos
+  entornos restringidos.
+- Agrega el checklist de aceptación manual productiva y actualiza el estado de
+  despliegue, riesgos y rollback. No agrega migraciones nuevas.
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/). Fases según [`SPEC.md`](./SPEC.md).
 

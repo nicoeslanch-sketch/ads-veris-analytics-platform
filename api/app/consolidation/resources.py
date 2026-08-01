@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -14,6 +15,11 @@ from typing import Any, Iterator
 from uuid import uuid4
 
 import psutil
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - resource no existe en Windows
+    resource = None  # type: ignore[assignment]
 
 from ..config import Settings
 
@@ -93,7 +99,14 @@ class ResourceMonitor:
 
     def __init__(self, settings: Settings, *, sample_interval_seconds: float = 0.05) -> None:
         self.settings = settings
-        self.process = psutil.Process(os.getpid())
+        try:
+            self.process: psutil.Process | None = psutil.Process(os.getpid())
+        except (psutil.Error, OSError):
+            # Algunos runners aislados no montan /proc. El worker no debe
+            # abortar antes de procesar: getrusage conserva un peak RSS
+            # conservador aunque no pueda informar liberacion de memoria.
+            self.process = None
+        self.memory_backend = "psutil" if self.process is not None else "rusage"
         self.sample_interval_seconds = max(0.01, sample_interval_seconds)
         self.initial_rss_bytes = self.current_rss_bytes()
         self.final_rss_bytes = self.initial_rss_bytes
@@ -108,11 +121,30 @@ class ResourceMonitor:
         self._sampler.start()
 
     def current_rss_bytes(self) -> int:
-        return int(self.process.memory_info().rss)
+        if self.process is not None:
+            try:
+                return int(self.process.memory_info().rss)
+            except (psutil.Error, OSError):
+                self.process = None
+                self.memory_backend = "rusage"
+        return self._rusage_peak_rss_bytes()
+
+    def _rusage_peak_rss_bytes(self) -> int:
+        if resource is None:
+            return 0
+        peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        # Linux y los BSD reportan KiB; macOS reporta bytes.
+        return peak if sys.platform == "darwin" else peak * 1024
 
     def _os_peak_rss_bytes(self) -> int:
-        info = self.process.memory_info()
-        return int(getattr(info, "peak_wset", 0) or 0)
+        peak = self._rusage_peak_rss_bytes()
+        if self.process is None:
+            return peak
+        try:
+            info = self.process.memory_info()
+        except (psutil.Error, OSError):
+            return peak
+        return max(peak, int(getattr(info, "peak_wset", 0) or 0))
 
     def _observe(self) -> int:
         rss = self.current_rss_bytes()
@@ -188,6 +220,7 @@ class ResourceMonitor:
             "memory_released_bytes": max(0, self.peak_rss_bytes - self.final_rss_bytes),
             "soft_limit_bytes": self.settings.consolidation_memory_soft_limit_mb * MB,
             "hard_limit_bytes": self.settings.consolidation_memory_hard_limit_mb * MB,
+            "memory_backend": self.memory_backend,
             "soft_limit_exceeded": self.soft_limit_exceeded,
             "duration_ms": int((time.perf_counter() - self.started) * 1000),
             "stages": [stage.as_dict() for stage in self.stages.values()],

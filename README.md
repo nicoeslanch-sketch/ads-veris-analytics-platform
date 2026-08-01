@@ -304,9 +304,10 @@ por esquema, libros de códigos, reducción de relaciones one-to-many, mapping
 declarativo, controles de calidad, artefactos inmutables y un worker local. No
 modifica `/standardize`, `/clean`, `/metrics`, snapshots ni relaciones genéricas.
 
-La función está apagada por defecto. Antes de habilitarla en un entorno:
+La función está apagada por defecto. En producción la migración `0022` ya fue
+aplicada y `/version` la declara. Antes de habilitar otro entorno:
 
-1. revisar y aplicar manualmente `supabase/migrations/0022_consolidation_domain.sql`;
+1. comprobar que `supabase/migrations/0022_consolidation_domain.sql` esté aplicada;
 2. arrancar el worker con `python -m app.consolidation.worker` desde `api/`;
 3. configurar `CONSOLIDATION_ENABLED=true` y `VITE_CONSOLIDATION_ENABLED=true`;
 4. mantener `CONSOLIDATION_ADMIN_ONLY=true` durante el piloto.

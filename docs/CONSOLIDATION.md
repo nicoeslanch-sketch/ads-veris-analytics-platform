@@ -52,16 +52,20 @@ requiere una confirmación explícita del usuario.
 - La plantilla de 92 columnas es el manifest DEMRE predeterminado, pero la API
   admite otra lista única y ordenada por proyecto.
 
-## Migración pendiente
+## Estado de producción
 
 `0022_consolidation_domain.sql` crea cinco tablas aditivas con RLS, ownership,
-FKs, checks, índices e idempotencia. Para aplicarla posteriormente:
+FKs, checks, índices e idempotencia. El 1 de agosto de 2026 se comprobó que:
 
-1. respaldar y revisar el proyecto Supabase objetivo;
-2. ejecutar las migraciones mediante el procedimiento habitual del proyecto;
-3. comprobar que existen las cinco tablas y sus políticas RLS;
-4. mantener ambos flags apagados y probar la API como administrador;
-5. arrancar el worker y recién después encender backend y frontend.
+- la migración `0022_consolidation_domain` está registrada en Supabase;
+- las cinco tablas existen con RLS y políticas de lectura por propietario;
+- la API productiva responde `/health` y `/version`;
+- `/version` declara entorno `production`, motor `0.25.0`, migración `0022` y
+  el SHA `aba2d5a8639b7be2f39a1ee23923bbbdc0a06b81`.
+
+La release `0.25.1` conserva la misma migración. El worker y los flags del
+backend se aceptan observando una ejecución autenticada pasar de `queued` a
+`running` y a un estado terminal; no se infieren solo desde el frontend.
 
 ## Ejecución local
 
@@ -107,6 +111,11 @@ El espacio temporal se valida antes de empezar; la falta de capacidad produce
 `temporary_disk_insufficient`. Cada run usa un directorio aislado que se borra
 en `finally` tanto al completar como al fallar.
 
+Si el runtime no permite que `psutil` inspeccione el proceso, la telemetría usa
+el high-water mark de `getrusage` como respaldo conservador y lo declara en
+`resource_metrics.memory_backend`. En ese modo puede comprobar límites, aunque
+no calcular memoria liberada con la misma precisión.
+
 D y las dimensiones CSV se leen por chunks. B/C conservan solo columnas útiles
 y IDs del universo de Matrícula. Oferta filtra `OFE_<cohorte>` durante la
 lectura y los libros de códigos se cierran inmediatamente. Los XLSX derivados
@@ -137,6 +146,33 @@ Los artefactos siguen siendo inmutables: ante un `409`, el worker descarga y
 compara SHA-256; solo reutiliza el objeto si es idéntico, nunca lo sobrescribe.
 
 Resultados y mediciones reales: [CONSOLIDATION_PERFORMANCE_2026.md](./CONSOLIDATION_PERFORMANCE_2026.md).
+
+## Aceptación manual en producción
+
+Use una cuenta administradora y fuentes de prueba que ya estén cargadas en el
+Historial. No use datos personales reales para el primer smoke test.
+
+1. Abra **Estandarización** y seleccione **Consolidar y recodificar bases**.
+2. Cree un proyecto sin salida histórica para que la primera prueba sea corta.
+3. En **Fuentes**, asigne al menos Matrícula. Agregue B, C, D, Oferta y libros de
+   códigos si están disponibles; guarde las fuentes.
+4. Valide. Sin B se espera `valid_with_warnings`; sin Matrícula debe bloquear.
+5. Prepare la previsualización. El run debe abandonar `queued`, pasar por
+   `running` y terminar en `valid_with_warnings`, `partial` o `certified`.
+   Si permanece en `queued` más de 30 segundos, revise el servicio worker.
+6. Compruebe que la muestra no exponga más de 100 filas y que el número de filas
+   e IDs únicos coincida con Matrícula.
+7. Genere los artefactos y descargue `annual`, `audit` y `manifest`. El Excel
+   anual debe conservar una fila por `ID_aux` y 92 columnas en el orden objetivo.
+8. Pulse **Usar resultado en la plataforma** solo después de revisar esos tres
+   archivos. Debe aparecer un dataset derivado en el Historial.
+9. En Supabase deben existir, para ese usuario, un proyecto, sus fuentes, dos
+   runs como máximo (preview/full; el segundo puede reutilizar el primero) y
+   artefactos inmutables bajo `.consolidation`.
+
+Pruebe después tres fallos controlados: Matrícula con ID duplicado, código no
+encontrado en un libro y ausencia de Archivo B. Ninguno debe multiplicar filas
+ni producir una descarga certificada silenciosamente.
 
 ## Rollback
 

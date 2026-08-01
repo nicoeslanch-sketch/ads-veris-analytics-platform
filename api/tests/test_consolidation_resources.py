@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
+import psutil
 import pytest
 
 from app.config import Settings
@@ -47,6 +48,20 @@ def test_configurable_memory_limits_fail_with_auditable_code(monkeypatch):
             monitor.checkpoint("simulated_large_stage")
         assert raised.value.code == "memory_hard_limit_exceeded"
         assert "initial_rss_bytes" in raised.value.metrics
+    finally:
+        monitor.stop()
+
+
+def test_resource_monitor_falls_back_when_process_metrics_are_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "app.consolidation.resources.psutil.Process",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(psutil.NoSuchProcess(123)),
+    )
+    monitor = ResourceMonitor(_settings())
+    try:
+        assert monitor.memory_backend == "rusage"
+        assert monitor.current_rss_bytes() >= 0
+        assert monitor.snapshot()["memory_backend"] == "rusage"
     finally:
         monitor.stop()
 

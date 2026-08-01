@@ -1,8 +1,9 @@
 # Aceptación de recursos — consolidación 2026
 
 Fecha de medición: 2026-07-31. Baseline de código: `1dc0416`. Las fuentes reales
-se leyeron localmente y no se copiaron al repositorio. La migración 0022 no fue
-aplicada.
+se leyeron localmente y no se copiaron al repositorio. Durante esta medición la
+migración 0022 aún no estaba aplicada; se verificó aplicada en producción el
+1 de agosto de 2026.
 
 ## Resultado ejecutivo
 
@@ -111,7 +112,7 @@ versión editable del manifest, no inferirse durante esta optimización.
   optimización de CPU/lectura XML, no un riesgo de RAM.
 - El fallback de `cohorte_id` impide certificar una consolidación histórica
   hasta validar la clave autoritativa.
-- La migración 0022 debe revisarse y aplicarse externamente antes del piloto;
-  los flags permanecen apagados.
+- El worker y los flags del backend deben aceptarse con una ejecución
+  autenticada de extremo a extremo; la migración 0022 ya está aplicada.
 - Concurrencia mayor que 1 por proceso se rechaza deliberadamente. Escalar
   horizontalmente hasta contar con otra prueba de presupuesto.
