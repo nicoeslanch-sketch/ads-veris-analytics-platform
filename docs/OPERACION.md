@@ -22,8 +22,8 @@ CHANGELOG [0.20.0].)
 ## 2. Checklist de release (orden exacto)
 
 1. CI verde (pytest + Vitest + build + job de seguridad).
-2. Migraciones nuevas ejecutadas en STAGING y smoke test ahí. Para Fase 17:
-   `0021_multi_sheet_analysis.sql` después de `0020`.
+2. Migraciones nuevas ejecutadas en STAGING y smoke test ahí. La secuencia
+   actual termina con `0022_consolidation_domain.sql` después de `0021`.
 3. Migraciones en producción (Supabase → SQL Editor, en orden).
 4. Deploy backend (Render) → `GET /version` coincide con el SHA.
 5. Deploy frontend (Vercel).

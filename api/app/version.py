@@ -13,7 +13,7 @@ import os
 
 ENGINE_VERSION = "0.25.0"
 SERVICE_MODEL_VERSION = 1
-LATEST_MIGRATION = "0021"
+LATEST_MIGRATION = "0022"
 
 
 def commit_sha() -> str:
