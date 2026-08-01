@@ -18,6 +18,28 @@ from .repository import MemoryConsolidationRepository, repository_for
 from .resources import ConsolidationResourceError, ResourceMonitor, directory_size, isolated_run_directory
 
 
+def validate_worker_runtime(settings: Settings) -> None:
+    """Impide un worker de producción aparentemente sano pero desconectado.
+
+    En desarrollo se conserva el repositorio en memoria para pruebas. En
+    producción, arrancar sin Supabase haría que el proceso quedara esperando
+    eternamente una cola local vacía, mientras la API encola en la base real.
+    """
+    if settings.app_env.strip().lower() != "production":
+        return
+    violations: list[str] = []
+    if not settings.supabase_url:
+        violations.append("SUPABASE_URL ausente")
+    if not settings.supabase_service_role_key:
+        violations.append("SUPABASE_SERVICE_ROLE_KEY ausente")
+    if not settings.consolidation_enabled:
+        violations.append("CONSOLIDATION_ENABLED debe ser true")
+    if settings.dev_auth_bypass:
+        violations.append("DEV_AUTH_BYPASS debe ser false")
+    if violations:
+        raise RuntimeError("Worker startup failed: " + "; ".join(violations))
+
+
 class ConsolidationWorker:
     def __init__(self, repository: Any, settings: Settings, output_root: Path | None = None) -> None:
         if settings.consolidation_worker_concurrency != 1:
@@ -225,6 +247,7 @@ class ConsolidationWorker:
 
 def main() -> None:
     settings = get_settings()
+    validate_worker_runtime(settings)
     ConsolidationWorker(repository_for(settings), settings).run_forever()
 
 
