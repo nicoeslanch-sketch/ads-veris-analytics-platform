@@ -296,3 +296,22 @@ Si el usuario no ha cargado y limpiado datos, la plataforma no muestra dashboard
   (`AI_CLASSIFIER_ENABLED`, apagado), prompts de grupo por rol y el refinado
   global (`AI_REFINE_ENABLED`, apagado). La IA decide y corrige residuos con
   JSON validable; el motor determinista transforma.
+
+## Consolidar y recodificar bases (feature flag)
+
+El dominio `api/app/consolidation/` implementa proyectos multi-fuente, detección
+por esquema, libros de códigos, reducción de relaciones one-to-many, mapping
+declarativo, controles de calidad, artefactos inmutables y un worker local. No
+modifica `/standardize`, `/clean`, `/metrics`, snapshots ni relaciones genéricas.
+
+La función está apagada por defecto. Antes de habilitarla en un entorno:
+
+1. revisar y aplicar manualmente `supabase/migrations/0022_consolidation_domain.sql`;
+2. arrancar el worker con `python -m app.consolidation.worker` desde `api/`;
+3. configurar `CONSOLIDATION_ENABLED=true` y `VITE_CONSOLIDATION_ENABLED=true`;
+4. mantener `CONSOLIDATION_ADMIN_ONLY=true` durante el piloto.
+
+La aceptación local puede ejecutarse con `api/scripts/run_consolidation_local.py`.
+Solo ese CLI admite rutas locales; la API acepta exclusivamente `dataset_id` y
+resuelve Storage después de comprobar JWT y ownership. Consulta
+[`docs/CONSOLIDATION.md`](docs/CONSOLIDATION.md) para contratos y rollback.

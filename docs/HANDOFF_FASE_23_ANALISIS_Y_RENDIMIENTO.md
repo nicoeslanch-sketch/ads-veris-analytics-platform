@@ -9,9 +9,9 @@ Fecha: 2026-07-22
 - Motor: `0.23.0`.
 - Ultima migracion: `0021`. No se creo ni ejecuto ninguna migracion.
 - Libro principal de auditoria:
-  `C:\Users\NICOLAS-PC\Downloads\Prueba_PYME_Desafiante_Multihoja_ADS_VerIs_2026.xlsx`.
+  `Downloads/Prueba_PYME_Desafiante_Multihoja_ADS_VerIs_2026.xlsx`.
 - Libro limpio de referencia:
-  `C:\Users\NICOLAS-PC\Downloads\Prueba_PYME_Desafiante_Multihoja_ADS_VerIs_2026_limpio.xlsx`.
+  `Downloads/Prueba_PYME_Desafiante_Multihoja_ADS_VerIs_2026_limpio.xlsx`.
 
 ## Trabajo ya integrado anteriormente
 
