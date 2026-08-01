@@ -35,8 +35,8 @@ insumos contables existen.
 La estandarización y limpieza de varias hojas se ejecutan por lote. La
 restauración muestra primero el último estado válido y actualiza en segundo
 plano cuando cambia el motor; la exportación auditada se precalienta y reutiliza
-el resultado para evitar reconstrucciones idénticas. Esta versión no requiere
-una migración nueva: la última sigue siendo `0021`.
+el resultado para evitar reconstrucciones idénticas. El dominio durable de
+consolidación usa la migración aditiva `0022`.
 
 ## Requisitos
 
