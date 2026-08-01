@@ -17,6 +17,11 @@ const API_BASE_URL =
  * "cargando" para siempre. El primer procesamiento de un archivo grande
  * puede tardar — el pipeline recibe margen amplio; las lecturas, poco. */
 const PIPELINE_TIMEOUT_MS = 240_000
+// Una exportación XLSX multihoja incluye las hojas limpias y una auditoría
+// celda a celda. En CPU compartida puede tardar bastante más que el análisis
+// interactivo, aunque el servidor siga trabajando correctamente. No debe usar
+// el límite corto del resto del pipeline ni mostrar un falso error a los 4 min.
+const DOWNLOAD_TIMEOUT_MS = 15 * 60_000
 const JSON_TIMEOUT_MS = 90_000
 const GET_TIMEOUT_MS = 60_000
 const STREAM_TOTAL_TIMEOUT_MS = 180_000
@@ -189,7 +194,13 @@ export function buildDatasetForm(
 }
 
 /** POST multipart que devuelve un archivo descargable (binario). Dispara el diálogo del navegador. */
-export async function apiDownload(path: string, form: FormData, fallbackFilename: string): Promise<void> {
+export async function apiDownload(
+  path: string,
+  form: FormData,
+  fallbackFilename: string,
+  options?: number | ApiRequestOptions,
+): Promise<void> {
+  const { timeoutMs, signal } = normalizeOptions(options, DOWNLOAD_TIMEOUT_MS)
   const token = await getAccessToken()
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
@@ -197,7 +208,12 @@ export async function apiDownload(path: string, form: FormData, fallbackFilename
   const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
-    response = await fetchWithTimeout(fullUrl, { method: 'POST', headers, body: form }, PIPELINE_TIMEOUT_MS)
+    response = await fetchWithTimeout(
+      fullUrl,
+      { method: 'POST', headers, body: form },
+      timeoutMs,
+      signal,
+    )
   } catch (err) {
     throw connectionError(err, 'No se pudo contactar al servidor.')
   }

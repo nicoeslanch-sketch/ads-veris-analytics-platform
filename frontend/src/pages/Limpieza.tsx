@@ -1474,8 +1474,9 @@ export default function Limpieza() {
                 <p className="mt-3 flex items-center gap-2 rounded-lg bg-teal/[0.06] px-3 py-2 text-xs text-navy/65" aria-live="polite">
                   <Loader2 className="h-3.5 w-3.5 animate-spin text-teal" />
                   Estamos armando tu archivo con todas las hojas, la auditoría celda a celda y las
-                  observaciones. La primera descarga puede tardar; si repites la misma descarga sale
-                  al instante.
+                  observaciones. En libros con muchas transformaciones, el primer XLSX puede tardar
+                  varios minutos; puedes seguir esperando sin que la plataforma lo cancele. Si repites
+                  la misma descarga, sale al instante.
                 </p>
               )}
             </Card>
