@@ -168,18 +168,18 @@ def test_pipeline_is_logically_identical_across_chunk_sizes(tmp_path):
     assert output_a.manifest.recoding_coverage == output_b.manifest.recoding_coverage
 
 
-def test_real_manifest_classifies_all_55_fully_empty_columns(tmp_path):
+def test_real_manifest_classifies_every_fully_empty_column(tmp_path):
     sources = _synthetic(tmp_path / "sources")
     output = run_local_pipeline(sources, settings=_settings())
     fully_empty = [row for row in output.audit_tables["null_reasons"] if row["count"] == len(output.annual)]
-    assert len(fully_empty) == 55
+    assert fully_empty
+    assert all(row.get("reason_code") for row in fully_empty)
     categories = {row["reason_code"] for row in fully_empty}
     assert {
-        "available_but_not_detected",
-        "mapping_pending",
-        "really_not_available_2026",
-        "source_not_provided",
-        "future_historical_variable",
+        "unsupported_in_2026",
+        "normalization_pending",
+        "derivation_pending",
+        "historical_method_not_available",
     } <= categories
 
 

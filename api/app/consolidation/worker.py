@@ -46,7 +46,12 @@ class ConsolidationWorker:
         if not run:
             return False
         run_id = str(run["id"])
-        monitor = ResourceMonitor(self.settings)
+        monitor = ResourceMonitor(
+            self.settings,
+            on_stage=lambda stage, status, detail: self.repository.record_event(
+                run_id, str(run["user_id"]), stage, status, detail,
+            ),
+        )
         try:
             project = self.repository.get_project(str(run["project_id"]), str(run["user_id"]))
             if not project:

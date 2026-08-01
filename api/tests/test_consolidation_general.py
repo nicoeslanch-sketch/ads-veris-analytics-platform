@@ -87,6 +87,51 @@ def test_equivalence_adds_new_column_and_keeps_original(tmp_path):
     assert output.manifest.status is ConsolidationStatus.CERTIFIED
 
 
+def test_complete_generic_scenario_with_two_dimensions_and_equivalence(tmp_path):
+    sales = _csv(tmp_path / "ventas.csv", pd.DataFrame({
+        "ID_VENTA": [1, 2, 3, 4], "ID_PRODUCTO": ["A", "A", "B", "C"],
+        "ID_CLIENTE": [10, 20, 10, 30], "COD_ESTADO": ["1", "2", "1", "9"],
+        "MONTO": [100, 200, 150, 90],
+    }))
+    products = _csv(tmp_path / "productos.csv", pd.DataFrame({
+        "ID_PRODUCTO": ["A", "A", "B", "C"],
+        "PRODUCTO": ["Uno", "Uno conflictivo", "Dos", "Tres"],
+        "COSTO": [60, 65, 90, 50],
+    }))
+    clients = _csv(tmp_path / "clientes.csv", pd.DataFrame({
+        "ID_CLIENTE": [10, 20, 30], "SEGMENTO": ["PyME", "Empresa", "PyME"],
+        "REGION": ["Norte", "Centro", "Sur"],
+    }))
+    states = _csv(tmp_path / "estados.csv", pd.DataFrame({
+        "CODIGO": ["1", "2"], "DESCRIPCION": ["Pagada", "Pendiente"],
+    }))
+    output = _run(
+        {
+            SourceRole.PRIMARY: sales, SourceRole.SUPPLEMENT_1: products,
+            SourceRole.SUPPLEMENT_2: clients, SourceRole.EQUIVALENCE_1: states,
+        },
+        {
+            SourceRole.PRIMARY: {"primary_key": "ID_VENTA"},
+            SourceRole.SUPPLEMENT_1: {"label": "Productos", "primary_key": "ID_PRODUCTO", "source_key": "ID_PRODUCTO"},
+            SourceRole.SUPPLEMENT_2: {"label": "Clientes", "primary_key": "ID_CLIENTE", "source_key": "ID_CLIENTE"},
+            SourceRole.EQUIVALENCE_1: {
+                "label": "Estados", "target_column": "COD_ESTADO", "source_key": "CODIGO",
+                "value_column": "DESCRIPCION", "output_column": "ESTADO_DESCRIPCION",
+            },
+        },
+    )
+    assert len(output.annual) == 4
+    assert len(output.annual.columns) == 10
+    assert output.manifest.status is ConsolidationStatus.VALID_WITH_WARNINGS
+    assert output.annual.loc[0, "PRODUCTO"] is pd.NA or pd.isna(output.annual.loc[0, "PRODUCTO"])
+    assert output.annual.loc[2, "PRODUCTO"] == "Dos"
+    assert output.annual["SEGMENTO"].tolist() == ["PyME", "Empresa", "PyME", "PyME"]
+    assert output.annual["ESTADO_DESCRIPCION"].tolist()[:3] == ["Pagada", "Pendiente", "Pagada"]
+    assert pd.isna(output.annual.loc[3, "ESTADO_DESCRIPCION"])
+    assert any(issue.code == "supplement_1_duplicate_keys" and issue.count == 1 for issue in output.manifest.issues)
+    assert any(issue.code == "equivalence_1_unmapped" and issue.count == 1 for issue in output.manifest.issues)
+
+
 def test_worker_routes_general_project_and_writes_generic_artifacts(tmp_path):
     primary = _csv(tmp_path / "ventas.csv", pd.DataFrame({"Venta": [1, 2], "SKU": ["A", "B"]}))
     repository = MemoryConsolidationRepository()

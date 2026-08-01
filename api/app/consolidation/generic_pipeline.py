@@ -101,6 +101,7 @@ def run_general_pipeline(
     if primary_key not in annual.columns:
         raise ValueError(f"La clave principal '{primary_key}' no existe en el archivo principal.")
     expected_rows = len(annual)
+    original_column_count = len(annual.columns)
     primary_keys = _clean_key(annual[primary_key])
     empty_primary = int(primary_keys.eq("").sum())
     if empty_primary:
@@ -243,6 +244,13 @@ def run_general_pipeline(
         row_counts={
             "primary": expected_rows, "annual": len(annual),
             "unique_keys": int(primary_keys[primary_keys.ne("")].nunique()),
+            "original_columns": original_column_count, "final_columns": len(annual.columns),
+            "added_columns": max(0, len(annual.columns) - original_column_count),
+            "files_related": len(audit["relations"]),
+            "unmatched_rows": sum(int(row.get("unmatched_primary_rows", 0)) for row in audit["relations"]),
+            "ambiguous_keys": sum(int(row.get("ambiguous_keys_excluded", 0)) for row in audit["relations"]),
+            "codes_translated": sum(int(row.get("mapped", 0)) for row in audit["recoding"]),
+            "codes_unmapped": sum(int(row.get("unmapped", 0)) for row in audit["recoding"]),
         },
         issues=issues, timings_ms={"total": elapsed_ms}, target_columns=[str(column) for column in annual.columns],
         relationship_summary=audit["relations"], assumptions=[item["assumption"] for item in audit["assumptions"]],

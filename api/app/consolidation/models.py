@@ -76,7 +76,7 @@ class ConsolidationProjectConfig(BaseModel):
     period_label: str | None = Field(default=None, max_length=80)
     sources: list[SourceAssignment] = Field(default_factory=list)
     include_historical_output: bool = False
-    mapping_version: str = "demre-2026-v1"
+    mapping_version: str = "demre-2026-historico-real-v2"
     target_columns: list[str] | None = None
     aliases: dict[str, str] = Field(default_factory=dict)
     precedence: dict[str, list[SourceRole]] = Field(default_factory=dict)

@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 from uuid import uuid4
 
 import psutil
@@ -97,7 +97,13 @@ class StageUpdate:
 class ResourceMonitor:
     """Mide el proceso completo; el SO aporta el high-water mark cuando existe."""
 
-    def __init__(self, settings: Settings, *, sample_interval_seconds: float = 0.05) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        sample_interval_seconds: float = 0.05,
+        on_stage: Callable[[str, str, dict[str, Any]], None] | None = None,
+    ) -> None:
         self.settings = settings
         try:
             self.process: psutil.Process | None = psutil.Process(os.getpid())
@@ -112,6 +118,7 @@ class ResourceMonitor:
         self.final_rss_bytes = self.initial_rss_bytes
         self.peak_rss_bytes = max(self.initial_rss_bytes, self._os_peak_rss_bytes())
         self.started = time.perf_counter()
+        self.on_stage = on_stage
         self.stages: dict[str, StageObservation] = {}
         self.soft_limit_exceeded = False
         self._active_observations: list[StageObservation] = []
@@ -188,8 +195,17 @@ class ResourceMonitor:
         observation.peak_rss_bytes = max(observation.peak_rss_bytes, before)
         with self._observations_lock:
             self._active_observations.append(observation)
+        if self.on_stage:
+            try:
+                self.on_stage(name, "started", observation.as_dict())
+            except Exception:
+                pass
+        outcome = "completed"
         try:
             yield update
+        except BaseException:
+            outcome = "failed"
+            raise
         finally:
             after = self._observe()
             with self._observations_lock:
@@ -204,6 +220,11 @@ class ResourceMonitor:
             observation.temporary_bytes += update.temporary_bytes
             observation.artifact_bytes += update.artifact_bytes
             observation.source_bytes += update.source_bytes
+            if self.on_stage:
+                try:
+                    self.on_stage(name, outcome, observation.as_dict())
+                except Exception:
+                    pass
             self.checkpoint(name)
 
     def stop(self) -> dict[str, Any]:
