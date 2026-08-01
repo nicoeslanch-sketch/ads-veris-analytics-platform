@@ -504,16 +504,31 @@ function transactionGroupScore(
  * ("FECHA" / "Fecha", "Monto Neto" / "MONTO_NETO"). Espeja `_canonical_header`
  * del motor: solo sirve para aparear, nunca para mostrar. */
 function canonicalHeader(name: string): string {
-  return String(name)
+  const aliases: Record<string, string> = {
+    cant: 'cantidad',
+    dcto: 'descuento',
+    dto: 'descuento',
+    unit: 'unitario',
+    prov: 'proveedor',
+    suc: 'sucursal',
+    min: 'minimo',
+    obs: 'observacion',
+    observaciones: 'observacion',
+    porcentaje: 'pct',
+  }
+  let tokens: string[] = String(name)
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/%/g, ' pct ')
     .replace(/_/g, ' ')
-    .replace(/\bporcentaje\b/g, 'pct')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^observaciones$/, 'observacion')
+    .match(/[a-z0-9]+/g) ?? []
+  tokens = tokens.map((token) => aliases[token] ?? token)
+  const leadingToken = tokens[0]
+  if (tokens.length > 1 && leadingToken && ['cod', 'codigo', 'id', 'nro', 'n', 'num', 'numero'].includes(leadingToken)) {
+    tokens = tokens.slice(1)
+  }
+  return tokens.filter((token) => !['de', 'del', 'la', 'el'].includes(token)).join(' ')
 }
 
 export function compatibleAppendSheets(

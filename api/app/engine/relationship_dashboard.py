@@ -33,7 +33,7 @@ from .business import (
 )
 from .mapping import resolve_mapping
 from .metrics import CurrencyDetection
-from .multi_sheet import join_related_frames, relation_stats
+from .multi_sheet import append_compatible_frames, join_related_frames, relation_stats
 from .quality import find_column, numeric_series, structural_total_mask
 from .relationships import classify_relationship_template, collapse_inventory_snapshots
 
@@ -782,17 +782,24 @@ def build_relationship_dashboard(
     ):
         return _empty_dashboard(relationship, "generic", currency, "Las hojas de la relación no están disponibles.")
 
-    left = (
-        pd.concat(
-            [frames[name].copy() for name in append_sheets],
-            ignore_index=True,
-            sort=False,
-        )
-        if append_sheets
-        else frames[left_name]
-    )
+    if append_sheets:
+        try:
+            left, left_mapping, _ = append_compatible_frames(
+                {name: frames[name] for name in append_sheets},
+                mappings,
+                allow_single=True,
+            )
+        except ValueError as exc:
+            return _empty_dashboard(
+                relationship,
+                "generic",
+                currency,
+                f"Los periodos seleccionados no se pueden consolidar: {exc}",
+            )
+    else:
+        left = frames[left_name]
+        left_mapping = resolve_mapping([str(c) for c in left.columns], mappings.get(left_name))
     right = frames[right_name]
-    left_mapping = resolve_mapping([str(c) for c in left.columns], mappings.get(left_name))
     right_mapping = resolve_mapping([str(c) for c in right.columns], mappings.get(right_name))
     template, label, purpose = classify_relationship_template(
         left_name, left, left_mapping, right_name, right, right_mapping

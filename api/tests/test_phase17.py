@@ -165,6 +165,74 @@ def test_append_aligns_percent_pct_and_singular_plural_observation_headers():
     assert "Observaciones" not in combined.columns
 
 
+def test_append_aligns_retail_id_prefixes_abbreviations_and_any_number_of_periods():
+    first_columns = {
+        "ID Venta": ["VTA-1"],
+        "N° Boleta": ["B-1"],
+        "FECHA": ["01/01/2025"],
+        "Cod Sucursal": ["SUC-1"],
+        "Cod Vendedor": ["VEN-1"],
+        "Cod Cliente": ["CLI-1"],
+        "Cod Producto": ["SKU-1"],
+        "cantidad": [1],
+        "Precio Unit.": [100],
+        "Dcto %": [0],
+        "MONTO NETO": [100],
+        "IVA": [19],
+        "Total": [119],
+        "medio de pago": ["Efectivo"],
+        "ESTADO": ["Pagado"],
+        "Observación": [""],
+    }
+    second_columns = {
+        "Id_Venta": ["VTA-2"],
+        "Nro Boleta": ["B-2"],
+        "Fecha": ["01/02/2025"],
+        "ID_SUCURSAL": ["SUC-01"],
+        "Id Vendedor": ["VEN-001"],
+        "ID CLIENTE": ["CLI-01"],
+        "Id_Producto": ["SKU-01"],
+        "CANTIDAD": [2],
+        "precio_unitario": [100],
+        "descuento_pct": [0],
+        "Monto_Neto": [200],
+        "iva": [38],
+        "TOTAL": [238],
+        "Medio_Pago": ["Tarjeta"],
+        "Estado": ["Pagado"],
+        "OBSERVACION": [""],
+    }
+    frames = {
+        "S1": pd.DataFrame(first_columns),
+        **{
+            f"S{period}": pd.DataFrame(second_columns)
+            for period in range(2, 7)
+        },
+    }
+    mappings = {
+        "S1": {
+            "fecha": "FECHA", "monto": "MONTO NETO", "cantidad": "cantidad",
+            "producto": "Cod Producto", "cliente": "Cod Cliente",
+            "sucursal": "Cod Sucursal", "vendedor": "Cod Vendedor",
+        },
+        **{
+            f"S{period}": {
+                "fecha": "Fecha", "monto": "Monto_Neto", "cantidad": "CANTIDAD",
+                "producto": "Id_Producto", "cliente": "ID CLIENTE",
+                "sucursal": "ID_SUCURSAL", "vendedor": "Id Vendedor",
+            }
+            for period in range(2, 7)
+        },
+    }
+
+    combined, mapping, provenance = append_compatible_frames(frames, mappings)
+
+    assert len(combined) == 6
+    assert combined["MONTO NETO"].sum() == 1100
+    assert provenance["sheets"] == ["S1", "S2", "S3", "S4", "S5", "S6"]
+    assert mapping["producto"] == "Cod Producto"
+
+
 def test_append_accepts_auxiliary_column_present_in_only_one_period():
     frames = {
         "2024": pd.DataFrame({"Fecha": ["01/01/2024"], "Venta": [1000], "Observacion": ["ok"]}),
@@ -226,6 +294,31 @@ def test_many_to_one_join_preserves_rows_and_transaction_totals():
     assert merged["Categoria"].tolist() == ["X", "X", "Y"]
     assert mapping["monto"] == "Venta"
     assert provenance["cardinality"] == "muchos_a_uno"
+
+
+def test_join_executes_with_the_same_normalized_keys_used_by_its_validation():
+    frames = {
+        "Ventas": pd.DataFrame(
+            {"Cod Producto": [" sku-1 ", "SKU-0002"], "Venta": [100, 200]}
+        ),
+        "Productos": pd.DataFrame(
+            {"ID Producto": ["SKU-0001", "sku-2"], "Categoria": ["A", "B"]}
+        ),
+    }
+    merged, _, provenance = join_related_frames(
+        frames,
+        {"Ventas": {"monto": "Venta"}, "Productos": {}},
+        {
+            "left_sheet": "Ventas",
+            "right_sheet": "Productos",
+            "left_keys": ["Cod Producto"],
+            "right_keys": ["ID Producto"],
+            "type": "left",
+        },
+    )
+
+    assert merged["Categoria"].tolist() == ["A", "B"]
+    assert provenance["filas_sin_correspondencia"] == 0
 
 
 def test_many_to_many_relation_is_blocked():

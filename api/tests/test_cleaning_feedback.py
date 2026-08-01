@@ -5,6 +5,35 @@ from app.engine.loader import _drop_trailing_total_rows
 from app.engine.standardize import standardize_dataframe
 
 
+def test_realigns_unambiguous_shifted_percentage_minimum_and_boolean_columns():
+    frame = pd.DataFrame({
+        "Margen Objetivo %": [71, 42, 18],
+        "stock minimo": ["Sí", "No", "Si"],
+        "activo": ["37,2%", "0.354", "41%"],
+    })
+
+    clean, report = standardize_dataframe(frame)
+
+    assert clean["Margen Objetivo %"].tolist() == ["0.372", "0.354", "0.41"]
+    assert clean["stock minimo"].tolist() == ["71", "42", "18"]
+    assert clean["activo"].tolist() == ["Si", "No", "Si"]
+    assert report["cambios"]["columnas_semanticas_realineadas"] == 3
+
+
+def test_does_not_move_semantic_columns_when_they_are_already_coherent():
+    frame = pd.DataFrame({
+        "Margen Objetivo %": ["37,2%", "35,4%"],
+        "stock minimo": [71, 42],
+        "activo": ["Sí", "No"],
+    })
+
+    clean, report = standardize_dataframe(frame)
+
+    assert clean["stock minimo"].tolist() == ["71", "42"]
+    assert clean["activo"].tolist() == ["Si", "No"]
+    assert report["cambios"]["columnas_semanticas_realineadas"] == 0
+
+
 def test_trailing_totals_detected_in_non_first_column():
     frame = pd.DataFrame(
         [

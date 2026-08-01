@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from types import SimpleNamespace
 
 from app.engine.business import analyze_business_workbook, classify_business_sheets
+from app.engine.mapping import resolve_mapping
 from app.routes.pipeline import _validate_business_filters
 
 
@@ -19,6 +20,62 @@ def _sales_mapping() -> dict[str, dict[str, str]]:
             "cliente": "ID Cliente",
         }
     }
+
+
+def test_retail_business_uses_all_periods_returns_expenses_inventory_and_seller_goals():
+    frames = {
+        "Ventas_S1": pd.DataFrame({
+            "ID Venta": ["VTA-1"], "FECHA": ["2025-01-02"],
+            "Cod Producto": ["SKU-1"], "Cod Vendedor": ["VEN-1"],
+            "cantidad": [2], "MONTO NETO": [100], "ESTADO": ["Pagado"],
+        }),
+        "Ventas_S2": pd.DataFrame({
+            "Id_Venta": ["VTA-000002"], "Fecha": ["2025-01-03"],
+            "Id_Producto": ["SKU-0001"], "Id Vendedor": ["VEN-001"],
+            "CANTIDAD": [3], "Monto_Neto": [180], "Estado": ["Pagado"],
+        }),
+        "Productos": pd.DataFrame({
+            "Cod Producto": ["SKU-0001"], "NOMBRE PRODUCTO": ["Producto A"],
+            "Costo Unitario": [20],
+        }),
+        "Vendedores": pd.DataFrame({"Cod Vendedor": ["VEN-001"], "NOMBRE": ["Ana"]}),
+        "Devoluciones": pd.DataFrame({
+            "ID Venta": ["VTA-2"], "Fecha": ["2025-01-04"],
+            "Cant. Devuelta": [1], "Monto Devuelto": [40], "Estado": ["Aceptada"],
+        }),
+        "Costos_Operativos": pd.DataFrame({
+            "ID Gasto": ["G-1"], "Fecha Gasto": ["2025-01-10"],
+            "Monto Gasto": [10],
+        }),
+        "Stock_Sucursal": pd.DataFrame({
+            "ID Stock": ["STK-1"], "Cod Producto": ["SKU-1"],
+            "Cod Sucursal": ["SUC-1"], "Fecha Corte": ["2025-01-31"],
+            "Stock": [5], "Minimo": [6],
+        }),
+        "Metas_Vendedor": pd.DataFrame({
+            "Cod Vendedor": ["VEN-0001"], "Periodo": ["2025/01"],
+            "Meta Venta Neta": [200],
+        }),
+    }
+    mappings = {
+        name: resolve_mapping([str(column) for column in frame.columns], None)
+        for name, frame in frames.items()
+    }
+
+    analysis = analyze_business_workbook(frames, mappings, {})
+
+    assert analysis is not None
+    results = analysis["estado_resultados"]
+    assert results["ventas_brutas"] == 280
+    assert results["devoluciones_aceptadas"] == 40
+    assert results["ventas_observadas"] == 240
+    assert results["costo_venta_conocido"] == 80
+    assert results["utilidad_bruta"] == 160
+    assert results["resultado_operacional"] == 150
+    assert analysis["operacion"]["valor_inventario"] == 100
+    assert analysis["operacion"]["inventario_bajo_minimo"] == 1
+    assert analysis["metas"]["metas_cumplidas"] == 1
+    assert analysis["metas"]["metas_evaluadas"] == 1
 
 
 def test_business_analysis_excludes_totals_and_cancelled_rows_and_uses_asof_cost():

@@ -922,6 +922,9 @@ export interface BusinessAnalysis {
     documentos_conflictivos: number
   }
   estado_resultados: {
+    ventas_brutas?: number
+    devoluciones_aceptadas?: number
+    filas_devoluciones_aceptadas?: number
     ventas_observadas: number
     ventas_certificables: number
     ventas_pareadas: number
