@@ -100,4 +100,30 @@ VITE_CONSOLIDATION_ENABLED=false
 Rollback: apagar ambos flags y detener el worker. No se elimina ninguna fuente,
 tabla ni artefacto automáticamente y el flujo clásico queda intacto.
 
+## Estado listo para activar
+
+La API puede cargar, detectar, validar y encolar sin ejecutar el cómputo pesado.
+El procesamiento y las descargas requieren un proceso continuo con
+`python -m app.consolidation.worker`. Si ese proceso no existe, los runs quedan
+durablemente en `queued`; no implica que el archivo sea incompatible ni que se
+haya perdido.
+
+El repositorio incluye [`render.yaml`](../render.yaml) como Blueprint **no
+aplicado**. Su presencia no crea servicios ni genera cobros. Al aprobar capacidad:
+
+1. crear/sincronizar el Blueprint en Render;
+2. copiar `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` desde el servicio API sin
+   exponer sus valores;
+3. confirmar el plan facturable;
+4. comprobar en logs que arranca `python -m app.consolidation.worker`;
+5. verificar que un run pequeño pasa de `queued` a un estado terminal y permite
+   descargar su base, auditoría y manifiesto.
+
+La plantilla parte en Standard (2 GB), porque la aceptación real alcanzó unos
+603 MB de RSS y excede el límite de 512 MB de Starter. Configura límites internos
+de 1.500/1.800 MB para fallar de forma controlada antes de agotar esa instancia.
+El worker ahora se niega a arrancar en producción si faltan las credenciales de
+la cola, si la función está apagada o si el bypass de autenticación está activo;
+así evita un despliegue que parezca operativo mientras escucha una cola local.
+
 Mediciones reales: [CONSOLIDATION_PERFORMANCE_2026.md](./CONSOLIDATION_PERFORMANCE_2026.md).

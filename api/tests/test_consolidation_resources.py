@@ -22,7 +22,7 @@ from app.consolidation.resources import (
     isolated_run_directory,
 )
 from app.consolidation.target_schema import TARGET_COLUMNS
-from app.consolidation.worker import ConsolidationWorker
+from app.consolidation.worker import ConsolidationWorker, validate_worker_runtime
 from tests.test_consolidation_engine import synthetic_sources
 
 
@@ -87,6 +87,21 @@ def test_insufficient_temporary_disk_is_controlled(tmp_path, monkeypatch):
 def test_worker_rejects_unvalidated_in_process_concurrency():
     with pytest.raises(ValueError, match="concurrencia 1"):
         ConsolidationWorker(MemoryConsolidationRepository(), _settings(consolidation_worker_concurrency=2))
+
+
+def test_production_worker_fails_closed_without_queue_credentials():
+    with pytest.raises(RuntimeError, match="SUPABASE_URL ausente"):
+        validate_worker_runtime(_settings(app_env="production", consolidation_enabled=True))
+
+
+def test_production_worker_accepts_complete_safe_configuration():
+    validate_worker_runtime(_settings(
+        app_env="production",
+        supabase_url="https://example.supabase.co",
+        supabase_service_role_key="test-only-service-role",
+        consolidation_enabled=True,
+        dev_auth_bypass=False,
+    ))
 
 
 def test_chunk_interruption_does_not_return_partial_dimension(tmp_path):

@@ -1,0 +1,40 @@
+# Plantilla declarativa preparada, pero NO aplicada. Crear/sincronizar este
+# Blueprint habilita un servicio facturable en Render y exige aprobación.
+services:
+  - type: worker
+    name: ads-veris-consolidation-worker
+    runtime: python
+    repo: https://github.com/nicoeslanch-sketch/ads-veris-analytics-platform
+    branch: main
+    rootDir: api
+    region: virginia
+    plan: standard
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.consolidation.worker
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: datasets
+      - key: CONSOLIDATION_ENABLED
+        value: "true"
+      - key: CONSOLIDATION_ADMIN_ONLY
+        value: "true"
+      - key: CONSOLIDATION_WORKER_CONCURRENCY
+        value: "1"
+      - key: CONSOLIDATION_WORKER_POLL_SECONDS
+        value: "2"
+      - key: CONSOLIDATION_MEMORY_SOFT_LIMIT_MB
+        value: "1500"
+      - key: CONSOLIDATION_MEMORY_HARD_LIMIT_MB
+        value: "1800"
+      - key: CONSOLIDATION_TEMP_DISK_MIN_MB
+        value: "10240"
+      - key: CONSOLIDATION_CHUNK_SIZE
+        value: "100000"
+      - key: DEV_AUTH_BYPASS
+        value: "false"
