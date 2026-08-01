@@ -1,6 +1,7 @@
 import re
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -55,8 +56,15 @@ class Settings(BaseSettings):
     consolidation_admin_only: bool = True
     consolidation_max_source_mb: int = 512
     consolidation_csv_chunk_rows: int = 100_000
-    consolidation_preview_rows: int = 50
+    consolidation_preview_rows: int = 100
     consolidation_worker_poll_seconds: float = 2.0
+    consolidation_worker_concurrency: int = 1
+    consolidation_memory_soft_limit_mb: int = 3_000
+    consolidation_memory_hard_limit_mb: int = 3_600
+    consolidation_temp_dir: str = ""
+    consolidation_temp_disk_min_mb: int = 10_240
+    consolidation_chunk_size: int = 100_000
+    consolidation_run_stale_seconds: int = 21_600
 
     # ── Fase 10: cuenta administradora de respaldo ──
     # El panel /admin acepta también a este correo aunque profiles.is_admin
@@ -104,6 +112,18 @@ class Settings(BaseSettings):
             self.allowed_origin_regex
             and re.fullmatch(self.allowed_origin_regex, origin)
         )
+
+    @model_validator(mode="after")
+    def validate_consolidation_resources(self) -> "Settings":
+        if self.consolidation_worker_concurrency < 1:
+            raise ValueError("CONSOLIDATION_WORKER_CONCURRENCY debe ser al menos 1.")
+        if self.consolidation_memory_soft_limit_mb < 1:
+            raise ValueError("CONSOLIDATION_MEMORY_SOFT_LIMIT_MB debe ser positivo.")
+        if self.consolidation_memory_hard_limit_mb <= self.consolidation_memory_soft_limit_mb:
+            raise ValueError("El límite duro de consolidación debe superar al límite blando.")
+        if self.consolidation_temp_disk_min_mb < 1 or self.consolidation_chunk_size < 1:
+            raise ValueError("Los límites de disco y chunk de consolidación deben ser positivos.")
+        return self
 
 
 @lru_cache

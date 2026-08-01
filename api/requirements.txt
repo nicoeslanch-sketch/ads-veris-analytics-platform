@@ -8,6 +8,7 @@ PyJWT[crypto]==2.13.0
 httpx==0.28.1
 pandas==2.3.3
 openpyxl==3.1.5
+psutil==7.0.0
 # openpyxl usa el escritor XML acelerado cuando lxml esta disponible. En el
 # libro multihoja de estres reduce la primera exportacion auditada sin cambiar
 # el contenido ni omitir hojas, formulas o trazabilidad.

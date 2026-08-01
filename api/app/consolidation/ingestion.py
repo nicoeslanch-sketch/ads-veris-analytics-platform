@@ -6,7 +6,7 @@ import csv
 import hashlib
 import os
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence, Set
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
@@ -33,6 +33,7 @@ def storage_source_file(
     storage_path: str,
     user_id: str,
     settings: Settings | None = None,
+    directory: Path | None = None,
 ) -> Iterator[tuple[Path, str]]:
     """Descarga a un temporal generado; nunca acepta una ruta local del cliente."""
     cfg = settings or get_settings()
@@ -49,7 +50,7 @@ def storage_source_file(
     }
     temp_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(prefix="ads-consolidation-", suffix=suffix, delete=False) as target:
+        with tempfile.NamedTemporaryFile(prefix="source-", suffix=suffix, dir=directory, delete=False) as target:
             temp_path = Path(target.name)
             digest = hashlib.sha256()
             received = 0
@@ -87,6 +88,7 @@ def iter_csv_chunks(
     *,
     delimiter: str = ";",
     chunk_rows: int | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> Iterator[pd.DataFrame]:
     rows = chunk_rows or get_settings().consolidation_csv_chunk_rows
     for chunk in pd.read_csv(
@@ -99,14 +101,72 @@ def iter_csv_chunks(
         na_values=[],
         encoding="utf-8-sig",
     ):
+        if checkpoint:
+            checkpoint()
         yield chunk
 
 
-def read_csv_selected(path: Path, usecols: Sequence[str] | None = None) -> pd.DataFrame:
-    chunks = list(iter_csv_chunks(path, usecols))
+def read_csv_selected(
+    path: Path,
+    usecols: Sequence[str] | None = None,
+    *,
+    chunk_rows: int | None = None,
+    checkpoint: Callable[[], None] | None = None,
+    metrics: dict[str, int] | None = None,
+) -> pd.DataFrame:
+    chunks = list(iter_csv_chunks(path, usecols, chunk_rows=chunk_rows, checkpoint=checkpoint))
+    if metrics is not None:
+        metrics.update({"rows_read": sum(len(chunk) for chunk in chunks), "chunks": len(chunks)})
     if not chunks:
         return pd.DataFrame(columns=list(usecols or []), dtype="string")
     return pd.concat(chunks, ignore_index=True, copy=False)
+
+
+def read_csv_unique_for_ids(
+    path: Path,
+    usecols: Sequence[str],
+    authority_ids: Set[str],
+    *,
+    chunk_rows: int | None = None,
+    checkpoint: Callable[[], None] | None = None,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Reduce una dimensión a claves únicas mientras lee; nunca concatena el CSV."""
+    if "ID_aux" not in usecols:
+        raise ValueError("La dimensión requiere ID_aux.")
+    columns = list(usecols)
+    records: dict[str, tuple[object, ...]] = {}
+    ambiguous: set[str] = set()
+    rows_read = rows_matched = chunks = 0
+    for chunk in iter_csv_chunks(
+        path,
+        columns,
+        chunk_rows=chunk_rows,
+        checkpoint=checkpoint,
+    ):
+        chunks += 1
+        rows_read += len(chunk)
+        chunk = chunk.loc[:, columns]
+        keys = chunk["ID_aux"].astype("string").str.strip()
+        scoped = chunk.loc[keys.isin(authority_ids)]
+        rows_matched += len(scoped)
+        for values in scoped.itertuples(index=False, name=None):
+            key = str(values[columns.index("ID_aux")]).strip()
+            if key in ambiguous:
+                continue
+            if key in records:
+                records.pop(key, None)
+                ambiguous.add(key)
+            else:
+                records[key] = values
+        del scoped, keys, chunk
+    frame = pd.DataFrame.from_records(list(records.values()), columns=columns).astype("string")
+    return frame, {
+        "rows_read": rows_read,
+        "rows_matched": rows_matched,
+        "rows_retained": len(frame),
+        "ambiguous_keys": len(ambiguous),
+        "chunks": chunks,
+    }
 
 
 def workbook_headers(path: Path) -> dict[str, list[str]]:
@@ -132,6 +192,9 @@ def read_xlsx_selected(
     sheet_name: str,
     usecols: Sequence[str],
     filter_equals: tuple[str, str] | None = None,
+    chunk_rows: int = 100_000,
+    checkpoint: Callable[[], None] | None = None,
+    metrics: dict[str, int] | None = None,
 ) -> pd.DataFrame:
     """Itera filas reales en modo read-only y materializa solo columnas útiles."""
     workbook = load_workbook(path, read_only=True, data_only=True)
@@ -146,12 +209,21 @@ def read_xlsx_selected(
         indexes = [header.index(column) for column in usecols]
         filter_index = header.index(filter_equals[0]) if filter_equals else None
         records: list[tuple[object, ...]] = []
+        rows_read = selected_rows = chunks = 0
         for row in rows:
+            rows_read += 1
+            if (rows_read - 1) % max(1, chunk_rows) == 0:
+                chunks += 1
+                if checkpoint:
+                    checkpoint()
             if filter_equals and str(row[filter_index]).strip() != filter_equals[1]:
                 continue
             values = tuple(row[index] if index < len(row) else None for index in indexes)
             if any(value is not None and str(value).strip() for value in values):
                 records.append(values)
+                selected_rows += 1
+        if metrics is not None:
+            metrics.update({"rows_read": rows_read, "rows_matched": selected_rows, "chunks": chunks})
         return pd.DataFrame.from_records(records, columns=list(usecols)).astype("string")
     finally:
         workbook.close()
@@ -189,6 +261,24 @@ def upload_consolidation_artifact(
         except httpx.HTTPError as exc:
             raise HTTPException(502, f"No se pudo guardar el artefacto: {exc.__class__.__name__}.") from exc
     if response.status_code == 409:
-        raise HTTPException(409, "El artefacto inmutable ya existe.")
+        # Reanudación segura: nunca sobrescribe. Solo reutiliza el objeto si su
+        # contenido inmutable coincide exactamente con el artefacto local.
+        expected = sha256_file(local_path)
+        remote = hashlib.sha256()
+        verification_headers = {
+            "Authorization": f"Bearer {cfg.supabase_service_role_key}",
+            "apikey": cfg.supabase_service_role_key,
+        }
+        try:
+            with httpx.stream("GET", url, headers=verification_headers, timeout=300) as existing:
+                if existing.status_code != 200:
+                    raise HTTPException(409, "El artefacto inmutable ya existe y no pudo verificarse.")
+                for chunk in existing.iter_bytes(1024 * 1024):
+                    remote.update(chunk)
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, "No se pudo verificar el artefacto existente.") from exc
+        if remote.hexdigest() == expected:
+            return
+        raise HTTPException(409, "El artefacto inmutable ya existe con contenido diferente.")
     if response.status_code not in {200, 201}:
         raise HTTPException(502, "Storage no pudo guardar el artefacto de consolidación.")

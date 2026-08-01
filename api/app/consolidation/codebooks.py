@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+import pandas as pd
 
 from .source_detection import normalize_header
 
@@ -106,3 +107,19 @@ def recode_values(values: list[Any], codebook: CodebookResult) -> tuple[list[str
             recoded.append(None)
             counts["unmapped"] += 1
     return recoded, counts
+
+
+def recode_series(values: pd.Series, codebook: CodebookResult) -> tuple[pd.Series, dict[str, int]]:
+    """Recodifica vectorizado y conserva los ceros iniciales del código."""
+    codes = values.astype("string").fillna("").str.strip().str.replace(r"\.0$", "", regex=True)
+    empty = codes.eq("")
+    conflict = codes.isin(codebook.conflicts)
+    mapped = codes.isin(codebook.mapping)
+    result = codes.map(codebook.mapping).astype("string")
+    result = result.mask(empty | conflict | ~mapped, pd.NA)
+    return result, {
+        "mapped": int(mapped.sum()),
+        "unmapped": int((~empty & ~conflict & ~mapped).sum()),
+        "conflict": int(conflict.sum()),
+        "empty": int(empty.sum()),
+    }

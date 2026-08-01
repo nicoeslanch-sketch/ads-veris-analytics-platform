@@ -151,8 +151,9 @@ class ConsolidationManifest(BaseModel):
     null_reasons: list[dict[str, Any]] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     cohort_id_method: str | None = None
-    preview: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    preview: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     memory_bytes_estimate: int | None = None
+    resource_metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConsolidationPreview(BaseModel):

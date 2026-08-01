@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -80,9 +80,23 @@ class MemoryConsolidationRepository:
             run = self.runs[run_id]
             run.update({"status": status, "input_hash": input_hash, "report": report, "artifacts": artifacts, "reused_run_id": reused_run_id, "completed_at": _now()})
 
-    def fail_run(self, run_id: str, code: str, message: str) -> None:
+    def fail_run(self, run_id: str, code: str, message: str, report: dict[str, Any] | None = None) -> None:
         with self._lock:
-            self.runs[run_id].update({"status": "failed", "error_code": code, "error_message": message[:500], "completed_at": _now()})
+            self.runs[run_id].update({"status": "failed", "error_code": code, "error_message": message[:500], "report": report or {}, "completed_at": _now()})
+
+    def recover_interrupted(self, stale_seconds: int) -> int:
+        threshold = datetime.now(timezone.utc) - timedelta(seconds=max(1, stale_seconds))
+        recovered = 0
+        with self._lock:
+            for run in self.runs.values():
+                started = run.get("started_at")
+                if run.get("status") != "running" or not started:
+                    continue
+                if datetime.fromisoformat(started) >= threshold:
+                    continue
+                run.update({"status": "queued", "started_at": None, "recovered_at": _now()})
+                recovered += 1
+        return recovered
 
     def find_completed(self, user_id: str, input_hash: str, config_hash: str) -> dict[str, Any] | None:
         for run in self.runs.values():
@@ -163,9 +177,20 @@ class SupabaseConsolidationRepository:
         if artifacts:
             self._rows(httpx.post(self._url("consolidation_artifacts"), headers=self.headers, json=artifacts, timeout=20))
 
-    def fail_run(self, run_id: str, code: str, message: str) -> None:
-        response = httpx.patch(self._url("consolidation_runs"), headers=self.headers, params={"id": f"eq.{run_id}"}, json={"status": "failed", "error_code": code, "error_message": message[:500], "completed_at": _now()}, timeout=20)
+    def fail_run(self, run_id: str, code: str, message: str, report: dict[str, Any] | None = None) -> None:
+        response = httpx.patch(self._url("consolidation_runs"), headers=self.headers, params={"id": f"eq.{run_id}"}, json={"status": "failed", "error_code": code, "error_message": message[:500], "report": report or {}, "completed_at": _now()}, timeout=20)
         response.raise_for_status()
+
+    def recover_interrupted(self, stale_seconds: int) -> int:
+        threshold = (datetime.now(timezone.utc) - timedelta(seconds=max(1, stale_seconds))).isoformat()
+        rows = self._rows(httpx.patch(
+            self._url("consolidation_runs"),
+            headers=self.headers,
+            params={"status": "eq.running", "started_at": f"lt.{threshold}"},
+            json={"status": "queued", "started_at": None},
+            timeout=20,
+        ))
+        return len(rows)
 
     def find_completed(self, user_id: str, input_hash: str, config_hash: str) -> dict[str, Any] | None:
         rows = self._rows(httpx.get(self._url("consolidation_runs"), headers=self.headers, params={"user_id": f"eq.{user_id}", "input_hash": f"eq.{input_hash}", "config_hash": f"eq.{config_hash}", "status": "in.(partial,certified,valid_with_warnings)", "order": "completed_at.desc", "limit": "1", "select": "*"}, timeout=20))

@@ -28,12 +28,28 @@ def validate_annual_contract(
     return issues
 
 
-def null_reason_summary(annual: pd.DataFrame, source_targets: set[str]) -> list[dict[str, object]]:
+def null_reason_summary(
+    annual: pd.DataFrame,
+    source_targets: set[str],
+    classifications: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
     summary: list[dict[str, object]] = []
+    declared = classifications or {}
     for column in annual.columns:
         values = annual[column]
         null_count = int((values.isna() | values.astype("string").fillna("").str.strip().eq("")).sum())
         if null_count:
-            reason = "source_value_missing" if column in source_targets else "unsupported_in_2026"
-            summary.append({"column": column, "reason_code": reason, "count": null_count})
+            classification = declared.get(column)
+            if isinstance(classification, dict):
+                reason = str(classification.get("reason_code") or "unsupported_in_2026")
+                evidence = str(classification.get("evidence") or "")
+            elif isinstance(classification, str):
+                reason, evidence = classification, ""
+            else:
+                reason = "source_value_missing" if column in source_targets else "unsupported_in_2026"
+                evidence = ""
+            row: dict[str, object] = {"column": column, "reason_code": reason, "count": null_count}
+            if evidence:
+                row["evidence"] = evidence
+            summary.append(row)
     return summary
