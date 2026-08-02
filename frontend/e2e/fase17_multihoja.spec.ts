@@ -152,7 +152,7 @@ with pd.ExcelWriter(path, engine="openpyxl") as writer:
     pd.DataFrame({"ID Cliente": ["C-1", "C-2", "C-3"], "Razon Social": ["Cliente Norte", "Cliente Sur", "Cliente Centro"], "Segmento": ["Empresa", "PyME", "Empresa"]}).to_excel(writer, sheet_name="Clientes", index=False)
     pd.DataFrame({"ID Sucursal": ["S-1", "S-2"], "Nombre Sucursal": ["Centro", "Norte"], "Comuna": ["Santiago", "Renca"]}).to_excel(writer, sheet_name="Sucursales", index=False)
     pd.DataFrame({"ID Vendedor": ["V-1", "V-2"], "Nombre Vendedor": ["Ana", "Luis"], "ID Sucursal": ["S-1", "S-2"]}).to_excel(writer, sheet_name="Vendedores", index=False)
-    pd.DataFrame({"Fecha Gasto": ["10/12/2025", "10/01/2026"], "ID Gasto": ["G-1", "G-2"], "Monto Neto": [800, 900], "IVA": [152, 171], "Total Gasto": [952, 1071], "Tipo Gasto": ["Fijo", "Fijo"], "Estado": ["Pagado", "Pagado"]}).to_excel(writer, sheet_name="Gastos_Operacionales", index=False)
+    pd.DataFrame({"Fecha Gasto": ["10/12/2025", "10/01/2026"], "ID Gasto": ["G-1", "G-2"], "Monto Neto": [800, 900], "IVA": [152, 171], "Total Gasto": [952, 1071], "Categoría Gasto": ["Arriendo", "Publicidad"], "Tipo Gasto": ["Fijo", "Variable"], "Estado": ["Pagado", "Pagado"]}).to_excel(writer, sheet_name="Gastos_Operacionales", index=False)
     pd.DataFrame({"Mes": ["01/12/2025", "01/01/2026"], "ID Sucursal": ["S-1", "S-1"], "Meta Venta": [9000, 10000], "Meta Margen": [0.30, 0.32]}).to_excel(writer, sheet_name="Metas_Mensuales", index=False)
 `
   execFileSync('python', ['-c', script, path])
@@ -457,6 +457,11 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await page.getByRole('link', { name: /Resumen/ }).first().click()
   await expect(page.getByText('Evolución del negocio')).toBeVisible()
   await expect(page.getByText('Utilidad y margen mensual')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Conclusiones del periodo' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Ventas y utilidad por categoría' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Ranking de vendedores por utilidad' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Ventas y margen por sucursal' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Gastos operacionales por categoría' })).toBeVisible()
   await expect(page.getByText('Estado de la información')).toHaveCount(0)
   const compactAlertLink = page.getByRole('link', { name: 'Ver alertas' })
   if (await compactAlertLink.count()) {
@@ -499,6 +504,27 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   expect(layout.display).toBe('grid')
   expect(layout.columns).toBe(2)
   expect(layout.width).toBeLessThanOrEqual(layout.clientWidth + 1)
+  const orderedHeadings = [
+    'Conclusiones del periodo',
+    'Evolución del negocio',
+    'Utilidad y margen mensual',
+    'Ventas y utilidad por categoría',
+    'Metas y punto de equilibrio',
+    'Ranking de vendedores por utilidad',
+    'Gastos operacionales por categoría',
+    'Indicadores disponibles',
+  ]
+  const headingPositions = await Promise.all(orderedHeadings.map(async (name) => {
+    const box = await page.getByRole('heading', { name }).boundingBox()
+    return box?.y ?? -1
+  }))
+  expect(headingPositions.every((position, index) => index === 0 || position > headingPositions[index - 1])).toBe(true)
+  await page.getByRole('heading', { name: 'Ventas y utilidad por categoría' }).locator('..').screenshot({
+    path: testInfo.outputPath('ventas-utilidad-categoria.png'),
+  })
+  await page.getByRole('heading', { name: 'Gastos operacionales por categoría' }).locator('..').screenshot({
+    path: testInfo.outputPath('gastos-operacionales-categoria.png'),
+  })
   await page.screenshot({ path: testInfo.outputPath('resumen-empresarial-desktop.png'), fullPage: true })
 
   await expect(page.getByRole('heading', { name: 'Filtros del negocio' })).toBeVisible()
