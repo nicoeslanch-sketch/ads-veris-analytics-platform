@@ -539,6 +539,38 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
 
   return (
     <div className="space-y-6">
+      <Card id="business-conclusions">
+        <h2 className="text-base font-semibold text-navy">Conclusiones del periodo</h2>
+        <p className="mt-1 text-xs text-navy/55">
+          Resultados deterministas sobre la información disponible; los datos parciales se indican expresamente.
+        </p>
+        <ol className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
+          {conclusions.map((conclusion, index) => (
+            <li key={conclusion} className="rounded-lg border border-navy/10 bg-navy/[0.025] p-3">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-teal">
+                Conclusión {index + 1}
+              </span>
+              <p className="mt-1 text-xs leading-relaxed text-navy/70">{conclusion}</p>
+              {index < 3 ? (
+                <a
+                  href={index === 0 ? '#business-trend' : '#business-monthly-profitability'}
+                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
+                >
+                  Abrir gráfico
+                </a>
+              ) : (
+                <Link
+                  to="/alertas"
+                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
+                >
+                  Abrir detalle
+                </Link>
+              )}
+            </li>
+          ))}
+        </ol>
+      </Card>
+
       {visibleCards.length > 0 && (
       <KpiCarousel label="Indicadores del negocio">
         {visibleCards.map(({ label, value, detail, icon: Icon, color, comparison, state }) => (
@@ -585,7 +617,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
         </div>
       )}
 
-      <AdaptiveIndicatorCatalog analysis={analysis} />
+      <AdaptiveIndicatorCatalog analysis={analysis} section="highlights" />
 
       <div data-testid="business-summary-flow" className="grid items-start gap-6 xl:grid-cols-2">
         {analysis.evolucion.length > 0 && (
@@ -613,7 +645,44 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           </Card>
         )}
 
-        <Card id="business-profitability" className="min-w-0">
+        <Card id="business-monthly-profitability" className="min-w-0 xl:col-span-2">
+          <h2 className="text-base font-semibold text-navy">Utilidad y margen mensual</h2>
+          <p className="mt-1 text-xs text-navy/55">
+            Compara cuánto quedó después del costo de venta y qué porcentaje representa sobre las ventas relacionadas.
+          </p>
+          {monthlyProfitability.length > 0 ? (
+            <div className="mt-4 h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={monthlyProfitability} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                  <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+                  <XAxis dataKey="mes" tickFormatter={formatMonthShort} tick={{ fill: AXIS_INK, fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="money" tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 10 }} width={64} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="margin" orientation="right" tickFormatter={(value) => `${formatNumber(value)}%`} tick={{ fill: AXIS_INK, fontSize: 10 }} width={42} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    formatter={(value, name) => (
+                      String(name).startsWith('Margen bruto')
+                        ? `${formatNumber(Number(value))}%`
+                        : formatCLP(Number(value))
+                    )}
+                    labelFormatter={(label) => formatMonthShort(String(label))}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <ReferenceLine yAxisId="money" y={0} stroke={AXIS_INK} strokeOpacity={0.45} />
+                  <Bar yAxisId="money" dataKey="utilidad_bruta" name="Utilidad bruta histórica" fill={CHART.utilidad} radius={[4, 4, 0, 0]} maxBarSize={36} />
+                  <Line yAxisId="margin" type="monotone" dataKey="margen_pct" name="Margen bruto histórico" stroke={CHART.flujo} strokeWidth={2.5} dot={{ r: 3 }} connectNulls={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-navy/55">No hay costos relacionados suficientes para calcular utilidad mensual.</p>
+          )}
+        </Card>
+      </div>
+
+      <AdaptiveIndicatorCatalog analysis={analysis} section="contribution" />
+
+      <div className="grid items-start gap-6 xl:grid-cols-2">
+        <Card id="business-profitability" className="min-w-0 xl:col-span-2">
           <div className="flex items-center gap-2">
             <Target className="h-4.5 w-4.5 text-gold" />
             <h2 className="text-base font-semibold text-navy">Metas y punto de equilibrio</h2>
@@ -651,7 +720,14 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           </div>
         </Card>
 
-        <Card className="min-w-0">
+      </div>
+
+      <AdaptiveIndicatorCatalog analysis={analysis} section="commercialDetails" />
+
+      <AdaptiveIndicatorCatalog analysis={analysis} section="technical" />
+
+      <div className="grid items-start gap-6 xl:grid-cols-2">
+        <Card className="min-w-0 xl:col-span-2">
           <div className="flex items-center gap-2">
             <Calculator className="h-4.5 w-4.5 text-teal" />
             <h2 className="text-base font-semibold text-navy">Indicadores disponibles</h2>
@@ -677,70 +753,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           )}
         </Card>
 
-        <Card className="min-w-0 xl:col-span-2">
-          <h2 className="text-base font-semibold text-navy">Utilidad y margen mensual</h2>
-          <p className="mt-1 text-xs text-navy/55">
-            Compara cuánto quedó después del costo de venta y qué porcentaje representa sobre las ventas relacionadas.
-          </p>
-          {monthlyProfitability.length > 0 ? (
-            <div className="mt-4 h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={monthlyProfitability} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
-                  <CartesianGrid stroke={GRID_STROKE} vertical={false} />
-                  <XAxis dataKey="mes" tickFormatter={formatMonthShort} tick={{ fill: AXIS_INK, fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis yAxisId="money" tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 10 }} width={64} axisLine={false} tickLine={false} />
-                  <YAxis yAxisId="margin" orientation="right" tickFormatter={(value) => `${formatNumber(value)}%`} tick={{ fill: AXIS_INK, fontSize: 10 }} width={42} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    formatter={(value, name) => (
-                      String(name).startsWith('Margen bruto')
-                        ? `${formatNumber(Number(value))}%`
-                        : formatCLP(Number(value))
-                    )}
-                    labelFormatter={(label) => formatMonthShort(String(label))}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <ReferenceLine yAxisId="money" y={0} stroke={AXIS_INK} strokeOpacity={0.45} />
-                  <Bar yAxisId="money" dataKey="utilidad_bruta" name="Utilidad bruta histórica" fill={CHART.utilidad} radius={[4, 4, 0, 0]} maxBarSize={36} />
-                  <Line yAxisId="margin" type="monotone" dataKey="margen_pct" name="Margen bruto histórico" stroke={CHART.flujo} strokeWidth={2.5} dot={{ r: 3 }} connectNulls={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <p className="mt-4 text-sm text-navy/55">No hay costos relacionados suficientes para calcular utilidad mensual.</p>
-          )}
-        </Card>
       </div>
-      <Card id="business-conclusions">
-        <h2 className="text-base font-semibold text-navy">Conclusiones del periodo</h2>
-        <p className="mt-1 text-xs text-navy/55">
-          Resultados deterministas sobre la información disponible; los datos parciales se indican expresamente.
-        </p>
-        <ol className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
-          {conclusions.map((conclusion, index) => (
-            <li key={conclusion} className="rounded-lg border border-navy/10 bg-navy/[0.025] p-3">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-teal">
-                Conclusión {index + 1}
-              </span>
-              <p className="mt-1 text-xs leading-relaxed text-navy/70">{conclusion}</p>
-              {index < 3 ? (
-                <a
-                  href={index === 0 ? '#business-trend' : '#business-profitability'}
-                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
-                >
-                  Abrir gráfico
-                </a>
-              ) : (
-                <Link
-                  to="/alertas"
-                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
-                >
-                  Abrir detalle
-                </Link>
-              )}
-            </li>
-          ))}
-        </ol>
-      </Card>
     </div>
   )
 }

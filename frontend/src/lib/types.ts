@@ -645,6 +645,7 @@ export interface DatasetDimensions {
 export interface BusinessGroupRow {
   nombre: string
   ingresos: number
+  ingresos_positivos?: number
   participacion_pct: number | null
   costo: number | null
   utilidad: number | null
@@ -1000,6 +1001,21 @@ export interface BusinessAnalysis {
     cumplimiento_meta_pct?: number | null
   }>
   agrupaciones: Record<string, BusinessGroupRow[]>
+  desgloses?: {
+    gastos_operacionales: Array<{
+      nombre: string
+      fijo: number
+      variable: number
+      sin_clasificar: number
+      total: number
+      registros: number
+    }>
+    devoluciones_por_motivo: Array<{
+      nombre: string
+      monto: number
+      casos: number
+    }>
+  }
   portafolio: {
     umbrales: { margen_mediano_pct: number; participacion_mediana_pct: number } | null
     productos: Array<BusinessGroupRow & {

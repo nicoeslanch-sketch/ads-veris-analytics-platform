@@ -27,11 +27,13 @@ def test_retail_business_uses_all_periods_returns_expenses_inventory_and_seller_
         "Ventas_S1": pd.DataFrame({
             "ID Venta": ["VTA-1"], "FECHA": ["2025-01-02"],
             "Cod Producto": ["SKU-1"], "Cod Vendedor": ["VEN-1"],
+            "Cod Cliente": ["CLI-1"],
             "cantidad": [2], "MONTO NETO": [100], "ESTADO": ["Pagado"],
         }),
         "Ventas_S2": pd.DataFrame({
             "Id_Venta": ["VTA-000002"], "Fecha": ["2025-01-03"],
             "Id_Producto": ["SKU-0001"], "Id Vendedor": ["VEN-001"],
+            "Id Cliente": ["CLI-002"],
             "CANTIDAD": [3], "Monto_Neto": [180], "Estado": ["Pagado"],
         }),
         "Productos": pd.DataFrame({
@@ -39,13 +41,21 @@ def test_retail_business_uses_all_periods_returns_expenses_inventory_and_seller_
             "Costo Unitario": [20],
         }),
         "Vendedores": pd.DataFrame({"Cod Vendedor": ["VEN-001"], "NOMBRE": ["Ana"]}),
+        "Clientes": pd.DataFrame({
+            "Cod Cliente": ["CLI-001", "CLI-002"],
+            "Razón Social": ["Cliente Uno", "Cliente Dos"],
+        }),
         "Devoluciones": pd.DataFrame({
             "ID Venta": ["VTA-2"], "Fecha": ["2025-01-04"],
-            "Cant. Devuelta": [1], "Monto Devuelto": [40], "Estado": ["Aceptada"],
+            "Cant. Devuelta": [1], "Monto Devuelto": [40],
+            "Motivo": ["Producto dañado"], "Estado": ["Aceptada"],
         }),
         "Costos_Operativos": pd.DataFrame({
-            "ID Gasto": ["G-1"], "Fecha Gasto": ["2025-01-10"],
-            "Monto Gasto": [10],
+            "ID Gasto": ["G-1", "G-2"],
+            "Fecha Gasto": ["2025-01-10", "2025-01-12"],
+            "Monto Gasto": [6, 4],
+            "Categoría Gasto": ["Arriendo", "Publicidad"],
+            "Tipo Gasto": ["Fijo", "Variable"],
         }),
         "Stock_Sucursal": pd.DataFrame({
             "ID Stock": ["STK-1"], "Cod Producto": ["SKU-1"],
@@ -76,6 +86,21 @@ def test_retail_business_uses_all_periods_returns_expenses_inventory_and_seller_
     assert analysis["operacion"]["inventario_bajo_minimo"] == 1
     assert analysis["metas"]["metas_cumplidas"] == 1
     assert analysis["metas"]["metas_evaluadas"] == 1
+    indicators = {
+        indicator["id"]: indicator
+        for category in analysis["catalogo_indicadores"]["categorias"]
+        for indicator in category["indicadores"]
+    }
+    concentration = indicators["concentracion_cliente_principal"]
+    assert concentration["valor"] == pytest.approx(64.29)
+    assert concentration["numerador"] == 180
+    assert concentration["denominador"] == 280
+    assert analysis["desgloses"]["devoluciones_por_motivo"] == [
+        {"nombre": "Producto dañado", "monto": 40.0, "casos": 1}
+    ]
+    assert sum(
+        row["total"] for row in analysis["desgloses"]["gastos_operacionales"]
+    ) == results["gastos_operacionales"]
 
 
 def test_business_analysis_excludes_totals_and_cancelled_rows_and_uses_asof_cost():

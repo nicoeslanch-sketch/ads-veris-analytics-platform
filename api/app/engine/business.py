@@ -469,17 +469,41 @@ def _attribute_consistency(
     }
 
 
+def _canonical_labels(series: pd.Series, fallback: str) -> pd.Series:
+    """Une variantes sólo tipográficas sin inventar equivalencias de negocio."""
+    cleaned = series.copy()
+    cleaned = cleaned.mask(physical_missing_mask(cleaned), fallback)
+    cleaned = (
+        cleaned.astype(str)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+        .replace("", fallback)
+    )
+    keys = cleaned.map(strip_accents_lower)
+    display_by_key: dict[str, str] = {}
+    for key, values in cleaned.groupby(keys, sort=False):
+        counts = values.value_counts(sort=True)
+        representative = str(counts.index[0]) if not counts.empty else fallback
+        display_by_key[str(key)] = representative
+    return keys.astype(str).map(display_by_key).fillna(fallback)
+
+
 def _group_profit(
     frame: pd.DataFrame,
     column: str | None,
     amount: pd.Series,
     cost: pd.Series,
-    limit: int = 15,
+    limit: int | None = 15,
+    normalize_labels: bool = False,
 ) -> list[dict[str, Any]]:
     if not column or column not in frame.columns:
         return []
     labels = frame[column].copy()
-    labels = labels.mask(physical_missing_mask(labels), "Sin clasificar")
+    labels = (
+        _canonical_labels(labels, "Sin clasificar")
+        if normalize_labels
+        else labels.mask(physical_missing_mask(labels), "Sin clasificar")
+    )
     grouped = pd.DataFrame(
         {
             "nombre": labels.astype(str).str.strip().replace("", "Sin clasificar"),
@@ -494,6 +518,9 @@ def _group_profit(
     rows: list[dict[str, Any]] = []
     for name, values in grouped.groupby("nombre", dropna=False):
         income = float(values["ingresos"].dropna().sum())
+        positive_income = float(
+            values.loc[values["ingresos"] > 0, "ingresos"].dropna().sum()
+        )
         paired_income = float(values["ingreso_pareado"].dropna().sum())
         paired_cost = float(values["costo_pareado"].dropna().sum())
         paired_rows = int(values["pareada"].sum())
@@ -502,6 +529,7 @@ def _group_profit(
             {
                 "nombre": str(name) or "Sin clasificar",
                 "ingresos": round(income, 2),
+                "ingresos_positivos": round(positive_income, 2),
                 "participacion_pct": round(
                     float(values.loc[values["ingresos"] > 0, "ingresos"].sum())
                     / total_positive
@@ -521,7 +549,7 @@ def _group_profit(
             }
         )
     rows.sort(key=lambda item: item["ingresos"], reverse=True)
-    return rows[:limit]
+    return rows if limit is None else rows[:limit]
 
 
 def _reference_values(
@@ -2004,6 +2032,7 @@ def analyze_business_workbook(
     accepted_return_cost = pd.Series(0.0, index=sales.index, dtype=float)
     accepted_returns_total = 0.0
     accepted_returns_rows = 0
+    return_reason_rows: list[dict[str, Any]] = []
     returns_name = (kinds.get("devoluciones") or [None])[0]
     returns_frame = frames.get(returns_name) if returns_name else None
     return_sale_key = None
@@ -2053,6 +2082,31 @@ def analyze_business_workbook(
             )
             accepted_returns_total = float(amount_by_sale.sum())
             accepted_return_amount = record_keys.map(amount_by_sale).fillna(0.0)
+            return_reason_col = _first_column(
+                returns_frame.columns,
+                (("motivo",), ("razon",), ("causa",)),
+            )
+            if return_reason_col:
+                return_labels = _canonical_labels(
+                    returns_frame[return_reason_col], "Sin motivo informado"
+                )
+                return_detail = pd.DataFrame(
+                    {
+                        "motivo": return_labels.astype(str).str.strip(),
+                        "monto": returned_amount,
+                    }
+                ).loc[accepted & returned_amount.notna()]
+                for reason, values in return_detail.groupby("motivo", dropna=False):
+                    return_reason_rows.append(
+                        {
+                            "nombre": str(reason) or "Sin motivo informado",
+                            "monto": round(float(values["monto"].sum()), 2),
+                            "casos": int(len(values)),
+                        }
+                    )
+                return_reason_rows.sort(
+                    key=lambda item: (item["monto"], item["casos"]), reverse=True
+                )
 
             if return_quantity_col:
                 # El costo devuelto usa el costo aplicable de la venta original,
@@ -2158,6 +2212,7 @@ def analyze_business_workbook(
     expense_value_basis = None
     expense_tax_excluded = None
     depreciation_expense = None
+    expense_category_rows: list[dict[str, Any]] = []
     expense_mask = pd.Series(dtype=bool)
     expense_values = pd.Series(dtype=float)
     expense_frame = frames.get((kinds.get("gastos") or [None])[0]) if kinds.get("gastos") else None
@@ -2209,6 +2264,58 @@ def analyze_business_workbook(
             )
             fixed_expenses = float(expense_values[fixed_mask].dropna().sum())
             variable_expenses = float(expense_values[variable_mask].dropna().sum())
+        expense_category_col = _first_column(
+            expense_frame.columns,
+            (
+                ("categoria", "gasto"),
+                ("categoria",),
+                ("subcategoria",),
+                ("descripcion",),
+                ("glosa",),
+                ("concepto",),
+            ),
+        )
+        if expense_category_col:
+            expense_labels = _canonical_labels(
+                expense_frame[expense_category_col], "Sin categoría"
+            )
+            expense_types = (
+                expense_frame[expense_type].astype(str).map(strip_accents_lower)
+                if expense_type
+                else pd.Series("", index=expense_frame.index, dtype=str)
+            )
+            expense_detail = pd.DataFrame(
+                {
+                    "categoria": expense_labels.astype(str).str.strip(),
+                    "tipo": expense_types,
+                    "monto": expense_values,
+                }
+            ).loc[comparable_expense_mask & expense_values.notna()]
+            for category, values in expense_detail.groupby("categoria", dropna=False):
+                fixed = float(
+                    values.loc[
+                        values["tipo"].str.contains(r"\bfij", regex=True, na=False),
+                        "monto",
+                    ].sum()
+                )
+                variable = float(
+                    values.loc[
+                        values["tipo"].str.contains(r"\bvariab", regex=True, na=False),
+                        "monto",
+                    ].sum()
+                )
+                total = float(values["monto"].sum())
+                expense_category_rows.append(
+                    {
+                        "nombre": str(category) or "Sin categoría",
+                        "fijo": round(fixed, 2),
+                        "variable": round(variable, 2),
+                        "sin_clasificar": round(total - fixed - variable, 2),
+                        "total": round(total, 2),
+                        "registros": int(len(values)),
+                    }
+                )
+            expense_category_rows.sort(key=lambda item: item["total"], reverse=True)
         depreciation_mask = pd.Series(False, index=expense_frame.index)
         for expense_label_col in expense_frame.columns:
             header = normalized_header(expense_label_col)
@@ -2698,10 +2805,21 @@ def analyze_business_workbook(
     seller_group_col = "_vendedor_analisis" if "_vendedor_analisis" in sales else seller_col
     analytic_sales = sales.loc[indicator_mask].reset_index(drop=True)
     analytic_amount = amount.loc[indicator_mask].reset_index(drop=True)
+    analytic_gross_amount = gross_amount.loc[indicator_mask].reset_index(drop=True)
     analytic_cost = cost_of_sales.loc[indicator_mask].reset_index(drop=True)
     groupings = {
         "productos": _group_profit(analytic_sales, product_group_col, analytic_amount, analytic_cost, 60),
-        "categorias": _group_profit(analytic_sales, category_group_col, analytic_amount, analytic_cost),
+        # Las categorías alimentan una composición completa. No se recortan en
+        # backend: si la interfaz necesita compactarlas debe sumar el remanente
+        # como "Otros", nunca descartarlo silenciosamente.
+        "categorias": _group_profit(
+            analytic_sales,
+            category_group_col,
+            analytic_amount,
+            analytic_cost,
+            None,
+            normalize_labels=True,
+        ),
         "canales": _group_profit(analytic_sales, channel_col, analytic_amount, analytic_cost),
         "sucursales": _group_profit(analytic_sales, branch_group_col, analytic_amount, analytic_cost),
         "clientes": _group_profit(analytic_sales, client_group_col, analytic_amount, analytic_cost),
@@ -2715,6 +2833,17 @@ def analyze_business_workbook(
             analytic_sales, seller_group_col, analytic_amount, analytic_cost, 60
         ),
     }
+    client_concentration_rows = _group_profit(
+        analytic_sales,
+        client_group_col,
+        analytic_gross_amount,
+        analytic_cost,
+        60,
+    )
+    client_concentration_rows.sort(
+        key=lambda item: item.get("ingresos_positivos", 0), reverse=True
+    )
+    positive_sales_total = float(analytic_gross_amount[analytic_gross_amount > 0].sum())
     eligible_products = [
         row for row in groupings["productos"]
         if row["margen_pct"] is not None and row["participacion_pct"] is not None
@@ -3187,7 +3316,10 @@ def analyze_business_workbook(
             "accion": "Prioriza los meses y sucursales con menor cumplimiento antes de aumentar descuentos generales.",
             "confianza": 0.98,
         })
-    top_clients = groupings.get("clientes", [])
+    # La concentración comercial usa venta bruta positiva. Una devolución
+    # aceptada reduce la venta neta, pero no debe cambiar el denominador ni
+    # convertir este indicador de dependencia en una participación neta.
+    top_clients = client_concentration_rows
     if top_clients and (top_clients[0].get("participacion_pct") or 0) >= 20:
         decisions.append({
             "severidad": "media",
@@ -3856,10 +3988,10 @@ def analyze_business_workbook(
             period_from=period_start,
             period_to=period_end,
             formula="Ventas positivas del principal cliente ÷ ventas positivas × 100",
-            numerator=top_clients[0].get("ingresos") if top_clients else None,
-            denominator=observed_sales if top_clients else None,
+            numerator=top_clients[0].get("ingresos_positivos") if top_clients else None,
+            denominator=positive_sales_total if top_clients else None,
             variation_type="puntos_porcentuales",
-            required=["ID cliente", "monto neto"],
+            required=["ID cliente", "monto de venta"],
             sources=available_source_names,
             polarity="lower_is_better",
             visualizations=["kpi", "ranking", "pareto"],
@@ -4160,6 +4292,10 @@ def analyze_business_workbook(
         },
         "evolucion": monthly_rows,
         "agrupaciones": groupings,
+        "desgloses": {
+            "gastos_operacionales": expense_category_rows,
+            "devoluciones_por_motivo": return_reason_rows,
+        },
         "portafolio": {"umbrales": thresholds, "productos": portfolio},
         "metas": goals,
         "sensibilidad": sensitivity,
