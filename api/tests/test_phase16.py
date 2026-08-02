@@ -206,6 +206,8 @@ def test_literales_textuales_cuentan_como_clientes_validos_en_metricas():
     assert metrics["clientes"]["unicos"] == 6
     assert len(metrics["clientes"]["top"]) == 5
     assert {row["nombre"] for row in metrics["clientes"]["top"]} <= set(LITERALS)
+    assert len(metrics["clientes"]["pareto"]) == 6
+    assert {row["nombre"] for row in metrics["clientes"]["pareto"]} <= set(LITERALS)
 
 
 def test_moneda_detecta_toda_la_columna_y_bloquea_backend_real():

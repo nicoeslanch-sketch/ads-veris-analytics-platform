@@ -889,6 +889,38 @@ def _sort_by_gross_share(rows: list[dict]) -> list[dict]:
     )
 
 
+def _amount_histogram(amounts: pd.Series) -> list[dict]:
+    """Distribución compacta de montos para el dashboard.
+
+    Es un agregado visual adicional: no modifica el ticket promedio ni excluye
+    registros de los KPI. Se exige una base mínima para no presentar como
+    "distribución" un puñado de observaciones aisladas.
+    """
+    values = amounts.dropna().astype(float)
+    if len(values) < 20 or values.nunique() < 4:
+        return []
+    minimum = float(values.min())
+    maximum = float(values.max())
+    if not math.isfinite(minimum) or not math.isfinite(maximum) or minimum == maximum:
+        return []
+    bins = min(12, max(6, int(round(math.sqrt(len(values))))))
+    width = (maximum - minimum) / bins
+    rows: list[dict] = []
+    for index in range(bins):
+        lower = minimum + width * index
+        upper = maximum if index == bins - 1 else minimum + width * (index + 1)
+        if index == bins - 1:
+            count = int(((values >= lower) & (values <= upper)).sum())
+        else:
+            count = int(((values >= lower) & (values < upper)).sum())
+        rows.append({
+            "desde": round(lower, 2),
+            "hasta": round(upper, 2),
+            "registros": count,
+        })
+    return rows
+
+
 def _projection(monthly: pd.DataFrame, first_month: pd.Period | None = None) -> dict | None:
     """Proyección simple a 3 meses por crecimiento promedio mensual.
 
@@ -1530,6 +1562,12 @@ def compute_metrics(
         "kpis": kpis,
         "evolucion_mensual": evolucion,
     }
+    histogram = _amount_histogram(amounts)
+    if histogram:
+        result["distribucion_montos"] = {
+            "granularidad": "linea" if line_sales.confirmed else "registro",
+            "bins": histogram,
+        }
     if transactional_profile:
         included_lines = int(amounts.notna().sum())
         amount_numeric = amounts_all.notna() & indicator_row_mask
@@ -1661,7 +1699,10 @@ def compute_metrics(
             brutos_ident = float(amounts[valid_mask & (amounts > 0)].sum())
             result["clientes"] = {
                 "unicos": int(clientes_raw[valid_mask].nunique()),
+                # Mantener el contrato histórico de cinco clientes. El Pareto
+                # recibe una serie adicional sin alterar el KPI existente.
                 "top": top[:5],
+                "pareto": top[:10],
                 # Fase 14b: la concentración es una afirmación de DISTRIBUCIÓN
                 # → usa la participación bruta (suma 100%), no el % neto.
                 "concentracion_top_pct": (
@@ -1699,6 +1740,66 @@ def compute_metrics(
                 }
                 for idx, row in agg.sort_index().iterrows()
             ]
+
+        # Matriz temporal cruzada con la primera dimensión comercial confiable.
+        # La prioridad es estable y genérica; no depende del nombre de la hoja.
+        primary_role = next(
+            (
+                role
+                for role in ("sucursal", "categoria", "vendedor", "canal", "producto")
+                if roles.get(role)
+                and roles[role] in selection.columns
+                and selection[roles[role]].dropna().astype(str).str.strip().nunique() >= 2
+            ),
+            None,
+        )
+        if primary_role:
+            primary_column = roles[primary_role]
+            matrix = pd.DataFrame({
+                "mes": dates_all[mask].map(
+                    lambda value: value.strftime("%Y-%m") if pd.notna(value) else None
+                ),
+                "grupo": selection[primary_column].map(
+                    lambda value: (
+                        "Sin clasificar"
+                        if pd.isna(value) or not str(value).strip()
+                        else str(value).strip()
+                    )
+                ),
+                "monto": amounts,
+            }).dropna(subset=["mes", "monto"])
+            if not matrix.empty:
+                totals = (
+                    matrix.groupby("grupo", dropna=False)["monto"]
+                    .sum()
+                    .sort_values(ascending=False)
+                )
+                visible_groups = [str(value) for value in totals.index[:8]]
+                hidden_groups = max(int(len(totals) - len(visible_groups)), 0)
+                if hidden_groups:
+                    matrix.loc[~matrix["grupo"].isin(visible_groups), "grupo"] = (
+                        f"Otros ({hidden_groups})"
+                    )
+                    visible_groups.append(f"Otros ({hidden_groups})")
+                cells = (
+                    matrix.groupby(["mes", "grupo"], dropna=False)["monto"]
+                    .sum()
+                    .reset_index()
+                )
+                result["matriz_mes_dimension"] = {
+                    "dimension": primary_role,
+                    "columna": primary_column,
+                    "meses": sorted(str(value) for value in cells["mes"].unique()),
+                    "grupos": visible_groups,
+                    "valores": [
+                        {
+                            "mes": str(row["mes"]),
+                            "nombre": str(row["grupo"]),
+                            "ingresos": round(float(row["monto"]), 2),
+                        }
+                        for _, row in cells.iterrows()
+                    ],
+                }
 
     # ── Fase 18: dimensiones flexibles (ventas por sucursal/región/zona/…) ──
     # Cualquier columna categórica razonable que NO sea ya un rol usado (canal,
@@ -1747,7 +1848,10 @@ def compute_metrics(
                 continue
             item = {
                 "columna": name,
+                # Mantener las 12 filas del contrato histórico y entregar al
+                # selector una serie opcional más amplia para Top 10 + Otros.
                 "grupos": grupos[:12],
+                "grupos_completos": grupos[:30],
                 "grupos_totales": len(grupos),
             }
             if bool(out_of_range.any()):

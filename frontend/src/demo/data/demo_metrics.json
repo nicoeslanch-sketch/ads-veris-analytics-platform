@@ -24,6 +24,63 @@
  "clientes": {
   "cobertura_identificacion_pct": 83.4,
   "concentracion_top_pct": 22.2,
+  "pareto": [
+   {
+    "devoluciones": -18990.0,
+    "filas": 46,
+    "ingresos": 1984420.0,
+    "nombre": "Distribuidora Norte",
+    "participacion_bruta_pct": 22.2,
+    "participacion_neta_pct": 22.1,
+    "porcentaje": 22.0,
+    "ventas_brutas": 2003410.0,
+    "ventas_netas": 1984420.0
+   },
+   {
+    "devoluciones": 0.0,
+    "filas": 53,
+    "ingresos": 1970940.0,
+    "nombre": "Almacén Doña Rosa",
+    "participacion_bruta_pct": 21.9,
+    "participacion_neta_pct": 21.9,
+    "porcentaje": 21.9,
+    "ventas_brutas": 1970940.0,
+    "ventas_netas": 1970940.0
+   },
+   {
+    "devoluciones": -10980.0,
+    "filas": 55,
+    "ingresos": 1883810.0,
+    "nombre": "Minimarket El Sol",
+    "participacion_bruta_pct": 21.0,
+    "participacion_neta_pct": 21.0,
+    "porcentaje": 20.9,
+    "ventas_brutas": 1894790.0,
+    "ventas_netas": 1883810.0
+   },
+   {
+    "devoluciones": 0.0,
+    "filas": 46,
+    "ingresos": 1725700.0,
+    "nombre": "Café Central",
+    "participacion_bruta_pct": 19.2,
+    "participacion_neta_pct": 19.2,
+    "porcentaje": 19.2,
+    "ventas_brutas": 1725700.0,
+    "ventas_netas": 1725700.0
+   },
+   {
+    "devoluciones": 0.0,
+    "filas": 40,
+    "ingresos": 1414470.0,
+    "nombre": "Botillería La Esquina",
+    "participacion_bruta_pct": 15.7,
+    "participacion_neta_pct": 15.8,
+    "porcentaje": 15.7,
+    "ventas_brutas": 1414470.0,
+    "ventas_netas": 1414470.0
+   }
+  ],
   "top": [
    {
     "devoluciones": -18990.0,
@@ -95,6 +152,71 @@
   "producto": true,
   "sucursal": true,
   "vendedor": false
+ },
+ "distribucion_montos": {
+  "bins": [
+   {
+    "desde": -18990.0,
+    "hasta": 1582.5,
+    "registros": 6
+   },
+   {
+    "desde": 1582.5,
+    "hasta": 22155.0,
+    "registros": 133
+   },
+   {
+    "desde": 22155.0,
+    "hasta": 42727.5,
+    "registros": 49
+   },
+   {
+    "desde": 42727.5,
+    "hasta": 63300.0,
+    "registros": 40
+   },
+   {
+    "desde": 63300.0,
+    "hasta": 83872.5,
+    "registros": 23
+   },
+   {
+    "desde": 83872.5,
+    "hasta": 104445.0,
+    "registros": 9
+   },
+   {
+    "desde": 104445.0,
+    "hasta": 125017.5,
+    "registros": 1
+   },
+   {
+    "desde": 125017.5,
+    "hasta": 145590.0,
+    "registros": 4
+   },
+   {
+    "desde": 145590.0,
+    "hasta": 166162.5,
+    "registros": 5
+   },
+   {
+    "desde": 166162.5,
+    "hasta": 186735.0,
+    "registros": 2
+   },
+   {
+    "desde": 186735.0,
+    "hasta": 207307.5,
+    "registros": 5
+   },
+   {
+    "desde": 207307.5,
+    "hasta": 227880.0,
+    "registros": 2
+   }
+  ],
+  "granularidad": "registro"
  },
  "duplicados": {
   "conservados": 2,
@@ -253,6 +375,115 @@
   "monto": "Ventas",
   "producto": "Producto",
   "sucursal": "Sucursal"
+ },
+ "matriz_mes_dimension": {
+  "columna": "Sucursal",
+  "dimension": "sucursal",
+  "grupos": [
+   "Santiago Centro",
+   "Puente Alto",
+   "Maipú"
+  ],
+  "meses": [
+   "2026-01",
+   "2026-02",
+   "2026-03",
+   "2026-04",
+   "2026-05",
+   "2026-06"
+  ],
+  "valores": [
+   {
+    "ingresos": 507950.0,
+    "mes": "2026-01",
+    "nombre": "Maipú"
+   },
+   {
+    "ingresos": 571930.0,
+    "mes": "2026-01",
+    "nombre": "Puente Alto"
+   },
+   {
+    "ingresos": 791710.0,
+    "mes": "2026-01",
+    "nombre": "Santiago Centro"
+   },
+   {
+    "ingresos": 267480.0,
+    "mes": "2026-02",
+    "nombre": "Maipú"
+   },
+   {
+    "ingresos": 715040.0,
+    "mes": "2026-02",
+    "nombre": "Puente Alto"
+   },
+   {
+    "ingresos": 801140.0,
+    "mes": "2026-02",
+    "nombre": "Santiago Centro"
+   },
+   {
+    "ingresos": 666090.0,
+    "mes": "2026-03",
+    "nombre": "Maipú"
+   },
+   {
+    "ingresos": 586290.0,
+    "mes": "2026-03",
+    "nombre": "Puente Alto"
+   },
+   {
+    "ingresos": 791950.0,
+    "mes": "2026-03",
+    "nombre": "Santiago Centro"
+   },
+   {
+    "ingresos": 693650.0,
+    "mes": "2026-04",
+    "nombre": "Maipú"
+   },
+   {
+    "ingresos": 609960.0,
+    "mes": "2026-04",
+    "nombre": "Puente Alto"
+   },
+   {
+    "ingresos": 917650.0,
+    "mes": "2026-04",
+    "nombre": "Santiago Centro"
+   },
+   {
+    "ingresos": 399550.0,
+    "mes": "2026-05",
+    "nombre": "Maipú"
+   },
+   {
+    "ingresos": 634080.0,
+    "mes": "2026-05",
+    "nombre": "Puente Alto"
+   },
+   {
+    "ingresos": 344350.0,
+    "mes": "2026-05",
+    "nombre": "Santiago Centro"
+   },
+   {
+    "ingresos": 670370.0,
+    "mes": "2026-06",
+    "nombre": "Maipú"
+   },
+   {
+    "ingresos": 498780.0,
+    "mes": "2026-06",
+    "nombre": "Puente Alto"
+   },
+   {
+    "ingresos": 304620.0,
+    "mes": "2026-06",
+    "nombre": "Santiago Centro"
+   }
+  ]
  },
  "moneda": "CLP",
  "moneda_detalle": {
