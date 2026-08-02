@@ -107,6 +107,36 @@ def test_conflicto_de_id_se_reporta_como_conflicto_no_duplicado(client, auth_hea
     assert body["resumen"]["filas_despues"] == 2
 
 
+def test_muchos_ids_repetidos_se_diagnostican_en_una_pasada(monkeypatch):
+    from app.engine.clean import _row_identifier_diagnostics
+
+    groups = 1_500
+    frame = pd.DataFrame(
+        {
+            "ID": [f"MOV-{index}" for index in range(groups) for _ in range(2)],
+            "Producto": [value for _ in range(groups) for value in ("A", "B")],
+            "Ventas": [value for _ in range(groups) for value in (100, 200)],
+        }
+    )
+    original_drop_duplicates = pd.DataFrame.drop_duplicates
+    calls = 0
+
+    def counted_drop_duplicates(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_drop_duplicates(self, *args, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "drop_duplicates", counted_drop_duplicates)
+    diagnostics, conflicts, examples = _row_identifier_diagnostics(
+        frame, list(range(2, len(frame) + 2))
+    )
+
+    assert conflicts == groups
+    assert diagnostics[0]["conflictos_contenido"] == groups
+    assert examples[0]["filas_origen"] == [2, 3]
+    assert calls == 0
+
+
 def test_formato_normalizado_no_inventa_conflicto_de_id():
     result = analyze_and_clean(
         pd.DataFrame(
