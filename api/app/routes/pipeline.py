@@ -4965,19 +4965,11 @@ async def clean_batch(
             if analysis_scope
             else None
         )
-        # El usuario suele continuar a Resumen tras revisar la limpieza. Las
-        # hojas ya estan en memoria, asi que preparar aqui la relacion segura y
-        # sus metricas evita otra espera larga sin retrasar la respuesta del
-        # boton Limpiar datos.
-        background_tasks.add_task(
-            _prewarm_business_analysis_sync,
-            filename,
-            content,
-            warm_manifest,
-            response["resultados"],
-            dataset_id,
-            user.id,
-        )
+        # BackgroundTasks ejecuta las tareas en el orden registrado. El XLSX
+        # auditado es la siguiente acción más costosa y visible para el usuario,
+        # por lo que se prepara antes que los gráficos de Resumen. Así, si pulsa
+        # Descargar apenas termina la limpieza, encuentra la exportación en
+        # curso/caché en vez de competir por la CPU limitada de Render.
         background_tasks.add_task(
             _clean_download_book_sync,
             filename,
@@ -4985,6 +4977,17 @@ async def clean_batch(
             warm_manifest,
             "xlsx",
             parsed_scope,
+            dataset_id,
+            user.id,
+        )
+        # Luego se precalculan relaciones y métricas para la navegación a
+        # Resumen; no se elimina ningún control ni cálculo.
+        background_tasks.add_task(
+            _prewarm_business_analysis_sync,
+            filename,
+            content,
+            warm_manifest,
+            response["resultados"],
             dataset_id,
             user.id,
         )

@@ -1449,7 +1449,7 @@ export default function Limpieza() {
                       onClick={() => void handleDownload('csv')}
                       disabled={downloading !== null || applying || !cleaningComplete}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-teal/40 px-3.5 py-2.5 text-xs font-semibold text-teal transition-colors hover:bg-teal/5 disabled:cursor-not-allowed disabled:opacity-50"
-                      title="Descargar datos CSV y auditoría dentro de un ZIP"
+                      title="Descarga rápida: datos CSV y auditoría dentro de un ZIP"
                     >
                       {downloading === 'csv' ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1457,7 +1457,7 @@ export default function Limpieza() {
                       <span className="hidden">
                       {sheetManifest ? 'CSV + auditoría (hoja activa)' : 'CSV + auditoría (ZIP)'}
                       </span>
-                      <span>ZIP CSV multihoja + auditoria</span>
+                      <span>ZIP CSV + auditoría (más rápido)</span>
                     </button>
                     {cleaningComplete ? (
                       <Link
