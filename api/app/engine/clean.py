@@ -361,19 +361,46 @@ def _row_identifier_diagnostics(df: pd.DataFrame, source_rows: list[int]) -> tup
         conflicts = 0
         if repeated_values:
             repeated_rows = df.loc[~missing & df[col].duplicated(keep=False)]
-            for value, group in repeated_rows.groupby(col, sort=False, dropna=False):
-                other = group.drop(columns=[col])
-                if len(other.drop_duplicates()) <= 1:
-                    continue
-                conflicts += 1
-                if len(conflict_examples) < min(5, MAX_AUDIT_DETAILS_IN_RESPONSE):
-                    conflict_examples.append(
-                        {
-                            "columna": col,
-                            "identificador": str(value)[:120],
-                            "filas_origen": [source_rows[int(index)] for index in group.index[:10]],
-                        }
-                    )
+            # Compara el contenido una sola vez para todos los IDs repetidos.
+            # Antes se ejecutaba ``drop_duplicates`` sobre el DataFrame completo
+            # por cada ID. Como pandas copia ``attrs`` al crear cada grupo (y
+            # aquí attrs contiene el mapa de filas de origen), 1.900 IDs de una
+            # hoja de ventas terminaban copiando cientos de millones de valores.
+            # El hash solo participa en este diagnóstico; nunca modifica datos
+            # ni decide qué filas eliminar.
+            other = repeated_rows.drop(columns=[col])
+            other.attrs = {}
+            content_hash = pd.util.hash_pandas_object(
+                other,
+                index=False,
+                categorize=True,
+            )
+            diagnostic = pd.DataFrame(
+                {
+                    "_identifier": repeated_rows[col].to_numpy(copy=False),
+                    "_content_hash": content_hash.to_numpy(copy=False),
+                    "_row_index": repeated_rows.index.to_numpy(copy=False),
+                }
+            )
+            diagnostic.attrs = {}
+            grouped = diagnostic.groupby("_identifier", sort=False, dropna=False)
+            conflict_counts = grouped["_content_hash"].nunique(dropna=False)
+            conflicting_values = conflict_counts[conflict_counts > 1].index
+            conflicts = int(len(conflicting_values))
+            remaining_examples = min(5, MAX_AUDIT_DETAILS_IN_RESPONSE) - len(
+                conflict_examples
+            )
+            for value in list(conflicting_values[: max(remaining_examples, 0)]):
+                indices = diagnostic.loc[
+                    diagnostic["_identifier"].eq(value), "_row_index"
+                ].head(10)
+                conflict_examples.append(
+                    {
+                        "columna": col,
+                        "identificador": str(value)[:120],
+                        "filas_origen": [source_rows[int(index)] for index in indices],
+                    }
+                )
         total_conflicts += conflicts
         diagnostics.append(
             {
