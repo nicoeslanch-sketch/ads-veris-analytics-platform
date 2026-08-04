@@ -1182,12 +1182,28 @@ export interface MetricsResult {
   clientes?: {
     unicos: number
     top: GroupRow[]
+    /** Serie ampliada solo para el Pareto; `top` conserva su contrato. */
+    pareto?: GroupRow[]
     concentracion_top_pct: number | null
     /** Fase 12b §21: % de los ingresos que tienen cliente identificado. */
     cobertura_identificacion_pct?: number | null
   }
   /** Fase 12: en qué días de la semana se concentra la venta — solo si hay fechas. */
   por_dia_semana?: Array<{ dia: string; ingresos: number; transacciones: number }>
+  /** Agregado visual: distribución del monto por línea o registro. No altera
+   * el ticket promedio ni las exclusiones de los KPI. */
+  distribucion_montos?: {
+    granularidad: 'linea' | 'registro'
+    bins: Array<{ desde: number; hasta: number; registros: number }>
+  }
+  /** Cruce temporal con la primera dimensión comercial confiable disponible. */
+  matriz_mes_dimension?: {
+    dimension: 'sucursal' | 'categoria' | 'vendedor' | 'canal' | 'producto'
+    columna: string
+    meses: string[]
+    grupos: string[]
+    valores: Array<{ mes: string; nombre: string; ingresos: number }>
+  }
   proyeccion: {
     crecimiento_pct: number
     crecimiento_trimestre_pct: number | null
@@ -1356,6 +1372,8 @@ export interface MetricsResult {
   agrupaciones_flexibles?: Array<{
     columna: string
     grupos: GroupRow[]
+    /** Serie ampliada para que el selector agrupe la cola con montos reales. */
+    grupos_completos?: GroupRow[]
     grupos_totales: number
     fuera_de_rango?: { filas: number; monto_asociado: number }
   }>

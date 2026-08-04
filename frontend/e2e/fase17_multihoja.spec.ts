@@ -295,32 +295,30 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await expect(page.getByText(/Evolución de Ingresos|Ingresos por mes/)).toBeVisible({ timeout: 90_000 })
     const compactFlow = page.getByTestId('summary-compact-flow')
     const primaryChart = page.getByTestId('summary-primary-chart')
+    const commercialGrid = page.getByTestId('summary-commercial-grid')
     await expect(compactFlow).toBeVisible()
-    // Las tarjetas comienzan justo después del gráfico reducido y fluyen como
-    // columnas compactas: una tarjeta alta no deja un hueco bajo su vecina.
-    const compactLayout = await compactFlow.evaluate((element) => {
-      const children = Array.from(element.children) as HTMLElement[]
-      const style = getComputedStyle(element)
-      return {
-        display: style.display,
-        columnCount: Number(style.columnCount),
-        cardCount: children.length,
-        avoidsBreaks: children.every(
-          (child) => getComputedStyle(child).breakInside === 'avoid',
-        ),
-      }
-    })
-    expect(compactLayout.display).toBe('block')
-    expect(compactLayout.columnCount).toBeGreaterThanOrEqual(2)
-    expect(compactLayout.cardCount).toBeGreaterThanOrEqual(1)
-    expect(compactLayout.avoidsBreaks).toBe(true)
+    await expect(commercialGrid).toBeVisible()
+    // La evolución usa todo el ancho; los dos cortes comerciales principales
+    // se equilibran en una grilla y el modo no conserva ninguna dona.
+    const gridColumns = await commercialGrid.evaluate((element) => (
+      getComputedStyle(element).gridTemplateColumns.split(' ').filter(Boolean).length
+    ))
+    expect(gridColumns).toBeGreaterThanOrEqual(2)
+    await expect(page.locator('.recharts-pie-sector')).toHaveCount(0)
     const [chartBox, compactBox] = await Promise.all([
       primaryChart.boundingBox(),
       compactFlow.boundingBox(),
     ])
     expect(chartBox).not.toBeNull()
     expect(compactBox).not.toBeNull()
-    expect(Math.round(compactBox!.y - (chartBox!.y + chartBox!.height))).toBeLessThanOrEqual(25)
+    expect(Math.round(compactBox!.y - (chartBox!.y + chartBox!.height))).toBeLessThanOrEqual(40)
+    await page.setViewportSize({ width: 390, height: 844 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
+    const mobileColumns = await commercialGrid.evaluate((element) => (
+      getComputedStyle(element).gridTemplateColumns.split(' ').filter(Boolean).length
+    ))
+    expect(mobileColumns).toBe(1)
+    await page.setViewportSize({ width: 1600, height: 1000 })
 
     await page.getByRole('button', { name: /Visión del negocio/ }).click()
     await expect(page.getByText('Ventas + costos activo')).toBeVisible({ timeout: 90_000 })

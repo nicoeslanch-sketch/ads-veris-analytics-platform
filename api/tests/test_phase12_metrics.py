@@ -179,6 +179,31 @@ def test_por_dia_semana(metrics_clientes):
     assert dias["martes"]["ingresos"] == 80000.0
 
 
+def test_agregados_visuales_no_alteran_kpis_y_se_adaptan_a_la_dimension():
+    frame = pd.DataFrame({
+        "Fecha": [
+            *(f"{day:02d}/01/2026" for day in range(1, 13)),
+            *(f"{day:02d}/02/2026" for day in range(1, 13)),
+        ],
+        "Sucursal": ["Centro", "Norte"] * 12,
+        "Ventas": [float(value * 10_000) for value in range(1, 25)],
+    })
+
+    metrics = compute_metrics(frame)
+
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == sum(frame["Ventas"])
+    histogram = metrics["distribucion_montos"]
+    assert histogram["granularidad"] == "registro"
+    assert 6 <= len(histogram["bins"]) <= 12
+    assert sum(item["registros"] for item in histogram["bins"]) == len(frame)
+
+    matrix = metrics["matriz_mes_dimension"]
+    assert matrix["dimension"] == "sucursal"
+    assert matrix["grupos"] == ["Norte", "Centro"]
+    assert matrix["meses"] == ["2026-01", "2026-02"]
+    assert sum(item["ingresos"] for item in matrix["valores"]) == sum(frame["Ventas"])
+
+
 def test_filtro_mes_calendario(metrics_audit):
     """Febrero completo se compara contra enero; los totales del mes cuadran."""
     df, _ = load_dataframe_with_report("audit.csv", CSV_AUDIT.encode("utf-8"))
