@@ -286,6 +286,17 @@ def test_analysis_response_cache_is_user_and_revision_isolated(monkeypatch):
     assert calls == 3
 
 
+def test_analysis_inflight_wait_fits_inside_frontend_timeout():
+    """El servidor no debe cortar al segundo consumidor antes que la UI.
+
+    Resumen espera 240 s. El margen evita repetir el falso timeout observado
+    tras un despliegue, sin dejar una solicitud esperando indefinidamente.
+    """
+    from app.routes import pipeline
+
+    assert 120 < pipeline._ANALYSIS_INFLIGHT_WAIT_SECONDS < 240
+
+
 def test_business_prewarm_uses_only_transaction_sheets(monkeypatch):
     from app.routes import pipeline
 
