@@ -295,9 +295,16 @@ def _analysis_cache_store(key: tuple, value: dict) -> dict:
     return copy.deepcopy(stored)
 
 
+# El frontend espera hasta 240 s los análisis multihoja fríos. Una segunda
+# solicitud idéntica (por remontaje, restauración o cambio de vista) no debe
+# abandonar a los 120 s mientras el único productor sigue avanzando. Dejamos
+# 30 s de margen para que el cliente reciba o cancele la respuesta.
+_ANALYSIS_INFLIGHT_WAIT_SECONDS = 210
+
+
 def _analysis_cache_compute(key: tuple, producer) -> dict:
     started = time.monotonic()
-    deadline = started + 120
+    deadline = started + _ANALYSIS_INFLIGHT_WAIT_SECONDS
     cache_kind = str(key[0]) if key else "analysis"
     while True:
         with _ANALYSIS_CACHE_LOCK:
@@ -329,7 +336,8 @@ def _analysis_cache_compute(key: tuple, producer) -> dict:
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail=(
-                    "El análisis anterior no terminó dentro de 120 segundos. "
+                    "El análisis anterior no terminó dentro de "
+                    f"{_ANALYSIS_INFLIGHT_WAIT_SECONDS} segundos. "
                     "Puedes reintentar; no se iniciará un trabajo duplicado."
                 ),
             )
