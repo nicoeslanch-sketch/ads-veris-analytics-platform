@@ -28,7 +28,7 @@ El libro de servicios no usa nombres convencionales de ventas. Su fuente comerci
 - las horas facturables generan ingreso al relacionarlas con una tarifa de venta vigente;
 - todas las horas generan costo al relacionarlas con una tarifa de costo vigente;
 - la visión completa requiere conectar órdenes, detalle, horas, tarifas, técnicos, clientes, contratos, cuotas, UF y gastos;
-- ninguna hoja comparte el esquema de otra, por lo que **Unir periodos de venta no aplica**;
+- ninguna hoja comparte el esquema de otra, por lo que **Consolidar períodos de venta no aplica**;
 - compartir `ID_OT` no basta para apilar tablas.
 
 Además, la descarga fallaba con:
@@ -144,7 +144,7 @@ Se agregó `frontend/src/components/ServiceBusinessPanel.tsx` con:
 También se incorporó:
 
 - explicación de que `Detalle_OT` puede contener ventas aunque no se llame `Ventas`;
-- bloqueo de `Unir periodos` para este libro;
+- bloqueo de `Consolidar períodos` para este libro;
 - orientación hacia `Relación manual`;
 - plan recomendado de relaciones y qué indicador desbloquea cada paso;
 - tipos TypeScript para el nuevo perfil;
@@ -407,7 +407,7 @@ Crear una prueba controlada o fixture anonimizado que compruebe:
 - `Detalle_OT` se reconoce como fuente comercial;
 - `Subcontrato` no aumenta las ventas;
 - las tarifas vigentes se aplican correctamente;
-- Unir periodos queda bloqueado;
+- Consolidar períodos queda bloqueado;
 - la exportación termina;
 - las cifras principales coinciden;
 - Historial no reprocesa indefinidamente.
@@ -420,7 +420,7 @@ El trabajo puede considerarse cerrado cuando:
 
 - la exportación productiva termina sin `pd` indefinido;
 - la Visión del negocio muestra y reconcilia las cifras de control;
-- Unir periodos explica que no aplica;
+- Consolidar períodos explica que no aplica;
 - Relación manual solo muestra conexiones seguras;
 - los joins temporales funcionan sin multiplicar filas;
 - un snapshot antiguo restaura rápido y recalcula derivados una sola vez;

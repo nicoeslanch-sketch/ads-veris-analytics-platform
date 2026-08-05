@@ -85,6 +85,14 @@ interrumpidos, idempotencia y eventos por etapa en
 `consolidation_run_events`. Los XLSX neutralizan celdas que comienzan con
 `=`, `+`, `-` o `@`; cada artefacto lleva SHA-256 y nunca se sobrescribe.
 
+El disco no usa un requisito rígido de 10 GB. Antes de iniciar se exige el
+mayor valor entre el piso configurable (512 MB por defecto) y
+`tamaño_fuentes × 4 + 256 MB` para descarga, expansión XML, exportación y
+margen. El error informa espacio disponible, requerido, faltante, tamaño de
+fuentes y la configuración responsable. El `render.yaml` declara un worker
+Standard, concurrencia 1 y límites de memoria de 1.500/1.800 MB; el Blueprint
+sigue siendo una plantilla y no crea por sí solo un servicio facturable.
+
 No se requirió una migración nueva: se reutilizan las tablas de 0022, los roles
 aditivos de 0023 y la tabla de eventos ya existente.
 

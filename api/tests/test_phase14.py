@@ -225,7 +225,13 @@ def test_endpoints_de_ia_metricas_y_restore_tienen_puerta():
 
     for func in (ai.ai_summary, ai.ai_chat, ai.ai_recommendation):
         assert "require_capability_for_user" in inspect.getsource(func), func.__name__
-    assert "require_capability_for_user" in inspect.getsource(pipeline.metrics)
+    assert "require_capability_for_user" in inspect.getsource(
+        pipeline._prepare_metrics_computation
+    )
+    assert "_prepare_metrics_computation" in inspect.getsource(pipeline.metrics)
+    assert "_prepare_metrics_computation" in inspect.getsource(
+        pipeline.create_metrics_job
+    )
     assert "require_capability_for_user" in inspect.getsource(pipeline.restore_latest)
 
 

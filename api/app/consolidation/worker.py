@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import tempfile
 import time
 from contextlib import ExitStack
 from pathlib import Path
@@ -15,7 +16,13 @@ from .ingestion import sha256_file, storage_source_file, upload_consolidation_ar
 from .models import ConsolidationStatus, IssueSeverity, QualityIssue, SourceRole
 from .pipeline import run_local_pipeline
 from .repository import MemoryConsolidationRepository, repository_for
-from .resources import ConsolidationResourceError, ResourceMonitor, directory_size, isolated_run_directory
+from .resources import (
+    ConsolidationResourceError,
+    ResourceMonitor,
+    directory_size,
+    ensure_temp_capacity,
+    isolated_run_directory,
+)
 
 
 def validate_worker_runtime(settings: Settings) -> None:
@@ -248,6 +255,12 @@ class ConsolidationWorker:
 def main() -> None:
     settings = get_settings()
     validate_worker_runtime(settings)
+    base = (
+        Path(settings.consolidation_temp_dir).expanduser()
+        if settings.consolidation_temp_dir.strip()
+        else Path(tempfile.gettempdir())
+    )
+    ensure_temp_capacity(base, settings)
     ConsolidationWorker(repository_for(settings), settings).run_forever()
 
 

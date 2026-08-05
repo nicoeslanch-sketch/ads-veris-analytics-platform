@@ -97,30 +97,50 @@ function requireBase(): string {
   return API_BASE_URL
 }
 
-// El backend corre en Render, que DUERME el servidor tras ~15 min sin tráfico;
-// despertarlo agrega ~50 s al primer pedido (la lentitud "al cargar" que se
-// reportó). Despierto, responde en ~150 ms. Mientras la pestaña esté abierta y
-// visible, pingeamos /health (endpoint público, sin credenciales ni efectos)
-// para mantenerlo despierto y precalentarlo apenas se abre la app.
+// Keep-alive opcional. En producción con un servicio que no duerme debe quedar
+// apagado; si se habilita para un plan suspendible, Web Locks elige una sola
+// pestaña líder y evita que cada navegador duplique los pings.
 let warmupStarted = false
+const API_KEEP_ALIVE_ENABLED = (
+  import.meta.env.VITE_API_KEEP_ALIVE_ENABLED as string | undefined
+) === 'true'
 
 export function startApiWarmup(): void {
-  if (warmupStarted || typeof window === 'undefined' || !API_BASE_URL) return
+  if (
+    warmupStarted
+    || !API_KEEP_ALIVE_ENABLED
+    || typeof window === 'undefined'
+    || !API_BASE_URL
+  ) return
   warmupStarted = true
 
-  const ping = () => {
-    fetch(`${API_BASE_URL}/health`, { method: 'GET', mode: 'cors', cache: 'no-store' }).catch(() => {})
+  const lead = () => {
+    const ping = () => {
+      fetch(`${API_BASE_URL}/health`, { method: 'GET', mode: 'cors', cache: 'no-store' }).catch(() => {})
+    }
+
+    ping()
+    window.setInterval(() => {
+      if (document.visibilityState === 'visible') ping()
+    }, 10 * 60 * 1000)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') ping()
+    })
   }
 
-  ping() // precalentar al abrir la app
-  // Render duerme a los ~15 min; 10 min de margen lo mantienen despierto.
-  window.setInterval(() => {
-    if (document.visibilityState === 'visible') ping()
-  }, 10 * 60 * 1000)
-  // Al volver a la pestaña tras un rato, despertarlo antes de que el usuario actúe.
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') ping()
-  })
+  if (navigator.locks?.request) {
+    void navigator.locks.request(
+      'ads-veris-api-keep-alive',
+      { ifAvailable: true },
+      async (lock) => {
+        if (!lock) return
+        lead()
+        await new Promise<void>(() => {})
+      },
+    )
+    return
+  }
+  lead()
 }
 
 async function getAccessToken(): Promise<string | null> {
@@ -241,7 +261,11 @@ export async function apiDownload(
 }
 
 /** GET con JWT (para endpoints de estado como /ai/usage). */
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(
+  path: string,
+  options?: number | ApiRequestOptions,
+): Promise<T> {
+  const { timeoutMs, signal } = normalizeOptions(options, GET_TIMEOUT_MS)
   const token = await getAccessToken()
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
@@ -249,7 +273,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   const fullUrl = `${requireBase()}${path}`
   let response: Response
   try {
-    response = await fetchWithTimeout(fullUrl, { headers }, GET_TIMEOUT_MS)
+    response = await fetchWithTimeout(fullUrl, { headers }, timeoutMs, signal)
   } catch (err) {
     throw connectionError(err, 'No se pudo contactar al servidor.')
   }
@@ -266,6 +290,87 @@ export async function apiGet<T>(path: string): Promise<T> {
     return JSON.parse(rawBody) as T
   } catch {
     throw new ApiError(response.status, 'Respuesta inesperada del servidor.')
+  }
+}
+
+export interface AnalysisJobResponse<T> {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  phase: string
+  completed_phases: number
+  total_phases: number
+  attempt: number
+  result: T | null
+  error: string | null
+}
+
+function waitForPoll(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new ApiError(0, 'El procesamiento fue cancelado.'))
+      return
+    }
+    const onAbort = () => {
+      window.clearTimeout(timer)
+      reject(new ApiError(0, 'El procesamiento fue cancelado.'))
+    }
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
+ * Crea un trabajo durable y consulta su estado. La conexión del navegador
+ * puede renovarse sin cancelar el cálculo que continúa en el backend.
+ */
+export async function apiPostJob<T>(
+  path: string,
+  form: FormData,
+  options?: ApiRequestOptions,
+): Promise<T> {
+  const signal = options?.signal
+  let job = await apiPost<AnalysisJobResponse<T>>(path, form, {
+    timeoutMs: options?.timeoutMs ?? JSON_TIMEOUT_MS,
+    signal,
+  })
+
+  const requestCancellation = () => {
+    void apiPostJson<AnalysisJobResponse<T>>(
+      `/analysis/jobs/${encodeURIComponent(job.job_id)}/cancel`,
+      {},
+      { timeoutMs: 15_000 },
+    ).catch(() => {})
+  }
+
+  while (true) {
+    if (signal?.aborted) {
+      requestCancellation()
+      throw new ApiError(0, 'El procesamiento fue cancelado.')
+    }
+    if (job.status === 'completed') {
+      if (job.result === null) throw new ApiError(500, 'El análisis terminó sin resultado.')
+      return job.result
+    }
+    if (job.status === 'failed') {
+      throw new ApiError(422, job.error || 'El análisis no pudo completarse.')
+    }
+    if (job.status === 'cancelled') {
+      throw new ApiError(0, 'El procesamiento fue cancelado.')
+    }
+
+    try {
+      await waitForPoll(1_200, signal)
+      job = await apiGet<AnalysisJobResponse<T>>(
+        `/analysis/jobs/${encodeURIComponent(job.job_id)}`,
+        { timeoutMs: GET_TIMEOUT_MS, signal },
+      )
+    } catch (error) {
+      if (signal?.aborted) requestCancellation()
+      throw error
+    }
   }
 }
 

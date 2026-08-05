@@ -23,7 +23,7 @@ supabase/   Migraciones SQL (Postgres + Auth + Storage + RLS)
 
 ## Análisis empresarial multihoja
 
-El motor `0.23.0` separa dos experiencias: **Resumen** presenta la imagen
+El motor `0.28.0` separa dos experiencias: **Resumen** presenta la imagen
 numérica ejecutiva del negocio y **Explorar** explica causas, riesgos y
 decisiones. Las relaciones se validan antes de unir tablas; los costos
 históricos usan vigencia temporal y cualquier respaldo con costo actual queda
@@ -37,6 +37,14 @@ restauración muestra primero el último estado válido y actualiza en segundo
 plano cuando cambia el motor; la exportación auditada se precalienta y reutiliza
 el resultado para evitar reconstrucciones idénticas. El dominio durable de
 consolidación usa el dominio aditivo `0022` y los roles generales de `0023`.
+
+Resumen, Explorar y el panel asistido crean métricas mediante
+`POST /analysis/jobs/metrics` y consultan el trabajo autenticado hasta que
+termina. Así, una conexión HTTP vencida no cancela el cálculo ni obliga a
+repetirlo. El identificador es determinístico por usuario, archivo,
+configuración y versión del motor; `ANALYSIS_REDIS_URL` permite recuperar el
+estado, resultado, caché y bloqueo entre procesos. El antiguo `POST /metrics`
+se conserva como contrato sincrónico compatible.
 
 ## Requisitos
 
@@ -163,6 +171,7 @@ python -m pytest tests/ -v
 | `VITE_SUPABASE_URL` | URL del proyecto Supabase |
 | `VITE_SUPABASE_ANON_KEY` | Clave anónima (protegida por RLS) |
 | `VITE_API_BASE_URL` | URL del motor de datos FastAPI |
+| `VITE_API_KEEP_ALIVE_ENABLED` | Keep-alive desde el navegador. Default `false`; si se habilita, una sola pestaña líder envía los pings. Mantener apagado en servicios que no duermen. |
 
 **Backend (secretas — jamás en React/Vite):**
 
@@ -183,6 +192,12 @@ python -m pytest tests/ -v
 | `STRUCTURAL_NULL_OUTSIDE_FILLED_THRESHOLD` | Proporción informada fuera del grupo (default: `0.95`) |
 | `STRUCTURAL_NULL_MIN_GROUP_SIZE` | Tamaño mínimo del grupo estructural (default: `20`) |
 | `STRUCTURAL_NULL_MAX_GROUP_CARDINALITY` | Máximo de categorías de la variable agrupadora (default: `50`) |
+| `ANALYSIS_REDIS_URL` | Redis/Render Key Value opcional para compartir resultados y locks entre instancias. Vacío conserva el fallback local. |
+| `ANALYSIS_CACHE_TTL_SECONDS` | Retención de resultados agregados compartidos (default: `1800`). |
+| `ANALYSIS_LOCK_TTL_SECONDS` | Duración máxima del lock distribuido (default: `600`). |
+| `CONSOLIDATION_TEMP_DISK_MIN_MB` | Piso de disco temporal al iniciar el worker (default: `512`). |
+| `CONSOLIDATION_TEMP_SOURCE_MULTIPLIER` | Multiplicador aplicado al tamaño real de las fuentes (default: `4.0`). |
+| `CONSOLIDATION_TEMP_EXPORT_MARGIN_MB` | Margen adicional para artefactos de salida (default: `256`). |
 
 ## Deploy
 

@@ -624,19 +624,28 @@ export function synchronizeAppendJoinSelection(
 }
 
 export function relationshipPlainMessage(candidate: RelationshipCandidate): string {
+  const rows = candidate.left_rows ?? 0
+  const projected = candidate.projected_rows ?? rows
+  const duplicates = candidate.right_duplicate_keys ?? 0
+  const unmatched = candidate.unmatched_rows ?? 0
+  const keys = `${candidate.left_sheet}.${candidate.left_keys.join(' + ')} ↔ ${candidate.right_sheet}.${candidate.right_keys.join(' + ')}`
+  const evidence = `${keys}. Cardinalidad: ${candidate.cardinality.replace(/_/g, ' ')}. Filas: ${rows}; proyectadas: ${projected}; claves duplicadas en referencia: ${duplicates}; filas sin correspondencia: ${unmatched}.`
+  const examples = candidate.problem_examples?.length
+    ? ` Ejemplos problemáticos: ${candidate.problem_examples.slice(0, 8).join(', ')}.`
+    : ''
   if (candidate.safe) {
-    return `La unión es segura: ${Math.round(candidate.coverage_left * 100)} de cada 100 filas tienen clave y ${Math.round(candidate.overlap * 100)} de cada 100 claves encuentran correspondencia. No aumentará las filas.`
+    return `La unión es segura. ${evidence} ${Math.round(candidate.coverage_left * 100)} de cada 100 filas tienen clave y ${Math.round(candidate.overlap * 100)} de cada 100 claves encuentran correspondencia.`
   }
   if (candidate.currency_compatible === false) {
-    return candidate.reason ?? 'Las monedas no son compatibles para calcular costos y utilidad.'
+    return `${candidate.reason ?? 'Las monedas no son compatibles para calcular costos y utilidad.'} ${evidence}${examples}`
   }
   if (candidate.overlap === 0) {
-    return 'Ningún identificador de la primera hoja existe en la segunda; la unión no agregaría información.'
+    return `Ningún identificador de la primera hoja existe en la segunda; la unión no agregaría información. ${evidence}${examples}`
   }
   if (candidate.cardinality === 'muchos_a_muchos' || candidate.cardinality === 'uno_a_muchos') {
-    return 'La hoja de referencia repite identificadores y podría multiplicar ventas. Corrige esa clave o elige otra hoja.'
+    return `La hoja de referencia repite identificadores y podría multiplicar ventas. Corrige esa clave o elige otra hoja. ${evidence}${examples}`
   }
-  return candidate.reason ?? 'La relación no es segura con las columnas elegidas.'
+  return `${candidate.reason ?? 'La relación no es segura con las columnas elegidas.'} ${evidence}${examples}`
 }
 
 export interface AppendJoinCostCandidates {

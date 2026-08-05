@@ -255,9 +255,15 @@ def directory_size(path: Path) -> int:
 
 
 def required_temp_bytes(settings: Settings, source_bytes: int = 0) -> int:
-    configured = settings.consolidation_temp_disk_min_mb * MB
-    # Descargas + XLSX derivados + margen conservador. Nunca reduce el mínimo.
-    return max(configured, max(0, source_bytes) * 3)
+    configured_floor = settings.consolidation_temp_disk_min_mb * MB
+    export_margin = settings.consolidation_temp_export_margin_mb * MB
+    # Incluye descarga, expansión de XLSX/XML, artefactos y copias transitorias.
+    # El piso protege el arranque; con fuentes reales manda el tamaño observado.
+    proportional = int(
+        max(0, source_bytes) * settings.consolidation_temp_source_multiplier
+        + export_margin
+    )
+    return max(configured_floor, proportional)
 
 
 def ensure_temp_capacity(base: Path, settings: Settings, *, source_bytes: int = 0) -> dict[str, int]:
@@ -265,12 +271,29 @@ def ensure_temp_capacity(base: Path, settings: Settings, *, source_bytes: int = 
     usage = shutil.disk_usage(base)
     required = required_temp_bytes(settings, source_bytes)
     if usage.free < required:
+        missing = required - usage.free
         raise ConsolidationResourceError(
             "temporary_disk_insufficient",
-            "No existe espacio temporal suficiente para ejecutar la consolidación.",
-            {"temporary_free_bytes": usage.free, "temporary_required_bytes": required},
+            (
+                "No existe espacio temporal suficiente para ejecutar la consolidación: "
+                f"faltan {missing} bytes."
+            ),
+            {
+                "temporary_free_bytes": usage.free,
+                "temporary_required_bytes": required,
+                "temporary_missing_bytes": missing,
+                "source_bytes": max(0, source_bytes),
+                "configured_floor_bytes": settings.consolidation_temp_disk_min_mb * MB,
+                "source_multiplier": settings.consolidation_temp_source_multiplier,
+                "export_margin_bytes": settings.consolidation_temp_export_margin_mb * MB,
+            },
         )
-    return {"temporary_free_bytes": usage.free, "temporary_required_bytes": required}
+    return {
+        "temporary_free_bytes": usage.free,
+        "temporary_required_bytes": required,
+        "temporary_missing_bytes": 0,
+        "source_bytes": max(0, source_bytes),
+    }
 
 
 @contextmanager

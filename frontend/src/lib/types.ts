@@ -411,6 +411,7 @@ export interface RelationshipCandidate extends AnalysisJoin {
   projected_rows?: number
   right_duplicate_keys?: number
   unmatched_rows?: number
+  problem_examples?: string[]
   purpose?: 'enriquecer_costos' | 'enriquecer_referencia' | 'otra_relacion'
   recommended?: boolean
   currency_compatible?: boolean

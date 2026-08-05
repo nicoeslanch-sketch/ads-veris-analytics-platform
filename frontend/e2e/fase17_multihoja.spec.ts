@@ -288,9 +288,9 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await page.setViewportSize({ width: 1600, height: 1000 })
     await page.getByRole('link', { name: /Resumen/ }).first().click()
     await expect(page.getByText('Datos que estas analizando')).toBeVisible({ timeout: 60_000 })
-    await page.getByRole('button', { name: /Unir periodos de venta/ }).click()
+    await page.getByRole('button', { name: /Consolidar períodos de venta/ }).click()
     await expect(page.getByText(/hoja_origen/)).toBeVisible()
-    // "Unir periodos de venta" no incorpora costos: el título del gráfico de
+    // "Consolidar períodos de venta" no incorpora costos: el título del gráfico de
     // evolución cambia a "Ingresos por mes" (Resumen.tsx, `hasCosts` false).
     await expect(page.getByText(/Evolución de Ingresos|Ingresos por mes/)).toBeVisible({ timeout: 90_000 })
     const compactFlow = page.getByTestId('summary-compact-flow')

@@ -1,5 +1,27 @@
 # Changelog — ADS Veris Plataforma de Análisis de Datos
 
+## [0.28.0] — 2026-08-04 — Períodos compactos y relaciones estrictas
+
+- Renombra el modo como **Consolidar períodos de venta** y describe el cálculo
+  multihoja completo durante la espera, sin atribuirlo a `Ventas_S1`.
+- Distribuye tarjetas adaptativas en columnas compactas, limita el Resumen a
+  ocho preguntas no repetidas y conserva el detalle secundario en Explorar.
+- El mapa de calor usa p95, escala logarítmica cuando corresponde, leyenda,
+  valores extremos y alternancia entre monto y participación.
+- Una relación deja de ser segura ante cualquier clave duplicada o proyección
+  de filas distinta del origen. La evidencia incluye cardinalidad, cobertura,
+  filas, duplicados, faltantes y ejemplos problemáticos.
+- Los maestros del modelo de servicios consolidan únicamente duplicados
+  idénticos; conflictos de OT, clientes, técnicos o SLA no escogen una fila
+  arbitraria ni propagan `MergeError`.
+- El disco temporal se calcula desde el tamaño de las fuentes y la exportación;
+  Redis/Render Key Value puede compartir caché y locks entre instancias.
+- Resumen, Explorar y el panel asistido procesan métricas como trabajos
+  autenticados, idempotentes, consultables y cancelables; se conserva
+  `/metrics` para clientes sincrónicos existentes.
+- FastAPI, `/version`, snapshots y documentación usan `ENGINE_VERSION=0.28.0`.
+  No agrega migraciones; la versión esperada continúa siendo `0023`.
+
 ## [0.26.0] — 2026-08-01 — Consolidación general para Excel y CSV
 
 - Agrega un modo general sin nombres ni reglas educativas: archivo principal,

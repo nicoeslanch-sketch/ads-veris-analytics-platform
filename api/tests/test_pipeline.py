@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import time
 import zipfile
 from types import SimpleNamespace
 
@@ -24,9 +25,50 @@ def test_health_es_publico(client):
 
 def test_endpoints_protegidos_rechazan_sin_token(client, sample_csv):
     name, content = sample_csv
-    for path in ("/standardize", "/clean", "/clean/download", "/metrics"):
+    for path in (
+        "/standardize",
+        "/clean",
+        "/clean/download",
+        "/metrics",
+        "/analysis/jobs/metrics",
+    ):
         response = client.post(path, files={"file": (name, content, "text/csv")})
         assert response.status_code == 401, path
+
+
+def test_metrics_job_es_recuperable_idempotente_y_protegido(
+    client, auth_headers, sample_csv
+):
+    name, content = sample_csv
+    upload = {"file": (name, content, "text/csv")}
+    created = client.post(
+        "/analysis/jobs/metrics", files=upload, headers=auth_headers
+    )
+    assert created.status_code == 202
+    job_id = created.json()["job_id"]
+
+    # El mismo contenido y configuración no crea trabajo duplicado.
+    repeated = client.post(
+        "/analysis/jobs/metrics", files=upload, headers=auth_headers
+    )
+    assert repeated.status_code == 202
+    assert repeated.json()["job_id"] == job_id
+
+    state = created.json()
+    for _ in range(100):
+        state_response = client.get(
+            f"/analysis/jobs/{job_id}", headers=auth_headers
+        )
+        assert state_response.status_code == 200
+        state = state_response.json()
+        if state["status"] in {"completed", "failed", "cancelled"}:
+            break
+        time.sleep(0.02)
+
+    assert state["status"] == "completed"
+    assert state["result"]["archivo"] == name
+    assert state["result"]["kpis"]["ingresos_totales"]["valor"] > 0
+    assert client.get(f"/analysis/jobs/{job_id}").status_code == 401
 
 
 def test_preload_estandarizacion_prepara_varias_hojas_sin_snapshots(

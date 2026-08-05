@@ -63,8 +63,8 @@ def test_service_structural_cleaning_fill_down_subtotals_hours_and_unpivot():
     assert expense_metrics["analisis_generico"]["numericas"][0]["total"] == 30.0
 
 
-def test_service_business_requires_relations_and_separates_revenue_from_cost():
-    frames = {
+def _service_frames() -> dict[str, pd.DataFrame]:
+    return {
         "Ordenes_Trabajo": pd.DataFrame(
             {
                 "N° OT": ["OT-00001"],
@@ -136,6 +136,8 @@ def test_service_business_requires_relations_and_separates_revenue_from_cost():
         ),
     }
 
+def test_service_business_requires_relations_and_separates_revenue_from_cost():
+    frames = _service_frames()
     analysis = analyze_service_business(frames)
 
     assert analysis is not None
@@ -204,3 +206,80 @@ def test_service_business_requires_relations_and_separates_revenue_from_cost():
     assert metrics["analysis_provenance"]["mode"] == "service_network"
     assert metrics["analisis_negocio"]["perfil"] == "servicios_tecnicos"
     assert metrics["analisis_negocio"]["servicios"]["kpis"]["ventas_netas"] == 350.0
+
+
+def test_identical_order_duplicate_is_collapsed_without_multiplying_totals():
+    frames = _service_frames()
+    frames["Ordenes_Trabajo"] = pd.concat(
+        [frames["Ordenes_Trabajo"], frames["Ordenes_Trabajo"]],
+        ignore_index=True,
+    )
+
+    analysis = analyze_service_business(frames)
+
+    assert analysis is not None
+    assert analysis["servicios"]["kpis"]["ventas_netas"] == 350.0
+    assert analysis["servicios"]["kpis"]["ot_total"] == 1
+    alerts = analysis["servicios"]["trazabilidad"]["alertas"]
+    assert any(alert["source"] == "Ordenes_Trabajo" for alert in alerts)
+
+
+def test_conflicting_order_duplicate_blocks_service_model_without_merge_error():
+    frames = _service_frames()
+    conflict = frames["Ordenes_Trabajo"].copy()
+    conflict["ESTADO"] = "Abierta"
+    frames["Ordenes_Trabajo"] = pd.concat(
+        [frames["Ordenes_Trabajo"], conflict],
+        ignore_index=True,
+    )
+
+    assert analyze_service_business(frames) is None
+
+
+def test_identical_contract_duplicate_keeps_sla_and_conflict_only_blocks_sla():
+    frames = _service_frames()
+    frames["Ordenes_Trabajo"]["Horas Respuesta"] = 3
+    frames["Contratos"]["SLA H"] = 4
+    frames["Contratos"] = pd.concat([frames["Contratos"], frames["Contratos"]], ignore_index=True)
+
+    identical = analyze_service_business(frames)
+
+    assert identical is not None
+    assert identical["servicios"]["kpis"]["cumplimiento_sla_pct"] == 100.0
+    assert identical["servicios"]["kpis"]["ventas_netas"] == 350.0
+
+    conflicting_frames = _service_frames()
+    conflicting_frames["Ordenes_Trabajo"]["Horas Respuesta"] = 3
+    conflicting_frames["Contratos"]["SLA H"] = 4
+    contract_conflict = conflicting_frames["Contratos"].copy()
+    contract_conflict["SLA H"] = 2
+    conflicting_frames["Contratos"] = pd.concat(
+        [conflicting_frames["Contratos"], contract_conflict],
+        ignore_index=True,
+    )
+
+    conflicting = analyze_service_business(conflicting_frames)
+
+    assert conflicting is not None
+    assert conflicting["servicios"]["kpis"]["cumplimiento_sla_pct"] is None
+    assert conflicting["servicios"]["kpis"]["ventas_netas"] == 350.0
+    assert conflicting["estado_certificacion"] == "partial"
+
+
+def test_conflicting_client_and_technician_masters_do_not_multiply_results():
+    frames = _service_frames()
+    client_conflict = frames["Clientes"].copy()
+    client_conflict["SEGMENTO"] = "Otro"
+    frames["Clientes"] = pd.concat([frames["Clientes"], client_conflict], ignore_index=True)
+    frames["Tecnicos"]["Nombre"] = "Técnico Uno"
+    technician_conflict = frames["Tecnicos"].copy()
+    technician_conflict["Nombre"] = "Otro nombre"
+    frames["Tecnicos"] = pd.concat([frames["Tecnicos"], technician_conflict], ignore_index=True)
+
+    analysis = analyze_service_business(frames)
+
+    assert analysis is not None
+    assert analysis["servicios"]["kpis"]["ventas_netas"] == 350.0
+    assert analysis["servicios"]["kpis"]["ot_total"] == 1
+    assert analysis["servicios"]["por_segmento"] == []
+    assert analysis["estado_certificacion"] == "partial"

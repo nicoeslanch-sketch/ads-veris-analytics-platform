@@ -62,9 +62,19 @@ class Settings(BaseSettings):
     consolidation_memory_soft_limit_mb: int = 3_000
     consolidation_memory_hard_limit_mb: int = 3_600
     consolidation_temp_dir: str = ""
-    consolidation_temp_disk_min_mb: int = 10_240
+    # Piso operativo más una fórmula proporcional al tamaño real. El valor
+    # anterior de 10 GB rechazaba incluso fuentes pequeñas sin fundamento.
+    consolidation_temp_disk_min_mb: int = 512
+    consolidation_temp_source_multiplier: float = 4.0
+    consolidation_temp_export_margin_mb: int = 256
     consolidation_chunk_size: int = 100_000
     consolidation_run_stale_seconds: int = 21_600
+
+    # Coordinación multiinstancia para Resumen/Explorar. Si está vacío, se usa
+    # la caché local existente (adecuada para desarrollo y una sola instancia).
+    analysis_redis_url: str = ""
+    analysis_cache_ttl_seconds: int = 30 * 60
+    analysis_lock_ttl_seconds: int = 10 * 60
 
     # ── Fase 10: cuenta administradora de respaldo ──
     # El panel /admin acepta también a este correo aunque profiles.is_admin
@@ -121,8 +131,15 @@ class Settings(BaseSettings):
             raise ValueError("CONSOLIDATION_MEMORY_SOFT_LIMIT_MB debe ser positivo.")
         if self.consolidation_memory_hard_limit_mb <= self.consolidation_memory_soft_limit_mb:
             raise ValueError("El límite duro de consolidación debe superar al límite blando.")
-        if self.consolidation_temp_disk_min_mb < 1 or self.consolidation_chunk_size < 1:
+        if (
+            self.consolidation_temp_disk_min_mb < 1
+            or self.consolidation_temp_source_multiplier < 1
+            or self.consolidation_temp_export_margin_mb < 0
+            or self.consolidation_chunk_size < 1
+        ):
             raise ValueError("Los límites de disco y chunk de consolidación deben ser positivos.")
+        if self.analysis_cache_ttl_seconds < 1 or self.analysis_lock_ttl_seconds < 1:
+            raise ValueError("Los TTL de análisis compartido deben ser positivos.")
         return self
 
 
