@@ -10,7 +10,7 @@ Reutiliza los mismos umbrales y validaciones de :mod:`multi_sheet`:
 - Solo se aprueban ``uno_a_uno`` y ``muchos_a_uno`` (left join). Se bloquean
   ``uno_a_muchos``, ``muchos_a_muchos`` y claves derechas duplicadas.
 - Dos hojas transaccionales compatibles NO se relacionan: son responsabilidad
-  del modo ``append`` ("Unir periodos de venta").
+  del modo ``append`` ("Consolidar períodos de venta").
 """
 
 from __future__ import annotations
@@ -797,7 +797,7 @@ def detect_relationship_catalog(
                     cardinality = "muchos_a_uno"
                 else:
                     stats = relation_stats(left, [left_key], right, [right_key])
-                    safe = stats.cardinality in {"uno_a_uno", "muchos_a_uno"}
+                    safe = stats.safe
                     if not safe:
                         return
                     try:

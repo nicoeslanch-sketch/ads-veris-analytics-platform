@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
+from pandas.errors import MergeError
 
 from .mapping import resolve_mapping, strip_accents_lower
 from .quality import line_sales_evidence, normalized_header
@@ -116,6 +117,44 @@ class ServiceTransform:
     source_rows: list[int]
     operations: list[dict[str, Any]]
     removed_rows: list[dict[str, Any]]
+
+
+@dataclass
+class UniqueReference:
+    frame: pd.DataFrame
+    identical_rows: int
+    conflict_keys: tuple[str, ...]
+
+
+def _validated_unique_reference(
+    frame: pd.DataFrame,
+    key: str,
+    value_columns: list[str],
+) -> UniqueReference:
+    """Consolida solo duplicados idénticos y separa claves conflictivas.
+
+    Nunca decide entre dos tarifas, clientes, nombres o estados diferentes.
+    Las filas sin clave no participan en un índice many-to-one.
+    """
+
+    columns = list(dict.fromkeys([key, *value_columns]))
+    selected = frame[columns].copy()
+    key_text = selected[key].astype("string").str.strip()
+    valid = key_text.notna() & ~key_text.str.casefold().isin(
+        {"", "nan", "none", "null", "n/a", "na", "-", "--"}
+    )
+    selected = selected.loc[valid].copy()
+    canonical = selected.drop_duplicates(subset=columns)
+    conflict_mask = canonical[key].duplicated(keep=False)
+    conflict_keys = tuple(
+        str(value) for value in canonical.loc[conflict_mask, key].drop_duplicates().tolist()[:8]
+    )
+    safe = canonical.loc[~canonical[key].astype(str).isin(conflict_keys)].copy()
+    return UniqueReference(
+        frame=safe,
+        identical_rows=max(0, len(selected) - len(canonical)),
+        conflict_keys=conflict_keys,
+    )
 
 
 def transform_service_sheet(
@@ -466,6 +505,37 @@ def analyze_service_business(
     installments = service["cuotas_contrato"].copy()
     uf = service["valor_uf"].copy()
     expenses = service["gastos_estructura"].copy()
+    service_alerts: list[dict[str, Any]] = []
+
+    def record_reference_result(source: str, result: UniqueReference, affected: str) -> None:
+        if result.identical_rows:
+            service_alerts.append(
+                {
+                    "code": "duplicate_identical_collapsed",
+                    "severity": "info",
+                    "source": source,
+                    "affected_calculation": affected,
+                    "rows": result.identical_rows,
+                    "message": (
+                        f"{source}: se consolidaron {result.identical_rows} duplicado(s) "
+                        "idéntico(s) sin alterar valores."
+                    ),
+                }
+            )
+        if result.conflict_keys:
+            service_alerts.append(
+                {
+                    "code": "duplicate_conflict",
+                    "severity": "warning",
+                    "source": source,
+                    "affected_calculation": affected,
+                    "examples": list(result.conflict_keys),
+                    "message": (
+                        f"{source}: hay claves duplicadas con valores incompatibles. "
+                        f"Se omitió únicamente {affected}."
+                    ),
+                }
+            )
 
     # Columnas críticas: si falta una, se bloquea el modelo completo en lugar de
     # completar con cero o inferir una relación no demostrada.
@@ -510,6 +580,17 @@ def analyze_service_business(
     orders["__fecha"] = _dates(orders[order_date])
     orders["__estado"] = _text(orders[order_status])
     orders["__tipo"] = _text(orders[order_type]).str.title()
+    order_reference = _validated_unique_reference(
+        orders,
+        order_id,
+        [str(column) for column in orders.columns if str(column) != order_id],
+    )
+    record_reference_result("Ordenes_Trabajo", order_reference, "el modelo por OT")
+    if order_reference.conflict_keys:
+        # La OT es el grano central. Continuar escogería arbitrariamente fecha,
+        # estado, cliente o contrato y podría duplicar ingresos y costos.
+        return None
+    orders = order_reference.frame
 
     detail[detail_ot] = detail[detail_ot].mask(_blank(detail[detail_ot]), pd.NA).ffill().map(_pad_ot)
     detail["__tipo_linea"] = _text(detail[line_type])
@@ -531,13 +612,24 @@ def analyze_service_business(
     item_lookup = items[[item_key, standard_cost] + ([family] if family else [])].copy()
     item_lookup["__item"] = item_lookup[item_key].astype(str).str.strip().str.upper()
     item_lookup["__costo_unit"] = _numbers(item_lookup[standard_cost])
-    item_lookup = item_lookup.drop_duplicates("__item", keep="last")
-    detail = detail.merge(
-        item_lookup[["__item", "__costo_unit"] + ([family] if family else [])],
-        on="__item",
-        how="left",
-        validate="many_to_one",
+    item_reference = _validated_unique_reference(
+        item_lookup,
+        "__item",
+        ["__costo_unit"] + ([family] if family else []),
     )
+    record_reference_result("Items", item_reference, "el costo y margen de materiales")
+    if item_reference.conflict_keys:
+        return None
+    item_lookup = item_reference.frame
+    try:
+        detail = detail.merge(
+            item_lookup[["__item", "__costo_unit"] + ([family] if family else [])],
+            on="__item",
+            how="left",
+            validate="many_to_one",
+        )
+    except MergeError:
+        return None
     detail["__costo_material"] = (
         detail["__cantidad"] * detail["__costo_unit"]
     ).where(material)
@@ -769,7 +861,20 @@ def analyze_service_business(
     contract_key = _column(contracts, ("cod", "contrato"), ("id", "contrato"))
     contract_currency = _column(contracts, ("moneda",))
     active_contracts = int(contracts[contract_key].nunique()) if contract_key else len(contracts)
-    contracts_uf = int(_text(contracts[contract_currency]).str.replace(".", "", regex=False).eq("uf").sum()) if contract_currency else 0
+    contracts_uf = 0
+    if contract_key and contract_currency:
+        currency_reference = _validated_unique_reference(
+            contracts[[contract_key, contract_currency]],
+            contract_key,
+            [contract_currency],
+        )
+        record_reference_result("Contratos", currency_reference, "la clasificación de moneda contractual")
+        contracts_uf = int(
+            _text(currency_reference.frame[contract_currency])
+            .str.replace(".", "", regex=False)
+            .eq("uf")
+            .sum()
+        )
     pending_installments = float(
         installments.loc[
             installments["__estado"].str.contains("pend", na=False), "__monto_clp"
@@ -780,25 +885,44 @@ def analyze_service_business(
     client_key_master = _column(clients, ("cod", "cliente"), ("id", "cliente"))
     client_segment = _column(clients, ("segmento",))
     client_name = _column(clients, ("razon", "social"), ("nombre", "cliente"))
+    client_lookup = pd.DataFrame()
     if client_key_order and client_key_master and client_segment:
         client_columns = [
             client_key_master,
             client_segment,
             *([client_name] if client_name else []),
         ]
-        client_lookup = clients[client_columns].drop_duplicates(client_key_master)
-        ot = ot.merge(
-            orders[[order_id, client_key_order]],
-            on=order_id,
-            how="left",
-            validate="one_to_one",
-        ).merge(
-            client_lookup,
-            left_on=client_key_order,
-            right_on=client_key_master,
-            how="left",
-            validate="many_to_one",
+        client_reference = _validated_unique_reference(
+            clients[client_columns],
+            client_key_master,
+            [column for column in client_columns if column != client_key_master],
         )
+        record_reference_result("Clientes", client_reference, "la rentabilidad por cliente y segmento")
+        client_lookup = client_reference.frame
+        if not client_reference.conflict_keys:
+            try:
+                ot = ot.merge(
+                    orders[[order_id, client_key_order]],
+                    on=order_id,
+                    how="left",
+                    validate="one_to_one",
+                ).merge(
+                    client_lookup,
+                    left_on=client_key_order,
+                    right_on=client_key_master,
+                    how="left",
+                    validate="many_to_one",
+                )
+            except MergeError:
+                service_alerts.append(
+                    {
+                        "code": "relationship_cardinality_rejected",
+                        "severity": "warning",
+                        "source": "Ordenes_Trabajo ↔ Clientes",
+                        "affected_calculation": "la rentabilidad por cliente y segmento",
+                        "message": "La cardinalidad no permitió calcular el desglose por cliente sin multiplicar OT.",
+                    }
+                )
 
     type_rows = _group_rows(ot, "__tipo", "ingresos", "costo")
     segment_rows = (
@@ -822,11 +946,11 @@ def analyze_service_business(
         )
         cumulative = 0.0
         client_names = {}
-        if client_key_master and client_name:
+        if client_key_master and client_name and not client_lookup.empty:
             client_names = dict(
                 zip(
-                    clients[client_key_master].astype(str),
-                    clients[client_name].astype(str),
+                    client_lookup[client_key_master].astype(str),
+                    client_lookup[client_name].astype(str),
                 )
             )
         for key, row in grouped_clients.head(12).iterrows():
@@ -902,7 +1026,13 @@ def analyze_service_business(
         tech_lookup["__tecnico"] = (
             tech_lookup[technician_key].astype(str).str.strip().str.upper()
         )
-        tech_lookup = tech_lookup.drop_duplicates("__tecnico", keep="last")
+        tech_reference = _validated_unique_reference(
+            tech_lookup,
+            "__tecnico",
+            [column for column in tech_lookup_columns if column != technician_key],
+        )
+        record_reference_result("Tecnicos", tech_reference, "los nombres y categorías del ranking técnico")
+        tech_lookup = tech_reference.frame
         tech_group = matched.groupby("__tecnico").agg(
             horas=("__horas", "sum"),
             horas_facturables=(
@@ -923,12 +1053,24 @@ def analyze_service_business(
         tech_group["utilidad_hora"] = tech_group["utilidad"].div(
             tech_group["horas"].replace(0, pd.NA)
         )
-        tech_group = tech_group.reset_index().merge(
-            tech_lookup,
-            on="__tecnico",
-            how="left",
-            validate="one_to_one",
-        )
+        try:
+            tech_group = tech_group.reset_index().merge(
+                tech_lookup,
+                on="__tecnico",
+                how="left",
+                validate="one_to_one",
+            )
+        except MergeError:
+            service_alerts.append(
+                {
+                    "code": "relationship_cardinality_rejected",
+                    "severity": "warning",
+                    "source": "Horas_Tecnicos ↔ Tecnicos",
+                    "affected_calculation": "los nombres y categorías del ranking técnico",
+                    "message": "El ranking conserva sus cifras por código, sin elegir metadatos técnicos ambiguos.",
+                }
+            )
+            tech_group = tech_group.reset_index()
         tech_group = tech_group.sort_values("utilidad_hora", ascending=False)
         technician_rows = [
             {
@@ -987,23 +1129,42 @@ def analyze_service_business(
         sla_orders["__respuesta_h"] = _hours(sla_orders[response_hours])
         sla_contracts = contracts[[contract_key, contract_sla]].copy()
         sla_contracts["__sla_h"] = _hours(sla_contracts[contract_sla])
-        sla_joined = sla_orders.merge(
-            sla_contracts[[contract_key, "__sla_h"]],
-            left_on=contract_order_key,
-            right_on=contract_key,
-            how="inner",
-            validate="many_to_one",
+        contract_reference = _validated_unique_reference(
+            sla_contracts,
+            contract_key,
+            ["__sla_h"],
         )
-        evaluable = sla_joined["__respuesta_h"].notna() & sla_joined["__sla_h"].notna()
-        sla_evaluated = int(evaluable.sum())
-        if sla_evaluated:
-            sla_compliance = float(
-                (
-                    sla_joined.loc[evaluable, "__respuesta_h"]
-                    <= sla_joined.loc[evaluable, "__sla_h"]
-                ).mean()
-                * 100
-            )
+        record_reference_result("Contratos", contract_reference, "el cumplimiento de SLA")
+        if not contract_reference.conflict_keys:
+            try:
+                sla_joined = sla_orders.merge(
+                    contract_reference.frame[[contract_key, "__sla_h"]],
+                    left_on=contract_order_key,
+                    right_on=contract_key,
+                    how="inner",
+                    validate="many_to_one",
+                )
+            except MergeError:
+                service_alerts.append(
+                    {
+                        "code": "relationship_cardinality_rejected",
+                        "severity": "warning",
+                        "source": "Ordenes_Trabajo ↔ Contratos",
+                        "affected_calculation": "el cumplimiento de SLA",
+                        "message": "El SLA quedó no disponible porque la relación no es many-to-one.",
+                    }
+                )
+            else:
+                evaluable = sla_joined["__respuesta_h"].notna() & sla_joined["__sla_h"].notna()
+                sla_evaluated = int(evaluable.sum())
+                if sla_evaluated:
+                    sla_compliance = float(
+                        (
+                            sla_joined.loc[evaluable, "__respuesta_h"]
+                            <= sla_joined.loc[evaluable, "__sla_h"]
+                        ).mean()
+                        * 100
+                    )
 
     operating_leverage = (
         gross_profit / operating_profit if operating_profit else None
@@ -1223,6 +1384,7 @@ def analyze_service_business(
                 )
                 if warning is not None
             ],
+            "alertas": service_alerts,
         },
     }
 
@@ -1230,8 +1392,12 @@ def analyze_service_business(
         "version": 2,
         "perfil": "servicios_tecnicos",
         "servicios": service_payload,
-        "estado_certificacion": "certified",
-        "confianza_pct": 100.0,
+        "estado_certificacion": "partial" if any(
+            alert.get("severity") == "warning" for alert in service_alerts
+        ) else "certified",
+        "confianza_pct": 90.0 if any(
+            alert.get("severity") == "warning" for alert in service_alerts
+        ) else 100.0,
         "filtros": {"disponibles": {}, "aplicados": {}},
         "alcance": {
             "hojas_ventas": ["Detalle_OT", "Horas_Tecnicos", "Cuotas_Contrato"],

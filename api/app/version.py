@@ -11,8 +11,8 @@ Actualizar ENGINE_VERSION en cada release que cambie resultados del motor
 
 import os
 
-ENGINE_VERSION = "0.27.0"
-SERVICE_MODEL_VERSION = 1
+ENGINE_VERSION = "0.28.0"
+SERVICE_MODEL_VERSION = 2
 LATEST_MIGRATION = "0023"
 
 

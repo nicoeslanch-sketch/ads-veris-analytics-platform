@@ -45,13 +45,14 @@ import { useAuth } from '../auth/AuthContext'
 import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
-import { apiPost, buildDatasetForm, ApiError } from '../lib/api'
+import { apiPostJob, buildDatasetForm, ApiError } from '../lib/api'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, shouldSplitFinancialScale } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { summaryContentKind } from '../lib/metrics'
 import { relationBlockedNotice } from '../lib/relationBlocked'
+import { analysisLoadingOperation } from '../lib/analysisModes'
 import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../lib/multiSheet'
 import type { AnalysisScope, MetricsResult } from '../lib/types'
 
@@ -380,14 +381,10 @@ export default function Resumen() {
     if (period.to) fields.date_to = period.to
     requestMetrics(
       key,
-      (signal) => apiPost<MetricsResult>(
-        '/metrics',
+      (signal) => apiPostJob<MetricsResult>(
+        '/analysis/jobs/metrics',
         buildDatasetForm(file, storagePath, fields),
-        // Un cálculo frío multihoja en Render puede superar 120 s aunque el
-        // trabajo siga avanzando y quede cacheado. El motor evita duplicados;
-        // este margen permite recibir ese único resultado sin mostrar un falso
-        // timeout. El usuario conserva el botón Cancelar.
-        { signal, timeoutMs: 240_000 },
+        { signal },
       ),
       controller.signal,
     )
@@ -679,7 +676,7 @@ export default function Resumen() {
         />
       ) : loading && !metrics ? (
         <AnalysisLoadingPanel
-          operation={`Calculando indicadores${sheet ? ` de ${sheet}` : ''}`}
+          operation={analysisLoadingOperation(selectorMode, sheet)}
           detail="Reutilizamos la limpieza y las relaciones ya procesadas. Puedes cancelar sin perder el archivo."
           onCancel={cancelMetrics}
         />

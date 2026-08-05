@@ -305,7 +305,7 @@ def _append_sales(
     if not names:
         return pd.DataFrame(), {}
     # Las ventas mensuales/semestrales pueden usar sinónimos de encabezado.
-    # El mismo alineador que usa "Unir periodos" evita que Visión del negocio
+    # El mismo alineador que usa "Consolidar períodos" evita que Visión del negocio
     # sume únicamente la primera hoja y deje el resto lleno de NaN.
     combined, combined_mapping, _ = append_compatible_frames(
         {name: frames[name] for name in names},

@@ -97,5 +97,22 @@ CHANGELOG [0.20.0].)
 - **KPIs por moneda / conversión declarada**: hoy las monedas mixtas
   BLOQUEAN los KPIs (jamás una cifra inválida); separar por moneda es la
   siguiente iteración.
-- **Rate limiting compartido multi-instancia** (Postgres/Redis): necesario
-  recién al escalar horizontalmente la API.
+- **Coordinación multi-instancia**: `ANALYSIS_REDIS_URL` habilita caché y locks
+  compartidos para Resumen/Explorar; sin configurar Redis se conserva el
+  fallback en memoria, apropiado únicamente para desarrollo o una instancia.
+  El rate limiting global continúa siendo un paso previo al escalado horizontal.
+
+## 7. Trabajos interactivos de análisis
+
+- El frontend usa `POST /analysis/jobs/metrics`, seguido de
+  `GET /analysis/jobs/{job_id}`. Los cuatro puntos de consumo (Resumen,
+  Explorar, panel asistido y métricas de sesión) comparten ese contrato.
+- El trabajo es idempotente por usuario, contenido, manifiesto, alcance,
+  filtros y versión del motor. Cancelar marca el trabajo y evita publicar su
+  resultado; el cálculo nativo ya iniciado termina de forma cooperativa.
+- Con Redis, estado y resultado sobreviven a otra petición y una instancia
+  nueva puede retomar el trabajo. Sin Redis, sobreviven mientras viva el
+  proceso de la API; es el modo de desarrollo y de instancia única.
+- En producción horizontal debe definirse `ANALYSIS_REDIS_URL`. Verificar en
+  el smoke que dos solicitudes idénticas devuelvan el mismo `job_id` y que una
+  tercera lectura recupere `status=completed` sin recalcular.

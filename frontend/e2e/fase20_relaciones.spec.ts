@@ -61,12 +61,12 @@ test('Fase 20: botonera de 4 modos y workspace de relaciones', async ({ page }, 
   await expect(page.getByText('Datos que estas analizando')).toBeVisible({ timeout: 60_000 })
 
   // Los cuatro modos existen (Parte 15.1).
-  for (const label of ['Analizar una hoja', 'Visión del negocio', 'Unir periodos de venta', 'Relación manual']) {
+  for (const label of ['Analizar una hoja', 'Visión del negocio', 'Consolidar períodos de venta', 'Relación manual']) {
     await expect(page.getByRole('button', { name: label })).toBeVisible()
   }
 
-  // "Unir periodos de venta" y "Visión del negocio" conservan su comportamiento.
-  await page.getByRole('button', { name: 'Unir periodos de venta' }).click()
+  // "Consolidar períodos de venta" y "Visión del negocio" conservan su comportamiento.
+  await page.getByRole('button', { name: 'Consolidar períodos de venta' }).click()
   // El encabezado, no el párrafo explicativo: prueba que el append realmente
   // produjo la columna hoja_origen en el dashboard.
   await expect(page.getByRole('heading', { name: 'hoja_origen' })).toBeVisible({ timeout: 90_000 })

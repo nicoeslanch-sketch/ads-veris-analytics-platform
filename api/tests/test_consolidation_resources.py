@@ -20,6 +20,7 @@ from app.consolidation.resources import (
     ResourceMonitor,
     ensure_temp_capacity,
     isolated_run_directory,
+    required_temp_bytes,
 )
 from app.consolidation.target_schema import TARGET_COLUMNS
 from app.consolidation.worker import ConsolidationWorker, validate_worker_runtime
@@ -27,12 +28,13 @@ from tests.test_consolidation_engine import synthetic_sources
 
 
 def _settings(**overrides) -> Settings:
-    return Settings(
-        consolidation_memory_soft_limit_mb=3_000,
-        consolidation_memory_hard_limit_mb=3_600,
-        consolidation_temp_disk_min_mb=1,
-        **overrides,
-    )
+    values = {
+        "consolidation_memory_soft_limit_mb": 3_000,
+        "consolidation_memory_hard_limit_mb": 3_600,
+        "consolidation_temp_disk_min_mb": 1,
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 def _synthetic(path: Path):
@@ -82,6 +84,40 @@ def test_insufficient_temporary_disk_is_controlled(tmp_path, monkeypatch):
         ensure_temp_capacity(tmp_path, _settings())
     assert raised.value.code == "temporary_disk_insufficient"
     assert raised.value.metrics["temporary_required_bytes"] > raised.value.metrics["temporary_free_bytes"]
+    assert raised.value.metrics["temporary_missing_bytes"] == (
+        raised.value.metrics["temporary_required_bytes"] - 1
+    )
+    assert raised.value.metrics["source_bytes"] == 0
+
+
+def test_temporary_disk_formula_scales_with_sources_and_accepts_exact_limit(tmp_path, monkeypatch):
+    Usage = namedtuple("Usage", "total used free")
+    settings = _settings(
+        consolidation_temp_disk_min_mb=2,
+        consolidation_temp_source_multiplier=4,
+        consolidation_temp_export_margin_mb=1,
+    )
+    source_bytes = 2 * 1024 * 1024
+    required = required_temp_bytes(settings, source_bytes)
+    assert required == 9 * 1024 * 1024
+    monkeypatch.setattr(
+        "app.consolidation.resources.shutil.disk_usage",
+        lambda _path: Usage(required * 2, required, required),
+    )
+
+    result = ensure_temp_capacity(tmp_path, settings, source_bytes=source_bytes)
+
+    assert result["temporary_required_bytes"] == required
+    assert result["temporary_missing_bytes"] == 0
+
+
+def test_temporary_disk_formula_uses_floor_for_small_sources():
+    settings = _settings(
+        consolidation_temp_disk_min_mb=64,
+        consolidation_temp_source_multiplier=4,
+        consolidation_temp_export_margin_mb=1,
+    )
+    assert required_temp_bytes(settings, 128) == 64 * 1024 * 1024
 
 
 def test_worker_rejects_unvalidated_in_process_concurrency():

@@ -300,6 +300,20 @@ def test_duplicate_right_key_is_blocked():
     assert stats.projected_rows == 4
     assert stats.right_duplicate_keys == 1
     assert stats.unmatched_rows == 0
+    assert stats.problem_examples == ("a",)
+
+
+def test_almost_unique_reference_is_never_advertised_as_safe():
+    left = pd.DataFrame({"K": [f"k-{index}" for index in range(250)]})
+    right = pd.DataFrame({"K": [f"k-{index}" for index in range(250)] + ["k-1"]})
+
+    stats = relation_stats(left, ["K"], right, ["K"])
+
+    assert stats.unique_right > 0.995
+    assert stats.cardinality == "uno_a_muchos"
+    assert stats.safe is False
+    assert stats.right_duplicate_keys == 1
+    assert stats.projected_rows == len(left) + 1
 
 
 def test_repeated_missing_placeholders_do_not_make_reference_many_to_many():

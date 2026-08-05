@@ -70,7 +70,7 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
       </div>
       <div className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          {chart.kind === 'donut' ? (
+          {chart.kind === 'donut' && chart.data.length >= 3 ? (
             <PieChart>
               <Pie
                 data={chart.data}

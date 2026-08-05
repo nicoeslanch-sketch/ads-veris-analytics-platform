@@ -1289,7 +1289,7 @@ class _DashboardContext:
             return None
         return {
             "id": "ingresos_categoria",
-            "kind": "donut" if 2 <= len(data) <= 5 else "bar",
+            "kind": "donut" if 3 <= len(data) <= 5 else "bar",
             "title": "Ingresos por categoría",
             "help": "Suma de ingresos del periodo por categoría del producto.",
             "category_key": "categoria",

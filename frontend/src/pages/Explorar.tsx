@@ -63,7 +63,7 @@ import { relationBlockedNotice } from '../lib/relationBlocked'
 import { computeBusinessInsights } from '../lib/businessInsights'
 import { soloMesesCompletos } from '../lib/partial'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
-import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
+import { ApiError, apiPostJob, apiPostJson, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, truncateLabel } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
@@ -522,12 +522,10 @@ export default function Explorar() {
     if (rango.to) fields.date_to = rango.to
     requestMetrics(
       key,
-      (signal) => apiPost<MetricsResult>(
-        '/metrics',
+      (signal) => apiPostJob<MetricsResult>(
+        '/analysis/jobs/metrics',
         buildDatasetForm(file, storagePath, fields),
-        // Mismo contrato que Resumen: una sola operación compartida y
-        // cancelable, con margen suficiente para un arranque frío de Render.
-        { signal, timeoutMs: 240_000 },
+        { signal },
       ),
       controller.signal,
     )

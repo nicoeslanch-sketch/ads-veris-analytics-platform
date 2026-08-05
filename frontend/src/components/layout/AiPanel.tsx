@@ -14,7 +14,7 @@ import { ArrowUp, Crown, Loader2, Lock, RefreshCw, Sparkles, Square, Star, Trian
 import { useDataset } from '../../data/DatasetContext'
 import { useDemo } from '../../demo/DemoContext'
 import { useAccess } from '../../lib/access'
-import { ApiError, apiPost, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
+import { ApiError, apiPostJob, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
 import { metricsCacheKey, requestMetrics } from '../../lib/analysisCache'
 import { setActiveCurrency } from '../../lib/format'
 import { serializedAnalysisScope } from '../../lib/multiSheet'
@@ -152,10 +152,10 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         }
         m = await requestMetrics(
           metricsKey,
-          (signal) => apiPost<MetricsResult>(
-            '/metrics',
+          (signal) => apiPostJob<MetricsResult>(
+            '/analysis/jobs/metrics',
             buildDatasetForm(fileObj, storagePathArg, fields),
-            { signal, timeoutMs: 120_000 },
+            { signal },
           ),
           controller.signal,
         )

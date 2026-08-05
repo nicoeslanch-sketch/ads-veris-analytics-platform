@@ -11,7 +11,7 @@ import {
   templateLabel,
   usableRelationships,
 } from './relationshipDashboard'
-import { ANALYSIS_MODES, internalModeForLabel } from './analysisModes'
+import { ANALYSIS_MODES, analysisLoadingOperation, internalModeForLabel } from './analysisModes'
 import type { CatalogRelationship } from './types'
 
 function relation(overrides: Partial<CatalogRelationship>): CatalogRelationship {
@@ -172,7 +172,7 @@ describe('ANALYSIS_MODES (invariante de los 4 modos)', () => {
     expect(ANALYSIS_MODES.map((entry) => entry.label)).toEqual([
       'Analizar una hoja',
       'Visión del negocio',
-      'Unir periodos de venta',
+      'Consolidar períodos de venta',
       'Relación manual',
     ])
     expect(ANALYSIS_MODES.map((entry) => entry.mode)).toEqual([
@@ -186,7 +186,14 @@ describe('ANALYSIS_MODES (invariante de los 4 modos)', () => {
   it('mapea cada texto a su modo interno', () => {
     expect(internalModeForLabel('Analizar una hoja')).toBe('single')
     expect(internalModeForLabel('Visión del negocio')).toBe('append_join')
+    expect(internalModeForLabel('Consolidar períodos de venta')).toBe('append')
     expect(internalModeForLabel('Unir periodos de venta')).toBe('append')
     expect(internalModeForLabel('Relación manual')).toBe('join')
+  })
+
+  it('describe el procesamiento según el alcance real', () => {
+    expect(analysisLoadingOperation('append', 'Ventas_S1')).toBe('Procesando todos los períodos de venta')
+    expect(analysisLoadingOperation('single', 'Ventas_S1')).toBe('Calculando indicadores de Ventas_S1')
+    expect(analysisLoadingOperation('append_join')).toBe('Calculando la visión completa del negocio')
   })
 })

@@ -5,7 +5,7 @@
  * (Fase 10 §5). */
 
 import { useEffect, useRef, useState } from 'react'
-import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
+import { ApiError, apiPostJob, buildDatasetForm } from '../lib/api'
 import { setActiveCurrency } from '../lib/format'
 import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
 import { serializedAnalysisScope } from '../lib/multiSheet'
@@ -92,10 +92,10 @@ export function useSessionMetrics(): {
     }
     requestMetrics(
       key,
-      (signal) => apiPost<MetricsResult>(
-        '/metrics',
+      (signal) => apiPostJob<MetricsResult>(
+        '/analysis/jobs/metrics',
         buildDatasetForm(file, storagePath, fields),
-        { signal, timeoutMs: 240_000 },
+        { signal },
       ),
       controller.signal,
     )

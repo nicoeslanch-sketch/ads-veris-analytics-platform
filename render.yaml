@@ -33,7 +33,11 @@ services:
       - key: CONSOLIDATION_MEMORY_HARD_LIMIT_MB
         value: "1800"
       - key: CONSOLIDATION_TEMP_DISK_MIN_MB
-        value: "10240"
+        value: "512"
+      - key: CONSOLIDATION_TEMP_SOURCE_MULTIPLIER
+        value: "4.0"
+      - key: CONSOLIDATION_TEMP_EXPORT_MARGIN_MB
+        value: "256"
       - key: CONSOLIDATION_CHUNK_SIZE
         value: "100000"
       - key: DEV_AUTH_BYPASS

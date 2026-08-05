@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   chartColorForKey,
   distributionChartKind,
+  buildRobustHeatScale,
+  robustHeatIntensity,
   prepareCategoricalChart,
   shouldSplitFinancialScale,
 } from './charts'
@@ -22,13 +24,23 @@ describe('visualizaciones honestas y estables', () => {
     ).toBe(false)
   })
 
+  it('usa p95 y conserva contraste ante un valor extremo', () => {
+    const scale = buildRobustHeatScale([...Array.from({ length: 20 }, (_, index) => index + 1), 10_000])
+    expect(scale.reference).toBe(20)
+    expect(scale.maximum).toBe(10_000)
+    expect(scale.logarithmic).toBe(true)
+    expect(robustHeatIntensity(10, scale)).toBeGreaterThan(0.5)
+    expect(robustHeatIntensity(10_000, scale)).toBe(1)
+  })
+
   it('mantiene el color de una dimensión aunque cambie el orden de los datos', () => {
     expect(chartColorForKey('Estado Pago')).toBe(chartColorForKey('Estado Pago'))
     expect(chartColorForKey('Estado Pago', 1)).not.toBe(chartColorForKey('Estado Pago'))
   })
 
   it('usa donut solo para composiciones pequeñas no negativas', () => {
-    expect(distributionChartKind([{ registros: 8 }, { registros: 2 }])).toBe('donut')
+    expect(distributionChartKind([{ registros: 8 }, { registros: 2 }])).toBe('bars')
+    expect(distributionChartKind([{ registros: 8 }, { registros: 2 }, { registros: 1 }])).toBe('donut')
     expect(distributionChartKind(Array.from({ length: 8 }, () => ({ registros: 1 })))).toBe('bars')
     expect(distributionChartKind([{ registros: 8 }, { registros: -2 }])).toBe('bars')
   })

@@ -6,7 +6,7 @@ Fecha: 2026-07-22
 
 - Rama: `main` (trabajo directo, sin PR).
 - Ultimo commit remoto antes de este cierre: `10010e2dc82a515275c3a3fe8c770e0ffc94d430`.
-- Motor: `0.23.0`.
+- Motor actual: `0.28.0`.
 - Ultima migracion: `0021`. No se creo ni ejecuto ninguna migracion.
 - Libro principal de auditoria:
   `Downloads/Prueba_PYME_Desafiante_Multihoja_ADS_VerIs_2026.xlsx`.
@@ -79,7 +79,7 @@ Con la sesion autenticada y el SHA `10010e2...`:
 1. Confirmar que GitHub Actions del nuevo SHA termino verde (API, frontend,
    seguridad y E2E).
 2. Confirmar Vercel `success` y que Render `/version` reporta el nuevo SHA,
-   `engine_version=0.23.0`, `database_migration=0021`, `environment=production`.
+   `engine_version=0.28.0`, `database_migration=0023`, `environment=production`.
 3. En la sesion autenticada, limpiar o reutilizar el libro principal, esperar
    unos segundos en Limpieza y abrir `Resumen > Vision del negocio`.
 4. Medir primera apertura y segunda apertura. La segunda debe reutilizar cache;

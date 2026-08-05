@@ -15,3 +15,4 @@ psutil==7.0.0
 lxml==6.1.1
 python-multipart==0.0.32
 anthropic==0.116.0
+redis==8.0.1

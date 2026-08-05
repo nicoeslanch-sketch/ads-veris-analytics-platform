@@ -66,7 +66,7 @@ export default function AnalysisModeSwitcher({
             ].join(' ')}
           >
             <Icon className="h-4 w-4 shrink-0" aria-hidden />
-            <span className="text-center leading-tight whitespace-nowrap">{label}</span>
+            <span className="min-w-0 text-center leading-tight text-balance">{label}</span>
             {active && (
               <span
                 className="absolute right-2 top-2 h-2 w-2 rounded-full border-2 border-white bg-white/60"

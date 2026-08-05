@@ -33,6 +33,7 @@ import time
 import zipfile
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable
 from uuid import UUID
 
 import pandas as pd
@@ -119,6 +120,8 @@ from ..storage import (
     upload_export_cache,
 )
 from ..version import ENGINE_VERSION, SERVICE_MODEL_VERSION
+from ..shared_analysis import coordinator_for
+from ..analysis_jobs import manager_for
 
 router = APIRouter()
 
@@ -292,6 +295,7 @@ def _analysis_cache_store(key: tuple, value: dict) -> dict:
         _ANALYSIS_CACHE.move_to_end(key)
         while len(_ANALYSIS_CACHE) > _ANALYSIS_CACHE_MAX_ENTRIES:
             _ANALYSIS_CACHE.popitem(last=False)
+    coordinator_for(get_settings()).store(key, stored)
     return copy.deepcopy(stored)
 
 
@@ -306,6 +310,7 @@ def _analysis_cache_compute(key: tuple, producer) -> dict:
     started = time.monotonic()
     deadline = started + _ANALYSIS_INFLIGHT_WAIT_SECONDS
     cache_kind = str(key[0]) if key else "analysis"
+    shared = coordinator_for(get_settings())
     while True:
         with _ANALYSIS_CACHE_LOCK:
             cached = _ANALYSIS_CACHE.get(key)
@@ -316,6 +321,20 @@ def _analysis_cache_compute(key: tuple, producer) -> dict:
                     cache_kind,
                     round((time.monotonic() - started) * 1000),
                 )
+                return copy.deepcopy(cached)
+        shared_cached = shared.get(key)
+        if shared_cached is not None:
+            logger.info(
+                "analysis_shared_cache_hit kind=%s duration_ms=%d",
+                cache_kind,
+                round((time.monotonic() - started) * 1000),
+            )
+            return _analysis_cache_store(key, shared_cached)
+        with _ANALYSIS_CACHE_LOCK:
+            # Otra hebra pudo completar entre la lectura local y Redis.
+            cached = _ANALYSIS_CACHE.get(key)
+            if cached is not None:
+                _ANALYSIS_CACHE.move_to_end(key)
                 return copy.deepcopy(cached)
             event = _ANALYSIS_INFLIGHT.get(key)
             if event is None:
@@ -342,6 +361,27 @@ def _analysis_cache_compute(key: tuple, producer) -> dict:
                 ),
             )
 
+    distributed_token = shared.acquire(key)
+    if distributed_token is False:
+        try:
+            while time.monotonic() < deadline:
+                shared_cached = shared.get(key)
+                if shared_cached is not None:
+                    return _analysis_cache_store(key, shared_cached)
+                time.sleep(0.25)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "Otra instancia continúa procesando este análisis. "
+                    "Puedes reintentar sin crear un trabajo duplicado."
+                ),
+            )
+        finally:
+            with _ANALYSIS_CACHE_LOCK:
+                finished = _ANALYSIS_INFLIGHT.pop(key, None)
+                if finished is not None:
+                    finished.set()
+
     try:
         logger.info("analysis_cache_compute_start kind=%s", cache_kind)
         result = _analysis_cache_store(key, producer())
@@ -352,6 +392,7 @@ def _analysis_cache_compute(key: tuple, producer) -> dict:
         )
         return result
     finally:
+        shared.release(key, distributed_token)
         with _ANALYSIS_CACHE_LOCK:
             finished = _ANALYSIS_INFLIGHT.pop(key, None)
             if finished is not None:
@@ -5243,6 +5284,100 @@ async def clean_download(
     )
 
 
+async def _prepare_metrics_computation(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
+    mapping: str | None = Form(None),
+    rules: str | None = Form(None),
+    scope: str | None = Form(None),
+    revision: int | None = Form(None),
+    eliminar_duplicados: bool = Form(False),
+    date_from: str | None = Form(None),
+    date_to: str | None = Form(None),
+    sheet: str | None = Form(None),
+    manifest: str | None = Form(None),
+    analysis_scope: str | None = Form(None),
+    business_filters: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> tuple[tuple, Callable[[], dict]]:
+    # Fase 14 (P0): /metrics reprocesa el archivo completo (caché aparte) —
+    # sin esta puerta, una cuenta sin plan tenía el dashboard gratis.
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    )
+    filename, content = await _read_input(file, storage_path, user)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    parsed_business_filters = _validate_business_filters(
+        _parse_json_field(business_filters, "business_filters")
+        if business_filters
+        else None
+    )
+    if sheet_manifest is not None:
+        if not analysis_scope:
+            raise HTTPException(status_code=422, detail="Las metricas multihoja requieren analysis_scope.")
+        available = [entry["nombre"] for entry in sheet_manifest["hojas"]]
+        parsed_analysis_scope = _parse_analysis_scope(analysis_scope, available)
+        job_key = _analysis_cache_key(
+            "metrics_job_multi",
+            user.id,
+            filename,
+            content,
+            dataset_id,
+            _analysis_manifest_identity(sheet_manifest),
+            parsed_analysis_scope,
+            date_from,
+            date_to,
+            parsed_business_filters,
+        )
+        return job_key, lambda: _metrics_multi_cached_sync(
+            filename,
+            content,
+            sheet_manifest,
+            parsed_analysis_scope,
+            date_from,
+            date_to,
+            dataset_id,
+            user.id,
+            parsed_business_filters,
+        )
+    mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
+    rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
+    scope_dict = _validate_scope(_parse_json_field(scope, "scope") or None)
+    clean_sheet = _clean_sheet_param(sheet)
+    job_key = _analysis_cache_key(
+        "metrics_job_single",
+        user.id,
+        filename,
+        content,
+        dataset_id,
+        mapping_dict,
+        rules_dict,
+        scope_dict,
+        revision,
+        eliminar_duplicados,
+        date_from,
+        date_to,
+        clean_sheet,
+        parsed_business_filters,
+    )
+    return job_key, lambda: _metrics_sync(
+        filename,
+        content,
+        mapping_dict,
+        date_from,
+        date_to,
+        clean_sheet,
+        eliminar_duplicados,
+        rules_dict,
+        scope_dict,
+        dataset_id,
+        revision,
+        parsed_business_filters,
+    )
+
+
 @router.post("/metrics")
 async def metrics(
     file: UploadFile | None = File(None),
@@ -5262,43 +5397,108 @@ async def metrics(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    # Fase 14 (P0): /metrics reprocesa el archivo completo (caché aparte) —
-    # sin esta puerta, una cuenta sin plan tenía el dashboard gratis.
-    await run_in_threadpool(
-        require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings
+    """Contrato sincrónico conservado para clientes antiguos y pruebas."""
+
+    _job_key, producer = await _prepare_metrics_computation(
+        file,
+        storage_path,
+        dataset_id,
+        mapping,
+        rules,
+        scope,
+        revision,
+        eliminar_duplicados,
+        date_from,
+        date_to,
+        sheet,
+        manifest,
+        analysis_scope,
+        business_filters,
+        user,
+        settings,
     )
-    filename, content = await _read_input(file, storage_path, user)
-    sheet_manifest = _parse_sheet_manifest(manifest)
-    parsed_business_filters = _validate_business_filters(
-        _parse_json_field(business_filters, "business_filters")
-        if business_filters
-        else None
+    return await run_in_threadpool(producer)
+
+
+@router.post("/analysis/jobs/metrics", status_code=status.HTTP_202_ACCEPTED)
+async def create_metrics_job(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
+    mapping: str | None = Form(None),
+    rules: str | None = Form(None),
+    scope: str | None = Form(None),
+    revision: int | None = Form(None),
+    eliminar_duplicados: bool = Form(False),
+    date_from: str | None = Form(None),
+    date_to: str | None = Form(None),
+    sheet: str | None = Form(None),
+    manifest: str | None = Form(None),
+    analysis_scope: str | None = Form(None),
+    business_filters: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    job_key, producer = await _prepare_metrics_computation(
+        file,
+        storage_path,
+        dataset_id,
+        mapping,
+        rules,
+        scope,
+        revision,
+        eliminar_duplicados,
+        date_from,
+        date_to,
+        sheet,
+        manifest,
+        analysis_scope,
+        business_filters,
+        user,
+        settings,
     )
-    if sheet_manifest is not None:
-        if not analysis_scope:
-            raise HTTPException(status_code=422, detail="Las metricas multihoja requieren analysis_scope.")
-        available = [entry["nombre"] for entry in sheet_manifest["hojas"]]
-        parsed_analysis_scope = _parse_analysis_scope(analysis_scope, available)
-        return await run_in_threadpool(
-            _metrics_multi_cached_sync,
-            filename,
-            content,
-            sheet_manifest,
-            parsed_analysis_scope,
-            date_from,
-            date_to,
-            dataset_id,
-            user.id,
-            parsed_business_filters,
+    return manager_for(settings).submit(user.id, job_key, producer)
+
+
+@router.get("/analysis/jobs/{job_id}")
+async def get_analysis_job(
+    job_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    job = manager_for(settings).get(user.id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="El trabajo de análisis no existe.")
+    return job
+
+
+@router.post("/analysis/jobs/{job_id}/cancel")
+async def cancel_analysis_job(
+    job_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    job = manager_for(settings).cancel(user.id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="El trabajo de análisis no existe.")
+    return job
+
+
+@router.post("/analysis/jobs/{job_id}/retry")
+async def retry_analysis_job(
+    job_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    job = manager_for(settings).retry(user.id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="El trabajo de análisis no existe.")
+    if job.get("status") not in {"queued", "running", "completed"}:
+        raise HTTPException(
+            status_code=409,
+            detail="El trabajo no puede reintentarse en esta instancia; crea uno nuevo.",
         )
-    mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
-    rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
-    scope_dict = _validate_scope(_parse_json_field(scope, "scope") or None)
-    return await run_in_threadpool(
-        _metrics_sync, filename, content, mapping_dict, date_from, date_to,
-        _clean_sheet_param(sheet), eliminar_duplicados, rules_dict, scope_dict,
-        dataset_id, revision, parsed_business_filters,
-    )
+    return job
 
 
 @router.post("/sheets/relationships")

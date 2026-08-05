@@ -1,4 +1,6 @@
 import { AlertTriangle, Info } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Bar,
@@ -18,15 +20,22 @@ import {
   CHART,
   GRID_STROKE,
   chartColorForKey,
+  buildRobustHeatScale,
   formatCLPCompact,
   formatMonthShort,
   prepareCategoricalChart,
+  robustHeatIntensity,
   truncateLabel,
   type CategoricalChartSourceRow,
   type PreparedCategoricalChart,
 } from '../../lib/charts'
 import { formatCLP, formatNumber } from '../../lib/format'
 import type { MetricsResult } from '../../lib/types'
+import {
+  analyticalFingerprint,
+  MAX_SUMMARY_CHARTS,
+  selectUniqueVisualizations,
+} from '../../lib/visualizationRegistry'
 
 interface CategoricalChartCardProps {
   title: string
@@ -142,7 +151,7 @@ function NaturalBars({ chart, color }: { chart: PreparedCategoricalChart; color:
   }))
   return (
     <div className="mt-4 overflow-x-auto" data-chart-kind="natural-bars">
-      <div style={{ height: 270, minWidth: Math.max(rows.length * 94, 520) }}>
+      <div style={{ height: Math.min(260, Math.max(190, rows.length * 18 + 130)), minWidth: Math.max(rows.length * 88, 440) }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} margin={{ top: 28, right: 12, bottom: 10, left: 8 }}>
             <CartesianGrid stroke={GRID_STROKE} vertical={false} />
@@ -160,6 +169,23 @@ function NaturalBars({ chart, color }: { chart: PreparedCategoricalChart; color:
           <li key={row.nombre}><strong className="text-navy/80">{row.nombre}:</strong> {formatCLP(row.ingresos)} · {formatNumber(row.participacion)}%</li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function CompactChartGrid({
+  children,
+  testId,
+}: {
+  children: ReactNode
+  testId?: string
+}) {
+  return (
+    <div
+      data-testid={testId}
+      className="columns-1 gap-6 md:columns-2 2xl:columns-3 [&>*]:mb-6 [&>*]:break-inside-avoid"
+    >
+      {children}
     </div>
   )
 }
@@ -288,14 +314,35 @@ function TicketHistogram({ distribution }: { distribution: NonNullable<MetricsRe
 }
 
 function MonthDimensionHeatmap({ matrix }: { matrix: NonNullable<MetricsResult['matriz_mes_dimension']> }) {
+  const [displayMode, setDisplayMode] = useState<'amount' | 'share'>('amount')
   const values = new Map(matrix.valores.map((row) => [`${row.nombre}\u0000${row.mes}`, row.ingresos]))
-  const maximum = Math.max(...matrix.valores.map((row) => Math.abs(row.ingresos)), 1)
+  const monthTotals = new Map<string, number>()
+  matrix.valores.forEach((row) => {
+    monthTotals.set(row.mes, (monthTotals.get(row.mes) ?? 0) + Math.abs(row.ingresos))
+  })
+  const displayedValues = matrix.valores.map((row) => (
+    displayMode === 'share'
+      ? Math.abs(row.ingresos) / Math.max(monthTotals.get(row.mes) ?? 0, 1) * 100
+      : row.ingresos
+  ))
+  const scale = buildRobustHeatScale(displayedValues)
   const title = matrix.dimension.charAt(0).toUpperCase() + matrix.dimension.slice(1)
   const columns = `140px repeat(${matrix.meses.length}, minmax(76px, 1fr))`
+  const scaleLabel = (value: number) => displayMode === 'share'
+    ? `${formatNumber(value)}%`
+    : formatCLPCompact(value)
   return (
     <Card className="min-w-0">
-      <h3 className="text-base font-semibold text-navy">Mes × {title}</h3>
-      <p className="mt-1 text-xs text-navy/55">La intensidad muestra dónde se concentra la venta en el tiempo usando «{matrix.columna}».</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-navy">Mes × {title}</h3>
+          <p className="mt-1 text-xs text-navy/55">La intensidad muestra dónde se concentra la venta en el tiempo usando «{matrix.columna}».</p>
+        </div>
+        <div className="inline-flex rounded-lg border border-navy/10 bg-navy/[0.03] p-0.5 text-[10px] font-semibold">
+          <button type="button" aria-pressed={displayMode === 'amount'} onClick={() => setDisplayMode('amount')} className={`rounded-md px-2 py-1 ${displayMode === 'amount' ? 'bg-white text-teal shadow-sm' : 'text-navy/55'}`}>Monto</button>
+          <button type="button" aria-pressed={displayMode === 'share'} onClick={() => setDisplayMode('share')} className={`rounded-md px-2 py-1 ${displayMode === 'share' ? 'bg-white text-teal shadow-sm' : 'text-navy/55'}`}>Participación</button>
+        </div>
+      </div>
       <div className="mt-4 overflow-x-auto">
         <div className="grid gap-1.5" style={{ gridTemplateColumns: columns, minWidth: 140 + matrix.meses.length * 82 }}>
           <div />
@@ -306,24 +353,36 @@ function MonthDimensionHeatmap({ matrix }: { matrix: NonNullable<MetricsResult['
             <div key={`${group}-label`} className="flex items-center truncate pr-2 text-xs font-medium text-navy/70" title={group}>{group}</div>,
             ...matrix.meses.map((month) => {
               const value = values.get(`${group}\u0000${month}`) ?? 0
-              const ratio = Math.min(Math.abs(value) / maximum, 1)
+              const displayed = displayMode === 'share'
+                ? Math.abs(value) / Math.max(monthTotals.get(month) ?? 0, 1) * 100
+                : value
+              const ratio = robustHeatIntensity(displayed, scale)
               const negative = value < 0
+              const outlier = Math.abs(displayed) > scale.reference
               const background = negative
                 ? `rgba(212, 80, 43, ${0.10 + ratio * 0.78})`
                 : `rgba(0, 163, 163, ${0.08 + ratio * 0.80})`
               return (
                 <div
                   key={`${group}-${month}`}
-                  className="flex h-10 items-center justify-center rounded-md px-1 text-center text-[10px] font-semibold"
+                  className={`flex h-10 items-center justify-center rounded-md px-1 text-center text-[10px] font-semibold ${outlier ? 'ring-2 ring-gold/70 ring-offset-1' : ''}`}
                   style={{ background, color: ratio > 0.52 ? '#ffffff' : '#1f3547' }}
-                  title={`${group} · ${formatMonthShort(month)}: ${formatCLP(value)}`}
+                  title={`${group} · ${formatMonthShort(month)}: ${formatCLP(value)} · ${formatNumber(Math.abs(value) / Math.max(monthTotals.get(month) ?? 0, 1) * 100)}% del mes${outlier ? ' · valor extremo' : ''}`}
                 >
-                  {value === 0 ? '—' : formatCLPCompact(value)}
+                  {value === 0 ? '—' : displayMode === 'share' ? `${formatNumber(displayed)}%` : formatCLPCompact(value)}
                 </div>
               )
             }),
           ])}
         </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-navy/55" aria-label="Escala del mapa de calor">
+        <span>Bajo {scaleLabel(scale.minimum)}</span>
+        <span className="h-2.5 w-24 rounded-full bg-gradient-to-r from-teal/10 to-teal" aria-hidden />
+        <span>Referencia p95 {scaleLabel(scale.reference)}</span>
+        <span>Máximo {scaleLabel(scale.maximum)}</span>
+        {scale.logarithmic ? <span className="font-semibold text-gold">Escala logarítmica</span> : null}
+        {scale.maximum > scale.reference ? <span className="font-semibold text-gold">Anillo = valor extremo</span> : null}
       </div>
     </Card>
   )
@@ -359,10 +418,6 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
     && metrics.matriz_mes_dimension.grupos.length > 1,
   )
   const balancedPrimary = channel.length > 0 && products.length > 0 && hasMatrix
-  const flexible = [...(metrics.agrupaciones_flexibles ?? [])].sort((left, right) => (
-    flexiblePriority(left.columna) - flexiblePriority(right.columna)
-    || left.columna.localeCompare(right.columna, 'es-CL')
-  ))
   const weekdays = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
   const weekdayByName = new Map((metrics.por_dia_semana ?? []).map((row) => [row.dia, row]))
   const weekdayRows = weekdays.map((day) => ({
@@ -374,6 +429,23 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
     (metrics.por_dia_semana ?? []).length > 1 ? 'weekdays' : null,
     metrics.distribucion_montos?.bins.length ? 'histogram' : null,
   ].filter(Boolean)
+  const primaryCount = Number(channel.length > 0) + Number(products.length > 0) + Number(hasMatrix)
+  const flexibleBudget = Math.max(0, MAX_SUMMARY_CHARTS - primaryCount - behaviorCards.length)
+  const flexibleSelection = selectUniqueVisualizations(
+    (metrics.agrupaciones_flexibles ?? []).map((group) => ({
+      group,
+      fingerprint: analyticalFingerprint({
+        metric: 'ventas_netas',
+        dimension: group.columna,
+        granularity: 'categoria',
+        calculation: 'observed',
+      }),
+      priority: 100 - flexiblePriority(group.columna),
+      confidence: 'certified' as const,
+    })),
+    flexibleBudget,
+  )
+  const flexible = flexibleSelection.selected.map((item) => item.group)
 
   return (
     <div className="space-y-8">
@@ -422,7 +494,7 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
           <div id="summary-sales-method">
             {sectionTitle('Cómo se vende', 'Cada dimensión usa automáticamente el formato más honesto para su cardinalidad y orden semántico.')}
           </div>
-          <div className="grid items-start gap-6 md:grid-cols-2 2xl:grid-cols-3">
+          <CompactChartGrid testId="summary-sales-method-grid">
             {flexible.map((group) => (
               <CategoricalChartCard
                 key={group.columna}
@@ -435,7 +507,13 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
                 outOfRange={group.fuera_de_rango}
               />
             ))}
-          </div>
+          </CompactChartGrid>
+          {flexibleSelection.omitted > 0 && (
+            <p className="text-right text-xs text-navy/55">
+              {flexibleSelection.omitted} análisis secundario(s) se omitieron para evitar repeticiones.{' '}
+              <Link to="/explorar" className="font-semibold text-teal hover:underline">Verlos en Explorar datos</Link>
+            </p>
+          )}
         </section>
       )}
 
@@ -444,7 +522,7 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
           <div id="summary-sales-behavior">
             {sectionTitle('Comportamiento y concentración', 'Se muestran únicamente análisis respaldados por columnas presentes en el archivo.')}
           </div>
-          <div className="grid items-start gap-6 md:grid-cols-2 2xl:grid-cols-3">
+          <CompactChartGrid testId="summary-sales-behavior-grid">
             {metrics.clientes && metrics.clientes.unicos > 1 && metrics.clientes.top.length > 1 && (
               <CategoricalChartCard
                 title="Concentración por cliente"
@@ -468,7 +546,7 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
             {metrics.distribucion_montos?.bins.length ? (
               <TicketHistogram distribution={metrics.distribucion_montos} />
             ) : null}
-          </div>
+          </CompactChartGrid>
         </section>
       )}
 

@@ -45,7 +45,7 @@ export function shouldSplitFinancialScale(
 export function distributionChartKind(
   rows: Array<{ registros: number }>,
 ): 'donut' | 'bars' {
-  return rows.length >= 2 && rows.length <= 5 && rows.every((row) => row.registros >= 0)
+  return rows.length >= 3 && rows.length <= 5 && rows.every((row) => row.registros >= 0)
     ? 'donut'
     : 'bars'
 }
@@ -269,6 +269,44 @@ export function prepareCategoricalChart(
 
 export const GRID_STROKE = '#e8edf0'
 export const AXIS_INK = '#5c7285' // navy atenuado para ejes/ticks
+
+export interface RobustHeatScale {
+  minimum: number
+  reference: number
+  maximum: number
+  logarithmic: boolean
+}
+
+/** Escala robusta: el p95 conserva contraste cuando un único valor domina. */
+export function buildRobustHeatScale(values: number[]): RobustHeatScale {
+  const magnitudes = values
+    .filter(Number.isFinite)
+    .map((value) => Math.abs(value))
+    .filter((value) => value > 0)
+    .sort((left, right) => left - right)
+  if (!magnitudes.length) return { minimum: 0, reference: 1, maximum: 0, logarithmic: false }
+  const percentileIndex = Math.min(
+    magnitudes.length - 1,
+    Math.max(0, Math.ceil(magnitudes.length * 0.95) - 1),
+  )
+  const median = magnitudes[Math.floor((magnitudes.length - 1) / 2)] || 1
+  const reference = magnitudes[percentileIndex] || magnitudes[magnitudes.length - 1] || 1
+  const maximum = magnitudes[magnitudes.length - 1]
+  return {
+    minimum: magnitudes[0],
+    reference,
+    maximum,
+    logarithmic: maximum / median >= 20,
+  }
+}
+
+export function robustHeatIntensity(value: number, scale: RobustHeatScale): number {
+  const magnitude = Math.abs(value)
+  if (!magnitude) return 0
+  const numerator = scale.logarithmic ? Math.log1p(magnitude) : magnitude
+  const denominator = scale.logarithmic ? Math.log1p(scale.reference) : scale.reference
+  return Math.min(numerator / Math.max(denominator, Number.EPSILON), 1)
+}
 
 /** "2026-05" → "may 26" (es-CL) para ejes y leyendas. */
 export function formatMonthShort(isoMonth: string): string {

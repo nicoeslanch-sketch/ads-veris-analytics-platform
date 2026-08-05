@@ -63,7 +63,7 @@ if _violations:
 app = FastAPI(
     title="ADS Veris — Motor de datos",
     description="Estandarización, limpieza y métricas para la plataforma de análisis.",
-    version="0.1.0",
+    version=ENGINE_VERSION,
 )
 
 app.add_middleware(

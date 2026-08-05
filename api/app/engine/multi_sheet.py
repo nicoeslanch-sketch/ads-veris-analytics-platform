@@ -31,7 +31,6 @@ from .standardize import (
 # que la porcion identificada tiene solapamiento y cardinalidad seguros.
 RELATION_MIN_COVERAGE = 0.60
 RELATION_MIN_OVERLAP = 0.60
-RELATION_UNIQUE_THRESHOLD = 0.995
 MAX_RELATION_KEYS = 2
 
 ANALYSIS_MODES = {"single", "append", "join", "append_join"}
@@ -250,6 +249,7 @@ class RelationStats:
     projected_rows: int = 0
     right_duplicate_keys: int = 0
     unmatched_rows: int = 0
+    problem_examples: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -265,6 +265,7 @@ class RelationStats:
             "projected_rows": self.projected_rows,
             "right_duplicate_keys": self.right_duplicate_keys,
             "unmatched_rows": self.unmatched_rows,
+            "problem_examples": list(self.problem_examples),
         }
 
 
@@ -314,8 +315,11 @@ def _relation_stats_from_series(
     )
     unique_left = left_valid.nunique() / max(len(left_valid), 1)
     unique_right = right_valid.nunique() / max(len(right_valid), 1)
-    left_is_unique = unique_left >= RELATION_UNIQUE_THRESHOLD
-    right_is_unique = unique_right >= RELATION_UNIQUE_THRESHOLD
+    # La cardinalidad que se muestra al usuario debe ser la misma que pandas
+    # exigirá mediante ``validate``. Una unicidad "casi" completa (antes
+    # 99,5 %) sigue pudiendo multiplicar filas y por tanto nunca es many-to-one.
+    left_is_unique = not left_valid.duplicated().any()
+    right_is_unique = right_duplicate_keys == 0
     if left_is_unique and right_is_unique:
         cardinality = "uno_a_uno"
     elif right_is_unique:
@@ -325,13 +329,40 @@ def _relation_stats_from_series(
     else:
         cardinality = "muchos_a_muchos"
     reason = None
-    if coverage_left < RELATION_MIN_COVERAGE or coverage_right < RELATION_MIN_COVERAGE:
+    def display_key(value: object) -> str:
+        if isinstance(value, tuple):
+            return " + ".join(str(part) for part in value)
+        return str(value)
+
+    duplicate_examples = [
+        display_key(value)
+        for value in right_counts.loc[right_counts > 1].index.tolist()[:8]
+    ]
+    unmatched_examples = [
+        display_key(value)
+        for value in left_valid.loc[~left_valid.isin(right_unique_values)].drop_duplicates().tolist()[:8]
+    ]
+    problem_examples = tuple((duplicate_examples + unmatched_examples)[:8])
+    if right_duplicate_keys:
+        reason = (
+            f"La hoja de referencia contiene {right_duplicate_keys} claves duplicadas; "
+            f"la unión proyectaría {projected_rows} filas desde {left_rows}."
+        )
+    elif projected_rows != left_rows:
+        reason = (
+            f"La relación proyectaría {projected_rows} filas desde {left_rows}; "
+            "no es seguro ejecutarla."
+        )
+    elif coverage_left < RELATION_MIN_COVERAGE or coverage_right < RELATION_MIN_COVERAGE:
         reason = "La cobertura de la clave es demasiado baja."
     elif overlap < RELATION_MIN_OVERLAP:
         reason = "El solapamiento entre hojas es insuficiente."
-    elif not right_is_unique:
-        reason = "La hoja de referencia contiene claves duplicadas."
-    safe = reason is None and cardinality in {"muchos_a_uno", "uno_a_uno"}
+    safe = (
+        reason is None
+        and cardinality in {"muchos_a_uno", "uno_a_uno"}
+        and right_duplicate_keys == 0
+        and projected_rows == left_rows
+    )
     return RelationStats(
         coverage_left,
         coverage_right,
@@ -345,6 +376,7 @@ def _relation_stats_from_series(
         projected_rows,
         right_duplicate_keys,
         unmatched_rows,
+        problem_examples,
     )
 
 
