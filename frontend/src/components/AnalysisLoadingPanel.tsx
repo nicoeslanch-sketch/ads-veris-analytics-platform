@@ -9,7 +9,7 @@ export default function AnalysisLoadingPanel({
 }: {
   operation: string
   detail: string
-  onCancel: () => void
+  onCancel?: () => void
   compact?: boolean
 }) {
   const [seconds, setSeconds] = useState(0)
@@ -38,14 +38,16 @@ export default function AnalysisLoadingPanel({
             {seconds.toLocaleString('es-CL')} s transcurridos
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-navy/15 px-3 py-2 text-xs font-semibold text-navy/65 hover:bg-navy/5"
-        >
-          <Square className="h-3 w-3" />
-          Cancelar
-        </button>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-navy/15 px-3 py-2 text-xs font-semibold text-navy/65 hover:bg-navy/5"
+          >
+            <Square className="h-3 w-3" />
+            Cancelar
+          </button>
+        )}
       </div>
       <div
         role="progressbar"

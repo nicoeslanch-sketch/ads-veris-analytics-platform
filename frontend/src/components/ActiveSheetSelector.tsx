@@ -20,6 +20,8 @@ interface ActiveSheetSelectorProps {
   /** Notifica a la página el modo actual para decidir si mostrar el workspace
    * de relaciones (mode === 'join') en lugar del dashboard genérico. */
   onModeChange?: (mode: Mode) => void
+  /** Informa cuando se están validando relaciones para no mostrar un vacío falso. */
+  onBusyChange?: (busy: boolean) => void
   /** Al incrementar, abre "Relación manual" desde fuera (lo usa el aviso de
    * relación bloqueada, cuya única salida real es cambiar la relación). */
   openRelationsNonce?: number
@@ -27,6 +29,7 @@ interface ActiveSheetSelectorProps {
 
 export default function ActiveSheetSelector({
   onModeChange,
+  onBusyChange,
   openRelationsNonce,
 }: ActiveSheetSelectorProps = {}) {
   const location = useLocation()
@@ -104,6 +107,14 @@ export default function ActiveSheetSelector({
   const [detecting, setDetecting] = useState(false)
   const autoBusinessAttempt = useRef<string | null>(null)
   const manualModeSelected = useRef(false)
+  // Cada vista conserva su selección. Antes una relación cambiaba la hoja
+  // global y al volver a "Analizar una hoja" se calculaba otra hoja desde cero.
+  const lastSingleSheet = useRef<string | null>(
+    analysisScope?.mode === 'single' ? analysisScope.active_sheet : sheet,
+  )
+  const lastBusinessScope = useRef<AnalysisScope | null>(
+    initialMode === 'append_join' ? analysisScope : null,
+  )
 
   useEffect(() => {
     if (requestedMode === 'join') {
@@ -127,6 +138,10 @@ export default function ActiveSheetSelector({
   useEffect(() => {
     onModeChange?.(mode)
   }, [mode, onModeChange])
+
+  useEffect(() => {
+    onBusyChange?.(detecting)
+  }, [detecting, onBusyChange])
 
   // Apertura de "Relación manual" pedida por la página. Se ignora el valor
   // inicial: solo un incremento posterior representa una acción del usuario.
@@ -218,6 +233,7 @@ export default function ActiveSheetSelector({
     : cleanedSheets[0]
 
   const chooseSingle = (name: string) => {
+    lastSingleSheet.current = name
     setSheet(name)
     setAnalysisScope({ mode: 'single', sheets: [name], active_sheet: name })
   }
@@ -287,6 +303,7 @@ export default function ActiveSheetSelector({
         && serviceAnalysis?.perfil === 'servicios_tecnicos'
         && serviceAnalysis.servicios
       ) {
+        lastBusinessScope.current = response.analysis_scope
         setSheet(response.analysis_scope.active_sheet)
         setAnalysisScope(response.analysis_scope)
         setMetrics(response.metrics)
@@ -322,6 +339,7 @@ export default function ActiveSheetSelector({
                 type: 'left',
               },
             }
+        lastBusinessScope.current = nextScope
         setAnalysisScope(nextScope)
         if (
           response.metrics &&
@@ -338,13 +356,15 @@ export default function ActiveSheetSelector({
         // pero no son requisito para reconocer ventas reales.
         if (appendSelection.length >= 1) {
           const salesSheet = appendSelection[0]
-          manualModeSelected.current = true
-          setSheet(salesSheet)
-          setAnalysisScope({
+          const nextScope: AnalysisScope = {
             mode: 'single',
             sheets: [salesSheet],
             active_sheet: salesSheet,
-          })
+          }
+          manualModeSelected.current = true
+          setSheet(salesSheet)
+          lastBusinessScope.current = nextScope
+          setAnalysisScope(nextScope)
         } else if (analysisScope?.mode === 'append_join') {
           setAnalysisScope(null)
         }
@@ -370,9 +390,27 @@ export default function ActiveSheetSelector({
     if (next === 'append' && compatibleSheets.length < 2) return
     manualModeSelected.current = true
     setMode(next)
-    if (next === 'single') chooseSingle(sheet && cleanedSheets.includes(sheet) ? sheet : cleanedSheets[0])
+    if (next === 'single') {
+      const remembered = lastSingleSheet.current
+      chooseSingle(remembered && cleanedSheets.includes(remembered) ? remembered : cleanedSheets[0])
+    }
     if (next === 'append') chooseAppend(compatibleSheets)
-    if (next === 'append_join') void findRelationships('append_join')
+    if (next === 'append_join') {
+      const remembered = lastBusinessScope.current
+      const rememberedSheets = remembered?.mode === 'append_join' || remembered?.mode === 'single'
+        ? remembered.sheets
+        : []
+      if (
+        remembered
+        && rememberedSheets.length > 0
+        && rememberedSheets.every((name) => cleanedSheets.includes(name))
+      ) {
+        setSheet(remembered.active_sheet)
+        setAnalysisScope(remembered)
+      } else {
+        void findRelationships('append_join')
+      }
+    }
     // 'join' (Relación manual) abre el workspace de relaciones, que detecta el
     // catálogo, permite elegir una relación y calcula su dashboard.
   }
@@ -385,7 +423,7 @@ export default function ActiveSheetSelector({
       setRelationMessage('Selecciona al menos una hoja de ventas que use la clave validada.')
       return
     }
-    setAnalysisScope({
+    const nextScope: AnalysisScope = {
       mode: 'append_join',
       sheets: [...new Set([...appendSelection, candidate.right_sheet])],
       append_sheets: appendSelection,
@@ -397,7 +435,9 @@ export default function ActiveSheetSelector({
         right_keys: candidate.right_keys,
         type: 'left',
       },
-    })
+    }
+    lastBusinessScope.current = nextScope
+    setAnalysisScope(nextScope)
   }
 
   const disabledModes: Partial<Record<Mode, string>> = pendingSelectedCount > 0
