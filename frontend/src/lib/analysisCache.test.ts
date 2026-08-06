@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   cacheMetrics,
   cacheRelationships,
+  cancelMetricsRequest,
   clearAnalysisCaches,
   getCachedMetrics,
   getCachedRelationships,
@@ -108,8 +109,7 @@ describe('caché de análisis', () => {
     expect(getCachedMetrics(key)).toBeNull()
   })
 
-  it('cancela una carga huérfana, pero no una que todavía comparte otra vista', async () => {
-    vi.useFakeTimers()
+  it('mantiene viva una carga al cambiar de vista y solo la cancela de forma explícita', async () => {
     clearAnalysisCaches()
     const key = metricsCacheKey({
       dataset: 'actual',
@@ -127,13 +127,13 @@ describe('caché de análisis', () => {
     requestMetrics(key, producer, resumen.signal)
     requestMetrics(key, producer, explorar.signal)
     resumen.abort()
-    await vi.advanceTimersByTimeAsync(200)
     expect(sharedSignals[0]?.aborted).toBe(false)
 
     explorar.abort()
-    await vi.advanceTimersByTimeAsync(200)
+    expect(sharedSignals[0]?.aborted).toBe(false)
+
+    cancelMetricsRequest(key)
     expect(sharedSignals[0]?.aborted).toBe(true)
     expect(producer).toHaveBeenCalledTimes(1)
-    vi.useRealTimers()
   })
 })

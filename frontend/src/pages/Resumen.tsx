@@ -49,7 +49,12 @@ import { apiPostJob, buildDatasetForm, ApiError } from '../lib/api'
 import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, shouldSplitFinancialScale } from '../lib/charts'
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
-import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analysisCache'
+import {
+  cancelMetricsRequest,
+  getCachedMetrics,
+  metricsCacheKey,
+  requestMetrics,
+} from '../lib/analysisCache'
 import { summaryContentKind } from '../lib/metrics'
 import { relationBlockedNotice } from '../lib/relationBlocked'
 import { analysisLoadingOperation } from '../lib/analysisModes'
@@ -246,6 +251,7 @@ export default function Resumen() {
   const [selectorMode, setSelectorMode] = useState<AnalysisScope['mode']>(
     analysisScope?.mode ?? 'single',
   )
+  const [selectorBusy, setSelectorBusy] = useState(false)
   const relationshipMode = selectorMode === 'join'
   const standaloneBusinessAvailable = (
     analysisScope?.mode === 'single'
@@ -268,6 +274,7 @@ export default function Resumen() {
   const requestAbortRef = useRef<AbortController | null>(null)
 
   const cancelMetrics = () => {
+    if (lastFetchKey.current) cancelMetricsRequest(lastFetchKey.current)
     requestAbortRef.current?.abort()
     requestAbortRef.current = null
     latestRequest.current += 1
@@ -283,10 +290,6 @@ export default function Resumen() {
     typeof (location.state as { resumeWarning?: unknown } | null)?.resumeWarning === 'string'
       ? ((location.state as { resumeWarning: string }).resumeWarning)
       : null
-
-  useEffect(() => {
-    setMetrics(null)
-  }, [analysisScope, sheet])
 
   useEffect(() => {
     if (demo.active) return // la demo no consulta /metrics: snapshot congelado
@@ -346,6 +349,8 @@ export default function Resumen() {
       setLoading(false)
       return
     }
+    // Solo vaciamos el tablero cuando no hay un resultado reutilizable.
+    setMetrics(null)
     requestAbortRef.current?.abort()
     const controller = new AbortController()
     requestAbortRef.current = controller
@@ -624,7 +629,11 @@ export default function Resumen() {
         </Link>
       </div>
 
-      <ActiveSheetSelector onModeChange={setSelectorMode} openRelationsNonce={openRelationsNonce} />
+      <ActiveSheetSelector
+        onModeChange={setSelectorMode}
+        onBusyChange={setSelectorBusy}
+        openRelationsNonce={openRelationsNonce}
+      />
 
       {relationshipMode && !demo.active ? (
         <RelationshipWorkspace />
@@ -666,19 +675,24 @@ export default function Resumen() {
         </div>
       )}
 
-      {businessUnavailable ? (
-        <EmptyState
-          icon={LayoutDashboard}
-          title="No existen conexiones seguras entre las hojas."
-          description="No mostraremos ventas, costos, utilidad, margen ni tendencias hasta validar una fuente comercial o una red de relaciones compatible."
-          ctaLabel="Relacionar hojas a mano"
-          onCta={() => setOpenRelationsNonce((nonce) => nonce + 1)}
+      {selectorBusy ? (
+        <AnalysisLoadingPanel
+          operation="Buscando conexiones seguras entre las hojas"
+          detail="Validamos claves y cobertura antes de mostrar resultados. Los cálculos ya terminados se conservarán."
         />
       ) : loading && !metrics ? (
         <AnalysisLoadingPanel
           operation={analysisLoadingOperation(selectorMode, sheet)}
           detail="Reutilizamos la limpieza y las relaciones ya procesadas. Puedes cancelar sin perder el archivo."
           onCancel={cancelMetrics}
+        />
+      ) : businessUnavailable ? (
+        <EmptyState
+          icon={LayoutDashboard}
+          title="No existen conexiones seguras entre las hojas."
+          description="No mostraremos ventas, costos, utilidad, margen ni tendencias hasta validar una fuente comercial o una red de relaciones compatible."
+          ctaLabel="Relacionar hojas a mano"
+          onCta={() => setOpenRelationsNonce((nonce) => nonce + 1)}
         />
       ) : contentKind === 'mixed_currency' ? (
         /* El bloqueo antecede a todos los perfiles adaptativos. Un catálogo o
