@@ -50,6 +50,7 @@ import { AXIS_INK, CHART, GRID_STROKE, formatCLPCompact, formatMonthShort, shoul
 import { formatCLP, formatNumber, setActiveCurrency } from '../lib/format'
 import { soloMesesCompletos } from '../lib/partial'
 import {
+  cacheMetrics,
   cancelMetricsRequest,
   getCachedMetrics,
   metricsCacheKey,
@@ -341,6 +342,9 @@ export default function Resumen() {
       !contextMetrics.periodo.hasta,
     )
     if (snapshotMatchesPeriod && contextMetrics) {
+      // El snapshot restaura la primera vista sin consultar al motor. Guardarlo
+      // también en la caché de navegación evita recalcularlo al salir y volver.
+      cacheMetrics(key, contextMetrics)
       defaultPeriodSet.current = true
       setMetrics(contextMetrics)
       setActiveCurrency(contextMetrics.moneda)
