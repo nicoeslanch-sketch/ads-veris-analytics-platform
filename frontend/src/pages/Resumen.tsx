@@ -41,6 +41,7 @@ import BusinessFilterBar from '../components/BusinessFilterBar'
 import AnalysisLoadingPanel from '../components/AnalysisLoadingPanel'
 import SalesTraceability from '../components/SalesTraceability'
 import AdaptiveSalesCharts from '../components/summary/AdaptiveSalesCharts'
+import DashboardExperience from '../components/dashboard/DashboardExperience'
 import { useAuth } from '../auth/AuthContext'
 import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
@@ -58,7 +59,7 @@ import {
 } from '../lib/analysisCache'
 import { summaryContentKind } from '../lib/metrics'
 import { relationBlockedNotice } from '../lib/relationBlocked'
-import { analysisLoadingOperation } from '../lib/analysisModes'
+import { ANALYSIS_MODES, analysisLoadingOperation } from '../lib/analysisModes'
 import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../lib/multiSheet'
 import type { AnalysisScope, MetricsResult } from '../lib/types'
 
@@ -606,6 +607,9 @@ export default function Resumen() {
   // Solo en una hoja de ventas (sin costos relacionados) las columnas de costo,
   // utilidad y margen salen todas "—": no aportan y las ocultamos.
   const categoriaConCostos = (metrics?.por_categoria ?? []).some((row) => row.costo != null)
+  const dashboardTitle = `${ANALYSIS_MODES.find((entry) => entry.mode === selectorMode)?.label ?? 'Dashboard'}${
+    selectorMode === 'single' && sheet ? ` · ${sheet}` : ''
+  }`
 
   return (
     <>
@@ -639,6 +643,7 @@ export default function Resumen() {
         openRelationsNonce={openRelationsNonce}
       />
 
+      <DashboardExperience title={dashboardTitle} enabled={relationshipMode || Boolean(metrics)}>
       {relationshipMode && !demo.active ? (
         <RelationshipWorkspace />
       ) : (
@@ -959,8 +964,8 @@ export default function Resumen() {
                 <h2 id="summary-control-title" className="text-lg font-semibold text-navy">Control y seguimiento</h2>
                 <p className="mt-0.5 text-xs text-navy/50">Indicadores derivados y extrapolación, solo cuando la base disponible permite calcularlos.</p>
               </div>
-              <div className="grid items-stretch gap-6 lg:grid-cols-2">
-                <Card className="h-full min-w-0">
+              <div className="grid items-start gap-5 lg:grid-cols-2">
+                <Card className="min-w-0">
                   <h3 className="text-base font-semibold text-navy">Indicadores Clave</h3>
                   <p className="mt-0.5 text-xs text-navy/50">Calculados de tus datos reales.</p>
                   <ul className="mt-3 divide-y divide-navy/5">
@@ -989,6 +994,7 @@ export default function Resumen() {
       ) : null}
       </>
       )}
+      </DashboardExperience>
     </>
   )
 }

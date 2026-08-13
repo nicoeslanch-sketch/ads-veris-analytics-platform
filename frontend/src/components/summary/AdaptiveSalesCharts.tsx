@@ -33,6 +33,7 @@ import { formatCLP, formatNumber } from '../../lib/format'
 import type { MetricsResult } from '../../lib/types'
 import {
   analyticalFingerprint,
+  isRelevantClientPortfolio,
   MAX_SUMMARY_CHARTS,
   selectUniqueVisualizations,
 } from '../../lib/visualizationRegistry'
@@ -164,11 +165,6 @@ function NaturalBars({ chart, color }: { chart: PreparedCategoricalChart; color:
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-navy/60">
-        {rows.map((row) => (
-          <li key={row.nombre}><strong className="text-navy/80">{row.nombre}:</strong> {formatCLP(row.ingresos)} · {formatNumber(row.participacion)}%</li>
-        ))}
-      </ul>
     </div>
   )
 }
@@ -183,7 +179,7 @@ function CompactChartGrid({
   return (
     <div
       data-testid={testId}
-      className="columns-1 gap-6 md:columns-2 2xl:columns-3 [&>*]:mb-6 [&>*]:break-inside-avoid"
+      className="dashboard-balanced-grid grid items-start gap-5 md:grid-cols-2"
     >
       {children}
     </div>
@@ -194,7 +190,6 @@ function ParetoChart({ chart, color }: { chart: PreparedCategoricalChart; color:
   const rows = chart.rows.map((row) => ({
     ...row,
     etiqueta: truncateLabel(row.nombre, 16),
-    detalle: rowDetail(row.ingresos, row.participacion),
   }))
   return (
     <div className="mt-4" data-chart-kind="pareto">
@@ -222,14 +217,6 @@ function ParetoChart({ chart, color }: { chart: PreparedCategoricalChart; color:
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <ul className="mt-2 space-y-1.5 border-t border-navy/[0.06] pt-3 text-[11px]">
-        {rows.map((row) => (
-          <li key={row.nombre} className="flex items-start justify-between gap-3">
-            <span className="min-w-0 truncate text-navy/65" title={row.nombre}>{row.nombre}</span>
-            <span className="shrink-0 whitespace-nowrap font-semibold text-navy/80">{row.detalle}</span>
-          </li>
-        ))}
-      </ul>
     </div>
   )
 }
@@ -308,6 +295,73 @@ function TicketHistogram({ distribution }: { distribution: NonNullable<MetricsRe
             <Bar dataKey="registros" name="Registros" fill={CHART.flujo} radius={[4, 4, 0, 0]} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
+      </div>
+    </Card>
+  )
+}
+
+function ClientDependencyCard({ clients }: { clients: NonNullable<MetricsResult['clientes']> }) {
+  const leader = clients.top[0]
+  if (!leader) return null
+  const share = leader.participacion_bruta_pct ?? leader.porcentaje
+  return (
+    <Card className="min-w-0" data-dashboard-visual="client-dependency">
+      <h3 className="text-base font-semibold text-navy">Dependencia de cartera</h3>
+      <p className="mt-1 text-xs text-navy/55">Riesgo comercial del cliente con mayor participación, útil en carteras acotadas.</p>
+      <div className="mt-5 flex items-end justify-between gap-4">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-navy" title={leader.nombre}>{leader.nombre}</p>
+          <p className="mt-1 text-3xl font-bold text-navy">{formatNumber(share)}%</p>
+          <p className="text-[11px] text-navy/50">de las ventas identificadas · {formatCLP(leader.ingresos)}</p>
+        </div>
+        <div className="shrink-0 rounded-xl bg-gold/[0.10] px-3 py-2 text-right">
+          <p className="text-[10px] text-navy/45">Cartera</p>
+          <p className="text-lg font-bold text-navy">{formatNumber(clients.unicos)}</p>
+          <p className="text-[10px] text-navy/45">clientes</p>
+        </div>
+      </div>
+      <div className="mt-4 h-3 overflow-hidden rounded-full bg-navy/[0.07]" role="img" aria-label={`${leader.nombre} concentra ${formatNumber(share)}%`}>
+        <div className="h-full rounded-full bg-gold" style={{ width: `${Math.min(Math.max(share, 0), 100)}%` }} />
+      </div>
+      {clients.cobertura_identificacion_pct != null && (
+        <p className="mt-3 text-[10px] text-navy/45">Cobertura de identificación: {formatNumber(clients.cobertura_identificacion_pct)}%.</p>
+      )}
+    </Card>
+  )
+}
+
+function WeekdayPerformanceCard({ rows }: { rows: Array<{ dia: string; ingresos: number; transacciones: number }> }) {
+  const order = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+  const normalizeDay = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const byDay = new Map(rows.map((row) => [normalizeDay(row.dia), row]))
+  const data = order.map((day) => {
+    const source = byDay.get(normalizeDay(day))
+    return {
+      dia: day.charAt(0).toUpperCase() + day.slice(1, 3),
+      ingresos: source?.ingresos ?? 0,
+      transacciones: source?.transacciones ?? 0,
+    }
+  })
+  return (
+    <Card className="min-w-0">
+      <h3 className="text-base font-semibold text-navy">Actividad por día de la semana</h3>
+      <p className="mt-1 text-xs text-navy/55">Ventas y transacciones para apoyar decisiones de dotación, horario y operación.</p>
+      <div className="mt-4 h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
+            <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+            <XAxis dataKey="dia" tick={{ fill: AXIS_INK, fontSize: 10 }} axisLine={{ stroke: GRID_STROKE }} tickLine={false} />
+            <YAxis yAxisId="money" tickFormatter={formatCLPCompact} tick={{ fill: AXIS_INK, fontSize: 10 }} width={56} axisLine={false} tickLine={false} />
+            <YAxis yAxisId="count" orientation="right" allowDecimals={false} tick={{ fill: AXIS_INK, fontSize: 10 }} width={34} axisLine={false} tickLine={false} />
+            <Tooltip formatter={(value, name) => name === 'Ventas' ? formatCLP(Number(value)) : `${formatNumber(Number(value))} transacciones`} />
+            <Bar yAxisId="money" dataKey="ingresos" name="Ventas" fill={CHART.ingresos} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+            <Line yAxisId="count" dataKey="transacciones" name="Transacciones" stroke={CHART.gastos} strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-4 text-[10px] text-navy/60">
+        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-teal" />Ventas</span>
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-gold" />Transacciones</span>
       </div>
     </Card>
   )
@@ -417,15 +471,9 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
     && metrics.matriz_mes_dimension.meses.length > 1
     && metrics.matriz_mes_dimension.grupos.length > 1,
   )
-  const balancedPrimary = channel.length > 0 && products.length > 0 && hasMatrix
-  const weekdays = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
-  const weekdayByName = new Map((metrics.por_dia_semana ?? []).map((row) => [row.dia, row]))
-  const weekdayRows = weekdays.map((day) => ({
-    nombre: day.charAt(0).toUpperCase() + day.slice(1),
-    ingresos: weekdayByName.get(day)?.ingresos ?? 0,
-  }))
+  const showClientDependency = isRelevantClientPortfolio(metrics.clientes)
   const behaviorCards = [
-    metrics.clientes && metrics.clientes.unicos > 1 && metrics.clientes.top.length > 1 ? 'clients' : null,
+    showClientDependency ? 'clients' : null,
     (metrics.por_dia_semana ?? []).length > 1 ? 'weekdays' : null,
     metrics.distribucion_montos?.bins.length ? 'histogram' : null,
   ].filter(Boolean)
@@ -446,17 +494,23 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
     flexibleBudget,
   )
   const flexible = flexibleSelection.selected.map((item) => item.group)
+  const commercialCutCount = Number(channel.length > 0) + Number(products.length > 0)
 
   return (
     <div className="space-y-8">
       {(channel.length > 0 || products.length > 0 || hasMatrix) && (
         <section className="space-y-4" aria-labelledby="summary-commercial-cuts">
           <div id="summary-commercial-cuts">
-            {sectionTitle('Quién vende y qué se vende', 'Los dos cortes comerciales de mayor señal disponibles en este archivo.')}
+            {sectionTitle(
+              'Quién vende y qué se vende',
+              commercialCutCount > 1
+                ? 'Los cortes comerciales de mayor señal disponibles en este archivo.'
+                : 'El corte comercial con señal suficiente disponible en este archivo.',
+            )}
           </div>
           <div data-testid="summary-commercial-grid" className="grid items-start gap-6 lg:grid-cols-2">
             {channel.length > 0 && (
-              <div className={balancedPrimary ? 'lg:col-start-1 lg:row-start-1' : ''}>
+              <div className={commercialCutCount === 1 ? 'lg:col-span-2' : ''}>
                 <CategoricalChartCard
                   title={`Ventas por ${channelLabel}`}
                   subtitle={`Comparación ordenada por venta neta entre ${channelLabel.toLocaleLowerCase('es-CL')}es.`}
@@ -468,7 +522,7 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
               </div>
             )}
             {products.length > 0 && (
-              <div className={balancedPrimary ? 'lg:col-start-2 lg:row-span-2 lg:row-start-1' : ''}>
+              <div className={commercialCutCount === 1 ? 'lg:col-span-2' : ''}>
                 <CategoricalChartCard
                   title="Concentración por producto / servicio"
                   subtitle="Las barras muestran venta neta y la línea el porcentaje acumulado del catálogo."
@@ -481,7 +535,7 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
               </div>
             )}
             {hasMatrix && metrics.matriz_mes_dimension && (
-              <div className={balancedPrimary ? 'lg:col-start-1 lg:row-start-2' : 'lg:col-span-2'}>
+              <div className="lg:col-span-2">
                 <MonthDimensionHeatmap matrix={metrics.matriz_mes_dimension} />
               </div>
             )}
@@ -520,28 +574,14 @@ export default function AdaptiveSalesCharts({ metrics }: { metrics: MetricsResul
       {behaviorCards.length > 0 && (
         <section className="space-y-4" aria-labelledby="summary-sales-behavior">
           <div id="summary-sales-behavior">
-            {sectionTitle('Comportamiento y concentración', 'Se muestran únicamente análisis respaldados por columnas presentes en el archivo.')}
+            {sectionTitle('Comportamiento de venta', 'Priorizamos patrones operativos y riesgos de cartera que pueden apoyar una decisión.')}
           </div>
           <CompactChartGrid testId="summary-sales-behavior-grid">
-            {metrics.clientes && metrics.clientes.unicos > 1 && metrics.clientes.top.length > 1 && (
-              <CategoricalChartCard
-                title="Concentración por cliente"
-                subtitle={`Pareto de ${formatNumber(metrics.clientes.unicos)} clientes identificados.`}
-                dimension="Cliente"
-                rows={metrics.clientes.pareto ?? metrics.clientes.top}
-                totalGroups={metrics.clientes.unicos}
-                cumulative
-              />
+            {showClientDependency && metrics.clientes && (
+              <ClientDependencyCard clients={metrics.clientes} />
             )}
             {(metrics.por_dia_semana ?? []).length > 1 && (
-              <CategoricalChartCard
-                title="Ventas por día de la semana"
-                subtitle="Lunes a domingo en orden natural para apoyar decisiones de dotación y horario."
-                dimension="Día de semana"
-                rows={weekdayRows}
-                totalGroups={7}
-                totalValue={productTotal}
-              />
+              <WeekdayPerformanceCard rows={metrics.por_dia_semana ?? []} />
             )}
             {metrics.distribucion_montos?.bins.length ? (
               <TicketHistogram distribution={metrics.distribucion_montos} />

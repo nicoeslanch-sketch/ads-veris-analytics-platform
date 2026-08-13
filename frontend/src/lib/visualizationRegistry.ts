@@ -25,6 +25,18 @@ export const SUMMARY_VISUALIZATION_REGISTRY: readonly VisualizationDefinition[] 
 
 export const MAX_SUMMARY_CHARTS = 8
 
+/** La dependencia de cartera es una señal ejecutiva cuando la empresa tiene
+ * pocos compradores y uno concentra una parte material de la venta. */
+export function isRelevantClientPortfolio(clients?: {
+  unicos: number
+  concentracion_top_pct: number | null
+  cobertura_identificacion_pct?: number | null
+} | null): boolean {
+  if (!clients || clients.unicos < 2 || clients.unicos > 50) return false
+  if ((clients.cobertura_identificacion_pct ?? 100) < 70) return false
+  return (clients.concentracion_top_pct ?? 0) >= 15
+}
+
 const DIMENSION_ALIASES: Array<[RegExp, string]> = [
   [/\b(?:dcto|descuento|discount)\b/, 'descuento'],
   [/\b(?:estado|status)\b/, 'estado'],

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   analyticalFingerprint,
+  isRelevantClientPortfolio,
   normalizeVisualizationDimension,
   selectUniqueVisualizations,
 } from './visualizationRegistry'
@@ -20,5 +21,12 @@ describe('registro semántico de visualizaciones', () => {
     ], 2)
     expect(result.selected.map((item) => item.priority)).toEqual([30, 10])
     expect(result.omitted).toBe(1)
+  })
+
+  it('reserva dependencia de cartera para bases concentradas y no clientes masivos', () => {
+    expect(isRelevantClientPortfolio({ unicos: 18, concentracion_top_pct: 28, cobertura_identificacion_pct: 96 })).toBe(true)
+    expect(isRelevantClientPortfolio({ unicos: 320, concentracion_top_pct: 8, cobertura_identificacion_pct: 100 })).toBe(false)
+    expect(isRelevantClientPortfolio({ unicos: 12, concentracion_top_pct: 9, cobertura_identificacion_pct: 100 })).toBe(false)
+    expect(isRelevantClientPortfolio({ unicos: 12, concentracion_top_pct: 30, cobertura_identificacion_pct: 55 })).toBe(false)
   })
 })
