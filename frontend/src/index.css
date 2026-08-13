@@ -37,3 +37,95 @@ main :where(button, a) {
   50% { transform: translateX(200%); }
   100% { transform: translateX(420%); }
 }
+
+.dashboard-toolbar-button {
+  @apply inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-navy/15 bg-white px-3 py-1.5 text-[11px] font-semibold text-navy/70 transition hover:border-teal/45 hover:text-teal disabled:cursor-wait disabled:opacity-55;
+}
+
+.dashboard-enhanced-card {
+  position: relative;
+}
+
+@media (min-width: 768px) {
+  .dashboard-balanced-grid > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+.dashboard-card-actions {
+  position: absolute;
+  right: 0.65rem;
+  top: 0.65rem;
+  z-index: 12;
+  display: flex;
+  gap: 0.3rem;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.dashboard-enhanced-card:hover > .dashboard-card-actions,
+.dashboard-enhanced-card:focus-within > .dashboard-card-actions,
+.dashboard-card-expanded > .dashboard-card-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.dashboard-card-actions button,
+.dashboard-expanded-close {
+  @apply inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-navy/15 bg-white/95 px-2 text-[11px] font-semibold text-navy/70 shadow-sm backdrop-blur transition hover:border-teal/50 hover:text-teal disabled:opacity-50;
+}
+
+.dashboard-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  min-width: 100%;
+  background: rgba(18, 40, 58, 0.76);
+  backdrop-filter: blur(3px);
+}
+
+.dashboard-card-expanded {
+  position: fixed !important;
+  inset: 4vh 4vw !important;
+  z-index: 90 !important;
+  max-height: 92vh;
+  overflow: auto;
+  background: white !important;
+  box-shadow: 0 30px 90px rgba(18, 40, 58, 0.38) !important;
+}
+
+.dashboard-card-expanded .recharts-responsive-container {
+  height: min(62vh, 680px) !important;
+  min-height: 420px !important;
+}
+
+.dashboard-expanded-close {
+  position: fixed;
+  right: 5.25vw;
+  top: calc(4vh + 0.75rem);
+  z-index: 101;
+  width: auto;
+}
+
+.dashboard-fullscreen-shell {
+  position: fixed;
+  inset: 2vh 2vw;
+  z-index: 90;
+  overflow: auto;
+  border-radius: 1rem;
+  background: #f7f9fa;
+  padding: 1rem;
+  box-shadow: 0 30px 90px rgba(18, 40, 58, 0.38);
+}
+
+@media (hover: none) {
+  .dashboard-card-actions { opacity: 1; transform: none; }
+}
+
+@media (max-width: 640px) {
+  .dashboard-card-expanded { inset: 1.5vh 2vw !important; }
+  .dashboard-card-expanded .recharts-responsive-container { min-height: 340px !important; }
+  .dashboard-fullscreen-shell { inset: 0; border-radius: 0; padding: 0.65rem; }
+  .dashboard-expanded-close { right: 4vw; top: calc(1.5vh + 0.6rem); }
+}

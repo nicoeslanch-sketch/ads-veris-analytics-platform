@@ -7,6 +7,7 @@ interface CardProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
 export default function Card({ children, className = '', ...props }: CardProps) {
   return (
     <div
+      data-dashboard-card
       className={`rounded-xl border border-navy/10 bg-white p-4 shadow-sm sm:p-6 ${className}`}
       {...props}
     >

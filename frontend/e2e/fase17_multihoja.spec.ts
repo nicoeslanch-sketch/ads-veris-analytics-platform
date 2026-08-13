@@ -289,7 +289,7 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await page.getByRole('link', { name: /Resumen/ }).first().click()
     await expect(page.getByText('Datos que estas analizando')).toBeVisible({ timeout: 60_000 })
     await page.getByRole('button', { name: /Consolidar períodos de venta/ }).click()
-    await expect(page.getByText(/hoja_origen/)).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Ventas por hoja_origen' })).toBeVisible()
     // "Consolidar períodos de venta" no incorpora costos: el título del gráfico de
     // evolución cambia a "Ingresos por mes" (Resumen.tsx, `hasCosts` false).
     await expect(page.getByText(/Evolución de Ingresos|Ingresos por mes/)).toBeVisible({ timeout: 90_000 })
@@ -298,6 +298,22 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     const commercialGrid = page.getByTestId('summary-commercial-grid')
     await expect(compactFlow).toBeVisible()
     await expect(commercialGrid).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Ver dashboard completo' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Descargar HTML' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Descargar imagen' })).toBeVisible()
+    const expandChart = page.getByRole('button', { name: 'Ampliar gráfico' }).first()
+    await expect(expandChart).toBeAttached()
+    await expandChart.click()
+    await expect(page.getByRole('button', { name: 'Cerrar gráfico ampliado' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('button', { name: 'Cerrar gráfico ampliado' })).toHaveCount(0)
+    const dashboardDownload = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Descargar HTML' }).click()
+    expect((await dashboardDownload).suggestedFilename()).toMatch(/\.html$/)
+    await page.getByRole('button', { name: 'Ver dashboard completo' }).click()
+    await expect(page.getByRole('button', { name: 'Cerrar vista', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('button', { name: 'Ver dashboard completo' })).toBeVisible()
     // La evolución usa todo el ancho; los dos cortes comerciales principales
     // se equilibran en una grilla y el modo no conserva ninguna dona.
     const gridColumns = await commercialGrid.evaluate((element) => (
