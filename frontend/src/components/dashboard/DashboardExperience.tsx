@@ -39,13 +39,72 @@ function embeddedStyles(): string {
   }).join('\n')
 }
 
-function portableDashboardHtml(surface: HTMLElement, title: string): string {
+const PORTABLE_MARK_SELECTOR = [
+  '.recharts-bar-rectangle .recharts-rectangle',
+  '.recharts-line-dots .recharts-dot',
+  '.recharts-area-dots .recharts-dot',
+  '.recharts-pie-sector .recharts-sector',
+  '.recharts-scatter-symbol',
+  '.recharts-radar-dot .recharts-dot',
+].join(',')
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
+}
+
+function visibleTooltipText(wrapper: Element): string | null {
+  const tooltip = wrapper.querySelector<HTMLElement>('.recharts-tooltip-wrapper')
+  if (!tooltip || tooltip.style.visibility === 'hidden') return null
+  const rows = Array.from(tooltip.querySelectorAll<HTMLElement>('p,li'))
+    .map((row) => row.innerText.trim())
+    .filter(Boolean)
+  const text = (rows.length > 0 ? rows.join('\n') : tooltip.innerText)
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return text || null
+}
+
+async function collectPortableTooltips(surface: HTMLElement): Promise<Map<string, string>> {
+  const result = new Map<string, string>()
+  const charts = Array.from(surface.querySelectorAll<HTMLElement>('.recharts-wrapper'))
+  for (const [chartIndex, wrapper] of charts.entries()) {
+    const marks = Array.from(wrapper.querySelectorAll<SVGElement>(PORTABLE_MARK_SELECTOR))
+    for (const [markIndex, mark] of marks.entries()) {
+      const box = mark.getBoundingClientRect()
+      if (box.width <= 0 || box.height <= 0) continue
+      const eventInit: MouseEventInit = {
+        bubbles: true,
+        clientX: box.left + box.width / 2,
+        clientY: box.top + box.height / 2,
+      }
+      if (typeof PointerEvent !== 'undefined') wrapper.dispatchEvent(new PointerEvent('pointermove', eventInit))
+      wrapper.dispatchEvent(new MouseEvent('mousemove', eventInit))
+      await nextPaint()
+      const text = visibleTooltipText(wrapper)
+      if (text) result.set(`${chartIndex}:${markIndex}`, text)
+    }
+    wrapper.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))
+  }
+  return result
+}
+
+async function portableDashboardHtml(surface: HTMLElement, title: string): Promise<string> {
+  const tooltipValues = await collectPortableTooltips(surface)
   const clone = surface.cloneNode(true) as HTMLElement
   clone.querySelectorAll('[data-dashboard-actions]').forEach((node) => node.remove())
   clone.querySelectorAll('[data-dashboard-card]').forEach((node) => {
     node.setAttribute('data-portable-card', 'true')
-    node.setAttribute('tabindex', '0')
-    node.setAttribute('title', 'Haz clic para ampliar esta tarjeta')
+  })
+  clone.querySelectorAll<HTMLElement>('.recharts-wrapper').forEach((wrapper, chartIndex) => {
+    wrapper.querySelectorAll<SVGElement>(PORTABLE_MARK_SELECTOR).forEach((mark, markIndex) => {
+      const tooltip = tooltipValues.get(`${chartIndex}:${markIndex}`)
+      if (!tooltip) return
+      mark.setAttribute('data-portable-tooltip', tooltip)
+      mark.setAttribute('tabindex', '0')
+      mark.setAttribute('role', 'button')
+      mark.setAttribute('aria-label', tooltip.replace(/\n/g, '. '))
+    })
+    wrapper.querySelectorAll('.recharts-tooltip-wrapper').forEach((node) => node.remove())
   })
   const escapedTitle = title.replace(/[<>&"]/g, (character) => ({
     '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;',
@@ -55,12 +114,14 @@ function portableDashboardHtml(surface: HTMLElement, title: string): string {
 <title>${escapedTitle}</title><style>${embeddedStyles()}
 body{margin:0;padding:24px;background:#f7f9fa;color:#1a3a52;font-family:Poppins,Arial,sans-serif}
 .portable-shell{max-width:1500px;margin:auto}.portable-note{margin:0 0 16px;padding:12px 16px;border:1px solid #1a3a521a;border-radius:12px;background:white;font-size:12px;color:#1a3a5299}
-[data-portable-card]{cursor:zoom-in;transition:box-shadow .2s,transform .2s}[data-portable-card]:hover{box-shadow:0 14px 34px #12283a1f;transform:translateY(-1px)}
-[data-portable-card].portable-expanded{position:fixed!important;inset:3vh 3vw;z-index:10;overflow:auto;background:white;cursor:zoom-out;box-shadow:0 30px 80px #12283a55}
-.portable-backdrop{position:fixed;inset:0;background:#12283acc;z-index:9}
-@media(max-width:700px){body{padding:10px}[data-portable-card].portable-expanded{inset:1vh 2vw}}
-</style></head><body><main class="portable-shell"><p class="portable-note"><strong>${escapedTitle}</strong> · Copia navegable generada desde ADS Veris. Haz clic en una tarjeta para ampliarla. Los filtros y tooltips dinámicos permanecen disponibles en la plataforma.</p>${clone.outerHTML}</main>
-<script>document.addEventListener('click',function(event){var card=event.target.closest('[data-portable-card]');if(!card)return;var expanded=card.classList.toggle('portable-expanded');var old=document.querySelector('.portable-backdrop');if(old)old.remove();if(expanded){var back=document.createElement('div');back.className='portable-backdrop';back.onclick=function(){card.classList.remove('portable-expanded');back.remove()};document.body.appendChild(back)}});document.addEventListener('keydown',function(event){if(event.key==='Escape'){document.querySelectorAll('.portable-expanded').forEach(function(node){node.classList.remove('portable-expanded')});var back=document.querySelector('.portable-backdrop');if(back)back.remove()}})</script></body></html>`
+[data-portable-card]{break-inside:avoid}
+[data-portable-tooltip]{cursor:help;outline:none;transition:filter .12s ease,stroke-width .12s ease}
+[data-portable-tooltip]:hover,[data-portable-tooltip]:focus,.portable-mark-active{filter:brightness(.9);stroke:#16394f!important;stroke-width:2px!important}
+.portable-tooltip{position:fixed;z-index:50;display:none;max-width:min(320px,calc(100vw - 24px));white-space:pre-line;pointer-events:none;border:1px solid #16394f26;border-radius:10px;background:#fff;padding:9px 11px;color:#16394f;font-size:12px;line-height:1.45;box-shadow:0 12px 32px #12283a2b}
+.portable-tooltip.is-visible{display:block}
+@media(max-width:700px){body{padding:10px}.portable-note{font-size:11px}.portable-tooltip{font-size:13px}}
+</style></head><body><main class="portable-shell"><p class="portable-note"><strong>${escapedTitle}</strong> · Copia interactiva generada desde ADS Veris. Pasa el mouse sobre un dato del gráfico o tócalo en el celular para ver su valor. Toca nuevamente o presiona Esc para cerrar el detalle.</p>${clone.outerHTML}</main><div class="portable-tooltip" role="status" aria-live="polite"></div>
+<script>(function(){var tip=document.querySelector('.portable-tooltip');var pinned=null;function place(event,mark){var box=mark.getBoundingClientRect();var x=event&&typeof event.clientX==='number'&&event.clientX?event.clientX:box.left+box.width/2;var y=event&&typeof event.clientY==='number'&&event.clientY?event.clientY:box.top;tip.style.left=Math.min(Math.max(12,x+14),window.innerWidth-tip.offsetWidth-12)+'px';tip.style.top=Math.min(Math.max(12,y-tip.offsetHeight-12),window.innerHeight-tip.offsetHeight-12)+'px'}function show(mark,event,pin){if(!mark||!mark.dataset.portableTooltip)return;if(pinned&&pinned!==mark)pinned.classList.remove('portable-mark-active');tip.textContent=mark.dataset.portableTooltip;tip.classList.add('is-visible');mark.classList.add('portable-mark-active');if(pin)pinned=mark;requestAnimationFrame(function(){place(event,mark)})}function hide(mark,force){if(pinned&&!force)return;if(mark)mark.classList.remove('portable-mark-active');if(force&&pinned){pinned.classList.remove('portable-mark-active');pinned=null}tip.classList.remove('is-visible')}document.addEventListener('pointerover',function(event){var mark=event.target.closest('[data-portable-tooltip]');if(mark&&!pinned)show(mark,event,false)});document.addEventListener('pointermove',function(event){var mark=event.target.closest('[data-portable-tooltip]');if(mark&&!pinned)place(event,mark)});document.addEventListener('pointerout',function(event){var mark=event.target.closest('[data-portable-tooltip]');if(mark&&!pinned)hide(mark,false)});document.addEventListener('click',function(event){var mark=event.target.closest('[data-portable-tooltip]');if(!mark){hide(null,true);return}event.preventDefault();event.stopPropagation();if(pinned===mark){hide(mark,true)}else{show(mark,event,true)}});document.addEventListener('focusin',function(event){var mark=event.target.closest('[data-portable-tooltip]');if(mark)show(mark,null,false)});document.addEventListener('focusout',function(event){var mark=event.target.closest('[data-portable-tooltip]');if(mark&&!pinned)hide(mark,false)});document.addEventListener('keydown',function(event){if(event.key==='Escape')hide(null,true);if((event.key==='Enter'||event.key===' ')&&event.target.matches('[data-portable-tooltip]')){event.preventDefault();event.target.click()}})})();</script></body></html>`
 }
 
 function chartTitle(card: HTMLElement, fallback: string): string {
@@ -157,12 +218,13 @@ export default function DashboardExperience({
     }
   }
 
-  const exportHtml = () => {
+  const exportHtml = async () => {
     if (!surfaceRef.current) return
     setExporting('dashboard-html')
     setError(null)
     try {
-      const blob = new Blob([portableDashboardHtml(surfaceRef.current, title)], { type: 'text/html;charset=utf-8' })
+      const html = await portableDashboardHtml(surfaceRef.current, title)
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       downloadUrl(url, `${fileStem}.html`)
       window.setTimeout(() => URL.revokeObjectURL(url), 1_000)
@@ -189,7 +251,7 @@ export default function DashboardExperience({
               {fullScreen ? <X className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
               {fullScreen ? 'Cerrar vista' : 'Ver dashboard completo'}
             </button>
-            <button type="button" onClick={exportHtml} disabled={exporting !== null} className="dashboard-toolbar-button">
+            <button type="button" onClick={() => void exportHtml()} disabled={exporting !== null} className="dashboard-toolbar-button">
               {exporting === 'dashboard-html' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
               Descargar HTML
             </button>

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 
 function createWorkbook(path: string, unsafe = false) {
   const script = String.raw`
@@ -309,7 +310,28 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await expect(page.getByRole('button', { name: 'Cerrar gráfico ampliado' })).toHaveCount(0)
     const dashboardDownload = page.waitForEvent('download')
     await page.getByRole('button', { name: 'Descargar HTML' }).click()
-    expect((await dashboardDownload).suggestedFilename()).toMatch(/\.html$/)
+    const portableDownload = await dashboardDownload
+    expect(portableDownload.suggestedFilename()).toMatch(/\.html$/)
+    const portablePath = await portableDownload.path()
+    expect(portablePath).not.toBeNull()
+    const portableHtml = readFileSync(portablePath!, 'utf8')
+    expect(portableHtml).toContain('Pasa el mouse sobre un dato del gráfico o tócalo')
+    expect(portableHtml).toContain('class="portable-tooltip"')
+    expect(portableHtml).toContain('data-portable-tooltip=')
+    expect(portableHtml).not.toContain('portable-expanded')
+    const portablePage = await page.context().newPage()
+    await portablePage.setContent(portableHtml, { waitUntil: 'domcontentloaded' })
+    const portableMark = portablePage.locator('[data-portable-tooltip]').first()
+    const portableTooltip = portablePage.locator('.portable-tooltip')
+    await expect(portableMark).toBeVisible()
+    await portableMark.hover()
+    await expect(portableTooltip).toHaveClass(/is-visible/)
+    await expect(portableTooltip).not.toHaveText('')
+    await portableMark.click()
+    await expect(portableTooltip).toHaveClass(/is-visible/)
+    await portableMark.click()
+    await expect(portableTooltip).not.toHaveClass(/is-visible/)
+    await portablePage.close()
     await page.getByRole('button', { name: 'Ver dashboard completo' }).click()
     await expect(page.getByRole('button', { name: 'Cerrar vista', exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
