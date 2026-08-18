@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useDataset } from '../data/DatasetContext'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
-import { cacheRelationships, getCachedRelationships } from '../lib/analysisCache'
+import { requestRelationships } from '../lib/analysisCache'
 import {
   compatibleAppendSheets,
   relationshipPlainMessage,
@@ -11,6 +11,7 @@ import {
   shouldAutoBuildBusinessScope,
 } from '../lib/multiSheet'
 import type { AnalysisScope, RelationshipCandidate, RelationshipResult } from '../lib/types'
+import { stableSerialize } from '../lib/stableSerialize'
 import { usePlan } from '../lib/usePlan'
 import AnalysisModeSwitcher from './summary/AnalysisModeSwitcher'
 
@@ -282,19 +283,18 @@ export default function ActiveSheetSelector({
         : compatibleSheets
       const focus = { sheets: appendSelection }
       const datasetKey = datasetId ?? storagePath ?? `${file.name}:${file.size}:${file.lastModified}`
-      const cacheKey = `${datasetKey}|${JSON.stringify(sheetManifest)}|${JSON.stringify(focus)}`
-      let response = getCachedRelationships(cacheKey)
-      if (!response) {
-        response = await apiPost<RelationshipResult>(
+      const cacheKey = stableSerialize({ dataset: datasetKey, manifest: sheetManifest, focus })
+      const response = await requestRelationships(
+        cacheKey,
+        () => apiPost<RelationshipResult>(
           '/sheets/relationships',
           buildDatasetForm(file, storagePath, {
             manifest: JSON.stringify(sheetManifest),
             ...(datasetId ? { dataset_id: datasetId } : {}),
             focus: JSON.stringify(focus),
           }),
-        )
-        cacheRelationships(cacheKey, response)
-      }
+        ),
+      )
       const serviceAnalysis = response.metrics?.analisis_negocio
       if (
         serviceWorkbook
