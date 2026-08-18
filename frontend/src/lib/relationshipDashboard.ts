@@ -1,5 +1,7 @@
 import { apiPost, buildDatasetForm } from './api'
 import { formatNumber } from './format'
+import { clearSessionAnalysis, readSessionAnalysis, writeSessionAnalysis } from './sessionAnalysisCache'
+import { stableSerialize } from './stableSerialize'
 import type {
   AnalysisScope,
   CatalogRelationship,
@@ -213,18 +215,29 @@ export interface RelationshipRequestParams {
 
 const catalogCache = new Map<string, RelationshipCatalog>()
 const dashboardCache = new Map<string, RelationshipDashboard>()
+const catalogInFlight = new Map<string, Promise<RelationshipCatalog>>()
+const dashboardInFlight = new Map<string, Promise<RelationshipDashboard>>()
 const MAX_RELATION_CACHE_ENTRIES = 30
+let relationshipCacheGeneration = 0
 
 export function clearRelationshipDashboardCaches() {
+  clearRelationshipDashboardRuntimeCaches()
+  clearSessionAnalysis(['catalog', 'dashboard'])
+}
+
+export function clearRelationshipDashboardRuntimeCaches() {
+  relationshipCacheGeneration += 1
   catalogCache.clear()
   dashboardCache.clear()
+  catalogInFlight.clear()
+  dashboardInFlight.clear()
 }
 
 function requestIdentity(params: RelationshipRequestParams): string {
   const source = params.datasetId
     ?? params.storagePath
     ?? `${params.file?.name ?? ''}:${params.file?.size ?? 0}:${params.file?.lastModified ?? 0}`
-  return `${source}|${JSON.stringify(params.manifest)}`
+  return stableSerialize({ source, manifest: params.manifest })
 }
 
 function remember<T>(cache: Map<string, T>, key: string, value: T): T {
@@ -238,37 +251,50 @@ function remember<T>(cache: Map<string, T>, key: string, value: T): T {
 
 export async function fetchRelationshipCatalog(
   params: RelationshipRequestParams,
-  signal?: AbortSignal,
+  _consumerSignal?: AbortSignal,
 ): Promise<RelationshipCatalog> {
   const key = requestIdentity(params)
   const cached = catalogCache.get(key)
-  if (cached) return cached
+    ?? readSessionAnalysis<RelationshipCatalog>('catalog', key)
+  if (cached) return remember(catalogCache, key, cached)
+  const pending = catalogInFlight.get(key)
+  if (pending) return pending
+  const generation = relationshipCacheGeneration
   const started = performance.now()
-  const result = await apiPost<RelationshipCatalog>(
-    '/sheets/relationship-catalog',
-    buildDatasetForm(params.file as File, params.storagePath, {
-      manifest: JSON.stringify(params.manifest),
-      ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
-    }),
-    // Analizar el libro completo es trabajo de PIPELINE, no una lectura
-    // rápida: con el arranque en frío de Render (~50 s) un presupuesto de
-    // 60-90 s se agotaba antes de empezar y la petición se cancelaba sola
-    // ("La solicitud tardó demasiado"). Sin `timeoutMs` se usa el margen
-    // amplio del pipeline, el mismo que ya usa /metrics.
-    { signal },
-  )
-  console.info('[ADS Veris timing] relationship-catalog', {
-    durationMs: Math.round(performance.now() - started),
-    count: result.relationships.length,
-  })
-  return remember(catalogCache, key, result)
+  const request = apiPost<RelationshipCatalog>(
+      '/sheets/relationship-catalog',
+      buildDatasetForm(params.file as File, params.storagePath, {
+        manifest: JSON.stringify(params.manifest),
+        ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
+      }),
+      // La señal de la vista no cancela el productor compartido. Si el usuario
+      // cambia de modo, el cálculo termina y queda listo al volver.
+    )
+    .then((result) => {
+      console.info('[ADS Veris timing] relationship-catalog', {
+        durationMs: Math.round(performance.now() - started),
+        count: result.relationships.length,
+      })
+      if (generation === relationshipCacheGeneration) {
+        remember(catalogCache, key, result)
+        writeSessionAnalysis('catalog', key, result, 6)
+      }
+      return result
+    })
+    .finally(() => {
+      if (catalogInFlight.get(key) === request) catalogInFlight.delete(key)
+    })
+  catalogInFlight.set(key, request)
+  // El consumidor puede ignorar el resultado al abortar; el trabajo compartido
+  // sigue vivo para no reiniciarse al regresar a la vista.
+  return request
 }
 
 export async function fetchRelationshipDashboard(
   params: RelationshipRequestParams,
   relationship: CatalogRelationship,
   period: { from: string | null; to: string | null },
-  signal?: AbortSignal,
+  _consumerSignal?: AbortSignal,
 ): Promise<RelationshipDashboard> {
   const join = {
     left_sheet: relationship.left_sheet,
@@ -283,31 +309,45 @@ export async function fetchRelationshipDashboard(
       ? { append_sheets: relationship.append_sheets }
       : {}),
   }
-  const key = `${requestIdentity(params)}|${JSON.stringify(join)}|${period.from ?? ''}|${period.to ?? ''}`
-  const cached = dashboardCache.get(key)
-  if (cached) return cached
-  const started = performance.now()
-  const result = await apiPost<RelationshipDashboard>(
-    '/sheets/relationship-dashboard',
-    buildDatasetForm(params.file as File, params.storagePath, {
-      manifest: JSON.stringify(params.manifest),
-      relationship: JSON.stringify(join),
-      ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
-      ...(period.from ? { date_from: period.from } : {}),
-      ...(period.to ? { date_to: period.to } : {}),
-    }),
-    // Analizar el libro completo es trabajo de PIPELINE, no una lectura
-    // rápida: con el arranque en frío de Render (~50 s) un presupuesto de
-    // 60-90 s se agotaba antes de empezar y la petición se cancelaba sola
-    // ("La solicitud tardó demasiado"). Sin `timeoutMs` se usa el margen
-    // amplio del pipeline, el mismo que ya usa /metrics.
-    { signal },
-  )
-  console.info('[ADS Veris timing] relationship-dashboard', {
-    durationMs: Math.round(performance.now() - started),
-    relationship: relationship.id,
+  const key = stableSerialize({
+    request: requestIdentity(params),
+    join,
+    dateFrom: period.from ?? '',
+    dateTo: period.to ?? '',
   })
-  return remember(dashboardCache, key, result)
+  const cached = dashboardCache.get(key)
+    ?? readSessionAnalysis<RelationshipDashboard>('dashboard', key)
+  if (cached) return remember(dashboardCache, key, cached)
+  const pending = dashboardInFlight.get(key)
+  if (pending) return pending
+  const generation = relationshipCacheGeneration
+  const started = performance.now()
+  const request = apiPost<RelationshipDashboard>(
+      '/sheets/relationship-dashboard',
+      buildDatasetForm(params.file as File, params.storagePath, {
+        manifest: JSON.stringify(params.manifest),
+        relationship: JSON.stringify(join),
+        ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
+        ...(period.from ? { date_from: period.from } : {}),
+        ...(period.to ? { date_to: period.to } : {}),
+      }),
+    )
+    .then((result) => {
+      console.info('[ADS Veris timing] relationship-dashboard', {
+        durationMs: Math.round(performance.now() - started),
+        relationship: relationship.id,
+      })
+      if (generation === relationshipCacheGeneration) {
+        remember(dashboardCache, key, result)
+        writeSessionAnalysis('dashboard', key, result, 12)
+      }
+      return result
+    })
+    .finally(() => {
+      if (dashboardInFlight.get(key) === request) dashboardInFlight.delete(key)
+    })
+  dashboardInFlight.set(key, request)
+  return request
 }
 
 /** Valida una relación manual reutilizando el endpoint existente. Devuelve la

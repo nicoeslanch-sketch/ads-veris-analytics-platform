@@ -9,9 +9,12 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { clearAnalysisCaches } from '../lib/analysisCache'
+import { clearAnalysisCaches, clearAnalysisRuntimeCaches } from '../lib/analysisCache'
 import { analysisScopesEqual, normalizedRestoredSelection } from '../lib/multiSheet'
-import { clearRelationshipDashboardCaches } from '../lib/relationshipDashboard'
+import {
+  clearRelationshipDashboardCaches,
+  clearRelationshipDashboardRuntimeCaches,
+} from '../lib/relationshipDashboard'
 import type {
   AnalysisScope,
   BusinessFilters,
@@ -418,8 +421,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       options?.expectedRevision !== undefined &&
       options.expectedRevision !== datasetRevisionRef.current
     ) return false
-    clearAnalysisCaches()
-    clearRelationshipDashboardCaches()
+    clearAnalysisRuntimeCaches()
+    clearRelationshipDashboardRuntimeCaches()
     const inferredActiveSheet =
       restoredCleaning?.carga?.hoja_usada ??
       restoredStandardization.carga?.hoja_usada ??

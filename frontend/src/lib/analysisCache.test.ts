@@ -1,13 +1,15 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   cacheMetrics,
   cacheRelationships,
   cancelMetricsRequest,
   clearAnalysisCaches,
+  clearAnalysisRuntimeCaches,
   getCachedMetrics,
   getCachedRelationships,
   metricsCacheKey,
   requestMetrics,
+  requestRelationships,
 } from './analysisCache'
 import type { MetricsResult, RelationshipResult } from './types'
 
@@ -95,6 +97,22 @@ describe('caché de análisis', () => {
     expect(centro).not.toBe(norte)
   })
 
+  it('genera la misma clave aunque el JSON restaurado cambie el orden de propiedades', () => {
+    const first = metricsCacheKey({
+      dataset: 'dataset-1',
+      eliminarDuplicados: false,
+      analysisScope: { mode: 'single', sheets: ['Ventas'], active_sheet: 'Ventas' },
+      rules: { textos: true, fechas: false },
+    })
+    const second = metricsCacheKey({
+      dataset: 'dataset-1',
+      eliminarDuplicados: false,
+      analysisScope: { active_sheet: 'Ventas', sheets: ['Ventas'], mode: 'single' },
+      rules: { fechas: false, textos: true },
+    })
+    expect(first).toBe(second)
+  })
+
   it('una petición de una sesión cerrada no repuebla la caché', async () => {
     clearAnalysisCaches()
     const key = metricsCacheKey({ dataset: 'anterior', eliminarDuplicados: false })
@@ -135,5 +153,57 @@ describe('caché de análisis', () => {
     cancelMetricsRequest(key)
     expect(sharedSignals[0]?.aborted).toBe(true)
     expect(producer).toHaveBeenCalledTimes(1)
+  })
+
+  it('comparte la detección de relaciones mientras el usuario cambia de modo', async () => {
+    clearAnalysisCaches()
+    let resolve!: (value: RelationshipResult) => void
+    const producer = vi.fn(() => new Promise<RelationshipResult>((done) => { resolve = done }))
+    const first = requestRelationships('dataset|manifest', producer)
+    const second = requestRelationships('dataset|manifest', producer)
+    expect(first).toBe(second)
+    expect(producer).toHaveBeenCalledTimes(1)
+    resolve({ candidates: [], safe_count: 0, message: null })
+    await first
+    expect(getCachedRelationships('dataset|manifest')).not.toBeNull()
+  })
+})
+
+describe('caché persistente de la pestaña', () => {
+  const values = new Map<string, string>()
+  const session = {
+    get length() { return values.size },
+    clear: () => values.clear(),
+    getItem: (key: string) => values.get(key) ?? null,
+    key: (index: number) => [...values.keys()][index] ?? null,
+    removeItem: (key: string) => { values.delete(key) },
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  } as Storage
+
+  beforeEach(() => {
+    values.clear()
+    vi.stubGlobal('sessionStorage', session)
+    clearAnalysisCaches()
+  })
+
+  afterEach(() => {
+    clearAnalysisCaches()
+    vi.unstubAllGlobals()
+  })
+
+  it('restaura métricas después de perder la memoria por una recarga', () => {
+    const metrics = metricsFixture()
+    cacheMetrics('dataset-restaurado|ventas', metrics)
+    clearAnalysisRuntimeCaches()
+
+    expect(getCachedMetrics('dataset-restaurado|ventas')).toEqual(metrics)
+  })
+
+  it('el borrado completo elimina también los resultados de la sesión', () => {
+    cacheMetrics('dataset-anterior|ventas', metricsFixture())
+    clearAnalysisCaches()
+    clearAnalysisRuntimeCaches()
+
+    expect(getCachedMetrics('dataset-anterior|ventas')).toBeNull()
   })
 })

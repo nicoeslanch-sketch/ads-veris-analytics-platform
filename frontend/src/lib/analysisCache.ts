@@ -1,4 +1,6 @@
 import type { MetricsResult, RelationshipResult } from './types'
+import { clearSessionAnalysis, readSessionAnalysis, writeSessionAnalysis } from './sessionAnalysisCache'
+import { stableSerialize } from './stableSerialize'
 
 const MAX_METRICS = 24
 const MAX_RELATIONSHIPS = 8
@@ -12,6 +14,7 @@ interface InFlightMetrics {
 }
 
 const metricsInFlight = new Map<string, InFlightMetrics>()
+const relationshipsInFlight = new Map<string, Promise<RelationshipResult>>()
 let cacheGeneration = 0
 
 function remember<T>(cache: Map<string, T>, key: string, value: T, max: number) {
@@ -25,13 +28,14 @@ function remember<T>(cache: Map<string, T>, key: string, value: T, max: number) 
 }
 
 export function getCachedMetrics(key: string): MetricsResult | null {
-  const value = metricsCache.get(key) ?? null
+  const value = metricsCache.get(key) ?? readSessionAnalysis<MetricsResult>('metrics', key)
   if (value) remember(metricsCache, key, value, MAX_METRICS)
   return value
 }
 
 export function cacheMetrics(key: string, value: MetricsResult) {
   remember(metricsCache, key, value, MAX_METRICS)
+  writeSessionAnalysis('metrics', key, value, 12)
 }
 
 export interface MetricsCacheKeyParts {
@@ -53,7 +57,7 @@ export interface MetricsCacheKeyParts {
 /** Una clave compartida evita que Resumen, Explorar, Reportes y la IA
  * describan el mismo procesamiento con formatos distintos. */
 export function metricsCacheKey(parts: MetricsCacheKeyParts): string {
-  return JSON.stringify({
+  return stableSerialize({
     dataset: parts.dataset,
     dateFrom: parts.dateFrom ?? '',
     dateTo: parts.dateTo ?? '',
@@ -123,19 +127,54 @@ export function cancelMetricsRequest(key: string) {
 }
 
 export function getCachedRelationships(key: string): RelationshipResult | null {
-  const value = relationshipCache.get(key) ?? null
+  const value = relationshipCache.get(key)
+    ?? readSessionAnalysis<RelationshipResult>('relationships', key)
   if (value) remember(relationshipCache, key, value, MAX_RELATIONSHIPS)
   return value
 }
 
 export function cacheRelationships(key: string, value: RelationshipResult) {
   remember(relationshipCache, key, value, MAX_RELATIONSHIPS)
+  writeSessionAnalysis('relationships', key, value, 8)
 }
 
-export function clearAnalysisCaches() {
+export function requestRelationships(
+  key: string,
+  producer: () => Promise<RelationshipResult>,
+): Promise<RelationshipResult> {
+  const cached = getCachedRelationships(key)
+  if (cached) return Promise.resolve(cached)
+  const pending = relationshipsInFlight.get(key)
+  if (pending) return pending
+  const generation = cacheGeneration
+  const request = producer()
+    .then((value) => {
+      if (generation === cacheGeneration) cacheRelationships(key, value)
+      return value
+    })
+    .finally(() => {
+      if (relationshipsInFlight.get(key) === request) relationshipsInFlight.delete(key)
+    })
+  relationshipsInFlight.set(key, request)
+  return request
+}
+
+function clearRuntimeCaches() {
   cacheGeneration += 1
   for (const entry of metricsInFlight.values()) entry.controller.abort()
   metricsCache.clear()
   relationshipCache.clear()
   metricsInFlight.clear()
+  relationshipsInFlight.clear()
+}
+
+/** Al restaurar el mismo dataset tras una recarga se limpian promesas y RAM,
+ * pero se conservan los resultados terminados de esta pestaña. */
+export function clearAnalysisRuntimeCaches() {
+  clearRuntimeCaches()
+}
+
+export function clearAnalysisCaches() {
+  clearRuntimeCaches()
+  clearSessionAnalysis(['metrics', 'relationships'])
 }

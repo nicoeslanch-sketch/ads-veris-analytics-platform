@@ -246,6 +246,20 @@ test('el ultimo archivo elegido prevalece aunque una carga anterior responda des
 test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async ({ page }, testInfo) => {
   const workbook = testInfo.outputPath('ventas_multihoja.xlsx')
   createWorkbook(workbook)
+  const analysisRequests = {
+    metrics: 0,
+    relationships: 0,
+    catalog: 0,
+    dashboard: 0,
+  }
+  page.on('request', (request) => {
+    if (request.method() !== 'POST') return
+    const path = new URL(request.url()).pathname
+    if (path.endsWith('/analysis/jobs/metrics')) analysisRequests.metrics += 1
+    else if (path.endsWith('/sheets/relationships')) analysisRequests.relationships += 1
+    else if (path.endsWith('/sheets/relationship-catalog')) analysisRequests.catalog += 1
+    else if (path.endsWith('/sheets/relationship-dashboard')) analysisRequests.dashboard += 1
+  })
 
   await page.goto('/estandarizacion')
     const chooserPromise = page.waitForEvent('filechooser')
@@ -371,6 +385,28 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await expect(page.getByText('Cobertura de Costos')).toBeVisible({ timeout: 90_000 })
     await expect(page.getByText('Costo Conocido')).toBeVisible()
     await expect(page.getByText('$17.400', { exact: true })).toBeVisible()
+
+    // Volver a vistas ya calculadas no crea otro trabajo ni muestra una espera
+    // perceptible. Esta es la regresión del caso reportado por el usuario.
+    const requestsAfterBusiness = { ...analysisRequests }
+    await page.getByRole('button', { name: /Consolidar períodos de venta/ }).click()
+    await expect(page.getByRole('heading', { name: 'Ventas por hoja_origen' })).toBeVisible({ timeout: 2_000 })
+    await page.getByRole('button', { name: /Visión del negocio/ }).click()
+    await expect(page.getByText('Cobertura de Costos')).toBeVisible({ timeout: 2_000 })
+    expect(analysisRequests.metrics).toBe(requestsAfterBusiness.metrics)
+    expect(analysisRequests.relationships).toBe(requestsAfterBusiness.relationships)
+
+    await page.getByRole('button', { name: /Relación manual/ }).click()
+    await expect(page.getByRole('heading', { name: 'Selecciona una conexión' })).toBeVisible({ timeout: 90_000 })
+    await expect(page.getByText('Conexión segura')).toBeVisible({ timeout: 90_000 })
+    const requestsAfterManual = { ...analysisRequests }
+    await page.getByRole('button', { name: /Visión del negocio/ }).click()
+    await expect(page.getByText('Cobertura de Costos')).toBeVisible({ timeout: 2_000 })
+    await page.getByRole('button', { name: /Relación manual/ }).click()
+    await expect(page.getByText('Conexión segura')).toBeVisible({ timeout: 2_000 })
+    expect(analysisRequests.catalog).toBe(requestsAfterManual.catalog)
+    expect(analysisRequests.dashboard).toBe(requestsAfterManual.dashboard)
+
     await page.getByRole('link', { name: /Explorar datos/ }).first().click()
     await expect(page.getByText('Datos que estas analizando')).toBeVisible()
     await expect(page.getByText('Explorar · confiabilidad del margen')).toBeVisible()
