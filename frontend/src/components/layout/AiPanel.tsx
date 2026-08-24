@@ -10,11 +10,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowUp, Crown, Loader2, Lock, RefreshCw, Sparkles, Square, Star, TriangleAlert } from 'lucide-react'
+import { ArrowUp, Bot, Coins, Crown, Loader2, Lock, MessageCircle, RefreshCw, Sparkles, Square, Star, TriangleAlert } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
 import { useDemo } from '../../demo/DemoContext'
 import { useAccess } from '../../lib/access'
-import { ApiError, apiPostJob, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
+import { ApiError, apiGet, apiPostJob, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
 import { metricsCacheKey, requestMetrics } from '../../lib/analysisCache'
 import { setActiveCurrency } from '../../lib/format'
 import { serializedAnalysisScope } from '../../lib/multiSheet'
@@ -31,6 +31,31 @@ interface Message {
 interface Summary {
   resumen: string
   sugerencias: string[]
+}
+
+interface AssistantConfig {
+  quick_help_enabled: boolean
+  advanced_enabled: boolean
+  advanced_message_cost: number
+  purchases_enabled: boolean
+  knowledge_articles: number
+}
+
+interface CoinWallet {
+  available: boolean
+  balance: number
+  monthly_allowance: number
+  advanced_chat_cost: number
+  advanced_chat_enabled: boolean
+  purchases_enabled: boolean
+}
+
+interface BotResponse {
+  answer: string
+  suggestions: string[]
+  confidence: 'low' | 'medium' | 'high'
+  coins_charged: number
+  knowledge_articles: number
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
@@ -59,11 +84,24 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     setMetrics: setContextMetrics,
   } = useDataset()
   const active = Boolean(cleaning && file)
+  const [mode, setMode] = useState<'quick' | 'advanced'>('quick')
+  const [assistantConfig, setAssistantConfig] = useState<AssistantConfig | null>(null)
+  const [coinWallet, setCoinWallet] = useState<CoinWallet | null>(null)
+  const [botMessages, setBotMessages] = useState<Message[]>([])
+  const [botInput, setBotInput] = useState('')
+  const [botSending, setBotSending] = useState(false)
+  const [botError, setBotError] = useState<string | null>(null)
+  const [botSuggestions, setBotSuggestions] = useState<string[]>([
+    '¿Cómo conecto Google Sheets?',
+    '¿Qué diferencia hay entre Resumen y Explorar?',
+    '¿Qué son los ADS Coins?',
+  ])
   // Fase 14: sin capacidad de IA (sin plan / prueba gratuita / expirada) el
   // panel muestra el mensaje comercial y NO llama a la API — ni una vez.
   const demo = useDemo()
   const { status: accessStatus, access, can } = useAccess()
-  const aiBlocked = demo.active || accessStatus !== 'resolved' || !can('ask_data_ai')
+  const advancedEnabled = Boolean(assistantConfig?.advanced_enabled)
+  const aiBlocked = mode !== 'advanced' || !advancedEnabled || demo.active || accessStatus !== 'resolved' || !can('ask_data_ai')
 
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(false)
@@ -88,6 +126,13 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       activationAbortRef.current?.abort()
       streamAbortRef.current?.abort()
     }
+  }, [])
+
+  useEffect(() => {
+    void Promise.all([
+      apiGet<AssistantConfig>('/assistant/config').then(setAssistantConfig),
+      apiGet<CoinWallet>('/coins/me').then(setCoinWallet),
+    ]).catch(() => undefined)
   }, [])
 
   // Auto-scroll al fondo cuando llegan mensajes
@@ -313,6 +358,75 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     }
   }
 
+  const sendBotMessage = async (text: string) => {
+    const clean = text.trim()
+    if (!clean || botSending) return
+    setBotInput('')
+    setBotError(null)
+    setBotMessages((current) => [...current, { role: 'user', content: clean }])
+    setBotSending(true)
+    try {
+      const response = await apiPostJson<BotResponse>('/assistant/bot', { message: clean })
+      setBotMessages((current) => [...current, { role: 'assistant', content: response.answer }])
+      setBotSuggestions(response.suggestions)
+    } catch (err) {
+      const detail = err instanceof ApiError ? err.message : 'No pude consultar la guía automática.'
+      setBotError(detail)
+      setBotMessages((current) => [...current, { role: 'assistant', content: `⚠️ ${detail}` }])
+    } finally {
+      setBotSending(false)
+    }
+  }
+
+  // Ayuda rápida funciona sin dataset, sin plan y sin consumir IA o monedas.
+  if (mode === 'quick') {
+    return (
+      <aside className={asideClass}>
+        <PanelHeader mode={mode} onModeChange={setMode} coinBalance={coinWallet?.balance} />
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
+          <div className="rounded-xl border border-teal/20 bg-teal/10 p-3">
+            <div className="flex items-center gap-2"><Bot className="h-4 w-4 text-teal" /><p className="text-xs font-semibold text-white">Bot automático, sin IA</p></div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-white/55">Responde con una biblioteca aprobada de {assistantConfig?.knowledge_articles ?? 'muchas'} guías. No consume ADS Coins.</p>
+          </div>
+          {botMessages.length === 0 && (
+            <div className="rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-white/75">
+              Hola, soy la Ayuda rápida de ADS Veris. Puedo explicarte importación, limpieza, Google Sheets, cálculos, relaciones, gráficos, planes y soporte.
+            </div>
+          )}
+          {botMessages.map((message, index) => <ChatBubble key={index} msg={message} />)}
+          {botSending && <div className="flex items-center gap-2 text-xs text-white/45"><Loader2 className="h-3.5 w-3.5 animate-spin text-teal" /> Buscando la respuesta aprobada…</div>}
+          {botMessages.length === 0 && botSuggestions.map((suggestion) => (
+            <button key={suggestion} onClick={() => void sendBotMessage(suggestion)} className="rounded-lg bg-white/5 px-3 py-2 text-left text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white">{suggestion}</button>
+          ))}
+          {botError && <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] text-coral">{botError}</p>}
+          <div ref={bottomRef} />
+        </div>
+        <div className="border-t border-white/10 p-3">
+          <div className="flex items-end gap-2 rounded-lg bg-white/5 px-3 py-2">
+            <textarea value={botInput} onChange={(event) => setBotInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendBotMessage(botInput) } }} rows={1} maxLength={1200} placeholder="Pregunta cómo usar ADS Veris…" className="max-h-24 min-h-5 w-full resize-none bg-transparent text-sm text-white placeholder:text-white/30 outline-none" />
+            <button onClick={() => void sendBotMessage(botInput)} disabled={!botInput.trim() || botSending} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal disabled:bg-white/10"><ArrowUp className="h-3.5 w-3.5" /></button>
+          </div>
+          <p className="mt-1.5 text-center text-[10px] text-white/25">Para un caso particular, abre Ayuda y conversa con soporte humano.</p>
+        </div>
+      </aside>
+    )
+  }
+
+  if (!advancedEnabled) {
+    return (
+      <aside className={asideClass}>
+        <PanelHeader mode={mode} onModeChange={setMode} coinBalance={coinWallet?.balance} />
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gold/15"><Lock className="h-6 w-6 text-gold" /></div>
+          <div><p className="text-sm font-semibold text-white/90">Chat avanzado próximamente</p><p className="mt-2 text-xs leading-relaxed text-white/50">La arquitectura de ADS Coins y el chat sobre tus números ya está preparada, pero permanece cerrada para no consumir tokens ni cobrar monedas antes de habilitar la IA.</p></div>
+          <div className="rounded-xl bg-white/5 px-4 py-3 text-xs text-white/65"><Coins className="mx-auto mb-1.5 h-4 w-4 text-gold" />Saldo: <strong className="text-white">{coinWallet?.balance ?? 0} ADS Coins</strong><br />Costo proyectado: {assistantConfig?.advanced_message_cost ?? 5} por mensaje.</div>
+          <button onClick={() => setMode('quick')} className="inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white"><MessageCircle className="h-3.5 w-3.5" /> Volver a Ayuda rápida</button>
+        </div>
+        <DisabledInput />
+      </aside>
+    )
+  }
+
   // ── Render: SIN CAPACIDAD DE IA (sin plan / prueba / expirada / demo) ─────
   // Fase 14: mensaje comercial claro y CERO llamadas a la API de IA.
   if (demo.active || (accessStatus === 'resolved' && !can('ask_data_ai'))) {
@@ -326,7 +440,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
           : 'Contrata un plan en la página Planes para analizar tus datos conversando con el asistente.'
     return (
       <aside className={asideClass}>
-        <PanelHeader />
+        <PanelHeader mode={mode} onModeChange={setMode} coinBalance={coinWallet?.balance} />
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gold/15">
             <Lock className="h-6 w-6 text-gold" />
@@ -355,7 +469,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   if (!active) {
     return (
       <aside className={asideClass}>
-        <PanelHeader />
+        <PanelHeader mode={mode} onModeChange={setMode} coinBalance={coinWallet?.balance} />
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/5">
             <Lock className="h-6 w-6 text-white/40" />
@@ -379,7 +493,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   if (loading) {
     return (
       <aside className={asideClass}>
-        <PanelHeader />
+        <PanelHeader mode={mode} onModeChange={setMode} coinBalance={coinWallet?.balance} />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           <Loader2 className="h-7 w-7 animate-spin text-teal" />
           <p className="text-xs text-white/50">{loadingLabel}</p>
@@ -393,7 +507,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   if (error) {
     return (
       <aside className={asideClass}>
-        <PanelHeader />
+        <PanelHeader mode={mode} onModeChange={setMode} coinBalance={coinWallet?.balance} />
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-coral/10">
             <TriangleAlert className="h-6 w-6 text-coral" />
@@ -422,7 +536,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   // ── Render: ACTIVO ───────────────────────────────────────────────────────
   return (
     <aside className={asideClass}>
-      <PanelHeader />
+      <PanelHeader mode={mode} onModeChange={setMode} coinBalance={coinWallet?.balance} />
 
       {/* Cuerpo con scroll */}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
@@ -506,11 +620,27 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
 
 // ── Sub-componentes ───────────────────────────────────────────────────────────
 
-function PanelHeader() {
+function PanelHeader({
+  mode = 'advanced',
+  onModeChange,
+  coinBalance,
+}: {
+  mode?: 'quick' | 'advanced'
+  onModeChange?: (mode: 'quick' | 'advanced') => void
+  coinBalance?: number
+} = {}) {
   return (
-    <div className="flex h-16 items-center gap-2 border-b border-white/10 px-5">
-      <Sparkles className="h-5 w-5 text-gold" />
-      <h2 className="text-base font-semibold">Asistente IA</h2>
+    <div className="border-b border-white/10 px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2"><Sparkles className="h-4.5 w-4.5 text-gold" /><h2 className="text-sm font-semibold">Asistente ADS Veris</h2></div>
+        {coinBalance != null && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-gold"><Coins className="h-3 w-3" /> {coinBalance}</span>}
+      </div>
+      {onModeChange && (
+        <div className="mt-3 grid grid-cols-2 rounded-lg bg-white/5 p-1">
+          <button onClick={() => onModeChange('quick')} className={`rounded-md px-2 py-1.5 text-[10px] font-semibold transition-colors ${mode === 'quick' ? 'bg-teal text-white' : 'text-white/45 hover:text-white'}`}>Ayuda rápida</button>
+          <button onClick={() => onModeChange('advanced')} className={`rounded-md px-2 py-1.5 text-[10px] font-semibold transition-colors ${mode === 'advanced' ? 'bg-gold text-navy-deep' : 'text-white/45 hover:text-white'}`}>Chat avanzado</button>
+        </div>
+      )}
     </div>
   )
 }

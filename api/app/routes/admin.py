@@ -21,6 +21,7 @@ contraseñas — Supabase Auth ni siquiera las expone).
 """
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -156,12 +157,23 @@ def _accounts_sync(caller_id: str, settings: Settings, caller_email: str | None 
             detail=f"No se pudo leer las cuentas desde Supabase: {exc.__class__.__name__}",
         ) from exc
 
+    try:
+        chat_conversations = _fetch_json(
+            settings,
+            _rest(settings, "support_conversations"),
+            {"select": "user_id,status", "status": "eq.open", "limit": "1000"},
+        )
+    except httpx.HTTPError:
+        chat_conversations = []
+
     by_id = {p["id"]: p for p in profiles}
     dataset_count: dict[str, int] = {}
     for row in datasets:
         dataset_count[row["user_id"]] = dataset_count.get(row["user_id"], 0) + 1
     support_count: dict[str, int] = {}
     for row in support:
+        support_count[row["user_id"]] = support_count.get(row["user_id"], 0) + 1
+    for row in chat_conversations:
         support_count[row["user_id"]] = support_count.get(row["user_id"], 0) + 1
     addon_count: dict[str, int] = {}
     for row in addons:
@@ -356,6 +368,287 @@ async def admin_support_inbox(
 ) -> dict:
     """Bandeja unificada: solicitudes de ayuda + solicitudes de tokens/upgrade."""
     return await run_in_threadpool(_support_inbox_sync, user.id, settings, user.email)
+
+
+# ── Conversaciones de soporte en tiempo casi real ───────────────────────────
+
+
+class AdminChatMessageBody(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+def _admin_conversations_sync(
+    caller_id: str,
+    settings: Settings,
+    caller_email: str | None = None,
+) -> dict:
+    _require_admin_sync(caller_id, settings, caller_email)
+    from .support import _purge_stale_sync
+
+    _purge_stale_sync(settings)
+    conversations = _fetch_json(
+        settings,
+        _rest(settings, "support_conversations"),
+        {
+            "select": "id,user_id,status,source_page,created_at,last_message_at,closed_at",
+            "order": "last_message_at.desc",
+            "limit": "200",
+        },
+    )
+    ids = [str(row["id"]) for row in conversations]
+    messages = (
+        _fetch_json(
+            settings,
+            _rest(settings, "support_messages"),
+            {
+                "conversation_id": f"in.({','.join(ids)})",
+                "select": "id,conversation_id,sender_role,body,created_at",
+                "order": "created_at.asc",
+                "limit": "5000",
+            },
+        )
+        if ids
+        else []
+    )
+    by_conversation: dict[str, list] = {}
+    for message in messages:
+        by_conversation.setdefault(str(message["conversation_id"]), []).append(message)
+    for conversation in conversations:
+        thread = by_conversation.get(str(conversation["id"]), [])
+        conversation["message_count"] = len(thread)
+        conversation["last_message"] = thread[-1] if thread else None
+    return {
+        "conversations": conversations,
+        "open": sum(1 for row in conversations if row.get("status") == "open"),
+    }
+
+
+def _admin_conversation_detail_sync(
+    caller_id: str,
+    conversation_id: str,
+    settings: Settings,
+    caller_email: str | None = None,
+) -> dict:
+    _require_admin_sync(caller_id, settings, caller_email)
+    conversations = _fetch_json(
+        settings,
+        _rest(settings, "support_conversations"),
+        {
+            "id": f"eq.{conversation_id}",
+            "select": "id,user_id,status,source_page,created_at,last_message_at,closed_at",
+            "limit": "1",
+        },
+    )
+    if not conversations:
+        raise HTTPException(status_code=404, detail="La conversación ya no existe.")
+    messages = _fetch_json(
+        settings,
+        _rest(settings, "support_messages"),
+        {
+            "conversation_id": f"eq.{conversation_id}",
+            "select": "id,sender_role,body,created_at",
+            "order": "created_at.asc",
+            "limit": "500",
+        },
+    )
+    return {"conversation": {**conversations[0], "messages": messages}}
+
+
+def _admin_send_message_sync(
+    caller_id: str,
+    conversation_id: str,
+    body: AdminChatMessageBody,
+    settings: Settings,
+    caller_email: str | None = None,
+) -> dict:
+    detail = _admin_conversation_detail_sync(
+        caller_id, conversation_id, settings, caller_email
+    )["conversation"]
+    if detail["status"] != "open":
+        raise HTTPException(status_code=409, detail="La conversación está cerrada.")
+    response = httpx.post(
+        _rest(settings, "support_messages"),
+        json={
+            "conversation_id": conversation_id,
+            "sender_id": caller_id,
+            "sender_role": "admin",
+            "body": body.message.strip(),
+        },
+        headers={**_headers(settings), "Prefer": "return=minimal"},
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    _audit(
+        settings,
+        caller_id,
+        "support_chat_reply",
+        detail.get("user_id"),
+        {"conversation_id": conversation_id},
+    )
+    return _admin_conversation_detail_sync(
+        caller_id, conversation_id, settings, caller_email
+    )
+
+
+def _admin_close_conversation_sync(
+    caller_id: str,
+    conversation_id: str,
+    settings: Settings,
+    caller_email: str | None = None,
+) -> dict:
+    detail = _admin_conversation_detail_sync(
+        caller_id, conversation_id, settings, caller_email
+    )["conversation"]
+    if detail["status"] == "closed":
+        return {"ok": True, "status": "closed"}
+    now = datetime.now(timezone.utc).isoformat()
+    system_message = httpx.post(
+        _rest(settings, "support_messages"),
+        json={
+            "conversation_id": conversation_id,
+            "sender_id": caller_id,
+            "sender_role": "system",
+            "body": "Conversación cerrada por el equipo de soporte ADS Veris.",
+        },
+        headers={**_headers(settings), "Prefer": "return=minimal"},
+        timeout=_TIMEOUT,
+    )
+    system_message.raise_for_status()
+    response = httpx.patch(
+        _rest(settings, "support_conversations"),
+        params={"id": f"eq.{conversation_id}"},
+        json={"status": "closed", "closed_at": now, "closed_by": caller_id},
+        headers={**_headers(settings), "Prefer": "return=representation"},
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    _audit(
+        settings,
+        caller_id,
+        "support_chat_closed",
+        detail.get("user_id"),
+        {"conversation_id": conversation_id},
+    )
+    return {"ok": True, "status": "closed"}
+
+
+@router.get("/support/conversations")
+async def admin_support_conversations(
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return await run_in_threadpool(
+            _admin_conversations_sync, user.id, settings, user.email
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="El chat de soporte se está habilitando en la base de datos.",
+        ) from exc
+
+
+@router.get("/support/conversations/{conversation_id}")
+async def admin_support_conversation_detail(
+    conversation_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    return await run_in_threadpool(
+        _admin_conversation_detail_sync,
+        user.id,
+        conversation_id,
+        settings,
+        user.email,
+    )
+
+
+@router.post("/support/conversations/{conversation_id}/messages")
+async def admin_send_support_message(
+    conversation_id: str,
+    body: AdminChatMessageBody,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    return await run_in_threadpool(
+        _admin_send_message_sync,
+        user.id,
+        conversation_id,
+        body,
+        settings,
+        user.email,
+    )
+
+
+@router.post("/support/conversations/{conversation_id}/close")
+async def admin_close_support_conversation(
+    conversation_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    return await run_in_threadpool(
+        _admin_close_conversation_sync,
+        user.id,
+        conversation_id,
+        settings,
+        user.email,
+    )
+
+
+class GrantAdsCoinsBody(BaseModel):
+    user_id: str = Field(min_length=10, max_length=80)
+    amount: int = Field(gt=0, le=1_000_000)
+    note: str = Field(default="Otorgado por soporte", max_length=300)
+
+
+def _grant_ads_coins_sync(
+    caller_id: str,
+    body: GrantAdsCoinsBody,
+    settings: Settings,
+    caller_email: str | None = None,
+) -> dict:
+    _require_admin_sync(caller_id, settings, caller_email)
+    reference = f"admin:{caller_id}:{uuid4()}"
+    response = httpx.post(
+        _rest(settings, "rpc/adjust_ads_coins"),
+        json={
+            "p_user_id": body.user_id,
+            "p_amount": body.amount,
+            "p_reason": "admin_grant",
+            "p_reference_key": reference,
+            "p_metadata": {"note": body.note},
+        },
+        headers=_headers(settings),
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    rows = response.json()
+    balance = int(rows[0]["balance"]) if rows else 0
+    _audit(
+        settings,
+        caller_id,
+        "grant_ads_coins",
+        body.user_id,
+        {"amount": body.amount, "reference": reference},
+    )
+    return {"ok": True, "balance": balance, "amount": body.amount}
+
+
+@router.post("/grant-coins")
+async def admin_grant_ads_coins(
+    body: GrantAdsCoinsBody,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        return await run_in_threadpool(
+            _grant_ads_coins_sync, user.id, body, settings, user.email
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="La billetera ADS Coins todavía no está disponible en la base de datos.",
+        ) from exc
 
 
 class AttendBody(BaseModel):

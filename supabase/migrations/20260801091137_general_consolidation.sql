@@ -1,4 +1,4 @@
--- 0023 - Roles genéricos para consolidar cualquier Excel o CSV.
+-- 0023 - Roles genericos para consolidar cualquier Excel o CSV.
 -- ADITIVA Y RETROCOMPATIBLE: conserva todos los roles DEMRE existentes.
 
 begin;

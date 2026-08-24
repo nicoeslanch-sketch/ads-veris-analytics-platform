@@ -636,6 +636,7 @@ export default function Explorar() {
           subtitle="Preparando el análisis sin volver a limpiar el archivo."
         />
         <ActiveSheetSelector />
+        <ExplorePurposeNote />
         <AnalysisLoadingPanel
           operation={`Preparando el análisis${sheet ? ` de ${sheet}` : ''}`}
           detail="La carga comparte la misma caché de Resumen y se cancela si cambias a otra hoja."
@@ -671,6 +672,7 @@ export default function Explorar() {
           subtitle="Entiende qué explica los resultados, qué tan confiables son y dónde conviene actuar primero."
         />
         <ActiveSheetSelector />
+        <ExplorePurposeNote />
         <BusinessFilterBar
           options={metrics.analisis_negocio.filtros?.disponibles ?? {}}
           value={businessFilters}
@@ -693,6 +695,7 @@ export default function Explorar() {
           subtitle="Costos, precios de lista, margen potencial y composicion del catalogo."
         />
         <ActiveSheetSelector />
+        <ExplorePurposeNote />
         <ProductCatalogSummary analysis={metrics.analisis_productos} variant="explore" />
       </>
     )
@@ -883,6 +886,8 @@ export default function Explorar() {
           </button>
         )}
       </div>
+
+      <ExplorePurposeNote />
 
       <ActiveSheetSelector onModeChange={setSelectorMode} openRelationsNonce={openRelationsNonce} />
 
@@ -1376,6 +1381,15 @@ export default function Explorar() {
       </>
       )}
     </>
+  )
+}
+
+function ExplorePurposeNote() {
+  return (
+    <div className="mb-5 grid gap-2 rounded-xl border border-teal/20 bg-teal/[0.05] px-4 py-3 text-xs leading-relaxed text-navy/65 sm:grid-cols-[auto_1fr] sm:items-center">
+      <span className="font-semibold text-teal">Resumen muestra qué pasó.</span>
+      <span>Explorar profundiza en el porqué: permite cambiar pregunta, dimensión, periodo y métrica, y muestra detalle, cobertura y hallazgos.</span>
+    </div>
   )
 }
 

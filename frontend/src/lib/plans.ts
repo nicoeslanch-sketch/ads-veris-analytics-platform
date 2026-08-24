@@ -12,6 +12,13 @@
 
 export type PlanCode = 'sin_plan' | 'basico' | 'analista' | 'gold'
 
+export const PLAN_ADS_COINS: Record<PlanCode, number> = {
+  sin_plan: 0,
+  basico: 100,
+  analista: 500,
+  gold: 1200,
+}
+
 export type Capability =
   | 'standardize'
   | 'clean'
@@ -89,6 +96,10 @@ export interface PlanFeatureRow {
 /** Matriz de la página Planes (Fase 8). */
 export const PLAN_FEATURE_ROWS: PlanFeatureRow[] = [
   {
+    label: 'ADS Coins incluidos por mes (100 Básico · 500 Analista · 1.200 Gold)',
+    availability: { basico: 'si', analista: 'si', gold: 'si' },
+  },
+  {
     label: 'Estandarizar y limpiar datos (reglas por defecto)',
     availability: { basico: 'si', analista: 'si', gold: 'si' },
   },
@@ -97,8 +108,8 @@ export const PLAN_FEATURE_ROWS: PlanFeatureRow[] = [
     availability: { basico: 'si', analista: 'si', gold: 'si' },
   },
   {
-    label: 'Asistente IA anclado a tus datos (insights)',
-    availability: { basico: 'limitado', analista: 'si', gold: 'si' },
+    label: 'Chat avanzado sobre tus datos (próximamente, consume ADS Coins)',
+    availability: { basico: 'construccion', analista: 'construccion', gold: 'construccion' },
   },
   {
     label: 'Reporte ejecutivo del negocio (PDF)',
