@@ -1,7 +1,12 @@
 from pathlib import Path
 
 
-SQL = (Path(__file__).parents[2] / "supabase" / "migrations" / "0023_general_consolidation.sql").read_text(encoding="utf-8")
+SQL = (
+    Path(__file__).parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260801091137_general_consolidation.sql"
+).read_text(encoding="utf-8")
 
 
 def test_migration_0023_keeps_old_roles_and_adds_general_roles():
