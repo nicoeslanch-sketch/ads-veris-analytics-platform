@@ -76,7 +76,7 @@ export function useFileImport() {
 
   const importFile = async (
     selected: File,
-    options: { source?: DatasetSource } = {},
+    options: { source?: DatasetSource; connectorSourceId?: string | null } = {},
   ): Promise<boolean> => {
     setError(null)
     setPersistWarning(null)
@@ -129,6 +129,11 @@ export function useFileImport() {
       )
       if (!isCurrent()) return false
       if (!setStandardization(result, { expectedFile: selected })) return false
+      if (options.connectorSourceId) {
+        void apiPostJson(`/connectors/sheets/sources/${options.connectorSourceId}/link`, {
+          dataset_id: datasetId,
+        }).catch(() => undefined)
+      }
       // History persistence is best-effort and must not extend the processing
       // spinner after the usable result has already arrived.
       void markStandardized(datasetId, result).then((marked) => {

@@ -30,6 +30,7 @@ import {
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
+import AdminSupportChat from '../components/admin/AdminSupportChat'
 import { ApiError, apiGet, apiPostJson } from '../lib/api'
 import { normalizePlan, planLabel, type PlanCode } from '../lib/plans'
 import { usePlan } from '../lib/usePlan'
@@ -97,6 +98,7 @@ export default function AdminCuentas() {
   const [savingPlan, setSavingPlan] = useState<string | null>(null)
   const [attending, setAttending] = useState<string | null>(null)
   const [grantingTo, setGrantingTo] = useState<string | null>(null)
+  const [grantingCoinsTo, setGrantingCoinsTo] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
@@ -174,6 +176,29 @@ export default function AdminCuentas() {
       setNotice(err instanceof ApiError ? err.message : 'No se pudieron otorgar los tokens.')
     } finally {
       setGrantingTo(null)
+    }
+  }
+
+  const otorgarAdsCoins = async (userId: string) => {
+    const cantidad = window.prompt('¿Cuántos ADS Coins quieres otorgar?', '100')
+    if (!cantidad) return
+    const amount = Number.parseInt(cantidad, 10)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setNotice('Cantidad inválida: escribe un número mayor que 0.')
+      return
+    }
+    setGrantingCoinsTo(userId)
+    try {
+      const result = await apiPostJson<{ balance: number }>('/admin/grant-coins', {
+        user_id: userId,
+        amount,
+        note: 'Otorgado desde Administrar cuentas',
+      })
+      setNotice(`ADS Coins otorgados. Nuevo saldo: ${result.balance}.`)
+    } catch (err) {
+      setNotice(err instanceof ApiError ? err.message : 'No se pudieron otorgar ADS Coins.')
+    } finally {
+      setGrantingCoinsTo(null)
     }
   }
 
@@ -287,6 +312,8 @@ export default function AdminCuentas() {
         </div>
       ) : (
         data && (
+          <>
+          <AdminSupportChat accounts={data.cuentas} />
           <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
             {/* Lista de cuentas */}
             <Card className="min-w-0">
@@ -399,6 +426,14 @@ export default function AdminCuentas() {
                                 <Coins className="h-3.5 w-3.5" />
                               )}
                               Otorgar tokens
+                            </button>
+                            <button
+                              onClick={() => void otorgarAdsCoins(cuenta.id)}
+                              disabled={grantingCoinsTo === cuenta.id}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-gold/10 px-3 py-1.5 text-xs font-semibold text-gold transition-colors hover:bg-gold/20 disabled:opacity-50"
+                            >
+                              {grantingCoinsTo === cuenta.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Coins className="h-3.5 w-3.5" />}
+                              Otorgar ADS Coins
                             </button>
                           </div>
                           <p className="mt-3 text-[11px] leading-relaxed text-navy/45">
@@ -517,6 +552,7 @@ export default function AdminCuentas() {
               </Card>
             </div>
           </div>
+          </>
         )
       )}
     </>

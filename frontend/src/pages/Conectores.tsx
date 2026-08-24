@@ -8,7 +8,7 @@
  * - Base de datos SQL y API/ERP: próximamente (requieren credenciales seguras).
  */
 
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -19,7 +19,9 @@ import {
   Link2,
   Loader2,
   Plug,
+  RefreshCw,
   Table2,
+  Trash2,
 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
@@ -27,11 +29,38 @@ import { PlanRequiredModal } from '../components/ui/PlanGate'
 import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
-import { ApiError, apiPostJson } from '../lib/api'
+import { ApiError, apiDelete, apiGet, apiPostJson } from '../lib/api'
 
 interface SheetsImportResponse {
   filename: string
   csv: string
+  source_id: string | null
+  content_hash: string
+  persistent: boolean
+}
+
+interface SheetSource {
+  id: string
+  dataset_id: string | null
+  source_url: string
+  display_name: string
+  gid: string
+  sync_mode: 'manual' | 'automatic'
+  update_available: boolean
+  last_status: 'connected' | 'changed' | 'error'
+  last_error: string | null
+  last_checked_at: string | null
+  last_synced_at: string | null
+  created_at: string
+}
+
+interface SheetsRefreshResponse {
+  source_id: string
+  filename: string
+  changed: boolean
+  content_hash: string
+  checked_at: string
+  csv?: string
 }
 
 export default function Conectores() {
@@ -49,8 +78,13 @@ export default function Conectores() {
   } = useFileImport()
 
   const [sheetUrl, setSheetUrl] = useState('')
+  const [syncMode, setSyncMode] = useState<'manual' | 'automatic'>('automatic')
   const [fetching, setFetching] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sources, setSources] = useState<SheetSource[]>([])
+  const [sourcesAvailable, setSourcesAvailable] = useState(true)
+  const [checkingSource, setCheckingSource] = useState<string | null>(null)
+  const autoCheckedRef = useRef(new Set<string>())
 
   const working = fetching || importing
   const checkingAccess = accessStatus === 'loading'
@@ -67,10 +101,14 @@ export default function Conectores() {
     setFetching(true)
     try {
       // La API valida la URL, extrae el ID y descarga el CSV oficial (≤15 MB)
-      const result = await apiPostJson<SheetsImportResponse>('/connectors/sheets', { url })
+      const result = await apiPostJson<SheetsImportResponse>('/connectors/sheets', { url, sync_mode: syncMode })
       const sheetFile = new File([result.csv], result.filename, { type: 'text/csv' })
-      const ok = await importFile(sheetFile, { source: 'google_sheets' })
-      if (ok) navigate('/estandarizacion')
+      const ok = await importFile(sheetFile, { source: 'google_sheets', connectorSourceId: result.source_id })
+      if (ok) {
+        setSheetUrl('')
+        void loadSources()
+        navigate('/estandarizacion')
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo importar la hoja.')
     } finally {
@@ -79,6 +117,76 @@ export default function Conectores() {
   }
 
   const shownError = error ?? importError
+
+  const loadSources = useCallback(async () => {
+    try {
+      const response = await apiGet<{ available: boolean; sources: SheetSource[] }>('/connectors/sheets/sources')
+      setSourcesAvailable(response.available)
+      setSources(response.sources)
+    } catch {
+      setSourcesAvailable(false)
+      setSources([])
+    }
+  }, [])
+
+  const checkSource = useCallback(async (source: SheetSource, applyUpdate: boolean) => {
+    if (checkingSource || importing) return
+    setCheckingSource(source.id)
+    setError(null)
+    try {
+      const response = await apiPostJson<SheetsRefreshResponse>(`/connectors/sheets/sources/${source.id}/refresh`, { include_content: applyUpdate })
+      if (applyUpdate && response.changed && response.csv != null) {
+        const file = new File([response.csv], response.filename, { type: 'text/csv' })
+        const ok = await importFile(file, { source: 'google_sheets', connectorSourceId: source.id })
+        if (ok) navigate('/estandarizacion')
+      }
+      await loadSources()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo comprobar la fuente.')
+      await loadSources()
+    } finally {
+      setCheckingSource(null)
+    }
+  }, [checkingSource, importing, importFile, loadSources, navigate])
+
+  useEffect(() => { void loadSources() }, [loadSources])
+
+  useEffect(() => {
+    const automatic = sources.filter((source) => source.sync_mode === 'automatic' && !autoCheckedRef.current.has(source.id))
+    const next = automatic[0]
+    if (!next || checkingSource || importing) return
+    autoCheckedRef.current.add(next.id)
+    void checkSource(next, false)
+  }, [sources, checkingSource, importing, checkSource])
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      autoCheckedRef.current.clear()
+      void loadSources()
+    }, 5 * 60_000)
+    return () => window.clearInterval(interval)
+  }, [loadSources])
+
+  const changeMode = async (source: SheetSource) => {
+    const next = source.sync_mode === 'automatic' ? 'manual' : 'automatic'
+    try {
+      await apiPostJson(`/connectors/sheets/sources/${source.id}/mode`, { sync_mode: next })
+      await loadSources()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo cambiar la sincronización.')
+    }
+  }
+
+  const removeSource = async (source: SheetSource) => {
+    if (!window.confirm(`¿Desconectar “${source.display_name}”? Los datasets ya importados no se eliminan.`)) return
+    try {
+      await apiDelete(`/connectors/sheets/sources/${source.id}`)
+      await loadSources()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'No se pudo desconectar la fuente.')
+    }
+  }
 
   return (
     <>
@@ -113,7 +221,7 @@ export default function Conectores() {
               <div>
                 <h2 className="text-base font-semibold text-navy">Google Sheets</h2>
                 <p className="text-xs text-navy/55">
-                  Importa una hoja pública o compartida por enlace — sin instalar nada.
+                  Guarda uno o varios enlaces y detecta sus actualizaciones — sin instalar nada.
                 </p>
               </div>
             </div>
@@ -160,6 +268,11 @@ export default function Conectores() {
             </button>
           </div>
 
+          <label className="mt-3 inline-flex items-center gap-2 text-xs text-navy/60">
+            <input type="checkbox" checked={syncMode === 'automatic'} onChange={(event) => setSyncMode(event.target.checked ? 'automatic' : 'manual')} className="h-4 w-4 rounded border-navy/20 text-teal focus:ring-teal" />
+            Comprobar automáticamente si esta fuente cambia mientras uso la plataforma
+          </label>
+
           {shownError && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-3 py-2.5 text-sm text-coral">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -179,8 +292,38 @@ export default function Conectores() {
               "Cualquier persona con el enlace"
             </span>{' '}
             (como lector). Tras importar, el archivo sigue el mismo flujo:
-            Estandarización → Limpieza → Dashboard. Máximo 15 MB.
+            Estandarización → Limpieza → Dashboard. Cada pestaña (gid) se registra por separado. Máximo 15 MB.
           </p>
+
+          <div className="mt-5 border-t border-navy/10 pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div><h3 className="text-sm font-semibold text-navy">Fuentes conectadas</h3><p className="text-[11px] text-navy/45">Los cambios se detectan solos; tú decides cuándo volver a validar y aplicar la nueva versión.</p></div>
+              <button onClick={() => void loadSources()} className="inline-flex items-center gap-1.5 rounded-lg border border-navy/15 px-3 py-1.5 text-[11px] font-semibold text-navy/60 hover:bg-navy/5"><RefreshCw className="h-3.5 w-3.5" /> Comprobar todas</button>
+            </div>
+            {!sourcesAvailable ? (
+              <p className="mt-3 rounded-lg bg-gold/10 px-3 py-2 text-xs text-navy/60">La persistencia de conexiones se está habilitando. La importación directa sigue disponible.</p>
+            ) : sources.length === 0 ? (
+              <p className="mt-3 rounded-lg bg-navy/[0.03] px-3 py-4 text-center text-xs text-navy/45">Todavía no has guardado enlaces de Google Sheets.</p>
+            ) : (
+              <ul className="mt-3 grid gap-3 lg:grid-cols-2">
+                {sources.map((source) => (
+                  <li key={source.id} className={`rounded-xl border p-3.5 ${source.update_available ? 'border-gold/45 bg-gold/[0.06]' : source.last_status === 'error' ? 'border-coral/35 bg-coral/[0.04]' : 'border-navy/10 bg-white'}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-green/10"><Table2 className="h-4 w-4 text-green" /></div>
+                      <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-navy">{source.display_name}</p><p className="mt-0.5 text-[10px] text-navy/40">Pestaña gid {source.gid} · {source.sync_mode === 'automatic' ? 'comprobación automática' : 'solo manual'}</p></div>
+                      <button onClick={() => void removeSource(source)} className="rounded-md p-1 text-navy/30 hover:bg-coral/10 hover:text-coral" title="Desconectar"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </div>
+                    {source.update_available ? <p className="mt-3 rounded-lg bg-gold/10 px-2.5 py-2 text-[11px] font-semibold text-navy/70">Hay cambios disponibles. Al actualizar volverás a Estandarización y Limpieza.</p> : source.last_error ? <p className="mt-3 text-[11px] text-coral">{source.last_error}</p> : <p className="mt-3 text-[11px] text-navy/45">Sin cambios pendientes.</p>}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button onClick={() => void checkSource(source, source.update_available)} disabled={checkingSource === source.id || importing} className="inline-flex items-center gap-1.5 rounded-lg bg-teal px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">{checkingSource === source.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{source.update_available ? 'Actualizar datos' : 'Comprobar cambios'}</button>
+                      <button onClick={() => void changeMode(source)} className="rounded-lg border border-navy/15 px-3 py-1.5 text-[10px] font-semibold text-navy/55 hover:bg-navy/5">{source.sync_mode === 'automatic' ? 'Pasar a manual' : 'Activar automática'}</button>
+                      <a href={source.source_url} target="_blank" rel="noreferrer" className="ml-auto text-[10px] font-semibold text-teal hover:underline">Abrir en Google</a>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </Card>
 
         {/* Excel / CSV */}

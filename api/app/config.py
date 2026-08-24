@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     ai_monthly_limit_analista: int = 200
     ai_monthly_limit_gold: int = 200
 
+    # Asistente de producto: Ayuda rapida es determinista y siempre funciona.
+    # El chat avanzado y las compras quedan explicitamente apagados hasta
+    # configurar proveedor de IA y pasarela de pago.
+    advanced_ai_enabled: bool = False
+    ads_coin_purchases_enabled: bool = False
+    ads_coins_advanced_message_cost: int = 5
+
     # ── Fase 7/8: planes y limpieza dirigida ──
     # Interruptor global de gating por plan. Desde la Fase 8 queda ENCENDIDO:
     # descargar la base limpia y la limpieza dirigida exigen Plan Analista.
@@ -140,6 +147,8 @@ class Settings(BaseSettings):
             raise ValueError("Los límites de disco y chunk de consolidación deben ser positivos.")
         if self.analysis_cache_ttl_seconds < 1 or self.analysis_lock_ttl_seconds < 1:
             raise ValueError("Los TTL de análisis compartido deben ser positivos.")
+        if self.ads_coins_advanced_message_cost < 1:
+            raise ValueError("El costo del chat avanzado en ADS Coins debe ser positivo.")
         return self
 
 

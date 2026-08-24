@@ -14,6 +14,8 @@ from .config import Settings, get_settings
 from .version import ENGINE_VERSION, LATEST_MIGRATION, commit_sha
 from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
+from .routes.assistant import router as assistant_router
+from .routes.coins import router as coins_router
 from .routes.connectors import router as connectors_router
 from .routes.datasets import router as datasets_router
 from .routes.me import router as me_router
@@ -121,6 +123,8 @@ def me(user: AuthenticatedUser = Depends(get_current_user)) -> dict:
 app.include_router(pipeline_router)
 app.include_router(me_router)
 app.include_router(ai_router)
+app.include_router(assistant_router)
+app.include_router(coins_router)
 app.include_router(connectors_router)
 app.include_router(datasets_router)
 app.include_router(plans_router)
