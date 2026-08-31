@@ -12,6 +12,8 @@ import re
 import unicodedata
 from typing import Any
 
+from .metric_assistant import answer_metrics_question
+
 
 def article(
     key: str,
@@ -73,7 +75,7 @@ ARTICLES: list[dict[str, Any]] = [
     article("coins", "ads_coins", "ADS Coins", ["ads coins", "monedas", "saldo", "comprar coins"], "ADS Coins será el saldo unificado para consumos variables. La billetera y su historial ya están preparados, pero las compras siguen deshabilitadas hasta integrar una pasarela. Nunca se descuenta una moneda sin registrar motivo y saldo resultante."),
     article("coin_uses", "ads_coins", "Usos futuros de ADS Coins", ["para que sirven monedas", "usos coins", "que comprar"], "Además del chat avanzado, los ADS Coins pueden cubrir limpiezas dirigidas adicionales, exportaciones pesadas, actualizaciones automáticas más frecuentes y conectores premium. Cada uso se activará por separado y mostrará el costo antes de confirmar."),
     article("advanced_chat", "asistente", "Chat avanzado", ["chat avanzado", "inteligencia artificial", "ia", "tokens"], "Chat avanzado está preparado para razonar sobre las métricas de tu negocio y consumirá ADS Coins según el plan. Por ahora permanece cerrado: Ayuda rápida responde dudas de uso sin IA y sin gastar monedas."),
-    article("bot_limits", "asistente", "Límites de Ayuda rápida", ["bot no entiende", "respuesta automatica", "sin ia", "pregunta sobre mis numeros"], "Ayuda rápida usa reglas y respuestas aprobadas: puede explicar funciones y fórmulas, pero no interpreta libremente tus cifras. Para un caso específico, abre Ayuda y conversa con soporte humano; Chat avanzado cubrirá ese razonamiento cuando se habilite."),
+    article("bot_metrics_scope_v2", "asistente", "Alcance de Ayuda rápida", ["bot no entiende", "respuesta automatica", "sin ia", "pregunta sobre mis numeros"], "Ayuda rápida usa reglas auditables: puede leer los indicadores publicados de tu archivo, explicar fórmulas y entregar conclusiones prudentes sin consumir ADS Coins. No inventa cifras ni calcula indicadores cuyas fuentes no estén disponibles.", priority=85),
     article("human_support", "soporte", "Hablar con soporte", ["hablar con persona", "soporte humano", "contactar admin", "necesito ayuda"], "Abre Ayuda en el menú, escribe tu caso y se creará una conversación con la cuenta administradora de ADS Veris. Puedes volver al mismo chat mientras siga abierto."),
     article("chat_expiry", "soporte", "Caducidad del chat", ["24 horas", "chat se elimina", "conversacion desaparece", "caduca"], "Por privacidad y orden, la conversación humana y sus mensajes se eliminan después de 24 horas sin actividad. Un nuevo mensaje antes del plazo reinicia el contador."),
     article("chat_closed", "soporte", "Conversación cerrada", ["conversacion cerrada", "cerraron chat", "volver a escribir"], "Cuando soporte cierra el caso verás Conversación cerrada y ya no podrás escribir en ese hilo. Si aparece una necesidad nueva, inicia otra conversación desde Ayuda."),
@@ -85,6 +87,18 @@ ARTICLES: list[dict[str, Any]] = [
     article("inventory", "inventario", "Inventario", ["inventario", "stock", "rotacion", "movimiento inventario"], "Los movimientos de inventario necesitan producto, fecha, tipo de movimiento y cantidad. El stock final requiere un saldo inicial o una secuencia completa; si falta, ADS Veris muestra movimientos y no inventa existencias."),
     article("customers", "clientes", "Análisis de clientes", ["clientes", "concentracion cliente", "top clientes", "muchos clientes"], "Cuando existen muchos clientes, conviene mostrar participación, recurrencia, ticket y concentración por segmentos, no una lista masiva. Los clientes sin ID estable se agrupan solo si la etiqueta es consistente y se informa la cobertura."),
     article("forecast", "analisis", "Pronósticos", ["pronostico", "proyeccion", "predecir ventas", "forecast"], "Una proyección necesita suficiente historia y una frecuencia temporal consistente. Si el archivo no cumple esas condiciones, ADS Veris no debe presentar un pronóstico como hecho; puede mostrar tendencia observada y su cobertura."),
+    article("current_ratio", "finanzas", "Liquidez corriente", ["liquidez corriente", "razon corriente", "indice de liquidez"], "Liquidez corriente = activo corriente / pasivo corriente. Mide cobertura contable de obligaciones de corto plazo. Debe compararse con periodos anteriores y con el sector: un valor alto también puede esconder inventario lento o recursos inmovilizados."),
+    article("acid_test", "finanzas", "Prueba ácida", ["prueba acida", "test acido", "liquidez sin inventario"], "Prueba ácida = (activo corriente − inventarios) / pasivo corriente. Evalúa la capacidad de pago de corto plazo sin depender de vender inventario. Conviene revisar también la cobrabilidad y vencimiento de las cuentas por cobrar."),
+    article("working_capital", "finanzas", "Capital de trabajo", ["capital de trabajo", "fondo de maniobra"], "Capital de trabajo = activo corriente − pasivo corriente. Un saldo positivo entrega holgura operativa, pero no garantiza caja disponible: importa la composición y velocidad de cobro, inventario y pago."),
+    article("debt_ratio", "finanzas", "Endeudamiento", ["endeudamiento", "nivel de deuda", "pasivo sobre activo", "apalancamiento"], "El endeudamiento relaciona pasivos con activos o patrimonio, según la fórmula publicada. No existe un nivel universalmente correcto: revisa costo, plazo, moneda, capacidad de pago y estabilidad de los flujos antes de concluir."),
+    article("interest_coverage", "finanzas", "Cobertura de intereses", ["cobertura de intereses", "puedo pagar intereses", "gastos financieros"], "Cobertura de intereses = resultado operativo / gastos financieros. Indica cuántas veces la operación cubre el costo financiero; debe leerse junto con vencimientos de capital y flujo de caja, no de forma aislada."),
+    article("roa_roe", "finanzas", "ROA y ROE", ["roa", "roe", "rentabilidad activos", "rentabilidad patrimonio"], "ROA relaciona resultado con activos y ROE con patrimonio. Sirven para evaluar eficiencia y retorno del capital, pero el ROE puede subir por mayor deuda; compáralos juntos, con periodos equivalentes y promedios de balance cuando estén disponibles."),
+    article("inventory_turnover", "finanzas", "Rotación de inventario", ["rotacion de inventario", "dias inventario", "stock inmovilizado"], "Rotación de inventario compara costo de ventas con inventario promedio. Una mayor rotación suele liberar capital, pero puede aumentar quiebres de stock; compárala con estacionalidad, margen y nivel de servicio."),
+    article("collection_payment_days", "finanzas", "Días de cobro y pago", ["dias de cobro", "dias de pago", "ciclo de caja", "periodo medio"], "Los días de cobro estiman cuánto tarda el negocio en recuperar ventas a crédito y los días de pago cuánto tarda en pagar proveedores. La brecha entre ambos ayuda a anticipar presión de caja, siempre que fechas y saldos sean comparables."),
+    article("financial_comparison", "finanzas", "Análisis horizontal y vertical", ["analisis horizontal", "analisis vertical", "comparar estados financieros"], "El análisis horizontal compara cambios entre periodos; el vertical expresa cada partida como porcentaje de una base, como ventas o activos. Úsalos juntos para distinguir crecimiento real, cambios de estructura y partidas atípicas."),
+    article("npv_irr", "finanzas", "VAN y TIR", ["van", "tir", "valoracion de proyecto", "evaluar proyecto"], "El VAN descuenta los flujos esperados a una tasa exigida; un VAN positivo crea valor bajo esos supuestos. La TIR es la tasa que lleva el VAN a cero. Ambos dependen de flujos, horizonte y riesgo: conviene probar escenarios y no decidir solo por una TIR alta."),
+    article("financial_quality", "calidad", "Errores en estados financieros", ["errores estados financieros", "balance descuadrado", "clasificacion contable", "datos financieros incorrectos"], "Antes de analizar, verifica que el balance cuadre, que periodos y unidades sean consistentes, que costos y gastos estén bien clasificados y que no falten movimientos. Una fórmula correcta sobre datos mal clasificados produce una conclusión engañosa."),
+    article("treasury_budget", "finanzas", "Presupuesto de tesorería", ["presupuesto de tesoreria", "planificar caja", "falta de liquidez"], "Un presupuesto de tesorería ordena cobros y pagos por fecha para anticipar déficits o excedentes. Actualízalo con escenarios y desviaciones reales; ventas devengadas no sustituyen fechas efectivas de entrada y salida de caja."),
 ]
 
 
@@ -119,13 +133,21 @@ def rank_articles(message: str, articles: list[dict[str, Any]] | None = None) ->
     return ranked
 
 
-def answer_for(message: str, articles: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def answer_for(
+    message: str,
+    articles: list[dict[str, Any]] | None = None,
+    metrics: dict[str, Any] | None = None,
+    history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    metric_answer = answer_metrics_question(message, metrics, history)
+    if metric_answer is not None:
+        return metric_answer
     catalog = articles or ARTICLES
     ranked = rank_articles(message, catalog)
     if not ranked or ranked[0][0] < 3.5:
         suggestions = [item["title"] for item in sorted(catalog, key=lambda row: row.get("priority", 0), reverse=True)[:4]]
         return {
-            "answer": "Puedo orientarte sobre importación, limpieza, Google Sheets, cálculos, relaciones, gráficos, planes, ADS Coins y soporte. Reformula la pregunta con el nombre de la función. Si el caso depende de tus cifras, abre Ayuda para conversar con soporte humano.",
+            "answer": "Puedo leer los indicadores visibles de tu archivo y orientarte sobre importación, limpieza, Google Sheets, finanzas, relaciones, gráficos, planes, ADS Coins y soporte. Pregunta por una cifra o usa el nombre del indicador. Si una fuente no está disponible, te diré qué falta en vez de estimarla; para un caso no cubierto también puedes abrir Ayuda y conversar con soporte humano.",
             "matched_key": None,
             "confidence": "low",
             "suggestions": suggestions,

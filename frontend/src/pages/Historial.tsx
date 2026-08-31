@@ -31,6 +31,8 @@ import EmptyState from '../components/ui/EmptyState'
 import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { apiDelete, apiPost, ApiError } from '../lib/api'
+import { saveDatasetWorkbookSummary } from '../lib/datasets'
+import { summarizeCleanWorkbook } from '../lib/workbookSummary'
 import {
   RECENT_ACTIVITY_DATASET_LIMIT,
   RECENT_ACTIVITY_LIMIT,
@@ -262,6 +264,20 @@ export default function Historial() {
         },
       )
       if (!applied) return
+      const selectedSheetNames = restored.selected_sheets ?? Object.keys(restored.sheet_sessions ?? {})
+      const restoredCleaningResults = selectedSheetNames.flatMap((name) => {
+        const result = restored.sheet_sessions?.[name]?.cleaning
+        return result ? [result] : []
+      })
+      if (
+        restoredCleaningResults.length > 0 &&
+        restoredCleaningResults.length === selectedSheetNames.length
+      ) {
+        void saveDatasetWorkbookSummary(
+          restored.dataset.id,
+          summarizeCleanWorkbook(restoredCleaningResults),
+        )
+      }
       navigate(restored.cleaning ? '/' : '/limpieza', {
         state: restored.refresh_required
           ? {

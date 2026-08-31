@@ -101,7 +101,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   const demo = useDemo()
   const { status: accessStatus, access, can } = useAccess()
   const advancedEnabled = Boolean(assistantConfig?.advanced_enabled)
-  const aiBlocked = mode !== 'advanced' || !advancedEnabled || demo.active || accessStatus !== 'resolved' || !can('ask_data_ai')
+  const advancedBlocked = !advancedEnabled || demo.active || accessStatus !== 'resolved' || !can('ask_data_ai')
 
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(false)
@@ -138,12 +138,13 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   // Auto-scroll al fondo cuando llegan mensajes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, botMessages])
 
   const runActivation = async (
     fileObj: File,
     storagePathArg: string | null,
     metricsArg: MetricsResult | null,
+    generateSummary: boolean,
   ) => {
     activationAbortRef.current?.abort()
     const controller = new AbortController()
@@ -210,13 +211,24 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         setContextMetrics(m)
       } else {
         if (!isCurrent()) return
+        setActiveCurrency(m.moneda)
         localMetrics.current = m
       }
       if (m.moneda_mixta) {
-        localMetrics.current = null
-        setError(
-          'La IA está bloqueada porque el archivo mezcla monedas incompatibles. Corrige ventas o costos en Limpieza.',
-        )
+        if (generateSummary) {
+          setError(
+            'La IA está bloqueada porque el archivo mezcla monedas incompatibles. Corrige ventas o costos en Limpieza.',
+          )
+          return
+        }
+      }
+      if (!generateSummary) {
+        setBotSuggestions([
+          '¿Cuáles son mis ingresos totales?',
+          '¿En qué moneda están mis datos?',
+          '¿Qué conclusión general sacas de mis datos?',
+          '¿Qué problemas de calidad debo revisar?',
+        ])
         return
       }
       setLoadingLabel('Generando resumen con IA…')
@@ -227,7 +239,9 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       setSummary(res)
     } catch (err) {
       if (!isCurrent()) return
-      setError(err instanceof ApiError ? err.message : 'No se pudo iniciar el asistente.')
+      const detail = err instanceof ApiError ? err.message : 'No se pudo iniciar el asistente.'
+      if (generateSummary) setError(detail)
+      else setBotError('No pude cargar los indicadores del archivo. Las guías de uso siguen disponibles.')
     } finally {
       if (activationAbortRef.current === controller) activationAbortRef.current = null
       if (isCurrent()) setLoading(false)
@@ -251,7 +265,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       return
     }
     // Fase 14: bloqueado por plan/prueba (o acceso sin resolver) → cero llamadas.
-    if (aiBlocked) return
+    if (mode === 'advanced' && advancedBlocked) return
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
     const fileKey = metricsCacheKey({
       dataset: datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0),
@@ -264,21 +278,25 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       directed: cleaning?.dirigida,
       manifest: sheetManifest,
     })
-    if (fetchedForFile.current === fileKey) return
-    fetchedForFile.current = fileKey
-    void runActivation(file, storagePath, contextMetrics)
+    const activationKey = `${mode}:${fileKey}`
+    if (fetchedForFile.current === activationKey) return
+    fetchedForFile.current = activationKey
+    void runActivation(file, storagePath, contextMetrics, mode === 'advanced')
     return () => {
       // Fase 12b: liberar la clave al desmontar (StrictMode/remontaje) — la
       // activación abortada quedaba "ya hecha" y el panel en spinner eterno.
-      if (fetchedForFile.current === fileKey) fetchedForFile.current = null
+      if (fetchedForFile.current === activationKey) fetchedForFile.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, aiBlocked, file, datasetId, storagePath, uploadedAt, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, cleaning])
+  }, [active, mode, advancedBlocked, file, datasetId, storagePath, uploadedAt, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, cleaning])
 
   // Si las métricas llegan al contexto después (usuario visitó Resumen),
   // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.
   useEffect(() => {
-    if (contextMetrics && active) localMetrics.current = contextMetrics
+    if (contextMetrics && active) {
+      setActiveCurrency(contextMetrics.moneda)
+      localMetrics.current = contextMetrics
+    }
   }, [contextMetrics, active])
 
   const sendMessage = async (text: string) => {
@@ -360,13 +378,20 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
 
   const sendBotMessage = async (text: string) => {
     const clean = text.trim()
-    if (!clean || botSending) return
+    if (!clean || botSending || loading) return
     setBotInput('')
     setBotError(null)
     setBotMessages((current) => [...current, { role: 'user', content: clean }])
     setBotSending(true)
     try {
-      const response = await apiPostJson<BotResponse>('/assistant/bot', { message: clean })
+      const response = await apiPostJson<BotResponse>('/assistant/bot', {
+        message: clean,
+        metrics: localMetrics.current,
+        historial: botMessages.slice(-12).map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      })
       setBotMessages((current) => [...current, { role: 'assistant', content: response.answer }])
       setBotSuggestions(response.suggestions)
     } catch (err) {
@@ -386,25 +411,26 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
           <div className="rounded-xl border border-teal/20 bg-teal/10 p-3">
             <div className="flex items-center gap-2"><Bot className="h-4 w-4 text-teal" /><p className="text-xs font-semibold text-white">Bot automático, sin IA</p></div>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-white/55">Responde con una biblioteca aprobada de {assistantConfig?.knowledge_articles ?? 'muchas'} guías. No consume ADS Coins.</p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-white/55">Lee los indicadores visibles y responde con una biblioteca aprobada de {assistantConfig?.knowledge_articles ?? 'muchas'} guías. No consume ADS Coins.</p>
           </div>
           {botMessages.length === 0 && (
             <div className="rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-white/75">
-              Hola, soy la Ayuda rápida de ADS Veris. Puedo explicarte importación, limpieza, Google Sheets, cálculos, relaciones, gráficos, planes y soporte.
+              Hola, soy la Ayuda rápida de ADS Veris. Puedo responder preguntas sobre las cifras de tu dashboard y explicar importación, limpieza, finanzas, gráficos y soporte.
             </div>
           )}
           {botMessages.map((message, index) => <ChatBubble key={index} msg={message} />)}
           {botSending && <div className="flex items-center gap-2 text-xs text-white/45"><Loader2 className="h-3.5 w-3.5 animate-spin text-teal" /> Buscando la respuesta aprobada…</div>}
+          {loading && active && <div className="flex items-center gap-2 text-xs text-white/45"><Loader2 className="h-3.5 w-3.5 animate-spin text-teal" /> Cargando indicadores del archivo…</div>}
           {botMessages.length === 0 && botSuggestions.map((suggestion) => (
-            <button key={suggestion} onClick={() => void sendBotMessage(suggestion)} className="rounded-lg bg-white/5 px-3 py-2 text-left text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white">{suggestion}</button>
+            <button key={suggestion} onClick={() => void sendBotMessage(suggestion)} disabled={loading} className="rounded-lg bg-white/5 px-3 py-2 text-left text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-50">{suggestion}</button>
           ))}
           {botError && <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] text-coral">{botError}</p>}
           <div ref={bottomRef} />
         </div>
         <div className="border-t border-white/10 p-3">
           <div className="flex items-end gap-2 rounded-lg bg-white/5 px-3 py-2">
-            <textarea value={botInput} onChange={(event) => setBotInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendBotMessage(botInput) } }} rows={1} maxLength={1200} placeholder="Pregunta cómo usar ADS Veris…" className="max-h-24 min-h-5 w-full resize-none bg-transparent text-sm text-white placeholder:text-white/30 outline-none" />
-            <button onClick={() => void sendBotMessage(botInput)} disabled={!botInput.trim() || botSending} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal disabled:bg-white/10"><ArrowUp className="h-3.5 w-3.5" /></button>
+            <textarea value={botInput} onChange={(event) => setBotInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendBotMessage(botInput) } }} rows={1} maxLength={1200} disabled={loading} placeholder="Pregunta por tus cifras o por una función…" className="max-h-24 min-h-5 w-full resize-none bg-transparent text-sm text-white placeholder:text-white/30 outline-none disabled:cursor-wait" />
+            <button onClick={() => void sendBotMessage(botInput)} disabled={!botInput.trim() || botSending || loading} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal disabled:bg-white/10"><ArrowUp className="h-3.5 w-3.5" /></button>
           </div>
           <p className="mt-1.5 text-center text-[10px] text-white/25">Para un caso particular, abre Ayuda y conversa con soporte humano.</p>
         </div>
@@ -520,7 +546,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
             onClick={() => {
               if (file) {
                 fetchedForFile.current = null
-                void runActivation(file, storagePath, contextMetrics)
+                void runActivation(file, storagePath, contextMetrics, true)
               }
             }}
             className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-xs font-semibold text-white/80 transition-colors hover:bg-white/15"

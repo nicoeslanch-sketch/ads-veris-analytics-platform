@@ -19,6 +19,8 @@ import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
 import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
+import { saveDatasetWorkbookSummary } from '../lib/datasets'
+import { summarizeStandardizedWorkbook } from '../lib/workbookSummary'
 import { cleanFilename, formatDateTime, formatNumber } from '../lib/format'
 import {
   sheetPreparationAction,
@@ -304,6 +306,16 @@ function ClassicStandardization() {
             'Las hojas se prepararon, pero una parte del avance no pudo guardarse para la próxima sesión.',
           )
         }
+        const workbookResults = effectiveSelection.flatMap((name) => {
+          const result = batch.resultados[name] ?? sheetSessions[name]?.standardization
+          return result ? [result] : []
+        })
+        if (datasetId && workbookResults.length === effectiveSelection.length) {
+          void saveDatasetWorkbookSummary(
+            datasetId,
+            summarizeStandardizedWorkbook(workbookResults),
+          )
+        }
         // setStandardization(... activate: true) already activates `target`.
         // Calling setSheet here reads the pre-request sheetSessions closure and
         // can immediately replace the fresh result with null.
@@ -324,6 +336,7 @@ function ClassicStandardization() {
       return
     }
     let position = 0
+    const processedResults: Record<string, StandardizeResult> = {}
     for (const name of pendingNames) {
       if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
       const effectiveSelection = replaceSelection ? names : selectedSheetsRef.current
@@ -349,6 +362,7 @@ function ClassicStandardization() {
           { signal: controller.signal },
         )
         if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
+        processedResults[name] = result
         setStandardization(result, { activate: name === target, expectedFile: sourceFile })
       } catch (err) {
         if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
@@ -357,6 +371,17 @@ function ClassicStandardization() {
       }
     }
     if (currentFileRef.current === sourceFile) {
+      const effectiveSelection = replaceSelection ? names : selectedSheetsRef.current
+      const workbookResults = effectiveSelection.flatMap((name) => {
+        const result = processedResults[name] ?? sheetSessions[name]?.standardization
+        return result ? [result] : []
+      })
+      if (datasetId && workbookResults.length === effectiveSelection.length) {
+        void saveDatasetWorkbookSummary(
+          datasetId,
+          summarizeStandardizedWorkbook(workbookResults),
+        )
+      }
       setBatchProgress(null)
       setChangingSheet(false)
     }

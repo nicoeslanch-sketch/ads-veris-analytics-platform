@@ -31,6 +31,79 @@ def test_quick_help_unknown_question_has_safe_fallback(client, auth_headers):
     assert "soporte humano" in response.json()["answer"]
 
 
+def test_quick_help_reads_dashboard_metrics_in_uf(client, auth_headers):
+    response = client.post(
+        "/assistant/bot",
+        json={
+            "message": "¿Cuáles son mis ingresos totales?",
+            "metrics": {
+                "moneda": "UF",
+                "moneda_mixta": False,
+                "datos_monetarios_disponibles": True,
+                "periodo": {"desde": "2026-01-01", "hasta": "2026-08-14", "mes_parcial": True},
+                "kpis": {
+                    "ingresos_totales": {"valor": 669700, "variacion_pct": 5.1},
+                    "transacciones": 2670,
+                    "ticket_promedio": 250.82,
+                },
+                "advertencias": ["No se encontró una columna de costos."],
+            },
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matched_key"] == "metric_income"
+    assert "UF 669.700" in body["answer"]
+    assert "no fue convertida a pesos" in body["answer"]
+    assert "no hay costos" in body["answer"].lower()
+    assert body["coins_charged"] == 0
+
+
+def test_quick_help_explains_missing_profit_instead_of_inventing_it(client, auth_headers):
+    response = client.post(
+        "/assistant/bot",
+        json={
+            "message": "¿Cuánto gané?",
+            "metrics": {
+                "moneda": "CLP",
+                "kpis": {"ingresos_totales": {"valor": 1000000}},
+            },
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["matched_key"] == "metric_profit_unavailable"
+    assert "Falta costo" in response.json()["answer"]
+
+
+def test_quick_help_reads_flexible_dashboard_graphs(client, auth_headers):
+    response = client.post(
+        "/assistant/bot",
+        json={
+            "message": "¿Quién es mi mejor vendedor?",
+            "metrics": {
+                "moneda": "CLP",
+                "kpis": {"ingresos_totales": {"valor": 300000}},
+                "agrupaciones_flexibles": [
+                    {
+                        "columna": "Vendedor",
+                        "grupos": [
+                            {"nombre": "Ana", "ingresos": 180000, "porcentaje": 60},
+                            {"nombre": "Luis", "ingresos": 120000, "porcentaje": 40},
+                        ],
+                    }
+                ],
+            },
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["matched_key"] == "metric_flexible_group"
+    assert "Ana" in response.json()["answer"]
+    assert "$180.000" in response.json()["answer"]
+
+
 def test_advanced_chat_is_off_by_default(client, auth_headers):
     response = client.get("/assistant/config", headers=auth_headers)
     assert response.status_code == 200

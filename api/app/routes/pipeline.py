@@ -1225,9 +1225,28 @@ def _analyze_uncached(
     }
     monto_col = raw_by_standardized.get(effective_mapping.get("monto"))
     costo_col = raw_by_standardized.get(effective_mapping.get("costo"))
+    moneda_col = raw_by_standardized.get(effective_mapping.get("moneda"))
+    if moneda_col not in df.columns:
+        moneda_col = next(
+            (
+                column
+                for column in df.columns
+                if any(
+                    token in strip_accents_lower(str(column)).split()
+                    for token in ("moneda", "currency", "divisa")
+                )
+            ),
+            None,
+        )
     currency = detect_currency(
         df[monto_col] if monto_col in df.columns else None,
         df[costo_col] if costo_col in df.columns else None,
+        df[moneda_col] if moneda_col in df.columns else None,
+        tuple(
+            str(column)
+            for column in (monto_col, costo_col)
+            if column in df.columns
+        ),
     )
 
     result = analyze_and_clean(

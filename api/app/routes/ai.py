@@ -25,6 +25,7 @@ from .. import quota
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import Capability, require_capability_for_user
 from ..config import Settings, get_settings
+from ..metric_assistant import format_amount
 
 router = APIRouter(prefix="/ai", dependencies=[Depends(get_current_user)])
 
@@ -69,6 +70,9 @@ _SYSTEM = (
     "Usa la MONEDA indicada en el contexto (por defecto CLP, formato $1.234.000); "
     "si el contexto advierte monedas mezcladas o cobertura parcial de costos, "
     "dilo explícitamente y evita conclusiones categóricas sobre esos montos. "
+    "Distingue siempre ingresos, utilidad y caja. No declares que un ratio es bueno "
+    "o malo sin compararlo con periodos, metas, vencimientos y sector. Un mes parcial "
+    "no se compara como si estuviera completo. "
     "Nunca inventes datos que no estén en el contexto entregado."
 )
 
@@ -133,7 +137,7 @@ def _metrics_context(metrics: dict) -> str:
         if v is None:
             return "N/D"
         try:
-            return f"${int(v):,}".replace(",", ".")
+            return format_amount(v, moneda)
         except Exception:
             return str(v)
 
@@ -188,6 +192,53 @@ def _metrics_context(metrics: dict) -> str:
     if categorias:
         cat_str = ", ".join(f"{c['nombre']} ({fmt(c['ingresos'])})" for c in categorias[:5])
         parts.append(f"Categorías principales: {cat_str}")
+
+    ratios = (metrics.get("analisis_negocio") or {}).get("ratios") or []
+    available_ratios = [
+        ratio for ratio in ratios
+        if isinstance(ratio, dict) and ratio.get("valor") is not None
+    ][:10]
+    if available_ratios:
+        ratio_str = ", ".join(
+            f"{ratio.get('nombre') or ratio.get('id')}={ratio.get('valor')}"
+            for ratio in available_ratios
+        )
+        parts.append(f"Indicadores financieros disponibles: {ratio_str}")
+
+    calidad = metrics.get("calidad_datos")
+    if calidad is not None:
+        parts.append(f"Calidad de datos publicada: {calidad}%")
+
+    generic = (metrics.get("analisis_generico") or {}).get("numericas") or []
+    generic_values = [row for row in generic if isinstance(row, dict)][:10]
+    if generic_values:
+        generic_str = ", ".join(
+            f"{row.get('etiqueta') or row.get('columna')}: "
+            f"total={row.get('total')}, promedio={row.get('promedio')}"
+            for row in generic_values
+        )
+        parts.append(f"Otras métricas numéricas: {generic_str}")
+
+    flexible = metrics.get("agrupaciones_flexibles") or []
+    flexible_parts: list[str] = []
+    for grouping in flexible[:8]:
+        rows = grouping.get("grupos") or []
+        if rows:
+            leader = rows[0]
+            flexible_parts.append(
+                f"{grouping.get('columna')}: {leader.get('nombre')} "
+                f"({fmt(leader.get('ingresos'))})"
+            )
+    if flexible_parts:
+        parts.append("Líderes de otros gráficos: " + "; ".join(flexible_parts))
+
+    weekdays = metrics.get("por_dia_semana") or []
+    if weekdays:
+        best_day = max(weekdays, key=lambda row: row.get("ingresos") or 0)
+        parts.append(
+            f"Mejor día de semana: {best_day.get('dia')} "
+            f"({fmt(best_day.get('ingresos'))}, {best_day.get('transacciones')} transacciones)"
+        )
 
     proyeccion = metrics.get("proyeccion")
     if proyeccion:

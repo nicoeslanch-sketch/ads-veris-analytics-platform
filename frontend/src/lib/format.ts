@@ -12,8 +12,14 @@ let activeCurrency = 'CLP'
 
 const CURRENCY_PREFIX: Record<string, string> = {
   CLP: '$',
+  UF: 'UF ',
   USD: 'US$',
   EUR: '€',
+  ARS: 'ARS ',
+  PEN: 'PEN ',
+  COP: 'COP ',
+  MXN: 'MXN ',
+  GBP: '£',
 }
 
 export function setActiveCurrency(code: string | null | undefined): void {
@@ -30,7 +36,12 @@ export function formatNumber(value: number): string {
 
 /** Monto en la moneda ACTIVA de la sesión (histórico: nació como CLP-only). */
 export function formatCLP(value: number): string {
-  return `${CURRENCY_PREFIX[activeCurrency]}${numberFormat.format(Math.round(value))}`
+  const digits = activeCurrency === 'UF' && !Number.isInteger(value) ? 2 : 0
+  const formatted = new Intl.NumberFormat('es-CL', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value)
+  return `${CURRENCY_PREFIX[activeCurrency]}${formatted}`
 }
 
 export function formatDateTime(date: Date): string {

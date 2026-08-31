@@ -155,18 +155,58 @@ def _currency_counts(raw: pd.Series | None) -> dict[str, int]:
     return counts
 
 
+def _currency_header_counts(headers: tuple[str, ...]) -> dict[str, int]:
+    """Extrae una moneda declarada en los encabezados monetarios.
+
+    Un encabezado como ``MONTO CTO UF`` es evidencia suficiente aunque sus
+    celdas contengan solo números. Si el encabezado declara la unidad entre
+    paréntesis (por ejemplo, ``Valor UF (CLP)``), esa unidad final tiene
+    prioridad: normalmente describe el valor ya convertido.
+    """
+
+    counts = {code: 0 for code in _CURRENCY_SIGNALS}
+    codes = "|".join(_CURRENCY_SIGNALS)
+    parenthetical = re.compile(rf"(?i)\b\w*\s*\(({codes})\)\s*$")
+    explicit_unit = re.compile(rf"(?i)\b(?:en|moneda|divisa)\s*[:_-]?\s*({codes})\b")
+    for raw_header in headers:
+        header = str(raw_header).strip()
+        if not header:
+            continue
+        match = parenthetical.search(header) or explicit_unit.search(header)
+        if match:
+            counts[match.group(1).upper()] += 1
+            continue
+        found = {
+            code for code, pattern in _CURRENCY_SIGNALS.items() if pattern.search(header)
+        }
+        if not found and "$" in header:
+            found.add("CLP")
+        for code in found:
+            counts[code] += 1
+    return counts
+
+
 def detect_currency(
     montos: pd.Series | None,
     costos: pd.Series | None = None,
+    currency_values: pd.Series | None = None,
+    header_hints: tuple[str, ...] = (),
 ) -> CurrencyDetection:
-    """Inspecciona montos y costos completos y devuelve un contrato tipado."""
+    """Inspecciona valores, columna de moneda y encabezados monetarios."""
 
     by_column = {
         "monto": _currency_counts(montos),
         "costo": _currency_counts(costos),
     }
+    metadata_counts = (
+        _currency_counts(currency_values),
+        _currency_header_counts(header_hints),
+    )
     counts = {
-        code: by_column["monto"][code] + by_column["costo"][code]
+        code: (
+            sum(column_counts[code] for column_counts in by_column.values())
+            + sum(metadata[code] for metadata in metadata_counts)
+        )
         for code in _CURRENCY_SIGNALS
     }
     explicit = {code: count for code, count in counts.items() if count > 0}

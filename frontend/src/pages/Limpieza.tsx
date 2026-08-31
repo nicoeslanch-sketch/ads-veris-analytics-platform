@@ -36,7 +36,13 @@ import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
 import { apiGet, apiPost, apiDownload, buildDatasetForm, ApiError } from '../lib/api'
-import { logActivity, saveCleaningJob, saveColumnMapping } from '../lib/datasets'
+import {
+  logActivity,
+  saveCleaningJob,
+  saveColumnMapping,
+  saveDatasetWorkbookSummary,
+} from '../lib/datasets'
+import { summarizeCleanWorkbook } from '../lib/workbookSummary'
 import { supabaseConfigured } from '../lib/supabase'
 import { formatNumber } from '../lib/format'
 import { useCapability, usePlan } from '../lib/usePlan'
@@ -388,7 +394,7 @@ export default function Limpieza() {
               response.reglas_activas,
               response,
               response.opciones_aplicacion,
-              { logActivity: false },
+              { logActivity: false, updateDataset: false },
             ),
           )
         } else {
@@ -401,6 +407,21 @@ export default function Limpieza() {
         setPersistWarning(
           'La limpieza terminó, pero una parte del avance no pudo guardarse para la próxima sesión.',
         )
+      }
+      const workbookResults = selectedSheets.flatMap((name) => {
+        const result = batch.resultados[name] ?? sheetSessions[name]?.cleaning
+        return result ? [result] : []
+      })
+      if (datasetId && workbookResults.length === selectedSheets.length) {
+        const summarySaved = await saveDatasetWorkbookSummary(
+          datasetId,
+          summarizeCleanWorkbook(workbookResults),
+        )
+        if (!summarySaved && supabaseConfigured) {
+          setPersistWarning(
+            'La limpieza quedó guardada, pero el resumen del libro no pudo actualizarse en Historial.',
+          )
+        }
       }
     } catch (err) {
       failedCount = runnable.length

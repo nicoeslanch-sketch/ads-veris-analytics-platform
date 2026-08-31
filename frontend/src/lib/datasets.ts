@@ -13,6 +13,7 @@ import {
   type CleaningRules,
   type StandardizeResult,
 } from './types'
+import type { DatasetWorkbookSummary } from './workbookSummary'
 
 const BUCKET = 'datasets'
 export type DatasetSource = 'excel_csv' | 'google_sheets'
@@ -47,6 +48,25 @@ export interface UploadedDataset {
   name: string
   status: string
   created_at: string
+}
+
+export async function saveDatasetWorkbookSummary(
+  datasetId: string | null,
+  summary: DatasetWorkbookSummary | null,
+): Promise<boolean> {
+  if (!supabase || !datasetId || !summary) return false
+  const payload: Record<string, number | string> = {
+    rows: summary.rows,
+    columns: summary.columns,
+    status: summary.status,
+  }
+  if (summary.quality != null) payload.quality = summary.quality
+  const { error } = await supabase.from('datasets').update(payload).eq('id', datasetId)
+  if (error) {
+    console.warn('[persistencia] Falló el resumen multihoja del dataset:', error.message)
+    return false
+  }
+  return true
 }
 
 /** Carga aislada del asistente: conserva el mismo bucket, ownership y tabla. */
@@ -176,7 +196,7 @@ export async function saveCleaningJob(
   rules: CleaningRules,
   result: CleanResult,
   options: CleaningOptions = result.opciones_aplicacion ?? DEFAULT_CLEANING_OPTIONS,
-  persistence: { logActivity?: boolean } = {},
+  persistence: { logActivity?: boolean; updateDataset?: boolean } = {},
 ): Promise<boolean> {
   const userId = await getUserId()
   if (!supabase || !userId || !datasetId) return false
@@ -198,18 +218,20 @@ export async function saveCleaningJob(
       console.warn('[persistencia] Falló el insert en cleaning_jobs:', jobError.message)
       return false
     }
-    const { error: dsError } = await supabase
-      .from('datasets')
-      .update({
-        status: 'limpio',
-        quality: result.resumen.calidad_despues,
-        rows: result.resumen.filas_despues,
-        columns: result.resumen.columnas_despues,
-      })
-      .eq('id', datasetId)
-    if (dsError) {
-      console.warn('[persistencia] Falló el update de datasets:', dsError.message)
-      return false
+    if (persistence.updateDataset !== false) {
+      const { error: dsError } = await supabase
+        .from('datasets')
+        .update({
+          status: 'limpio',
+          quality: result.resumen.calidad_despues,
+          rows: result.resumen.filas_despues,
+          columns: result.resumen.columnas_despues,
+        })
+        .eq('id', datasetId)
+      if (dsError) {
+        console.warn('[persistencia] Falló el update de datasets:', dsError.message)
+        return false
+      }
     }
     if (persistence.logActivity !== false) {
       try {

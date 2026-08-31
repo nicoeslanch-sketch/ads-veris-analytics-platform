@@ -1,8 +1,10 @@
 """Asistente gratuito determinista y configuracion del chat avanzado."""
 
+import json
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from threading import Lock
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,8 +21,15 @@ _requests: dict[str, deque[datetime]] = defaultdict(deque)
 _request_lock = Lock()
 
 
+class BotMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
 class BotRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1200)
+    metrics: dict | None = None
+    historial: list[BotMessage] = Field(default_factory=list, max_length=12)
 
 
 def _headers(settings: Settings) -> dict[str, str]:
@@ -67,7 +76,33 @@ def _load_catalog(settings: Settings) -> list[dict]:
         response.raise_for_status()
         rows = response.json()
         if rows:
-            return rows
+            rows_by_key = {str(row.get("key")): row for row in rows}
+            merged = {
+                str(item.get("key")): item
+                for item in ARTICLES
+            }
+            merged.update(rows_by_key)
+            missing = [
+                item for item in ARTICLES if str(item.get("key")) not in rows_by_key
+            ]
+            if missing:
+                try:
+                    httpx.post(
+                        _rest(settings, "support_bot_articles"),
+                        json=missing,
+                        headers={
+                            **_headers(settings),
+                            "Prefer": "resolution=merge-duplicates,return=minimal",
+                        },
+                        timeout=_TIMEOUT,
+                    ).raise_for_status()
+                except httpx.HTTPError:
+                    pass
+            return sorted(
+                merged.values(),
+                key=lambda item: int(item.get("priority") or 0),
+                reverse=True,
+            )
         # Primer uso: poblar la base editable con el catalogo versionado.
         seed = httpx.post(
             _rest(settings, "support_bot_articles"),
@@ -105,8 +140,18 @@ async def ask_quick_help(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     _guard_rate(user.id)
+    if body.metrics is not None and len(json.dumps(body.metrics)) > 200_000:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="El contexto de métricas es demasiado grande.",
+        )
     catalog = await run_in_threadpool(_load_catalog, settings)
-    result = answer_for(body.message.strip(), catalog)
+    result = answer_for(
+        body.message.strip(),
+        catalog,
+        body.metrics,
+        [item.model_dump(mode="json") for item in body.historial],
+    )
     return {
         **result,
         "mode": "deterministic",

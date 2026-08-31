@@ -98,6 +98,41 @@ def test_moneda_pesos_por_defecto(client, auth_headers, sample_csv):
     assert body["moneda"] == "CLP"
 
 
+def test_moneda_uf_se_detecta_desde_encabezado_del_monto(client, auth_headers):
+    csv = (
+        "FECHA VENTA;MONTO CTO UF;NUM OPE;DESC PLAN\n"
+        "01/08/2026;100;1;Plan A\n"
+        "02/08/2026;669600;1;Plan B\n"
+    )
+    response = client.post(
+        "/metrics",
+        files={"file": ("Carreras (59).csv", csv.encode("utf-8"), "text/csv")},
+        data={
+            "mapping": (
+                '{"fecha":"FECHA VENTA","monto":"MONTO CTO UF",'
+                '"cantidad":"NUM OPE","producto":"DESC PLAN"}'
+            )
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moneda"] == "UF"
+    assert body["kpis"]["ingresos_totales"]["valor"] == 669700.0
+    assert body["moneda_detalle"]["conteos"]["UF"] == 1
+
+
+def test_moneda_uf_se_detecta_desde_columna_explicita(client, auth_headers):
+    csv = "Fecha;Ventas;Moneda\n01/08/2026;100;UF\n02/08/2026;200;UF\n"
+    response = client.post(
+        "/metrics",
+        files={"file": ("uf.csv", csv.encode("utf-8"), "text/csv")},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["moneda"] == "UF"
+
+
 # ── Motor endurecido (§6) ────────────────────────────────────────────────────
 
 

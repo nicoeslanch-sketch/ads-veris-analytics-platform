@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { cleanFilename, formatRelativeTime } from './format'
+import { cleanFilename, formatCLP, formatRelativeTime, setActiveCurrency } from './format'
+
+describe('formatCLP', () => {
+  it('muestra UF cuando esa es la moneda activa', () => {
+    setActiveCurrency('UF')
+    expect(formatCLP(669700)).toBe('UF 669.700')
+    expect(formatCLP(12.34)).toBe('UF 12,34')
+    setActiveCurrency('CLP')
+  })
+
+  it('mantiene pesos como moneda predeterminada', () => {
+    setActiveCurrency(undefined)
+    expect(formatCLP(669700)).toBe('$669.700')
+  })
+})
 
 describe('cleanFilename', () => {
   it('quita el prefijo de timestamp que antepone Storage', () => {
