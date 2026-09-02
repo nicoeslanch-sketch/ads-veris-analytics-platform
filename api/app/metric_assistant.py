@@ -61,11 +61,11 @@ def format_amount(value: Any, currency: str) -> str:
     return f"{prefix}{_es_number(value, decimals=decimals)}"
 
 
-def _percent(value: Any) -> str:
+def _percent(value: Any, *, decimals: int = 1) -> str:
     parsed = _number(value)
     if parsed is None:
         return "N/D"
-    return f"{_es_number(parsed, decimals=1)}%"
+    return f"{_es_number(parsed, decimals=decimals)}%"
 
 
 def _kpi_value(value: Any) -> float | None:
@@ -135,6 +135,14 @@ def _result(
 
 
 def metric_suggestions(metrics: dict[str, Any]) -> list[str]:
+    collection = _collection_dashboard(metrics)
+    if collection is not None:
+        return [
+            "¿Cuánto recaudo de cobranza y cuánto queda fuera?",
+            "¿Qué equipo aporta más a la cobranza?",
+            f"¿Cuál fue el mejor {collection.get('grano_temporal') or 'periodo'}?",
+            "¿Qué problemas de calidad debo revisar?",
+        ]
     kpis = metrics.get("kpis") or {}
     suggestions: list[str] = []
     if _kpi_value(kpis.get("ingresos_totales")) is not None:
@@ -148,6 +156,354 @@ def metric_suggestions(metrics: dict[str, Any]) -> list[str]:
     suggestions.append("¿Qué conclusión general sacas de mis datos?")
     suggestions.append("¿Qué problemas de calidad debo revisar?")
     return list(dict.fromkeys(suggestions))[:4]
+
+
+def _collection_dashboard(metrics: dict[str, Any]) -> dict[str, Any] | None:
+    business = metrics.get("analisis_negocio") or {}
+    collection = business.get("cobranza")
+    if business.get("perfil") != "cobranza_nominal" or not isinstance(collection, dict):
+        return None
+    return collection
+
+
+def _collection_scope(metrics: dict[str, Any], collection: dict[str, Any]) -> str:
+    business = metrics.get("analisis_negocio") or {}
+    applied = (business.get("filtros") or {}).get("aplicados") or {}
+    if applied:
+        labels = {
+            "periodo_cotizado": "periodo cotizado",
+            "equipo": "equipo",
+            "subgrupo": "subgrupo",
+            "agencia_pago": "agencia",
+            "forma_pago": "forma de pago",
+        }
+        filters = ", ".join(
+            f"{labels.get(str(key), str(key))}: {value}"
+            for key, value in applied.items()
+        )
+        return f" con los filtros visibles ({filters})"
+    period = collection.get("periodo") or {}
+    since = period.get("desde")
+    until = period.get("hasta")
+    if since and until:
+        return f" entre {since} y {until}"
+    return " en el alcance visible"
+
+
+def _collection_parent_rows(collection: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in (collection.get("equipos") or [])
+        if isinstance(row, dict) and row.get("subgrupo") is None
+    ]
+
+
+def _collection_top(
+    rows: list[dict[str, Any]],
+    value_key: str,
+) -> dict[str, Any] | None:
+    candidates = [row for row in rows if _number(row.get(value_key)) is not None]
+    return max(candidates, key=lambda row: float(row.get(value_key) or 0)) if candidates else None
+
+
+def _collection_named_row(
+    rows: list[dict[str, Any]],
+    question: str,
+    name_key: str,
+) -> dict[str, Any] | None:
+    haystack = f" {question} "
+    return next(
+        (
+            row
+            for row in rows
+            if len(_normalize(row.get(name_key) or "")) >= 3
+            and f" {_normalize(row.get(name_key) or '')} " in haystack
+        ),
+        None,
+    )
+
+
+def _collection_overview(
+    metrics: dict[str, Any],
+    collection: dict[str, Any],
+) -> dict[str, Any]:
+    kpis = collection.get("kpis") or {}
+    currency = str(collection.get("moneda") or metrics.get("moneda") or "CLP")
+    collected = _number(kpis.get("recaudacion_cobranza"))
+    total = _number(kpis.get("recaudacion_total"))
+    outside = _number(kpis.get("diferencia"))
+    share = _number(kpis.get("participacion_cobranza_pct"))
+    leader = _collection_top(_collection_parent_rows(collection), "recaudacion_cobranza")
+    answer = (
+        f"El dashboard de cobranza{_collection_scope(metrics, collection)} muestra "
+        f"{format_amount(collected, currency)} de cobranza sobre "
+        f"{format_amount(total, currency)} de recaudación total. "
+    )
+    if outside is not None and share is not None:
+        answer += (
+            f"Quedan {format_amount(outside, currency)} fuera de la condición Lote ≤ 300; "
+            f"la cobertura de cobranza es {_percent(share, decimals=2)}. "
+        )
+    if leader is not None:
+        answer += (
+            f"El equipo líder es {leader.get('equipo')}, con "
+            f"{format_amount(leader.get('recaudacion_cobranza'), currency)} "
+            f"({_percent(leader.get('participacion_pct'), decimals=2)}). "
+        )
+    answer += (
+        "Estas cifras describen recaudación, no ventas, utilidad ni rentabilidad. "
+        "La prioridad es explicar el monto fuera de cobranza y validar los duplicados antes de eliminarlos."
+    )
+    return _result(answer, "metric_collection_overview", metric_suggestions(metrics))
+
+
+def _answer_collection_question(
+    metrics: dict[str, Any],
+    collection: dict[str, Any],
+    question: str,
+) -> dict[str, Any] | None:
+    kpis = collection.get("kpis") or {}
+    currency = str(collection.get("moneda") or metrics.get("moneda") or "CLP")
+    suggestions = metric_suggestions(metrics)
+    scope = _collection_scope(metrics, collection)
+
+    if _contains(
+        question,
+        "conclusion",
+        "recomendacion",
+        "como esta mi negocio",
+        "resume mis datos",
+        "que opinas",
+        "analiza mi negocio",
+        "que deberia hacer",
+        "que muestran los graficos",
+    ):
+        return _collection_overview(metrics, collection)
+
+    if _contains(question, "sin duplicados", "quitar duplicados", "eliminar duplicados"):
+        duplicates = metrics.get("duplicados") or {}
+        conserved = int(_number(duplicates.get("conservados")) or 0)
+        answer = (
+            f"El dashboard actual incluye {conserved} duplicados conservados. "
+            "No puedo afirmar el nuevo total sin volver a procesar el archivo con eliminación confirmada: "
+            "no existe un ID único de pago y dos filas iguales podrían representar operaciones reales distintas."
+        )
+        return _result(answer, "metric_collection_duplicates_what_if", suggestions)
+
+    team_rows = _collection_parent_rows(collection)
+    requested_team = _collection_named_row(team_rows, question, "equipo")
+    if requested_team is not None or _contains(question, "equipo", "grupo"):
+        row = requested_team or _collection_top(team_rows, "recaudacion_cobranza")
+        if row is not None:
+            subject = (
+                f"El equipo consultado{scope}"
+                if requested_team is not None
+                else f"El equipo que más aporta a la cobranza{scope}"
+            )
+            answer = (
+                f"{subject} es {row.get('equipo')}, "
+                f"con {format_amount(row.get('recaudacion_cobranza'), currency)} "
+                f"({_percent(row.get('participacion_pct'), decimals=2)} del total de cobranza)."
+            )
+            return _result(answer, "metric_collection_team", suggestions)
+
+    agency_rows = [row for row in (collection.get("agencias") or []) if isinstance(row, dict)]
+    requested_agency = _collection_named_row(agency_rows, question, "nombre")
+    if requested_agency is not None or _contains(
+        question, "agencia", "sucursal", "donde se recauda", "punto de pago"
+    ):
+        row = requested_agency or _collection_top(agency_rows, "valor")
+        if row is not None:
+            subject = "La agencia consultada" if requested_agency is not None else "La agencia líder"
+            answer = (
+                f"{subject}{scope} es {row.get('nombre')}, con "
+                f"{format_amount(row.get('valor'), currency)} "
+                f"({_percent(row.get('participacion_pct'), decimals=2)} de la cobranza identificada)."
+            )
+            return _result(answer, "metric_collection_agency", suggestions)
+
+    payment_rows = [row for row in (collection.get("formas_pago") or []) if isinstance(row, dict)]
+    requested_payment = _collection_named_row(payment_rows, question, "nombre")
+    if requested_payment is not None or _contains(
+        question, "forma de pago", "medio de pago", "como pagan", "metodo de pago"
+    ):
+        row = requested_payment or _collection_top(payment_rows, "valor")
+        if row is not None:
+            subject = (
+                "La forma de pago consultada"
+                if requested_payment is not None
+                else "La principal forma de pago"
+            )
+            answer = (
+                f"{subject}{scope} es {row.get('nombre')}, con "
+                f"{format_amount(row.get('valor'), currency)} "
+                f"({_percent(row.get('participacion_pct'), decimals=2)} de la cobranza identificada)."
+            )
+            return _result(answer, "metric_collection_payment_method", suggestions)
+
+    wants_total = _contains(
+        question,
+        "ingresos totales",
+        "recaudacion total",
+        "total recaudado",
+        "total de ingresos",
+        "cuanto ingrese",
+    )
+    wants_collection = _contains(
+        question,
+        "recaudo de cobranza",
+        "recaudacion de cobranza",
+        "cobranza total",
+        "cuanto recaudo",
+        "cuanto cobre",
+        "cobrado",
+    )
+    wants_difference = _contains(
+        question,
+        "diferencia",
+        "queda fuera",
+        "fuera de cobranza",
+        "lote mayor",
+        "lote > 300",
+        "lote 300",
+    )
+    if wants_difference or (wants_total and wants_collection):
+        collected = kpis.get("recaudacion_cobranza")
+        total = kpis.get("recaudacion_total")
+        outside = kpis.get("diferencia")
+        answer = (
+            f"La recaudación de cobranza{scope} es {format_amount(collected, currency)} "
+            f"y la recaudación total es {format_amount(total, currency)}. "
+            f"La diferencia fuera de Lote ≤ 300 es {format_amount(outside, currency)} "
+            f"({_percent(kpis.get('diferencia_pct'), decimals=2)} del total); "
+            f"{_percent(kpis.get('participacion_cobranza_pct'), decimals=2)} sí corresponde a cobranza."
+        )
+        return _result(answer, "metric_collection_difference", suggestions)
+    if wants_total or _contains(question, "ingresos", "facturacion", "cuanto vendi"):
+        answer = (
+            f"La recaudación total{scope} es "
+            f"{format_amount(kpis.get('recaudacion_total'), currency)}. "
+            "En este archivo el indicador suma Valor Nominal de todos los lotes; "
+            "no debe interpretarse como ventas, utilidad ni caja disponible."
+        )
+        return _result(answer, "metric_collection_total", suggestions)
+    if wants_collection or _contains(question, "recaudacion", "cobranza") and not _contains(
+        question, "equipo", "agencia", "semana", "mes", "periodo", "ticket"
+    ):
+        answer = (
+            f"La recaudación de cobranza{scope} es "
+            f"{format_amount(kpis.get('recaudacion_cobranza'), currency)}. "
+            f"Equivale a {_percent(kpis.get('participacion_cobranza_pct'), decimals=2)} de la recaudación total "
+            "y aplica únicamente a registros con Lote ≤ 300."
+        )
+        return _result(answer, "metric_collection_collected", suggestions)
+
+    if _contains(question, "ticket", "promedio por pago", "promedio cobranza"):
+        answer = (
+            f"El ticket promedio de cobranza{scope} es "
+            f"{format_amount(kpis.get('ticket_promedio_cobranza'), currency)}. "
+            f"Se calcula dividiendo la cobranza por {_es_number(kpis.get('registros_cobranza'))} "
+            "registros con Lote ≤ 300; no representa utilidad."
+        )
+        return _result(answer, "metric_collection_ticket", suggestions)
+
+    if _contains(
+        question,
+        "pagos en cero",
+        "pagos estan en cero",
+        "pagos con cero",
+        "monto cero",
+        "sin monto positivo",
+    ):
+        records = int(_number(kpis.get("registros")) or 0)
+        positive = int(_number(kpis.get("pagos_positivos")) or 0)
+        zero_or_non_positive = max(records - positive, 0)
+        answer = (
+            f"Hay {_es_number(zero_or_non_positive)} pagos sin Valor Nominal positivo{scope}. "
+            "El dashboard no publica valores negativos en este KPI; revisa esas filas antes de tratarlas como pagos efectivos."
+        )
+        return _result(answer, "metric_collection_zero_payments", suggestions)
+
+    if _contains(question, "pagos", "registros", "cuantas filas", "cuantos cobros"):
+        answer = (
+            f"Hay {_es_number(kpis.get('registros'))} pagos o filas{scope}; "
+            f"{_es_number(kpis.get('pagos_positivos'))} tienen Valor Nominal positivo y "
+            f"{_es_number(kpis.get('registros_cobranza'))} cumplen Lote ≤ 300. "
+            "El conteo es de filas porque el archivo no contiene un ID único de pago."
+        )
+        return _result(answer, "metric_collection_payments", suggestions)
+
+    if _contains(
+        question,
+        "mejor semana",
+        "mayor semana",
+        "semana con mayor",
+        "mejor mes",
+        "mejor periodo",
+        "periodo con mayor",
+        "pico",
+        "evolucion",
+        "tendencia",
+        "peor semana",
+        "menor semana",
+        "semana con menor",
+        "peor mes",
+        "peor periodo",
+        "periodo con menor",
+    ):
+        timeline = [row for row in (collection.get("evolucion") or []) if isinstance(row, dict)]
+        key = "recaudacion_total" if _contains(question, "total") else "recaudacion_cobranza"
+        wants_lowest = _contains(question, "peor", "menor")
+        candidates = [row for row in timeline if _number(row.get(key)) is not None]
+        selected = (
+            min(candidates, key=lambda row: float(row.get(key) or 0))
+            if wants_lowest and candidates
+            else _collection_top(candidates, key)
+        )
+        if selected is not None:
+            label = str(selected.get("periodo") or "periodo visible").replace("/", " a ")
+            answer = (
+                f"El {collection.get('grano_temporal') or 'periodo'} con {'menor' if wants_lowest else 'mayor'} "
+                f"{'recaudación total' if key == 'recaudacion_total' else 'recaudación de cobranza'} "
+                f"fue {label}, con {format_amount(selected.get(key), currency)}. "
+                "Es un valor observado en el alcance filtrado, no una proyección."
+            )
+            return _result(
+                answer,
+                "metric_collection_worst_period" if wants_lowest else "metric_collection_best_period",
+                suggestions,
+            )
+
+    if _contains(question, "periodo cotizado", "cotizacion", "mes cotizado"):
+        rows = [
+            row
+            for row in (collection.get("periodos_cotizados") or [])
+            if isinstance(row, dict)
+        ]
+        selected = _collection_top(rows, "valor")
+        if selected is not None:
+            answer = (
+                f"Entre los periodos cotizados mostrados, el mayor aporte corresponde a "
+                f"{selected.get('periodo')}, con {format_amount(selected.get('valor'), currency)} de cobranza. "
+                "Esta serie puede limitarse a los últimos periodos visibles del gráfico."
+            )
+            return _result(answer, "metric_collection_quoted_period", suggestions)
+
+    if _contains(question, "periodo anterior", "comparacion anterior", "versus anterior", "variacion"):
+        comparison = collection.get("comparacion") or {}
+        if not comparison.get("base_comparable"):
+            answer = (
+                "No hay una base anterior comparable con recaudación para el alcance visible. "
+                "El dashboard evita fabricar una variación porcentual cuando el periodo anterior es cero."
+            )
+        else:
+            answer = (
+                f"La cobranza actual es {format_amount(comparison.get('recaudacion_actual'), currency)} "
+                f"frente a {format_amount(comparison.get('recaudacion_anterior'), currency)} del periodo anterior: "
+                f"una variación de {_percent(comparison.get('variacion_pct'))}."
+            )
+        return _result(answer, "metric_collection_comparison", suggestions)
+    return None
 
 
 def _answer_currency(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -354,6 +710,8 @@ def _group_answer(
 def _answer_quality(metrics: dict[str, Any]) -> dict[str, Any]:
     quality = _number(metrics.get("calidad_datos"))
     warnings = [str(item) for item in (metrics.get("advertencias") or []) if str(item).strip()]
+    if _collection_dashboard(metrics) is not None:
+        warnings = [warning for warning in warnings if "maestra de clientes" not in warning.casefold()]
     duplicates = metrics.get("duplicados") or {}
     answer = (
         f"La calidad publicada es {_percent(quality)}. "
@@ -362,12 +720,20 @@ def _answer_quality(metrics: dict[str, Any]) -> dict[str, Any]:
     )
     detected = int(_number(duplicates.get("detectados")) or 0)
     removed = int(_number(duplicates.get("eliminados")) or 0)
+    conserved = int(_number(duplicates.get("conservados")) or max(detected - removed, 0))
     if detected:
-        answer += f"Se detectaron {detected} duplicados y se eliminaron {removed}. "
+        answer += f"Se detectaron {detected} duplicados: se eliminaron {removed} y se conservaron {conserved}. "
+        if conserved:
+            answer += "Los totales visibles sí incluyen los duplicados conservados. "
     if warnings:
         answer += "La principal cautela del motor es: " + warnings[0]
     else:
         answer += "El motor no publica advertencias adicionales para este alcance."
+    if _collection_dashboard(metrics) is not None:
+        answer += (
+            " Como el archivo no contiene un ID único de pago, valida esos grupos con la fuente "
+            "antes de confirmar una eliminación."
+        )
     answer += " Una calidad alta reduce errores de formato, pero no reemplaza validar el mapeo y el significado contable de cada columna."
     return _result(answer, "metric_quality", metric_suggestions(metrics))
 
@@ -700,6 +1066,11 @@ def answer_metrics_question(
         )
     if _contains(question, "moneda", "en pesos", "en uf", "son uf", "son pesos", "divisa"):
         return _answer_currency(metrics)
+    collection = _collection_dashboard(metrics)
+    if collection is not None:
+        collection_answer = _answer_collection_question(metrics, collection, question)
+        if collection_answer is not None:
+            return collection_answer
     if _contains(question, "calidad", "datos sucios", "advertencias", "problemas de datos", "duplicados"):
         return _answer_quality(metrics)
 

@@ -223,12 +223,20 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         }
       }
       if (!generateSummary) {
-        setBotSuggestions([
-          '¿Cuáles son mis ingresos totales?',
-          '¿En qué moneda están mis datos?',
-          '¿Qué conclusión general sacas de mis datos?',
-          '¿Qué problemas de calidad debo revisar?',
-        ])
+        const collectionProfile = m.analisis_negocio?.perfil === 'cobranza_nominal'
+        setBotSuggestions(collectionProfile
+          ? [
+              '¿Cuánto recaudo de cobranza y cuánto queda fuera?',
+              '¿Qué equipo aporta más a la cobranza?',
+              '¿Cuál fue la semana con mayor recaudación?',
+              '¿Qué problemas de calidad debo revisar?',
+            ]
+          : [
+              '¿Cuáles son mis ingresos totales?',
+              '¿En qué moneda están mis datos?',
+              '¿Qué conclusión general sacas de mis datos?',
+              '¿Qué problemas de calidad debo revisar?',
+            ])
         return
       }
       setLoadingLabel('Generando resumen con IA…')

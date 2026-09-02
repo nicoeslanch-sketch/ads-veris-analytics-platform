@@ -1,5 +1,90 @@
 from pathlib import Path
 
+import pytest
+
+
+def _collection_metrics():
+    return {
+        "moneda": "CLP",
+        "calidad_datos": 93.9,
+        "duplicados": {"detectados": 593, "eliminados": 0, "conservados": 593},
+        "advertencias": [
+            "Esta hoja se interpreta como maestra de clientes.",
+        ],
+        "analisis_negocio": {
+            "perfil": "cobranza_nominal",
+            "filtros": {"aplicados": {}},
+            "cobranza": {
+                "moneda": "CLP",
+                "grano_temporal": "semana",
+                "periodo": {"desde": "2026-04-23", "hasta": "2026-05-25"},
+                "kpis": {
+                    "recaudacion_cobranza": 1120052069,
+                    "recaudacion_total": 1335598867,
+                    "diferencia": 215546798,
+                    "diferencia_pct": 16.14,
+                    "participacion_cobranza_pct": 83.86,
+                    "registros": 14917,
+                    "registros_cobranza": 10021,
+                    "pagos_positivos": 14248,
+                    "ticket_promedio_cobranza": 111770.49,
+                },
+                "comparacion": {
+                    "recaudacion_actual": 1120052069,
+                    "recaudacion_anterior": None,
+                    "variacion_pct": None,
+                    "base_comparable": False,
+                },
+                "evolucion": [
+                    {
+                        "periodo": "2026-04-28/2026-05-04",
+                        "recaudacion_total": 221967569,
+                        "recaudacion_cobranza": 221967569,
+                    },
+                    {
+                        "periodo": "2026-05-05/2026-05-11",
+                        "recaudacion_total": 565983745,
+                        "recaudacion_cobranza": 397732370,
+                    },
+                ],
+                "equipos": [
+                    {
+                        "equipo": "FLUJO",
+                        "subgrupo": None,
+                        "recaudacion_cobranza": 620006326,
+                        "participacion_pct": 55.36,
+                    },
+                    {
+                        "equipo": "STOCK",
+                        "subgrupo": None,
+                        "recaudacion_cobranza": 246573996,
+                        "participacion_pct": 22.01,
+                    },
+                ],
+                "agencias": [
+                    {"nombre": "WEB", "valor": 553000000, "participacion_pct": 49.37},
+                    {"nombre": "CONCEPCION", "valor": 120000000, "participacion_pct": 10.71},
+                ],
+                "formas_pago": [
+                    {"nombre": "WebPay", "valor": 700000000, "participacion_pct": 62.50},
+                    {"nombre": "Efectivo", "valor": 150000000, "participacion_pct": 13.39},
+                ],
+                "periodos_cotizados": [
+                    {"periodo": "2025-12", "valor": 200000000},
+                    {"periodo": "2026-03", "valor": 420000000},
+                ],
+            },
+        },
+    }
+
+
+def _ask_collection(client, auth_headers, message):
+    return client.post(
+        "/assistant/bot",
+        json={"message": message, "metrics": _collection_metrics()},
+        headers=auth_headers,
+    )
+
 
 def test_quick_help_requires_auth(client):
     assert client.post("/assistant/bot", json={"message": "hola"}).status_code == 401
@@ -102,6 +187,88 @@ def test_quick_help_reads_flexible_dashboard_graphs(client, auth_headers):
     assert response.json()["matched_key"] == "metric_flexible_group"
     assert "Ana" in response.json()["answer"]
     assert "$180.000" in response.json()["answer"]
+
+
+@pytest.mark.parametrize(
+    ("question", "matched_key", "expected"),
+    [
+        ("¿Cuáles son mis ingresos totales?", "metric_collection_total", "$1.335.598.867"),
+        ("¿Cuál es mi ticket promedio de cobranza?", "metric_collection_ticket", "$111.770"),
+        ("¿Qué equipo aporta más a la cobranza?", "metric_collection_team", "FLUJO"),
+        ("¿Cuál fue la semana con mayor recaudación?", "metric_collection_best_period", "$397.732.370"),
+        ("¿Qué agencia lidera?", "metric_collection_agency", "WEB"),
+        ("¿Cuántos pagos tengo?", "metric_collection_payments", "14.917"),
+        ("¿Cuánto aporta STOCK?", "metric_collection_team", "$246.573.996"),
+        ("¿Cuál es la principal forma de pago?", "metric_collection_payment_method", "WebPay"),
+        ("¿Cuántos pagos están en cero?", "metric_collection_zero_payments", "669"),
+        ("¿Cuál fue la peor semana?", "metric_collection_worst_period", "$221.967.569"),
+        ("¿Qué periodo cotizado aporta más?", "metric_collection_quoted_period", "2026-03"),
+    ],
+)
+def test_quick_help_reads_collection_kpis_and_graphs(
+    client, auth_headers, question, matched_key, expected
+):
+    response = _ask_collection(client, auth_headers, question)
+
+    assert response.status_code == 200
+    assert response.json()["matched_key"] == matched_key
+    assert expected in response.json()["answer"]
+
+
+def test_quick_help_explains_collection_difference(client, auth_headers):
+    response = _ask_collection(
+        client,
+        auth_headers,
+        "¿Cuánto recaudo de cobranza y cuánto queda fuera?",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matched_key"] == "metric_collection_difference"
+    assert "$1.120.052.069" in body["answer"]
+    assert "$215.546.798" in body["answer"]
+    assert "83,86%" in body["answer"]
+
+
+def test_quick_help_says_conserved_duplicates_are_in_totals(client, auth_headers):
+    response = _ask_collection(
+        client,
+        auth_headers,
+        "¿Cuántos duplicados hay y están incluidos en los totales?",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matched_key"] == "metric_quality"
+    assert "se conservaron 593" in body["answer"]
+    assert "sí incluyen" in body["answer"]
+    assert "maestra de clientes" not in body["answer"]
+
+
+def test_quick_help_does_not_invent_total_without_duplicates(client, auth_headers):
+    response = _ask_collection(client, auth_headers, "¿Cuánto sería sin duplicados?")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matched_key"] == "metric_collection_duplicates_what_if"
+    assert "incluye 593" in body["answer"]
+    assert "No puedo afirmar" in body["answer"]
+
+
+def test_quick_help_builds_prudent_collection_overview(client, auth_headers):
+    response = _ask_collection(
+        client,
+        auth_headers,
+        "¿Qué conclusión general sacas de mis datos?",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matched_key"] == "metric_collection_overview"
+    assert "$1.120.052.069" in body["answer"]
+    assert "$1.335.598.867" in body["answer"]
+    assert "FLUJO" in body["answer"]
+    assert "no ventas, utilidad ni rentabilidad" in body["answer"]
 
 
 def test_advanced_chat_is_off_by_default(client, auth_headers):
