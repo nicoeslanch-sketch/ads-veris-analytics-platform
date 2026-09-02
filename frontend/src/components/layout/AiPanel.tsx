@@ -58,6 +58,13 @@ interface BotResponse {
   knowledge_articles: number
 }
 
+export function hasAssistantMetricFilters(
+  period: { from: string | null; to: string | null },
+  businessFilters: Record<string, string>,
+): boolean {
+  return Boolean(period.from || period.to || Object.keys(businessFilters).length > 0)
+}
+
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'drawer' } = {}) {
@@ -76,10 +83,12 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     datasetId,
     storagePath,
     uploadedAt,
+    period,
     mappingOverride,
     sheet,
     sheetManifest,
     analysisScope,
+    businessFilters,
     eliminarDuplicados,
     setMetrics: setContextMetrics,
   } = useDataset()
@@ -164,8 +173,11 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         setLoadingLabel('Calculando indicadores…')
         const metricsKey = metricsCacheKey({
           dataset: datasetId ?? storagePathArg ?? String(uploadedAt?.getTime() ?? 0),
+          dateFrom: period.from,
+          dateTo: period.to,
           sheet,
           analysisScope,
+          businessFilters,
           mapping: mappingOverride,
           eliminarDuplicados,
           revision: cleaning?.revision,
@@ -189,6 +201,11 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
               }
             : {}),
           ...(sheet ? { sheet } : {}),
+          ...(period.from ? { date_from: period.from } : {}),
+          ...(period.to ? { date_to: period.to } : {}),
+          ...(Object.keys(businessFilters).length > 0
+            ? { business_filters: JSON.stringify(businessFilters) }
+            : {}),
           ...(sheetManifest && serializedScope
             ? {
                 manifest: JSON.stringify(sheetManifest),
@@ -277,8 +294,11 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
     const fileKey = metricsCacheKey({
       dataset: datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0),
+      dateFrom: period.from,
+      dateTo: period.to,
       sheet,
       analysisScope,
+      businessFilters,
       mapping: mappingOverride,
       eliminarDuplicados,
       revision: cleaning?.revision,
@@ -289,23 +309,30 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     const activationKey = `${mode}:${fileKey}`
     if (fetchedForFile.current === activationKey) return
     fetchedForFile.current = activationKey
-    void runActivation(file, storagePath, contextMetrics, mode === 'advanced')
+    const visibleMetrics = hasAssistantMetricFilters(period, businessFilters)
+      ? null
+      : contextMetrics
+    void runActivation(file, storagePath, visibleMetrics, mode === 'advanced')
     return () => {
       // Fase 12b: liberar la clave al desmontar (StrictMode/remontaje) — la
       // activación abortada quedaba "ya hecha" y el panel en spinner eterno.
       if (fetchedForFile.current === activationKey) fetchedForFile.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, mode, advancedBlocked, file, datasetId, storagePath, uploadedAt, sheet, sheetManifest, analysisScope, mappingOverride, eliminarDuplicados, cleaning])
+  }, [active, mode, advancedBlocked, file, datasetId, storagePath, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, cleaning])
 
   // Si las métricas llegan al contexto después (usuario visitó Resumen),
   // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.
   useEffect(() => {
-    if (contextMetrics && active) {
+    if (
+      contextMetrics
+      && active
+      && !hasAssistantMetricFilters(period, businessFilters)
+    ) {
       setActiveCurrency(contextMetrics.moneda)
       localMetrics.current = contextMetrics
     }
-  }, [contextMetrics, active])
+  }, [contextMetrics, active, period, businessFilters])
 
   const sendMessage = async (text: string) => {
     const m = localMetrics.current
