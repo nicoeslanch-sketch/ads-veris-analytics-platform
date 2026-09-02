@@ -92,7 +92,11 @@ def build_audit_dataframe(
         "scope": scope or {},
         "revision": revision,
     }
-    records: list[dict[str, Any]] = []
+    # Las auditorías medianas pueden contener decenas de miles de registros.
+    # Tuplas y metadatos memoizados evitan repetir un dict y el mismo JSON por
+    # celda mientras se conserva exactamente la misma tabla de salida.
+    records: list[tuple[Any, ...]] = []
+    metadata_cache: dict[str, str] = {}
     original_values = original.copy(deep=False)
     original_values.attrs = {}
     cleaned_values = cleaned.copy(deep=False)
@@ -110,21 +114,23 @@ def build_audit_dataframe(
         extra: dict[str, Any] | None = None,
     ) -> None:
         metadata = {**common_metadata, **(extra or {})}
+        metadata_key = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+        metadata_json = metadata_cache.setdefault(metadata_key, metadata_key)
         records.append(
-            {
-                "archivo": filename,
-                "hoja": source_sheet or "CSV",
-                "fila_origen": row,
-                "columna": column,
-                "valor_original": _display(original_value),
-                "valor_final": _display(final_value),
-                "regla": rule,
-                "accion": action,
-                "confianza": confidence,
-                "confirmacion": confirmation,
-                "version_motor": ENGINE_VERSION,
-                "metadatos": json.dumps(metadata, ensure_ascii=False, sort_keys=True),
-            }
+            (
+                filename,
+                source_sheet or "CSV",
+                row,
+                column,
+                _display(original_value),
+                _display(final_value),
+                rule,
+                action,
+                confidence,
+                confirmation,
+                ENGINE_VERSION,
+                metadata_json,
+            )
         )
 
     if original_headers is not None:
@@ -272,4 +278,16 @@ def build_audit_dataframe(
         },
     )
 
-    return pd.DataFrame.from_records(records, columns=AUDIT_COLUMNS)
+    audit = pd.DataFrame.from_records(records, columns=AUDIT_COLUMNS)
+    for column in (
+        "archivo",
+        "hoja",
+        "columna",
+        "regla",
+        "accion",
+        "confirmacion",
+        "version_motor",
+        "metadatos",
+    ):
+        audit[column] = audit[column].astype("category")
+    return audit

@@ -192,7 +192,9 @@ def test_clean_export_job_prepares_download_through_job_manager(
     )
     pruned = []
     monkeypatch.setattr(
-        pipeline, "_prune_caches_for_export", lambda content: pruned.append(content)
+        pipeline,
+        "_prune_caches_for_export",
+        lambda content, _manifest, _dataset_id: pruned.append(content),
     )
     manifest = {
         "hojas": [

@@ -997,7 +997,11 @@ _EXPORT_INFLIGHT: dict[tuple, threading.Event] = {}
 _EXPORT_CACHE_MAX_ENTRIES = 1
 
 
-def _prune_caches_for_export(content: bytes) -> None:
+def _prune_caches_for_export(
+    content: bytes,
+    manifest: dict,
+    cache_dataset_id: str | None,
+) -> None:
     """Libera resultados ajenos antes de construir un XLSX grande.
 
     La exportación conserva las tramas y la limpieza del archivo activo para
@@ -1006,13 +1010,28 @@ def _prune_caches_for_export(content: bytes) -> None:
     """
     source_sha1 = hashlib.sha1(content).digest()
     source_sha256 = hashlib.sha256(content).digest()
+    allowed_clean_keys = {
+        _cache_key(
+            content,
+            entry["rules"],
+            True,
+            entry["mapping"] or None,
+            entry["scope"] or None,
+            entry["nombre"],
+            entry["eliminar_duplicados"],
+            cache_dataset_id,
+            entry.get("revision") or None,
+        )
+        for entry in manifest["hojas"]
+        if entry["procesar"]
+    }
     with _FRAME_CACHE_LOCK:
         for key in list(_FRAME_CACHE):
-            if len(key) < 2 or key[1] != source_sha1:
+            if len(key) < 2 or key[1] != source_sha1 or key[0] != "raw":
                 _FRAME_CACHE.pop(key, None)
     with _CACHE_LOCK:
         for key in list(_CLEAN_CACHE):
-            if len(key) < 5 or key[4] != source_sha1:
+            if key not in allowed_clean_keys:
                 _CLEAN_CACHE.pop(key, None)
     with _ANALYSIS_CACHE_LOCK:
         _ANALYSIS_CACHE.clear()
@@ -2498,15 +2517,20 @@ def _write_audit_sheet(wb, audit, title: str = "Auditoria") -> None:
     ws.column_dimensions["E"].width = 28
     ws.column_dimensions["F"].width = 28
     ws.column_dimensions["L"].width = 60
-    exported = safe_export_dataframe(audit)
     headers = []
-    for value in exported.columns:
+    for value in audit.columns:
         cell = WriteOnlyCell(ws, value=value)
         cell.font = Font(bold=True)
         headers.append(cell)
     ws.append(headers)
-    for row in exported.itertuples(index=False, name=None):
-        ws.append(list(row))
+    for row in audit.itertuples(index=False, name=None):
+        ws.append([
+            "'" + value
+            if isinstance(value, str)
+            and value.lstrip().startswith(("=", "+", "-", "@"))
+            else value
+            for value in row
+        ])
     if audit.empty:
         ws.append([
             "—",
@@ -2759,7 +2783,7 @@ def _clean_download_book_uncached_sync(
                 cache_revision=entry.get("revision") or None,
                 preloaded=preloaded.get(name),
             )
-            frame = result["_df_limpio"].copy()
+            frame = result["_df_limpio"]
             frames[name] = frame
             mappings[name] = result.get("mapeo", entry["mapping"])
             results[name] = result
@@ -2905,11 +2929,12 @@ def _clean_download_book_uncached_sync(
         )
 
     audit_parts = [frame for frame in audit_frames if not frame.empty]
-    audit = (
-        pd.concat(audit_parts, ignore_index=True)
-        if audit_parts
-        else pd.DataFrame(columns=AUDIT_COLUMNS)
-    )
+    if len(audit_parts) == 1:
+        audit = audit_parts[0]
+    elif audit_parts:
+        audit = pd.concat(audit_parts, ignore_index=True)
+    else:
+        audit = pd.DataFrame(columns=AUDIT_COLUMNS)
     stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
     manifest_payload = {
         "archivo_origen": filename,
@@ -2965,6 +2990,14 @@ def _clean_download_book_uncached_sync(
     all_sheets_processed = len(frames) == len(entries) and all(
         entry["procesar"] for entry in entries
     )
+    # Desde aquí solo se escriben las salidas limpias y la auditoría. Las
+    # tramas crudas/estandarizadas ya no se volverán a consultar en este job.
+    preloaded.clear()
+    with _FRAME_CACHE_LOCK:
+        for key in list(_FRAME_CACHE):
+            if len(key) >= 2 and key[1] == hashlib.sha1(content).digest():
+                _FRAME_CACHE.pop(key, None)
+    gc.collect()
     wb = _workbook_for_clean_export(content, all_sheets_processed)
     for name, frame in frames.items():
         index = None
@@ -5112,7 +5145,7 @@ async def clean_export_job(
     )
 
     def producer() -> dict:
-        _prune_caches_for_export(content)
+        _prune_caches_for_export(content, sheet_manifest, dataset_id)
         _payload, out_name, _media_type = _clean_download_book_sync(
             filename,
             content,
