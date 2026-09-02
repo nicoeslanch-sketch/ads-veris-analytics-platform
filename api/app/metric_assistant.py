@@ -387,8 +387,18 @@ def _answer_collection_question(
             "no debe interpretarse como ventas, utilidad ni caja disponible."
         )
         return _result(answer, "metric_collection_total", suggestions)
-    if wants_collection or _contains(question, "recaudacion", "cobranza") and not _contains(
-        question, "equipo", "agencia", "semana", "mes", "periodo", "ticket"
+    if (
+        wants_collection or _contains(question, "recaudacion", "cobranza")
+    ) and not _contains(
+        question,
+        "equipo",
+        "agencia",
+        "semana",
+        "mes",
+        "periodo",
+        "ticket",
+        "tendencia",
+        "evolucion",
     ):
         answer = (
             f"La recaudación de cobranza{scope} es "

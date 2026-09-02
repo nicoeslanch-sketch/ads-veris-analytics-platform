@@ -196,6 +196,7 @@ def test_quick_help_reads_flexible_dashboard_graphs(client, auth_headers):
         ("¿Cuál es mi ticket promedio de cobranza?", "metric_collection_ticket", "$111.770"),
         ("¿Qué equipo aporta más a la cobranza?", "metric_collection_team", "FLUJO"),
         ("¿Cuál fue la semana con mayor recaudación?", "metric_collection_best_period", "$397.732.370"),
+        ("¿Cuál fue la semana con mayor recaudación de cobranza?", "metric_collection_best_period", "$397.732.370"),
         ("¿Qué agencia lidera?", "metric_collection_agency", "WEB"),
         ("¿Cuántos pagos tengo?", "metric_collection_payments", "14.917"),
         ("¿Cuánto aporta STOCK?", "metric_collection_team", "$246.573.996"),
@@ -206,13 +207,15 @@ def test_quick_help_reads_flexible_dashboard_graphs(client, auth_headers):
     ],
 )
 def test_quick_help_reads_collection_kpis_and_graphs(
-    client, auth_headers, question, matched_key, expected
+    question, matched_key, expected
 ):
-    response = _ask_collection(client, auth_headers, question)
+    from app.metric_assistant import answer_metrics_question
 
-    assert response.status_code == 200
-    assert response.json()["matched_key"] == matched_key
-    assert expected in response.json()["answer"]
+    body = answer_metrics_question(question, _collection_metrics())
+
+    assert body is not None
+    assert body["matched_key"] == matched_key
+    assert expected in body["answer"]
 
 
 def test_quick_help_explains_collection_difference(client, auth_headers):
