@@ -233,6 +233,18 @@ def test_quick_help_explains_collection_difference(client, auth_headers):
     assert "83,86%" in body["answer"]
 
 
+def test_quick_help_uses_feminine_article_for_week():
+    from app.metric_assistant import answer_metrics_question
+
+    body = answer_metrics_question(
+        "¿Cuál fue la semana con mayor recaudación de cobranza?",
+        _collection_metrics(),
+    )
+
+    assert body is not None
+    assert body["answer"].startswith("La semana con mayor")
+
+
 def test_quick_help_says_conserved_duplicates_are_in_totals(client, auth_headers):
     response = _ask_collection(
         client,

@@ -137,10 +137,16 @@ def _result(
 def metric_suggestions(metrics: dict[str, Any]) -> list[str]:
     collection = _collection_dashboard(metrics)
     if collection is not None:
+        grain = str(collection.get("grano_temporal") or "periodo")
+        period_suggestion = (
+            "¿Cuál fue la semana con mayor recaudación?"
+            if grain == "semana"
+            else f"¿Cuál fue el {grain} con mayor recaudación?"
+        )
         return [
             "¿Cuánto recaudo de cobranza y cuánto queda fuera?",
             "¿Qué equipo aporta más a la cobranza?",
-            f"¿Cuál fue el mejor {collection.get('grano_temporal') or 'periodo'}?",
+            period_suggestion,
             "¿Qué problemas de calidad debo revisar?",
         ]
     kpis = metrics.get("kpis") or {}
@@ -472,8 +478,10 @@ def _answer_collection_question(
         )
         if selected is not None:
             label = str(selected.get("periodo") or "periodo visible").replace("/", " a ")
+            grain = str(collection.get("grano_temporal") or "periodo")
+            article = "La" if grain == "semana" else "El"
             answer = (
-                f"El {collection.get('grano_temporal') or 'periodo'} con {'menor' if wants_lowest else 'mayor'} "
+                f"{article} {grain} con {'menor' if wants_lowest else 'mayor'} "
                 f"{'recaudación total' if key == 'recaudacion_total' else 'recaudación de cobranza'} "
                 f"fue {label}, con {format_amount(selected.get(key), currency)}. "
                 "Es un valor observado en el alcance filtrado, no una proyección."
