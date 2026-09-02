@@ -114,6 +114,127 @@ def test_clean_batch_applies_every_sheet_without_individual_requests(client, aut
     assert body["resultados"]["Febrero"]["carga"]["hoja_usada"] == "Febrero"
 
 
+def test_clean_batch_does_not_start_hidden_heavy_jobs(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline
+
+    def unexpected_heavy_work(*_args, **_kwargs):
+        raise AssertionError("clean batch started a hidden XLSX or analysis job")
+
+    monkeypatch.setattr(pipeline, "_clean_download_book_sync", unexpected_heavy_work)
+    monkeypatch.setattr(
+        pipeline, "_prewarm_business_analysis_sync", unexpected_heavy_work
+    )
+    manifest = {
+        "hojas": [
+            {
+                "nombre": name,
+                "procesar": True,
+                "rules": {},
+                "mapping": {},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "status": "estandarizada",
+                "error": "",
+                "revision": 0,
+            }
+            for name in ("Enero", "Febrero")
+        ]
+    }
+
+    response = client.post(
+        "/clean/batch",
+        headers=auth_headers,
+        data={
+            "manifest": json.dumps(manifest),
+            "restore_state": json.dumps(_restore_state()),
+        },
+        files={
+            "file": (
+                "ventas.xlsx",
+                _book(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_clean_export_job_prepares_download_through_job_manager(
+    client, auth_headers, monkeypatch
+):
+    from app.routes import pipeline
+
+    calls = []
+
+    class ImmediateManager:
+        def submit(self, user_id, job_key, producer):
+            calls.append((user_id, job_key))
+            return {
+                "job_id": "export-job-1",
+                "status": "completed",
+                "progress": 100,
+                "result": producer(),
+                "error": None,
+            }
+
+    monkeypatch.setattr(pipeline, "manager_for", lambda _settings: ImmediateManager())
+    monkeypatch.setattr(
+        pipeline,
+        "_clean_download_book_sync",
+        lambda *_args, **_kwargs: (
+            b"xlsx",
+            "ventas_limpio.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    )
+    pruned = []
+    monkeypatch.setattr(
+        pipeline, "_prune_caches_for_export", lambda content: pruned.append(content)
+    )
+    manifest = {
+        "hojas": [
+            {
+                "nombre": name,
+                "procesar": True,
+                "rules": {},
+                "mapping": {},
+                "scope": {},
+                "eliminar_duplicados": False,
+                "revision": 0,
+            }
+            for name in ("Enero", "Febrero")
+        ]
+    }
+
+    response = client.post(
+        "/clean/export/jobs",
+        headers=auth_headers,
+        data={
+            "manifest": json.dumps(manifest),
+            "dataset_id": "00000000-0000-0000-0000-000000000099",
+        },
+        files={
+            "file": (
+                "ventas.xlsx",
+                _book(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["result"] == {
+        "ready": True,
+        "filename": "ventas_limpio.xlsx",
+        "format": "xlsx",
+    }
+    assert calls and calls[0][1][0] == "clean_export"
+    assert len(pruned) == 1
+
+
 def test_clean_batch_reuses_frames_prepared_by_standardization(
     client, auth_headers, monkeypatch
 ):

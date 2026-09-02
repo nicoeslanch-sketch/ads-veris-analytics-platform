@@ -332,8 +332,10 @@ export async function apiPostJob<T>(
   options?: ApiRequestOptions,
 ): Promise<T> {
   const signal = options?.signal
+  const totalTimeoutMs = options?.timeoutMs ?? PIPELINE_TIMEOUT_MS
+  const deadline = Date.now() + totalTimeoutMs
   let job = await apiPost<AnalysisJobResponse<T>>(path, form, {
-    timeoutMs: options?.timeoutMs ?? JSON_TIMEOUT_MS,
+    timeoutMs: Math.min(totalTimeoutMs, JSON_TIMEOUT_MS),
     signal,
   })
 
@@ -360,6 +362,10 @@ export async function apiPostJob<T>(
     if (job.status === 'cancelled') {
       throw new ApiError(0, 'El procesamiento fue cancelado.')
     }
+    if (Date.now() >= deadline) {
+      requestCancellation()
+      throw new ApiError(0, 'El procesamiento tardó demasiado. Puedes reintentar sin perder el avance guardado.')
+    }
 
     try {
       await waitForPoll(1_200, signal)
@@ -369,6 +375,14 @@ export async function apiPostJob<T>(
       )
     } catch (error) {
       if (signal?.aborted) requestCancellation()
+      if (
+        error instanceof ApiError
+        && (error.status === 0 || [502, 503, 504].includes(error.status))
+        && Date.now() < deadline
+      ) {
+        await waitForPoll(2_500, signal)
+        continue
+      }
       throw error
     }
   }

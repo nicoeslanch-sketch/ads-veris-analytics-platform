@@ -35,7 +35,7 @@ import { useAuth } from '../auth/AuthContext'
 import { useDataset } from '../data/DatasetContext'
 import { useDemo } from '../demo/DemoContext'
 import { DemoEmptyActions } from '../demo/DemoBanner'
-import { apiGet, apiPost, apiDownload, buildDatasetForm, ApiError } from '../lib/api'
+import { apiGet, apiPost, apiPostJob, apiDownload, buildDatasetForm, ApiError } from '../lib/api'
 import {
   logActivity,
   saveCleaningJob,
@@ -848,7 +848,15 @@ export default function Limpieza() {
         const serializedScope = serializedAnalysisScope(analysisScope)
         if (serializedScope) extra.analysis_scope = serializedScope
       }
-      await apiDownload('/clean/download', buildDatasetForm(file, storagePath, extra), `${stem}_limpio.${fmt}`)
+      const buildDownloadForm = () => buildDatasetForm(file, storagePath, extra)
+      if (sheetManifest && datasetId) {
+        await apiPostJob<{ ready: boolean; filename: string; format: string }>(
+          '/clean/export/jobs',
+          buildDownloadForm(),
+          { timeoutMs: 15 * 60_000 },
+        )
+      }
+      await apiDownload('/clean/download', buildDownloadForm(), `${stem}_limpio.${fmt}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo descargar el archivo.')
     } finally {

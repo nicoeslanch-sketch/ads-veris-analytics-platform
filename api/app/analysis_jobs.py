@@ -34,7 +34,11 @@ class AnalysisJobManager:
         self.jobs: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
         self.producers: dict[tuple[str, str], Callable[[], dict[str, Any]]] = {}
         self.lock = threading.Lock()
-        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis-job")
+        # Render usa una instancia de memoria acotada. Dos cálculos pandas/XLSX
+        # simultáneos pueden dejar sin respuesta incluso al health check. Los
+        # trabajos siguen siendo asíncronos, pero el proceso ejecuta uno pesado
+        # a la vez y mantiene libre el event loop para estado y navegación.
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-job")
 
     def _remember(self, user_id: str, job: dict[str, Any]) -> dict[str, Any]:
         identity = (user_id, str(job["job_id"]))

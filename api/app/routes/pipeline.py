@@ -22,6 +22,7 @@ Fase 7:
 """
 
 import copy
+import gc
 import hashlib
 import io
 import json
@@ -989,11 +990,39 @@ _CACHE_TOTAL_CELL_BUDGET = 2_400_000
 _CACHE_MAX_ENTRY_CELLS = 2_400_000
 _AUDIT_CACHE_LOCK = threading.Lock()
 _AUDIT_CACHE: "OrderedDict[tuple, object]" = OrderedDict()
-_AUDIT_CACHE_MAX_ROWS = 100_000
+_AUDIT_CACHE_MAX_ROWS = 10_000
 _EXPORT_CACHE_LOCK = threading.Lock()
 _EXPORT_CACHE: "OrderedDict[tuple, tuple[bytes, str, str]]" = OrderedDict()
 _EXPORT_INFLIGHT: dict[tuple, threading.Event] = {}
-_EXPORT_CACHE_MAX_ENTRIES = 3
+_EXPORT_CACHE_MAX_ENTRIES = 1
+
+
+def _prune_caches_for_export(content: bytes) -> None:
+    """Libera resultados ajenos antes de construir un XLSX grande.
+
+    La exportación conserva las tramas y la limpieza del archivo activo para
+    no recalcularlas. El resto ya tiene caché durable o puede regenerarse y no
+    debe competir con openpyxl dentro del límite de memoria de Render.
+    """
+    source_sha1 = hashlib.sha1(content).digest()
+    source_sha256 = hashlib.sha256(content).digest()
+    with _FRAME_CACHE_LOCK:
+        for key in list(_FRAME_CACHE):
+            if len(key) < 2 or key[1] != source_sha1:
+                _FRAME_CACHE.pop(key, None)
+    with _CACHE_LOCK:
+        for key in list(_CLEAN_CACHE):
+            if len(key) < 5 or key[4] != source_sha1:
+                _CLEAN_CACHE.pop(key, None)
+    with _ANALYSIS_CACHE_LOCK:
+        _ANALYSIS_CACHE.clear()
+    with _AUDIT_CACHE_LOCK:
+        for key in list(_AUDIT_CACHE):
+            if len(key) < 2 or key[1] != source_sha256:
+                _AUDIT_CACHE.pop(key, None)
+    with _EXPORT_CACHE_LOCK:
+        _EXPORT_CACHE.clear()
+    gc.collect()
 
 
 def _export_cache_identity(
@@ -2446,13 +2475,17 @@ def _build_export_audit(
         original_headers=original_headers,
         revision=cache_revision,
     )
-    with _AUDIT_CACHE_LOCK:
-        _AUDIT_CACHE[audit_key] = audit.copy(deep=True)
-        _AUDIT_CACHE.move_to_end(audit_key)
-        total_rows = sum(len(frame) for frame in _AUDIT_CACHE.values())
-        while len(_AUDIT_CACHE) > 1 and total_rows > _AUDIT_CACHE_MAX_ROWS:
-            _, removed = _AUDIT_CACHE.popitem(last=False)
-            total_rows -= len(removed)
+    # Una auditoría extensa puede ocupar decenas de MB por sus textos y JSON.
+    # La exportación completa ya se guarda en Storage; conservar además otra
+    # copia profunda en RAM provocaba el reinicio de Render en libros medianos.
+    if len(audit) <= _AUDIT_CACHE_MAX_ROWS:
+        with _AUDIT_CACHE_LOCK:
+            _AUDIT_CACHE[audit_key] = audit.copy(deep=True)
+            _AUDIT_CACHE.move_to_end(audit_key)
+            total_rows = sum(len(frame) for frame in _AUDIT_CACHE.values())
+            while total_rows > _AUDIT_CACHE_MAX_ROWS and _AUDIT_CACHE:
+                _, removed = _AUDIT_CACHE.popitem(last=False)
+                total_rows -= len(removed)
     return audit
 
 
@@ -4970,7 +5003,6 @@ async def clean(
 
 @router.post("/clean/batch")
 async def clean_batch(
-    background_tasks: BackgroundTasks,
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
     dataset_id: str | None = Form(None),
@@ -5014,52 +5046,89 @@ async def clean_batch(
         state,
     )
 
-    # La descarga auditada se prepara después de responder. El botón conserva
-    # exactamente el mismo exportador y controles; normalmente encuentra la
-    # caché lista cuando el usuario termina de revisar la limpieza.
-    manifest_names = {
-        entry["nombre"] for entry in sheet_manifest["hojas"] if entry["procesar"]
-    }
-    selected_names = set(state.get("selected_sheets") or manifest_names)
-    if not response["errores"] and selected_names <= manifest_names:
-        warm_manifest = copy.deepcopy(sheet_manifest)
-        for entry in warm_manifest["hojas"]:
-            if entry["nombre"] in response["resultados"]:
-                entry["revision"] = int(revision or 0)
-                entry["status"] = "limpio"
-        available = [entry["nombre"] for entry in warm_manifest["hojas"]]
-        parsed_scope = (
-            _parse_analysis_scope(analysis_scope, available)
-            if analysis_scope
-            else None
-        )
-        # BackgroundTasks ejecuta las tareas en el orden registrado. El XLSX
-        # auditado es la siguiente acción más costosa y visible para el usuario,
-        # por lo que se prepara antes que los gráficos de Resumen. Así, si pulsa
-        # Descargar apenas termina la limpieza, encuentra la exportación en
-        # curso/caché en vez de competir por la CPU limitada de Render.
-        background_tasks.add_task(
-            _clean_download_book_sync,
-            filename,
-            content,
-            warm_manifest,
-            "xlsx",
-            parsed_scope,
-            dataset_id,
-            user.id,
-        )
-        # Luego se precalculan relaciones y métricas para la navegación a
-        # Resumen; no se elimina ningún control ni cálculo.
-        background_tasks.add_task(
-            _prewarm_business_analysis_sync,
-            filename,
-            content,
-            warm_manifest,
-            response["resultados"],
-            dataset_id,
-            user.id,
-        )
+    # No iniciar cálculos pesados ocultos después de responder. El usuario
+    # puede abrir Resumen o descargar de inmediato; ambas acciones usan el
+    # gestor recuperable y se serializan para no dejar la API indisponible.
     return response
+
+
+def _resolve_export_analysis_scope(
+    sheet_manifest: dict,
+    combinar_hojas: bool,
+    analysis_scope: str | None,
+) -> dict | None:
+    available = [entry["nombre"] for entry in sheet_manifest["hojas"]]
+    if analysis_scope:
+        return _parse_analysis_scope(analysis_scope, available)
+    if not combinar_hojas:
+        return None
+    processed = [
+        entry["nombre"] for entry in sheet_manifest["hojas"] if entry["procesar"]
+    ]
+    return validate_analysis_scope(
+        {
+            "mode": "append",
+            "sheets": processed,
+            "active_sheet": processed[0],
+        },
+        available,
+    )
+
+
+@router.post("/clean/export/jobs", status_code=status.HTTP_202_ACCEPTED)
+async def clean_export_job(
+    file: UploadFile | None = File(None),
+    storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None),
+    fmt: str = Form("xlsx"),
+    format: str | None = Form(None),
+    manifest: str = Form(...),
+    combinar_hojas: bool = Form(False),
+    analysis_scope: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Prepara una exportación durable sin mantener una petición larga abierta."""
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.DOWNLOAD_CLEAN_DATASET, settings
+    )
+    if not dataset_id:
+        raise HTTPException(
+            status_code=422,
+            detail="La exportación recuperable requiere un dataset guardado.",
+        )
+    export_format = (format or fmt).strip().lower()
+    if export_format not in {"csv", "xlsx"}:
+        raise HTTPException(status_code=422, detail="El formato debe ser 'csv' o 'xlsx'.")
+    filename, content = await _read_input(file, storage_path, user)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if sheet_manifest is None:
+        raise HTTPException(status_code=422, detail="Envía un manifiesto de hojas.")
+    resolved_scope = _resolve_export_analysis_scope(
+        sheet_manifest, combinar_hojas, analysis_scope
+    )
+    identity = _export_cache_identity(
+        content, sheet_manifest, export_format, resolved_scope
+    )
+
+    def producer() -> dict:
+        _prune_caches_for_export(content)
+        _payload, out_name, _media_type = _clean_download_book_sync(
+            filename,
+            content,
+            sheet_manifest,
+            export_format,
+            resolved_scope,
+            dataset_id,
+            user.id,
+        )
+        return {"ready": True, "filename": out_name, "format": export_format}
+
+    return manager_for(settings).submit(
+        user.id,
+        ("clean_export", user.id, dataset_id, identity),
+        producer,
+    )
 
 
 @router.post("/clean/assisted")
@@ -5228,32 +5297,8 @@ async def clean_download(
                 status_code=422,
                 detail="La descarga multihoja solo está disponible en formato XLSX.",
             )
-        resolved_analysis_scope = (
-            _parse_analysis_scope(
-                analysis_scope,
-                [entry["nombre"] for entry in sheet_manifest["hojas"]],
-            )
-            if analysis_scope
-            else (
-                validate_analysis_scope(
-                    {
-                        "mode": "append",
-                        "sheets": [
-                            entry["nombre"]
-                            for entry in sheet_manifest["hojas"]
-                            if entry["procesar"]
-                        ],
-                        "active_sheet": next(
-                            entry["nombre"]
-                            for entry in sheet_manifest["hojas"]
-                            if entry["procesar"]
-                        ),
-                    },
-                    [entry["nombre"] for entry in sheet_manifest["hojas"]],
-                )
-                if combinar_hojas
-                else None
-            )
+        resolved_analysis_scope = _resolve_export_analysis_scope(
+            sheet_manifest, combinar_hojas, analysis_scope
         )
         signed_download = await run_in_threadpool(
             _cached_export_signed_download,
