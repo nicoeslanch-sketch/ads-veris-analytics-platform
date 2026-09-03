@@ -488,7 +488,10 @@ def _answer_collection_question(
             "aplicados"
         ) or {}
         if applied:
-            answer = f"Los cálculos usan{scope}. No incluyen las filas excluidas por esos filtros."
+            answer = (
+                f"Los cálculos se realizaron{scope}. "
+                "No incluyen las filas excluidas por esos filtros."
+            )
         else:
             answer = (
                 f"No hay filtros de negocio activos. Los cálculos usan todas las filas "
@@ -1544,7 +1547,14 @@ def answer_metrics_question(
             "metric_capabilities",
             suggestions,
         )
-    if _contains(original_question, "convertir a uf", "convertirlo a uf", "pasar a uf"):
+    if _contains(
+        original_question,
+        "convertir a uf",
+        "convertirlo a uf",
+        "convertir estos pesos a uf",
+        "convertir pesos a uf",
+        "pasar a uf",
+    ):
         return _result(
             "No convierto automáticamente a UF porque necesito el valor oficial de la "
             "UF correspondiente a la fecha de cada monto. El dashboard conserva la "

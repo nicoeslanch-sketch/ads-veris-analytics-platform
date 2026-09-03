@@ -307,6 +307,7 @@ def test_quick_help_builds_prudent_collection_overview(client, auth_headers):
         ("¿Cuál es la sucursal con más ventas?", "metric_collection_branch_unavailable", "no publica un desglose por sucursal"),
         ("¿Qué gráfico debería mirar?", "metric_collection_chart_guidance", "evolución por semana"),
         ("¿Puedes convertirlo a UF?", "metric_currency_conversion_unavailable", "valor oficial de la UF"),
+        ("¿Puedes convertir estos pesos a UF?", "metric_currency_conversion_unavailable", "valor oficial de la UF"),
     ],
 )
 def test_quick_help_handles_collection_conversation_variations(
@@ -347,7 +348,7 @@ def test_quick_help_understands_short_follow_ups(
 
 
 def test_quick_help_explains_filter_cache_and_clean_download():
-    from app.support_knowledge import answer_for
+    from app.support_knowledge import answer_for, rank_articles
 
     cache = answer_for(
         "¿Volver a filtrar vuelve a limpiar todo?", metrics=_collection_metrics()
@@ -358,8 +359,27 @@ def test_quick_help_explains_filter_cache_and_clean_download():
 
     assert cache["matched_key"] == "cache"
     assert "artefacto limpio firmado" in cache["answer"]
+    assert all(
+        article["key"] != "advanced_chat"
+        for _, article in rank_articles("¿Volver a filtrar vuelve a limpiar todo?")[:2]
+    )
     assert download["matched_key"] == "download_clean"
     assert "auditoría" in download["answer"]
+
+
+def test_quick_help_describes_active_filter_with_natural_grammar():
+    from app.metric_assistant import answer_metrics_question
+
+    metrics = _collection_metrics()
+    metrics["analisis_negocio"]["filtros"] = {
+        "aplicados": {"equipo": "JUDICIAL"}
+    }
+
+    body = answer_metrics_question("¿Qué filtros están activos?", metrics)
+
+    assert body is not None
+    assert "se realizaron con los filtros visibles" in body["answer"]
+    assert "equipo: JUDICIAL" in body["answer"]
 
 
 def _sales_conversation_metrics():

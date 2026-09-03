@@ -111,6 +111,7 @@ def normalize(text: str) -> str:
 
 def rank_articles(message: str, articles: list[dict[str, Any]] | None = None) -> list[tuple[float, dict[str, Any]]]:
     normalized = normalize(message)
+    padded = f" {normalized} "
     words = set(normalized.split())
     ranked: list[tuple[float, dict[str, Any]]] = []
     for item in articles or ARTICLES:
@@ -119,7 +120,10 @@ def rank_articles(message: str, articles: list[dict[str, Any]] | None = None) ->
             trigger_norm = normalize(str(trigger))
             if not trigger_norm:
                 continue
-            if trigger_norm in normalized:
+            # Match complete words/phrases. Short triggers such as "ia" used
+            # to fire inside unrelated words like "limpiar" and displaced the
+            # correct operational answer.
+            if f" {trigger_norm} " in padded:
                 score += 8 + len(trigger_norm.split()) * 2
             else:
                 trigger_words = set(trigger_norm.split())
