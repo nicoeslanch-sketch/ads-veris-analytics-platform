@@ -56,6 +56,11 @@ logger = logging.getLogger(__name__)
 from .. import quota
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import Capability, require_capability_for_user
+from ..clean_artifacts import (
+    InvalidCleanArtifact,
+    pack_clean_artifact,
+    unpack_clean_artifact,
+)
 from ..config import Settings, get_settings
 from ..engine.ai_refine import refine_with_ai
 from ..engine.audit import AUDIT_COLUMNS, build_audit_dataframe
@@ -888,6 +893,7 @@ def _processed_manifest_frames(
     manifest: dict,
     cache_dataset_id: str | None = None,
     selected_sheets: set[str] | None = None,
+    cache_user_id: str | None = None,
 ) -> tuple[dict[str, object], dict[str, dict[str, str]], dict[str, dict]]:
     """Procesa el manifiesto en orden y conserva la configuracion por hoja.
 
@@ -908,12 +914,41 @@ def _processed_manifest_frames(
     # cost 16 times after every cold start. Load the requested scope once and
     # feed each immutable frame into the existing per-sheet pipeline; rules,
     # mappings, revision keys and user isolation remain unchanged.
-    loaded, _available = _load_batch_frames_cached(filename, content, names)
+    durable: dict[str, dict] = {}
+    if cache_dataset_id and cache_user_id:
+        for entry in entries:
+            restored = _load_metrics_clean_artifact(
+                filename,
+                content,
+                entry["rules"],
+                entry["mapping"] or None,
+                entry["scope"] or None,
+                entry["nombre"],
+                entry["eliminar_duplicados"],
+                cache_dataset_id,
+                entry.get("revision") or None,
+                cache_user_id,
+            )
+            if restored is not None:
+                durable[entry["nombre"]] = restored
+    missing_names = [name for name in names if name not in durable]
+    loaded = (
+        _load_batch_frames_cached(filename, content, missing_names)[0]
+        if missing_names
+        else {}
+    )
 
     frames: dict[str, object] = {}
     mappings: dict[str, dict[str, str]] = {}
     results: dict[str, dict] = {}
     for entry in entries:
+        restored = durable.get(entry["nombre"])
+        if restored is not None:
+            result = restored
+            frames[entry["nombre"]] = result["_df_limpio"].copy()
+            mappings[entry["nombre"]] = result.get("mapeo", entry["mapping"])
+            results[entry["nombre"]] = result
+            continue
         preloaded = loaded.get(entry["nombre"])
         if preloaded is None:
             raise HTTPException(
@@ -932,6 +967,19 @@ def _processed_manifest_frames(
             cache_dataset_id=cache_dataset_id,
             cache_revision=entry.get("revision") or None,
             preloaded=preloaded,
+        )
+        _store_metrics_clean_artifact(
+            filename,
+            content,
+            entry["rules"],
+            entry["mapping"] or None,
+            entry["scope"] or None,
+            entry["nombre"],
+            entry["eliminar_duplicados"],
+            cache_dataset_id,
+            entry.get("revision") or None,
+            cache_user_id,
+            result,
         )
         frames[entry["nombre"]] = result["_df_limpio"].copy()
         mappings[entry["nombre"]] = result.get("mapeo", entry["mapping"])
@@ -995,6 +1043,240 @@ _EXPORT_CACHE_LOCK = threading.Lock()
 _EXPORT_CACHE: "OrderedDict[tuple, tuple[bytes, str, str]]" = OrderedDict()
 _EXPORT_INFLIGHT: dict[tuple, threading.Event] = {}
 _EXPORT_CACHE_MAX_ENTRIES = 1
+
+# The durable clean artifact is intentionally narrower than the in-memory
+# pipeline cache. It accelerates dashboard filters without competing with very
+# large exports for Render memory.
+_METRICS_ARTIFACT_MAX_CELLS = 600_000
+_METRICS_CLEAN_CACHE_LOCK = threading.Lock()
+_METRICS_CLEAN_CACHE: "OrderedDict[str, dict]" = OrderedDict()
+_METRICS_CLEAN_CACHE_MAX_ENTRIES = 1
+
+
+def _metrics_clean_artifact_identity(
+    content: bytes,
+    rules: dict | None,
+    mapping: dict | None,
+    scope: dict | None,
+    sheet: str | None,
+    eliminar_duplicados: bool,
+    cache_dataset_id: str,
+    cache_revision: int | None,
+) -> str:
+    canonical = json.dumps(
+        {
+            "engine": ENGINE_VERSION,
+            "service_model": SERVICE_MODEL_VERSION,
+            "dataset_id": cache_dataset_id,
+            "revision": int(cache_revision or 0),
+            "source_sha256": hashlib.sha256(content).hexdigest(),
+            "rules": {**DEFAULT_RULES, **(rules or {})},
+            "mapping": mapping or {},
+            "scope": scope or {},
+            "sheet": sheet or "",
+            "eliminar_duplicados": bool(eliminar_duplicados),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _metrics_clean_artifact_path(
+    user_id: str | None,
+    dataset_id: str | None,
+    sheet: str | None,
+) -> str | None:
+    safe_component = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+    if (
+        not user_id
+        or not dataset_id
+        or not safe_component.fullmatch(user_id)
+        or not safe_component.fullmatch(dataset_id)
+    ):
+        return None
+    sheet_key = hashlib.sha256((sheet or "__default__").encode("utf-8")).hexdigest()[:16]
+    return f"{user_id}/.analysis/{dataset_id}/clean-{sheet_key}.json.gz"
+
+
+def _metrics_clean_cache_get(identity: str) -> dict | None:
+    with _METRICS_CLEAN_CACHE_LOCK:
+        result = _METRICS_CLEAN_CACHE.get(identity)
+        if result is not None:
+            _METRICS_CLEAN_CACHE.move_to_end(identity)
+        return result
+
+
+def _metrics_clean_cache_store(identity: str, result: dict) -> None:
+    with _METRICS_CLEAN_CACHE_LOCK:
+        _METRICS_CLEAN_CACHE[identity] = result
+        _METRICS_CLEAN_CACHE.move_to_end(identity)
+        while len(_METRICS_CLEAN_CACHE) > _METRICS_CLEAN_CACHE_MAX_ENTRIES:
+            _METRICS_CLEAN_CACHE.popitem(last=False)
+
+
+def _currency_detection_from_dict(raw: object) -> CurrencyDetection | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return CurrencyDetection(
+            dominante=str(raw["dominante"]),
+            detectadas=tuple(str(value) for value in raw.get("detectadas", [])),
+            conteos={str(key): int(value) for key, value in raw.get("conteos", {}).items()},
+            mixta=bool(raw.get("mixta", False)),
+            advertencia=(
+                str(raw["advertencia"])
+                if raw.get("advertencia") is not None
+                else None
+            ),
+            conteos_por_columna={
+                str(column): {
+                    str(key): int(value) for key, value in counts.items()
+                }
+                for column, counts in raw.get("conteos_por_columna", {}).items()
+                if isinstance(counts, dict)
+            },
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _load_metrics_clean_artifact(
+    filename: str,
+    content: bytes,
+    rules: dict | None,
+    mapping: dict | None,
+    scope: dict | None,
+    sheet: str | None,
+    eliminar_duplicados: bool,
+    cache_dataset_id: str | None,
+    cache_revision: int | None,
+    cache_user_id: str | None,
+) -> dict | None:
+    path = _metrics_clean_artifact_path(cache_user_id, cache_dataset_id, sheet)
+    if path is None or cache_dataset_id is None:
+        return None
+    identity = _metrics_clean_artifact_identity(
+        content,
+        rules,
+        mapping,
+        scope,
+        sheet,
+        eliminar_duplicados,
+        cache_dataset_id,
+        cache_revision,
+    )
+    memory = _metrics_clean_cache_get(identity)
+    if memory is not None:
+        return memory
+    settings = get_settings()
+    if not settings.supabase_service_role_key:
+        return None
+    try:
+        payload = download_export_cache(path)
+        if payload is None:
+            return None
+        frame, metadata = unpack_clean_artifact(
+            payload, signing_key=settings.supabase_service_role_key
+        )
+        if metadata.get("identity") != identity:
+            return None
+        public_result = metadata.get("result")
+        currency = _currency_detection_from_dict(metadata.get("currency"))
+        if not isinstance(public_result, dict) or currency is None:
+            return None
+        summary = public_result.get("resumen")
+        if (
+            not isinstance(summary, dict)
+            or int(summary.get("filas_despues", -1)) != len(frame)
+        ):
+            return None
+        result = {
+            **public_result,
+            "_df_limpio": frame,
+            "_moneda": currency,
+        }
+        _metrics_clean_cache_store(identity, result)
+        logger.info(
+            "metrics_clean_artifact_hit dataset=%s sheet=%s rows=%s",
+            cache_dataset_id,
+            sheet or "(default)",
+            len(frame),
+        )
+        return result
+    except (HTTPException, InvalidCleanArtifact, MemoryError, OSError, TypeError, ValueError) as exc:
+        logger.warning(
+            "metrics_clean_artifact_read_failed dataset=%s error=%s",
+            cache_dataset_id,
+            exc.__class__.__name__,
+        )
+        return None
+
+
+def _store_metrics_clean_artifact(
+    filename: str,
+    content: bytes,
+    rules: dict | None,
+    mapping: dict | None,
+    scope: dict | None,
+    sheet: str | None,
+    eliminar_duplicados: bool,
+    cache_dataset_id: str | None,
+    cache_revision: int | None,
+    cache_user_id: str | None,
+    result: dict,
+) -> None:
+    path = _metrics_clean_artifact_path(cache_user_id, cache_dataset_id, sheet)
+    frame = result.get("_df_limpio")
+    if path is None or cache_dataset_id is None or not isinstance(frame, pd.DataFrame):
+        return
+    cells = len(frame) * max(len(frame.columns), 1)
+    if cells > _METRICS_ARTIFACT_MAX_CELLS:
+        return
+    identity = _metrics_clean_artifact_identity(
+        content,
+        rules,
+        mapping,
+        scope,
+        sheet,
+        eliminar_duplicados,
+        cache_dataset_id,
+        cache_revision,
+    )
+    settings = get_settings()
+    if not settings.supabase_service_role_key:
+        return
+    public_result = {key: value for key, value in result.items() if not key.startswith("_")}
+    currency = result.get("_moneda")
+    if not isinstance(currency, CurrencyDetection):
+        return
+    try:
+        payload = pack_clean_artifact(
+            frame,
+            {
+                "identity": identity,
+                "filename": filename,
+                "result": public_result,
+                "currency": currency.to_dict(),
+            },
+            signing_key=settings.supabase_service_role_key,
+        )
+        upload_export_cache(path, payload)
+        _metrics_clean_cache_store(identity, result)
+        logger.info(
+            "metrics_clean_artifact_stored dataset=%s sheet=%s rows=%s bytes=%s",
+            cache_dataset_id,
+            sheet or "(default)",
+            len(frame),
+            len(payload),
+        )
+    except (HTTPException, InvalidCleanArtifact, MemoryError, OSError, TypeError, ValueError) as exc:
+        logger.warning(
+            "metrics_clean_artifact_write_failed dataset=%s error=%s",
+            cache_dataset_id,
+            exc.__class__.__name__,
+        )
 
 
 def _prune_caches_for_export(
@@ -3371,6 +3653,7 @@ def _metrics_multi_sync(
     date_to: str | None,
     cache_dataset_id: str | None = None,
     business_filters: dict[str, str] | None = None,
+    cache_user_id: str | None = None,
 ) -> dict:
     business_view = analysis_scope["mode"] == "append_join"
     frames, mappings, results = _processed_manifest_frames(
@@ -3379,6 +3662,7 @@ def _metrics_multi_sync(
         _analysis_manifest_identity(manifest),
         cache_dataset_id,
         None if business_view else set(analysis_scope["sheets"]),
+        cache_user_id,
     )
     return _metrics_multi_from_processed(
         filename,
@@ -3426,6 +3710,7 @@ def _metrics_multi_cached_sync(
             date_to,
             cache_dataset_id,
             business_filters,
+            user_id,
         ),
     )
 
@@ -3951,21 +4236,49 @@ def _metrics_sync(
     cache_dataset_id: str | None = None,
     cache_revision: int | None = None,
     business_filters: dict[str, str] | None = None,
+    cache_user_id: str | None = None,
 ) -> dict:
     # Las métricas siempre se calculan sobre datos estandarizados y limpios.
-    # Con el caché (§5.7), cambiar el periodo NO re-corre todo el motor.
-    result = _analyze_cached(
+    # El artefacto durable permite que un proceso frío aplique filtros sobre la
+    # limpieza ya validada. Si falta o no coincide, se usa el motor completo.
+    result = _load_metrics_clean_artifact(
         filename,
         content,
-        rules=rules,
-        apply=True,
-        mapping=mapping,
-        scope=scope,
-        sheet=sheet,
-        eliminar_duplicados=eliminar_duplicados,
-        cache_dataset_id=cache_dataset_id,
-        cache_revision=cache_revision,
+        rules,
+        mapping,
+        scope,
+        sheet,
+        eliminar_duplicados,
+        cache_dataset_id,
+        cache_revision,
+        cache_user_id,
     )
+    if result is None:
+        result = _analyze_cached(
+            filename,
+            content,
+            rules=rules,
+            apply=True,
+            mapping=mapping,
+            scope=scope,
+            sheet=sheet,
+            eliminar_duplicados=eliminar_duplicados,
+            cache_dataset_id=cache_dataset_id,
+            cache_revision=cache_revision,
+        )
+        _store_metrics_clean_artifact(
+            filename,
+            content,
+            rules,
+            mapping,
+            scope,
+            sheet,
+            eliminar_duplicados,
+            cache_dataset_id,
+            cache_revision,
+            cache_user_id,
+            result,
+        )
     return _metrics_from_clean_result(
         filename,
         result,
@@ -4101,6 +4414,7 @@ def _build_and_store_restore_snapshot(
             scope=cleaning_scope,
             cache_dataset_id=dataset_id,
             cache_revision=revision,
+            cache_user_id=user_id,
         )
         if cleaning is not None
         else None
@@ -5472,6 +5786,7 @@ async def _prepare_metrics_computation(
         dataset_id,
         revision,
         parsed_business_filters,
+        user.id,
     )
 
 

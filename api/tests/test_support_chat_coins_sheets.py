@@ -286,6 +286,131 @@ def test_quick_help_builds_prudent_collection_overview(client, auth_headers):
     assert "no ventas, utilidad ni rentabilidad" in body["answer"]
 
 
+@pytest.mark.parametrize(
+    ("question", "matched_key", "expected"),
+    [
+        ("¿Entre qué fechas están estos datos?", "metric_collection_period", "2026-04-23"),
+        ("¿Los gráficos están agrupados por día, semana o mes?", "metric_collection_grain", "semana"),
+        ("Compara FLUJO con STOCK", "metric_collection_equipo_comparison", "$373.432.330"),
+        ("¿Cuánto aportan FLUJO y STOCK juntos?", "metric_collection_equipo_comparison", "$866.580.322"),
+        ("Dame los dos equipos principales", "metric_collection_equipo_ranking", "STOCK"),
+        ("Compara WEB con Concepción", "metric_collection_agencia_comparison", "$433.000.000"),
+        ("¿Qué porcentaje de pagos está en cero?", "metric_collection_zero_payments", "4,48%"),
+        ("¿Cuánto aporta marzo de 2026?", "metric_collection_quoted_period", "$420.000.000"),
+        ("Compara marzo con diciembre", "metric_collection_quoted_period_comparison", "$220.000.000"),
+        ("¿La recaudación subió o bajó?", "metric_collection_comparison", "No hay una base anterior"),
+        ("¿Qué filtros están activos?", "metric_collection_scope", "No hay filtros"),
+        ("¿Tengo flujo de caja?", "metric_collection_cashflow_unavailable", "no un flujo de caja completo"),
+        ("¿Y mis costos?", "metric_collection_costs_unavailable", "No hay costos"),
+        ("¿Puedo confiar en estos números?", "metric_collection_trust", "593 duplicados"),
+        ("¿Qué no puedes concluir con estos datos?", "metric_collection_limitations", "EBITDA"),
+        ("¿Cuál es la sucursal con más ventas?", "metric_collection_branch_unavailable", "no publica un desglose por sucursal"),
+        ("¿Qué gráfico debería mirar?", "metric_collection_chart_guidance", "evolución por semana"),
+        ("¿Puedes convertirlo a UF?", "metric_currency_conversion_unavailable", "valor oficial de la UF"),
+    ],
+)
+def test_quick_help_handles_collection_conversation_variations(
+    question, matched_key, expected
+):
+    from app.metric_assistant import answer_metrics_question
+
+    body = answer_metrics_question(question, _collection_metrics())
+
+    assert body is not None
+    assert body["matched_key"] == matched_key
+    assert expected in body["answer"]
+
+
+@pytest.mark.parametrize(
+    ("previous", "follow_up", "matched_key", "expected"),
+    [
+        ("¿Cuál fue la mejor semana?", "¿Y la peor?", "metric_collection_worst_period", "$221.967.569"),
+        ("¿Qué porcentaje aporta FLUJO?", "¿Y STOCK?", "metric_collection_team", "$246.573.996"),
+        ("¿Qué porcentaje representa WebPay?", "¿Y efectivo?", "metric_collection_payment_method", "$150.000.000"),
+        ("¿Cuánto aporta marzo de 2026?", "¿Cuál aporta menos?", "metric_collection_quoted_period", "2025-12"),
+    ],
+)
+def test_quick_help_understands_short_follow_ups(
+    previous, follow_up, matched_key, expected
+):
+    from app.metric_assistant import answer_metrics_question
+
+    history = [
+        {"role": "user", "content": previous},
+        {"role": "assistant", "content": "Respuesta anterior"},
+    ]
+    body = answer_metrics_question(follow_up, _collection_metrics(), history)
+
+    assert body is not None
+    assert body["matched_key"] == matched_key
+    assert expected in body["answer"]
+
+
+def test_quick_help_explains_filter_cache_and_clean_download():
+    from app.support_knowledge import answer_for
+
+    cache = answer_for(
+        "¿Volver a filtrar vuelve a limpiar todo?", metrics=_collection_metrics()
+    )
+    download = answer_for(
+        "¿Cómo descargo el Excel limpio?", metrics=_collection_metrics()
+    )
+
+    assert cache["matched_key"] == "cache"
+    assert "artefacto limpio firmado" in cache["answer"]
+    assert download["matched_key"] == "download_clean"
+    assert "auditoría" in download["answer"]
+
+
+def _sales_conversation_metrics():
+    return {
+        "moneda": "CLP",
+        "calidad_datos": 91.2,
+        "kpis": {
+            "ingresos_totales": {"valor": 870000},
+            "gastos_totales": {"valor": 450000},
+            "ganancia_neta": {"valor": 330000},
+            "margen_utilidad_pct": {"valor": 42.3},
+            "cobertura_costos": {"pct": 72.7},
+        },
+        "evolucion_mensual": [
+            {"mes": "2026-01", "ingresos": 350000, "parcial": False},
+            {"mes": "2026-02", "ingresos": 330000, "parcial": False},
+        ],
+        "top_productos": [
+            {"nombre": "P1", "ingresos": 610000, "participacion_pct": 70.1},
+            {"nombre": "P2", "ingresos": 220000, "participacion_pct": 25.3},
+        ],
+        "advertencias": ["La cobertura de costos es parcial."],
+    }
+
+
+def test_quick_help_handles_sales_comparisons_and_cost_coverage():
+    from app.metric_assistant import answer_metrics_question
+
+    coverage = answer_metrics_question(
+        "¿La cobertura de costos es completa?", _sales_conversation_metrics()
+    )
+    comparison = answer_metrics_question(
+        "Compara P1 con P2", _sales_conversation_metrics()
+    )
+    follow_up = answer_metrics_question(
+        "¿Y el segundo?",
+        _sales_conversation_metrics(),
+        [
+            {"role": "user", "content": "¿Cuál es el producto líder?"},
+            {"role": "assistant", "content": "El producto líder es P1."},
+        ],
+    )
+
+    assert coverage["matched_key"] == "metric_cost_coverage"
+    assert "72,7%" in coverage["answer"] and "parcial" in coverage["answer"]
+    assert comparison["matched_key"] == "metric_top_product_comparison"
+    assert "$390.000" in comparison["answer"]
+    assert follow_up["matched_key"] == "metric_top_product"
+    assert "segundo es P2" in follow_up["answer"]
+
+
 def test_advanced_chat_is_off_by_default(client, auth_headers):
     response = client.get("/assistant/config", headers=auth_headers)
     assert response.status_code == 200
