@@ -77,11 +77,11 @@ def _load_catalog(settings: Settings) -> list[dict]:
         rows = response.json()
         if rows:
             rows_by_key = {str(row.get("key")): row for row in rows}
-            merged = {
-                str(item.get("key")): item
-                for item in ARTICLES
-            }
-            merged.update(rows_by_key)
+            # Las respuestas versionadas son la fuente canonica para evitar que
+            # una copia antigua en la base tape correcciones ya desplegadas. La
+            # base puede seguir agregando articulos con claves propias.
+            merged = dict(rows_by_key)
+            merged.update({str(item.get("key")): item for item in ARTICLES})
             missing = [
                 item for item in ARTICLES if str(item.get("key")) not in rows_by_key
             ]

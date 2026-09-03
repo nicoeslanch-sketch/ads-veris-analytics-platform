@@ -650,6 +650,21 @@ test('perfil de cobranza nominal adapta KPI, filtros y detalle sin inventar tran
   await expect(page.getByText('$430', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Recaudación de cobranza vs recaudación total')).toBeVisible()
   await expect(page.getByText('Participación en cobranza por equipo')).toBeVisible()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const participationCard = page
+    .getByRole('heading', { name: 'Participación en cobranza por equipo' })
+    .locator('..')
+  const overflowingParticipationNodes = await participationCard.evaluate((card) => {
+    const bounds = card.getBoundingClientRect()
+    return [...card.querySelectorAll<HTMLElement>('*')]
+      .filter((node) => node.offsetParent !== null)
+      .map((node) => {
+        const rect = node.getBoundingClientRect()
+        return { text: node.textContent?.trim().slice(0, 80), left: rect.left, right: rect.right, width: rect.width, height: rect.height }
+      })
+      .filter((node) => node.width > 0 && node.height > 0 && (node.left < bounds.left - 1 || node.right > bounds.right + 1))
+  })
+  expect(overflowingParticipationNodes).toEqual([])
   await expect(page.getByLabel('Equipo / grupo')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('cobranza-resumen.png'), fullPage: true })
   await page.getByLabel('Equipo / grupo').selectOption({ label: 'JUDICIAL' })

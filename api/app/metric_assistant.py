@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import math
 import re
-import unicodedata
 from typing import Any
+
+from .language_normalization import normalize_basic, normalize_query
 
 
 _CURRENCY_PREFIX = {
@@ -28,11 +29,7 @@ _CURRENCY_PREFIX = {
 
 
 def _normalize(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", str(text).casefold())
-    ascii_text = "".join(
-        char for char in decomposed if not unicodedata.combining(char)
-    )
-    return re.sub(r"[^a-z0-9]+", " ", ascii_text).strip()
+    return normalize_basic(text)
 
 
 def _number(value: Any) -> float | None:
@@ -81,12 +78,24 @@ def _contains(text: str, *phrases: str) -> bool:
 def _previous_user_message(history: list[dict[str, Any]] | None) -> str:
     return next(
         (
-            _normalize(item.get("content") or "")
+            normalize_query(item.get("content") or "")
             for item in reversed(history or [])
             if item.get("role") == "user" and str(item.get("content") or "").strip()
         ),
         "",
     )
+
+
+def _recent_conversation_text(
+    history: list[dict[str, Any]] | None,
+    limit: int = 4,
+) -> str:
+    contents = [
+        normalize_query(item.get("content") or "")
+        for item in (history or [])[-limit:]
+        if str(item.get("content") or "").strip()
+    ]
+    return " ".join(content for content in contents if content)
 
 
 def _with_conversation_context(
@@ -102,6 +111,8 @@ def _with_conversation_context(
         "corresponde realmente a cobranza",
     ):
         return question
+    if _contains(question, "que porcentaje es eso", "que porcentaje representa eso"):
+        return "porcentaje corresponde a cobranza"
     if _contains(question, "y la peor", "y el peor"):
         grain = next(
             (value for value in ("semana", "mes", "periodo") if value in previous),
@@ -125,6 +136,25 @@ def _with_conversation_context(
         or any(month in previous for month in _SPANISH_MONTHS)
     ):
         return "periodo cotizado que aporta menos"
+    if _contains(question, "comparalos", "comparalas", "compara ambos", "compara ambas"):
+        recent = _recent_conversation_text(history)
+        return f"{recent} {question}".strip()
+    if _contains(question, "cuanto aporto"):
+        recent = _recent_conversation_text(history, limit=1)
+        return f"{recent} {question}".strip()
+    explicit_topics = (
+        "gastos",
+        "costos",
+        "ingresos",
+        "ganancia",
+        "utilidad",
+        "margen",
+        "moneda",
+        "calidad",
+        "duplicados",
+    )
+    if question.startswith("y ") and _contains(question, *explicit_topics):
+        return question
     contextual_phrases = (
         "y eso",
         "eso es bueno",
@@ -529,7 +559,7 @@ def _answer_collection_question(
             "medium",
         )
 
-    if _contains(question, "mis costos", "costos tengo", "cuanto cuestan", "gastos tengo"):
+    if _contains(question, "mis costos", "tengo costos", "costos tengo", "cuanto cuestan", "gastos tengo"):
         return _result(
             "No hay costos ni gastos atribuibles publicados en este dashboard de "
             "cobranza. Por eso no puedo deducir utilidad, margen ni EBITDA a partir de "
@@ -710,6 +740,8 @@ def _answer_collection_question(
         "total recaudado",
         "total de ingresos",
         "cuanto ingrese",
+        "cuanto recaude en total",
+        "cuanto recaude total",
     )
     wants_collection = _contains(
         question,
@@ -791,6 +823,7 @@ def _answer_collection_question(
         "pagos estan en cero",
         "pagos con cero",
         "monto cero",
+        "porcentaje en cero",
         "sin monto positivo",
         "porcentaje de pagos",
         "pagos esta en cero",
@@ -818,6 +851,7 @@ def _answer_collection_question(
     if _contains(
         question,
         "mejor semana",
+        "semana fue la mejor",
         "mayor semana",
         "semana con mayor",
         "mejor mes",
@@ -827,6 +861,7 @@ def _answer_collection_question(
         "evolucion",
         "tendencia",
         "peor semana",
+        "semana fue la peor",
         "menor semana",
         "semana con menor",
         "peor mes",
@@ -1081,13 +1116,13 @@ def _answer_trend(metrics: dict[str, Any], question: str) -> dict[str, Any]:
     currency = str(metrics.get("moneda") or "CLP")
     best = max(months, key=lambda row: float(row.get("ingresos") or 0))
     worst = min(months, key=lambda row: float(row.get("ingresos") or 0))
-    if _contains(question, "peor mes", "mes mas bajo", "menor mes"):
+    if _contains(question, "peor mes", "mes mas bajo", "menor mes", "mes fue peor"):
         answer = (
             f"El mes completo mas bajo fue {worst.get('mes')}, con "
             f"{format_amount(worst.get('ingresos'), currency)}."
         )
         key = "metric_worst_month"
-    elif _contains(question, "mejor mes", "mes mas alto", "mayor mes"):
+    elif _contains(question, "mejor mes", "mes mas alto", "mayor mes", "mes fue mejor"):
         answer = (
             f"El mejor mes completo fue {best.get('mes')}, con "
             f"{format_amount(best.get('ingresos'), currency)}."
@@ -1509,7 +1544,7 @@ def answer_metrics_question(
 
     if not isinstance(metrics, dict) or not metrics:
         return None
-    original_question = _normalize(message)
+    original_question = normalize_query(message)
     if not original_question:
         return None
     if _contains(original_question, "gracias", "muchas gracias"):
@@ -1569,7 +1604,10 @@ def answer_metrics_question(
         "convertirlo a uf",
         "convertir estos pesos a uf",
         "convertir pesos a uf",
+        "convierte a uf",
         "pasar a uf",
+        "pasarlos a uf",
+        "pasarlas a uf",
     ):
         return _result(
             "No convierto automáticamente a UF porque necesito el valor oficial de la "
@@ -1591,7 +1629,7 @@ def answer_metrics_question(
     if _contains(question, "calidad", "datos sucios", "advertencias", "problemas de datos", "duplicados"):
         return _answer_quality(metrics)
 
-    if _contains(question, "ingresos", "ventas totales", "venta total", "facturacion", "cuanto vendi"):
+    if _contains(question, "ingresos", "ingreso total", "ventas totales", "venta total", "facturacion", "cuanto vendi"):
         return _answer_income(metrics)
     if _contains(question, "gastos", "mis costos", "costos totales", "costo total", "cuanto gaste"):
         return _answer_expenses(metrics)
@@ -1653,7 +1691,16 @@ def answer_metrics_question(
                 "metric_returns",
                 metric_suggestions(metrics),
             )
-    if _contains(question, "mejor mes", "peor mes", "tendencia", "evolucion", "crecimiento mensual"):
+    if _contains(
+        question,
+        "mejor mes",
+        "mes fue mejor",
+        "peor mes",
+        "mes fue peor",
+        "tendencia",
+        "evolucion",
+        "crecimiento mensual",
+    ):
         return _answer_trend(metrics, question)
     if _contains(question, "dia de la semana", "que dia vendo", "mejor dia"):
         weekday = _answer_weekday(metrics)
@@ -1719,7 +1766,13 @@ def answer_metrics_question(
     if _contains(question, "puedo confiar", "son confiables", "confiar en esto"):
         return _answer_quality(metrics)
 
-    if _contains(question, "que datos faltan", "que informacion falta", "limitaciones"):
+    if _contains(
+        question,
+        "que datos faltan",
+        "que informacion falta",
+        "que informacion me falta",
+        "limitaciones",
+    ):
         kpis = metrics.get("kpis") or {}
         gaps: list[str] = []
         coverage = _number((kpis.get("cobertura_costos") or {}).get("pct"))
@@ -1749,6 +1802,8 @@ def answer_metrics_question(
         "recomendacion",
         "como esta mi negocio",
         "resume mis datos",
+        "resumelo",
+        "en una frase",
         "que opinas",
         "analiza mi negocio",
         "que deberia hacer",

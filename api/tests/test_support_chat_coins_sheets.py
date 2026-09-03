@@ -347,6 +347,58 @@ def test_quick_help_understands_short_follow_ups(
     assert expected in body["answer"]
 
 
+@pytest.mark.parametrize(
+    ("message", "matched_key", "expected"),
+    [
+        ("¿Cuánto recaudé en total?", "metric_collection_total", "$1.335.598.867"),
+        ("¿Qué semana fue la mejor?", "metric_collection_best_period", "$397.732.370"),
+        ("¿Puedes pasarlos a UF?", "metric_currency_conversion_unavailable", "valor oficial"),
+    ],
+)
+def test_quick_help_understands_natural_collection_phrases(message, matched_key, expected):
+    from app.metric_assistant import answer_metrics_question
+
+    body = answer_metrics_question(message, _collection_metrics())
+
+    assert body is not None
+    assert body["matched_key"] == matched_key
+    assert expected in body["answer"]
+
+
+def test_quick_help_uses_answer_context_for_collection_pronouns():
+    from app.metric_assistant import answer_metrics_question
+
+    percentage = answer_metrics_question(
+        "¿Qué porcentaje es eso?",
+        _collection_metrics(),
+        [
+            {"role": "user", "content": "¿Cuánto corresponde a cobranza?"},
+            {"role": "assistant", "content": "La recaudación de cobranza es $1.120.052.069."},
+        ],
+    )
+    contribution = answer_metrics_question(
+        "¿Cuánto aportó?",
+        _collection_metrics(),
+        [
+            {"role": "user", "content": "¿Qué semana fue la mejor?"},
+            {
+                "role": "assistant",
+                "content": "La semana con mayor recaudación fue 2026-05-05 a 2026-05-11.",
+            },
+            {"role": "user", "content": "¿Qué semana fue la peor?"},
+            {
+                "role": "assistant",
+                "content": "La semana con menor recaudación fue 2026-04-28 a 2026-05-04.",
+            },
+        ],
+    )
+
+    assert percentage["matched_key"] == "metric_collection_collected"
+    assert "83,86%" in percentage["answer"]
+    assert contribution["matched_key"] == "metric_collection_worst_period"
+    assert "$221.967.569" in contribution["answer"]
+
+
 def test_quick_help_explains_filter_cache_and_clean_download():
     from app.support_knowledge import answer_for, rank_articles
 
@@ -431,6 +483,62 @@ def test_quick_help_handles_sales_comparisons_and_cost_coverage():
     assert "$390.000" in comparison["answer"]
     assert follow_up["matched_key"] == "metric_top_product"
     assert "segundo es P2" in follow_up["answer"]
+
+
+def test_quick_help_does_not_let_previous_income_hide_explicit_expenses():
+    from app.metric_assistant import answer_metrics_question
+
+    body = answer_metrics_question(
+        "¿Y mis gastos?",
+        _sales_conversation_metrics(),
+        [
+            {"role": "user", "content": "¿Cuáles son mis ingresos?"},
+            {"role": "assistant", "content": "Tus ingresos son $870.000."},
+        ],
+    )
+
+    assert body["matched_key"] == "metric_expenses"
+    assert "$450.000" in body["answer"]
+
+
+def test_quick_help_resolves_sales_comparison_and_reversed_month_phrase():
+    from app.metric_assistant import answer_metrics_question
+
+    comparison = answer_metrics_question(
+        "Compáralos",
+        _sales_conversation_metrics(),
+        [
+            {"role": "user", "content": "Háblame de P1 y P2"},
+            {
+                "role": "assistant",
+                "content": "P1 aporta $610.000 y P2 aporta $220.000.",
+            },
+        ],
+    )
+    month = answer_metrics_question(
+        "¿Qué mes fue mejor?", _sales_conversation_metrics()
+    )
+
+    assert comparison["matched_key"] == "metric_top_product_comparison"
+    assert "$390.000" in comparison["answer"]
+    assert month["matched_key"] == "metric_best_month"
+    assert "2026-01" in month["answer"]
+
+
+def test_quick_help_understands_sales_gaps_and_short_summary_requests():
+    from app.metric_assistant import answer_metrics_question
+
+    gaps = answer_metrics_question(
+        "¿Qué información me falta?", _sales_conversation_metrics()
+    )
+    summary = answer_metrics_question(
+        "Resúmelo en una frase", _sales_conversation_metrics()
+    )
+
+    assert gaps["matched_key"] == "metric_data_gaps"
+    assert "costos completos" in gaps["answer"]
+    assert summary["matched_key"] == "metric_overview"
+    assert "$870.000" in summary["answer"]
 
 
 def test_advanced_chat_is_off_by_default(client, auth_headers):

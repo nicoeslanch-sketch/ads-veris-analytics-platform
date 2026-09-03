@@ -122,11 +122,11 @@ function CollectionDonut({
   if (!rows.length) return null
   const total = rows.reduce((sum, row) => sum + row.valor, 0)
   return (
-    <Card className="min-w-0">
+    <Card className="@container min-w-0 overflow-hidden">
       <h3 className="text-sm font-semibold text-navy">{title}</h3>
       <p className="mt-1 text-[11px] text-navy/50">{subtitle}</p>
-      <div className="mt-3 grid items-center gap-3 sm:grid-cols-[190px_1fr]">
-        <div className="h-48">
+      <div className="mt-3 grid min-w-0 items-center gap-3 @min-[430px]:grid-cols-[minmax(140px,180px)_minmax(0,1fr)]">
+        <div className="h-44 min-w-0 @min-[430px]:h-48">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie data={rows} dataKey="valor" nameKey="nombre" innerRadius={48} outerRadius={78}>
@@ -138,14 +138,14 @@ function CollectionDonut({
             </PieChart>
           </ResponsiveContainer>
         </div>
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           {rows.map((row, index) => (
-            <div key={row.nombre} className="flex items-start justify-between gap-3 text-[11px]">
-              <span className="flex min-w-0 items-center gap-2 text-navy/65">
+            <div key={row.nombre} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 text-[11px]">
+              <span className="flex min-w-0 items-start gap-2 text-navy/65">
                 <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: COLLECTION_COLORS[index % COLLECTION_COLORS.length] }} />
-                <span className="break-words">{row.nombre}</span>
+                <span className="min-w-0 break-words [overflow-wrap:anywhere]">{row.nombre}</span>
               </span>
-              <span className="shrink-0 text-right font-semibold text-navy">
+              <span className="whitespace-nowrap text-right font-semibold text-navy">
                 {formatNumber(total ? row.valor / total * 100 : 0)}%
               </span>
             </div>
