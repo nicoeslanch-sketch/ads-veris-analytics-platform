@@ -1549,6 +1549,22 @@ def answer_metrics_question(
         )
     if _contains(
         original_question,
+        "volver a filtrar",
+        "vuelve a limpiar",
+        "limpia todo al filtrar",
+        "filtro vuelve a limpiar",
+    ):
+        return _result(
+            "No. Los filtros del dashboard calculan sobre un artefacto limpio firmado "
+            "y no vuelven a limpiar el Excel. La limpieza completa solo se repite si "
+            "cambian el archivo, las reglas, el mapeo, la hoja o la decisión sobre "
+            "duplicados; si la caché no coincide, el servidor la descarta para mantener "
+            "la corrección.",
+            "metric_filter_cache",
+            metric_suggestions(metrics),
+        )
+    if _contains(
+        original_question,
         "convertir a uf",
         "convertirlo a uf",
         "convertir estos pesos a uf",

@@ -353,12 +353,14 @@ def test_quick_help_explains_filter_cache_and_clean_download():
     cache = answer_for(
         "¿Volver a filtrar vuelve a limpiar todo?", metrics=_collection_metrics()
     )
+    cache_without_metrics = answer_for("¿Volver a filtrar vuelve a limpiar todo?")
     download = answer_for(
         "¿Cómo descargo el Excel limpio?", metrics=_collection_metrics()
     )
 
-    assert cache["matched_key"] == "cache"
+    assert cache["matched_key"] == "metric_filter_cache"
     assert "artefacto limpio firmado" in cache["answer"]
+    assert cache_without_metrics["matched_key"] == "cache"
     assert all(
         article["key"] != "advanced_chat"
         for _, article in rank_articles("¿Volver a filtrar vuelve a limpiar todo?")[:2]
