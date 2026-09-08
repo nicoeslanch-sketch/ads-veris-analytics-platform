@@ -499,7 +499,9 @@ def valid_restore_snapshot(
     if dataset_status == "limpio":
         if not isinstance(raw.get("cleaning"), dict):
             return None
-        if not isinstance(raw.get("metrics"), dict):
+        if not isinstance(raw.get("metrics"), dict) and not (
+            raw.get("metrics_pending") is True and raw.get("metrics") is None
+        ):
             return None
     mapping = raw.get("mapping")
     if mapping is not None and not isinstance(mapping, dict):

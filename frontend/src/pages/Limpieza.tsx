@@ -369,9 +369,18 @@ export default function Limpieza() {
       }
       const scope = serializedAnalysisScope(analysisScope)
       if (scope) extra.analysis_scope = scope
-      const batch = await apiPost<CleanBatchResponse>(
-        '/clean/batch',
+      const batch = await apiPostJob<CleanBatchResponse>(
+        '/clean/batch/jobs',
         buildDatasetForm(file, storagePath, extra),
+        {
+          timeoutMs: 15 * 60_000,
+          onProgress: (job) => setCleaningProgress({
+            current: Math.min(job.completed_phases, runnable.length),
+            total: runnable.length,
+            sheet: job.current_sheet ?? (job.phase === 'saving' ? 'Guardando resultados' : 'Abriendo el libro'),
+            phase: job.phase === 'saving' ? 'saving' : 'processing',
+          }),
+        },
       )
 
       for (const [index, name] of runnable.entries()) {

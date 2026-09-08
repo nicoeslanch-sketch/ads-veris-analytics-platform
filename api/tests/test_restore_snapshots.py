@@ -167,6 +167,17 @@ def test_snapshot_versionado_exige_todas_las_etapas_para_dataset_limpio():
     ) is None
 
 
+def test_clean_snapshot_can_explicitly_defer_metrics_without_recleaning():
+    snapshot = {**_snapshot(), "metrics": None, "metrics_pending": True}
+    assert valid_restore_snapshot(snapshot, "limpio", **_expected(snapshot)) is snapshot
+    assert valid_restore_snapshot(
+        {**snapshot, "metrics_pending": "true"}, "limpio", **_expected(snapshot),
+    ) is None
+    assert valid_restore_snapshot(
+        {**snapshot, "cleaning": None}, "limpio", **_expected(snapshot),
+    ) is None
+
+
 def test_snapshot_de_otro_motor_solo_se_admite_para_restauracion_transitoria():
     snapshot = _snapshot()
     stale = {**snapshot, "engine_version": "0.21.0"}

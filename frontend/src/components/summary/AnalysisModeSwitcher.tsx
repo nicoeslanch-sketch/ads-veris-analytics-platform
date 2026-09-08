@@ -46,7 +46,7 @@ export default function AnalysisModeSwitcher({
         const Icon = MODE_ICON[value]
         const active = mode === value
         const disabledReason = disabledModes[value]
-        const disabled = busy || Boolean(disabledReason)
+        const disabled = (busy && value !== 'single') || Boolean(disabledReason)
         return (
           <button
             key={value}

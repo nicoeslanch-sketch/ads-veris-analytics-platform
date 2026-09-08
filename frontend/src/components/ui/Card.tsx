@@ -8,7 +8,7 @@ export default function Card({ children, className = '', ...props }: CardProps) 
   return (
     <div
       data-dashboard-card
-      className={`rounded-xl border border-navy/10 bg-white p-4 shadow-sm sm:p-6 ${className}`}
+      className={`min-w-0 max-w-full break-words rounded-xl border border-navy/10 bg-white p-4 shadow-sm sm:p-6 ${className}`}
       {...props}
     >
       {children}

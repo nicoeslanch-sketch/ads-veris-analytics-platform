@@ -1737,6 +1737,11 @@ def _analyze_nominal_collection(
     )
 
 
+class _SourceRows(tuple):
+    def __deepcopy__(self, memo):
+        return self
+
+
 def analyze_business_workbook(
     frames: dict[str, pd.DataFrame],
     mappings: dict[str, dict[str, str]],
@@ -1747,6 +1752,17 @@ def analyze_business_workbook(
     filters: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Build an executive and diagnostic view without mixing table grains."""
+
+    prepared = {}
+    for name, original in frames.items():
+        frame = original.copy(deep=False)
+        rows = frame.attrs.pop("source_rows", None)
+        if rows is None:
+            rows = frame.attrs.get("adsveris_source_rows", ())
+        # Immutable provenance avoids repeated O(rows) pandas attrs copies.
+        frame.attrs["adsveris_source_rows"] = _SourceRows(rows)
+        prepared[name] = frame
+    frames = prepared
 
     service_profile = analyze_service_business(frames)
     if service_profile is not None:

@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import Card from './ui/Card'
+import KpiValue from './ui/KpiValue'
 import DecisionInsightGrid, { type DecisionInsight } from './DecisionInsightGrid'
 import { formatCLP, formatNumber } from '../lib/format'
 import {
@@ -17,6 +19,7 @@ import {
   Bar,
   BarChart,
   Cell,
+  ComposedChart,
   CartesianGrid,
   Legend,
   Line,
@@ -256,7 +259,7 @@ export default function AdaptiveProfileSummary({
         )}
         {isExplore && <DecisionInsightGrid items={campaignInsights} />}
         {platforms.length > 1 && (
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className={`grid gap-5 ${isExplore ? 'xl:grid-cols-2' : ''}`}>
             <Card>
               <h3 className="text-sm font-semibold text-navy">Inversión por plataforma</h3>
               <div className="mt-4 h-64">
@@ -276,15 +279,16 @@ export default function AdaptiveProfileSummary({
                 <h3 className="text-sm font-semibold text-navy">Clics y CTR por plataforma</h3>
                 <div className="mt-4 h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={platforms} margin={{ top: 4, right: 12, bottom: 4, left: 4 }}>
+                    <ComposedChart data={platforms} margin={{ top: 4, right: 12, bottom: 4, left: 4 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
                       <XAxis dataKey="etiqueta" tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
-                      <YAxis tickFormatter={(value: number) => formatNumber(value)} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis yAxisId="clicks" tickFormatter={(value: number) => formatNumber(value)} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis yAxisId="ctr" orientation="right" tickFormatter={(value: number) => `${formatNumber(value)}%`} tick={{ fill: AXIS_INK, fontSize: 11 }} axisLine={false} tickLine={false} />
                       <Tooltip formatter={(value, name) => name === 'CTR %' ? `${formatNumber(Number(value))}%` : formatNumber(Number(value))} />
                       <Legend />
-                      <Bar dataKey="clics" name="Clics" fill={CHART.flujo} radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="ctr_pct" name="CTR %" fill={CHART.utilidad} radius={[3, 3, 0, 0]} />
-                    </BarChart>
+                      <Bar yAxisId="clicks" dataKey="clics" name="Clics" fill={CHART.flujo} radius={[3, 3, 0, 0]} />
+                      <Line yAxisId="ctr" dataKey="ctr_pct" name="CTR %" stroke={CHART.utilidad} strokeWidth={2} />
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </div>
               </Card>
@@ -459,7 +463,7 @@ export default function AdaptiveProfileSummary({
                     {item.etiqueta ?? item.columna}
                   </p>
                 </div>
-                <p className="mt-2 text-lg font-bold text-navy">{formatMetric(item, highlighted)}</p>
+                <KpiValue value={formatMetric(item, highlighted)} maxPx={20} className="mt-2" />
                 <p className="mt-1 text-[11px] text-navy/55">
                   {item.destacado === 'promedio' ? 'promedio' : 'total'} · mediana {formatMetric(item, item.mediana)}
                 </p>
@@ -475,6 +479,7 @@ export default function AdaptiveProfileSummary({
         </div>
       )}
       {isExplore && <DecisionInsightGrid items={decisionInsights} />}
+      {(generic.desgloses?.length ?? 0) > 0 && <OperationalBreakdown items={generic.desgloses!} />}
       {evolution && evolution.valores.length > 1 && (
         <Card>
           <h3 className="text-sm font-semibold text-navy">
@@ -562,13 +567,12 @@ function DistributionCard({
         <ResponsiveContainer width="100%" height="100%">
           {chartKind === 'donut' ? (
             <PieChart>
-              <Pie data={rows} dataKey="registros" nameKey="etiqueta" innerRadius={55} outerRadius={88} paddingAngle={2}>
+              <Pie data={rows} dataKey="registros" nameKey="nombre" innerRadius={55} outerRadius={88} paddingAngle={2}>
                 {rows.map((row, index) => (
                   <Cell key={`${row.nombre}-${index}`} fill={CATEGORICAL[index % CATEGORICAL.length]} />
                 ))}
               </Pie>
               <Tooltip formatter={(value) => formatNumber(Number(value))} />
-              <Legend />
             </PieChart>
           ) : (
             <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 20, bottom: 4, left: 8 }}>
@@ -581,6 +585,17 @@ function DistributionCard({
           )}
         </ResponsiveContainer>
       </div>
+      {chartKind === 'donut' && (
+        <ul className="mt-2 grid min-w-0 gap-2 text-xs">
+          {rows.map((row, index) => (
+            <li key={row.nombre} className="flex min-w-0 items-start gap-2">
+              <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: CATEGORICAL[index % CATEGORICAL.length] }} />
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{row.nombre}</span>
+              <strong className="shrink-0">{formatNumber(row.registros)}</strong>
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   )
 }
@@ -596,7 +611,7 @@ function CardGrid({ cards }: { cards: string[][] }) {
               <span className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />
               <p className="text-xs text-navy/50">{label}</p>
             </div>
-            <p className="mt-1 text-lg font-bold text-navy">{value}</p>
+            <KpiValue value={value} maxPx={20} className="mt-1" />
           </Card>
         )
       })}
@@ -611,11 +626,42 @@ function CountList({ title, rows }: { title: string; rows: Array<{ nombre: strin
       <h3 className="text-sm font-semibold text-navy">{title}</h3>
       <div className="mt-3 space-y-2">
         {rows.map((row) => (
-          <div key={row.nombre} className="flex justify-between text-xs">
-            <span>{row.nombre}</span>
-            <strong>{formatNumber(row.registros)}</strong>
+          <div key={row.nombre} className="flex min-w-0 justify-between gap-3 text-xs">
+            <span className="min-w-0 break-words">{row.nombre}</span>
+            <strong className="shrink-0">{formatNumber(row.registros)}</strong>
           </div>
         ))}
+      </div>
+    </Card>
+  )
+}
+
+
+function OperationalBreakdown({ items }: { items: NonNullable<GenericAnalysis['desgloses']> }) {
+  const [selected, setSelected] = useState('')
+  const item = items.find((row) => `${row.columna}|${row.dimension}` === selected) ?? items[0]
+  if (!item) return null
+  const rows = item.valores.map((row) => ({ ...row, etiqueta: truncateLabel(row.nombre, 18) }))
+  const formatValue = (value: number) => item.formato === 'moneda' ? formatCLP(value) : item.formato === 'porcentaje' ? `${formatNumber(value)}%` : formatNumber(value)
+  return (
+    <Card>
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <h3 className="min-w-0 text-sm font-semibold text-navy">{item.columna} por {item.dimension}</h3>
+        <select aria-label="Desglose operativo" className="max-w-full rounded-md border border-navy/20 bg-white p-2 text-xs" value={`${item.columna}|${item.dimension}`} onChange={(event) => setSelected(event.target.value)}>
+          {items.map((row) => <option key={`${row.columna}|${row.dimension}`} value={`${row.columna}|${row.dimension}`}>{row.columna} por {row.dimension}</option>)}
+        </select>
+      </div>
+      <p className="mt-1 text-xs text-navy/55">{item.operacion === 'total' ? 'Total' : 'Promedio'} · {rows.length} de {item.valores_totales} grupos</p>
+      <div className="mt-3 min-w-0" style={{ height: Math.max(190, rows.length * 28 + 40) }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
+            <CartesianGrid stroke={GRID_STROKE} horizontal={false} />
+            <XAxis type="number" tickFormatter={item.formato === 'moneda' ? formatCLPCompact : formatValue} tick={{ fill: AXIS_INK, fontSize: 10 }} />
+            <YAxis type="category" dataKey="etiqueta" width={110} tick={{ fill: AXIS_INK, fontSize: 10 }} axisLine={false} tickLine={false} />
+            <Tooltip formatter={(value) => formatValue(Number(value))} labelFormatter={(_label, payload) => payload?.[0]?.payload?.nombre ?? _label} />
+            <Bar dataKey="valor" name={item.columna} fill={CHART.ingresos} radius={[0, 3, 3, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </Card>
   )

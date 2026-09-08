@@ -12,6 +12,11 @@ const MEDIUM_CONFIDENCE = 0.75
 
 type SheetSelectionMode = 'all' | 'custom'
 
+export function scopeForActiveSheet(scope: AnalysisScope | null | undefined, sheet: string | null): AnalysisScope | null {
+  if (scope && scope.mode !== 'single') return scope
+  return sheet ? { mode: 'single', sheets: [sheet], active_sheet: sheet } : null
+}
+
 /** Normaliza selecciones guardadas por versiones anteriores. En modo "all",
  * una lista vacía significaba implícitamente todas las hojas. */
 export function normalizedRestoredSelection(

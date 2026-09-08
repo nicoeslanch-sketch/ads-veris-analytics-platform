@@ -18,7 +18,7 @@ import { PlanRequiredModal } from '../components/ui/PlanGate'
 import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
-import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
+import { ApiError, apiPost, apiPostJob, buildDatasetForm } from '../lib/api'
 import { saveDatasetWorkbookSummary } from '../lib/datasets'
 import { summarizeStandardizedWorkbook } from '../lib/workbookSummary'
 import { cleanFilename, formatDateTime, formatNumber } from '../lib/format'
@@ -67,7 +67,7 @@ const STEPS = [
   },
 ]
 
-const RESTORE_STATE_TIMEOUT_MS = 15_000
+const RESTORE_STATE_TIMEOUT_MS = 60_000
 
 interface StandardizeBatchResponse {
   resultados: Record<string, StandardizeResult>
@@ -163,6 +163,7 @@ function ClassicStandardization() {
   const activeSheet = sheet ?? standardization?.carga?.hoja_usada ?? null
 
   const applySheetSelection = (mode: 'all' | 'custom', names: string[]) => {
+    if (sheetAbortRef.current) return
     selectedSheetsRef.current = names
     selectionModeRef.current = mode
     setSelectionMode(mode)
@@ -230,6 +231,7 @@ function ClassicStandardization() {
     setSheetError(null)
     setSheet(name) // invalida limpieza/métricas: la hoja son otros datos
     try {
+      await selectionPersistChainRef.current
       const result = await apiPost<StandardizeResult>(
         '/standardize',
         buildDatasetForm(file, storagePath, {
@@ -277,8 +279,10 @@ function ClassicStandardization() {
       setBatchProgress({ current: 0, total: effectivePending.length, sheet: 'Preparando el libro' })
       effectivePending.forEach((name) => setSheetStatus(name, 'estandarizando'))
       try {
-        const batch = await apiPost<StandardizeBatchResponse>(
-          '/standardize/batch',
+        await selectionPersistChainRef.current
+        if (controller.signal.aborted) return
+        const batch = await apiPostJob<StandardizeBatchResponse>(
+          '/standardize/batch/jobs',
           buildDatasetForm(file, storagePath, {
             sheets: JSON.stringify(effectivePending),
             ...(datasetId ? { dataset_id: datasetId } : {}),
@@ -292,7 +296,15 @@ function ClassicStandardization() {
               selection_mode: selectionModeRef.current,
             }),
           }),
-          { signal: controller.signal },
+          {
+            signal: controller.signal,
+            timeoutMs: 15 * 60_000,
+            onProgress: (job) => setBatchProgress({
+              current: Math.min(job.completed_phases, effectivePending.length),
+              total: effectivePending.length,
+              sheet: job.phase === 'saving' ? 'Guardando resultados' : job.current_sheet ?? 'Abriendo el libro',
+            }),
+          },
         )
         if (currentFileRef.current !== sourceFile || controller.signal.aborted) return
         Object.entries(batch.resultados).forEach(([name, result]) => {
@@ -336,6 +348,7 @@ function ClassicStandardization() {
       return
     }
     let position = 0
+    await selectionPersistChainRef.current
     const processedResults: Record<string, StandardizeResult> = {}
     for (const name of pendingNames) {
       if (currentFileRef.current !== sourceFile || controller.signal.aborted) break
@@ -631,7 +644,7 @@ function ClassicStandardization() {
               <strong>Vista actual</strong> solo indica la hoja que ves en pantalla; todas las
               hojas marcadas se incluyen en el proceso.
             </p>
-            <fieldset className="mt-4 grid gap-2 sm:grid-cols-2">
+            <fieldset disabled={changingSheet} className="mt-4 grid gap-2 sm:grid-cols-2 disabled:opacity-60">
               <legend className="mb-2 text-sm font-semibold text-navy">
                 Que hojas quieres preparar?
               </legend>
@@ -740,6 +753,7 @@ function ClassicStandardization() {
                     <input
                       type="checkbox"
                       aria-label={`Procesar hoja ${name}`}
+                      disabled={changingSheet}
                       checked={isSelected}
                       onChange={(event) => {
                         applySheetSelection(

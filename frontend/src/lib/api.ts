@@ -299,6 +299,7 @@ export interface AnalysisJobResponse<T> {
   phase: string
   completed_phases: number
   total_phases: number
+  current_sheet?: string | null
   attempt: number
   result: T | null
   error: string | null
@@ -329,7 +330,7 @@ function waitForPoll(ms: number, signal?: AbortSignal): Promise<void> {
 export async function apiPostJob<T>(
   path: string,
   form: FormData,
-  options?: ApiRequestOptions,
+  options?: ApiRequestOptions & { onProgress?: (job: AnalysisJobResponse<T>) => void },
 ): Promise<T> {
   const signal = options?.signal
   const totalTimeoutMs = options?.timeoutMs ?? PIPELINE_TIMEOUT_MS
@@ -348,6 +349,7 @@ export async function apiPostJob<T>(
   }
 
   while (true) {
+    options?.onProgress?.(job)
     if (signal?.aborted) {
       requestCancellation()
       throw new ApiError(0, 'El procesamiento fue cancelado.')

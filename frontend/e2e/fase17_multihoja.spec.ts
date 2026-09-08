@@ -527,6 +527,7 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await expect(page.getByText('10 limpias', { exact: true })).toBeVisible({ timeout: 90_000 })
   await page.setViewportSize({ width: 1600, height: 1000 })
   await page.getByRole('link', { name: /Resumen/ }).first().click()
+  await page.getByRole('button', { name: 'Visión del negocio', exact: true }).click()
   await expect(page.getByText('Evolución del negocio')).toBeVisible()
   await expect(page.getByText('Utilidad y margen mensual')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Conclusiones del periodo' })).toBeVisible()

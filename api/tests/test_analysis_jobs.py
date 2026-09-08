@@ -1,7 +1,10 @@
 import threading
 import time
 
-from app.analysis_jobs import AnalysisJobManager
+import pytest
+from fastapi import HTTPException
+
+from app.analysis_jobs import AnalysisJobManager, report_job_progress
 from app.config import Settings
 from app.shared_analysis import SharedAnalysisCoordinator
 from tests.test_shared_analysis import FakeRedis
@@ -60,3 +63,55 @@ def test_job_can_be_cancelled_and_retried_without_duplicate_running_work():
     retried = manager.retry("user", job["job_id"])
     assert retried and retried["attempt"] == 2
     assert _wait(manager, "user", job["job_id"])["status"] == "completed"
+
+
+def test_job_reports_real_sheet_progress_and_stops_at_cancel_boundary():
+    manager = _manager()
+    reached = threading.Event()
+    release = threading.Event()
+    later = []
+
+    def producer():
+        report_job_progress("cleaning", 1, 4, "Ventas")
+        reached.set()
+        release.wait(timeout=2)
+        report_job_progress("cleaning", 2, 4, "Compras")
+        later.append(True)
+        return {"ok": True}
+
+    job = manager.submit("user", ("batch", "progress"), producer)
+    assert reached.wait(timeout=1)
+    current = manager.get("user", job["job_id"])
+    assert current["current_sheet"] == "Ventas"
+    assert current["completed_phases"] == 1
+    assert current["total_phases"] == 4
+    assert manager.get("other-user", job["job_id"]) is None
+    manager.cancel("user", job["job_id"])
+    release.set()
+    assert _wait(manager, "user", job["job_id"])["status"] == "cancelled"
+    assert later == []
+
+
+def test_job_completion_keeps_total_progress_and_does_not_evict_active_jobs():
+    manager = _manager()
+    manager.max_jobs = 2
+    release = threading.Event()
+
+    def producer():
+        release.wait(timeout=2)
+        report_job_progress("saving", 3, 4)
+        return {"ok": True}
+
+    first = manager.submit("user", ("batch", "first"), producer)
+    second = manager.submit("user", ("batch", "second"), producer)
+    with manager.lock:
+        assert len(manager.producers) == 2
+    with pytest.raises(HTTPException) as overloaded:
+        manager.submit("user", ("batch", "third"), producer)
+    assert overloaded.value.status_code == 429
+    release.set()
+    for job in (first, second):
+        complete = _wait(manager, "user", job["job_id"])
+        assert complete["completed_phases"] == complete["total_phases"] == 4
+    manager.executor.shutdown(wait=True)
+    assert not manager.producers

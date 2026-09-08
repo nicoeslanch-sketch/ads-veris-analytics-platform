@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import copy
+import logging
 import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -15,6 +17,20 @@ from .config import Settings
 from .shared_analysis import SharedAnalysisCoordinator, coordinator_for, shared_key_digest
 
 TERMINAL = {"completed", "failed", "cancelled"}
+logger = logging.getLogger(__name__)
+_PROGRESS: ContextVar[Callable | None] = ContextVar("analysis_job_progress", default=None)
+
+
+class JobCancelled(Exception):
+    """Cooperative cancellation between bounded processing phases."""
+
+
+def report_job_progress(
+    phase: str, completed: int, total: int, sheet: str | None = None,
+) -> None:
+    reporter = _PROGRESS.get()
+    if reporter is not None:
+        reporter(phase, completed, total, sheet)
 
 
 def _now() -> str:
@@ -46,7 +62,11 @@ class AnalysisJobManager:
             self.jobs[identity] = copy.deepcopy(job)
             self.jobs.move_to_end(identity)
             while len(self.jobs) > self.max_jobs:
-                removed, _value = self.jobs.popitem(last=False)
+                removed = next((key for key, value in self.jobs.items()
+                                if value.get("status") in TERMINAL), None)
+                if removed is None:
+                    break
+                self.jobs.pop(removed)
                 self.producers.pop(removed, None)
         self.coordinator.store_job(user_id, str(job["job_id"]), job)
         return copy.deepcopy(job)
@@ -92,6 +112,9 @@ class AnalysisJobManager:
             "error": None,
         }
         with self.lock:
+            active = sum(value.get("status") not in TERMINAL for value in self.jobs.values())
+            if active >= self.max_jobs:
+                raise HTTPException(status_code=429, detail="Hay demasiados procesos pendientes. Espera a que termine uno y vuelve a intentar.")
             self.producers[identity] = producer
         self._remember(user_id, job)
         self.executor.submit(self._run, user_id, job_id)
@@ -110,12 +133,26 @@ class AnalysisJobManager:
             return
         job.update(status="running", phase="analysis", updated_at=_now())
         self._remember(user_id, job)
+
+        def progress(phase: str, completed: int, total: int, sheet: str | None) -> None:
+            current = self.get(user_id, job_id) or job
+            if current.get("cancel_requested"):
+                raise JobCancelled()
+            job.update(current)
+            job.update(phase=phase, completed_phases=completed,
+                       total_phases=total, current_sheet=sheet, updated_at=_now())
+            self._remember(user_id, job)
+
+        token = _PROGRESS.set(progress)
         try:
             result = producer()
+        except JobCancelled:
+            job.update(status="cancelled", phase="cancelled", updated_at=_now())
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, str) else "El análisis no pudo completarse."
             job.update(status="failed", phase="failed", error=detail, updated_at=_now())
         except Exception:
+            logger.exception("analysis_job_failed job_id=%s", job_id)
             # El detalle técnico queda en logs del servidor; la API no expone
             # pandas, SQL, rutas ni infraestructura al usuario final.
             job.update(
@@ -132,11 +169,18 @@ class AnalysisJobManager:
                 job.update(
                     status="completed",
                     phase="completed",
-                    completed_phases=1,
+                    completed_phases=job.get("total_phases", 1),
                     result=result,
                     updated_at=_now(),
                 )
+        finally:
+            _PROGRESS.reset(token)
         self._remember(user_id, job)
+
+        if job.get("status") == "completed":
+            # Completed closures can retain entire uploaded workbooks.
+            with self.lock:
+                self.producers.pop(identity, None)
 
     def cancel(self, user_id: str, job_id: str) -> dict[str, Any] | None:
         job = self.get(user_id, job_id)

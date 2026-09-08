@@ -118,14 +118,14 @@ function ConcentrationNotice({ chart }: { chart: PreparedCategoricalChart }) {
 function HorizontalBars({ chart, color }: { chart: PreparedCategoricalChart; color: string }) {
   const rows = chart.rows.map((row) => ({
     ...row,
-    detalle: rowDetail(row.ingresos, row.participacion),
+    detalle: chart.signed ? formatCLPCompact(row.ingresos) : rowDetail(row.ingresos, row.participacion),
   }))
   const maximum = Math.max(...rows.map((row) => Math.abs(row.ingresos)), 1)
   return (
     <div className="mt-5 space-y-4" data-chart-kind="bars">
       {rows.map((row) => (
         <div key={row.nombre} className="min-w-0">
-          <div className="flex items-end justify-between gap-3 text-xs">
+          <div className="flex min-w-0 flex-wrap items-end justify-between gap-2 text-xs">
             <span className="min-w-0 truncate font-medium text-navy/75" title={row.nombre}>{row.nombre}</span>
             <span className="shrink-0 whitespace-nowrap font-semibold text-navy">{row.detalle}</span>
           </div>

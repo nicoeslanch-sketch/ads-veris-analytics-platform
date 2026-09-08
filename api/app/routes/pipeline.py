@@ -45,6 +45,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     status,
 )
@@ -127,7 +128,7 @@ from ..storage import (
 )
 from ..version import ENGINE_VERSION, SERVICE_MODEL_VERSION
 from ..shared_analysis import coordinator_for
-from ..analysis_jobs import manager_for
+from ..analysis_jobs import manager_for, report_job_progress
 
 router = APIRouter()
 
@@ -1908,10 +1909,12 @@ def _standardize_batch_sync(
     """Standardize selected sheets after opening the workbook exactly once."""
 
     started = time.perf_counter()
+    report_job_progress("opening", 0, len(sheets) + 1)
     loaded, available = _load_batch_frames_cached(filename, content, sheets)
     results: dict[str, dict] = {}
     errors: dict[str, str] = {}
-    for name in sheets:
+    for position, name in enumerate(sheets):
+        report_job_progress("standardizing", position, len(sheets) + 1, name)
         preloaded = loaded.get(name)
         if preloaded is None:
             errors[name] = "La hoja no existe o no contiene una tabla procesable."
@@ -1942,6 +1945,7 @@ def _standardize_batch_sync(
         final_state["sheet_errors"].pop(name, None)
 
     persistence_errors: dict[str, str] = {}
+    report_job_progress("saving", len(sheets), len(sheets) + 1)
     if dataset_id and revision is not None:
         snapshots: dict[str, dict] = {}
         for name, result in results.items():
@@ -1987,12 +1991,14 @@ def _clean_batch_sync(
     started = time.perf_counter()
     entries = [entry for entry in manifest["hojas"] if entry["procesar"]]
     names = [entry["nombre"] for entry in entries]
+    report_job_progress("opening", 0, len(names) + 1)
     loaded, available = _load_batch_frames_cached(filename, content, names)
 
     responses: dict[str, dict] = {}
     errors: dict[str, str] = {}
-    for entry in entries:
+    for position, entry in enumerate(entries):
         name = entry["nombre"]
+        report_job_progress("cleaning", position, len(names) + 1, name)
         preloaded = loaded.get(name)
         if preloaded is None:
             errors[name] = "La hoja no existe o no contiene una tabla procesable."
@@ -2034,6 +2040,7 @@ def _clean_batch_sync(
         final_state["sheet_errors"].pop(name, None)
 
     persistence_errors: dict[str, str] = {}
+    report_job_progress("saving", len(names), len(names) + 1)
     if dataset_id and revision is not None:
         entries_by_name = {entry["nombre"]: entry for entry in entries}
         snapshots: dict[str, dict] = {}
@@ -2052,6 +2059,7 @@ def _clean_batch_sync(
                     revision,
                     final_state,
                     persist=False,
+                    include_metrics=False,
                 )
             except HTTPException as exc:
                 persistence_errors[name] = str(exc.detail)
@@ -4388,6 +4396,7 @@ def _build_and_store_restore_snapshot(
     revision: int,
     restore_state: dict | None = None,
     persist: bool = True,
+    include_metrics: bool = True,
 ) -> dict:
     """Construye una hoja con resultados del servidor y la guarda atómicamente."""
     standardization = _standardize_sync(filename, content, sheet)
@@ -4416,7 +4425,7 @@ def _build_and_store_restore_snapshot(
             cache_revision=revision,
             cache_user_id=user_id,
         )
-        if cleaning is not None
+        if cleaning is not None and include_metrics
         else None
     )
     snapshot = build_restore_snapshot(
@@ -4430,6 +4439,8 @@ def _build_and_store_restore_snapshot(
         rules=(cleaning or {}).get("reglas_activas"),
         sheet=effective_sheet,
     )
+    if cleaning is not None and not include_metrics:
+        snapshot["metrics_pending"] = True
     effective_state = dict(restore_state or {})
     effective_state.setdefault("active_sheet", effective_sheet)
     if not effective_state.get("available_sheets"):
@@ -5191,7 +5202,9 @@ async def preload_standardization(
 
 
 @router.post("/standardize/batch")
+@router.post("/standardize/batch/jobs", status_code=status.HTTP_202_ACCEPTED)
 async def standardize_batch(
+    request: Request,
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
     dataset_id: str | None = Form(None),
@@ -5221,6 +5234,15 @@ async def standardize_batch(
             detail="No se pudo reservar una revisión segura para guardar las hojas.",
         )
     filename, content = await _read_input(file, storage_path, user)
+    if request.url.path.endswith("/jobs"):
+        return manager_for(settings).submit(
+            user.id,
+            ("standardize_batch", user.id, dataset_id, revision,
+             hashlib.sha256(content).hexdigest(), tuple(names), json.dumps(state, sort_keys=True)),
+            lambda: _standardize_batch_sync(
+                filename, content, names, dataset_id, user.id, revision, state,
+            ),
+        )
     return await run_in_threadpool(
         _standardize_batch_sync,
         filename,
@@ -5333,6 +5355,7 @@ async def clean(
                 eliminar_duplicados,
                 revision,
                 state,
+                include_metrics=False,
             )
             result["persistencia"] = {"guardada": True}
         except HTTPException as exc:
@@ -5349,7 +5372,9 @@ async def clean(
 
 
 @router.post("/clean/batch")
+@router.post("/clean/batch/jobs", status_code=status.HTTP_202_ACCEPTED)
 async def clean_batch(
+    request: Request,
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
     dataset_id: str | None = Form(None),
@@ -5382,6 +5407,16 @@ async def clean_batch(
             detail="No se pudo reservar una revisión segura para guardar la limpieza.",
         )
     filename, content = await _read_input(file, storage_path, user)
+    if request.url.path.endswith("/jobs"):
+        return manager_for(settings).submit(
+            user.id,
+            ("clean_batch", user.id, dataset_id, revision,
+             hashlib.sha256(content).hexdigest(), json.dumps(sheet_manifest, sort_keys=True),
+             json.dumps(state, sort_keys=True)),
+            lambda: _clean_batch_sync(
+                filename, content, sheet_manifest, dataset_id, user.id, revision, state,
+            ),
+        )
     response = await run_in_threadpool(
         _clean_batch_sync,
         filename,

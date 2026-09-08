@@ -5,11 +5,74 @@ import io
 import json
 import threading
 import time
+import pytest
 from concurrent.futures import ThreadPoolExecutor
 
 from openpyxl import Workbook
 
 from app.routes.pipeline import _store_restore_snapshots_parallel
+
+
+@pytest.mark.parametrize("operation", ["standardize", "clean"])
+def test_batch_jobs_return_promptly_and_expose_owned_results(
+    client, auth_headers, monkeypatch, operation,
+):
+    from app.routes import pipeline
+    from tests.test_analysis_jobs import _manager
+
+    manager = _manager()
+    monkeypatch.setattr(pipeline, "manager_for", lambda _settings: manager)
+    fields = {"sheets": json.dumps(["Enero", "Febrero"])} if operation == "standardize" else {
+        "manifest": json.dumps({"hojas": [
+            {"nombre": name, "procesar": True, "rules": {}, "mapping": {},
+             "scope": {}, "eliminar_duplicados": False}
+            for name in ("Enero", "Febrero")
+        ]}),
+    }
+    response = client.post(
+        f"/{operation}/batch/jobs", headers=auth_headers, data=fields,
+        files={"file": ("batch.xlsx", _book(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        response = client.get(f"/analysis/jobs/{job_id}", headers=auth_headers)
+        body = response.json()
+        if body["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.01)
+    assert body["status"] == "completed", body
+    assert set(body["result"]["resultados"]) == {"Enero", "Febrero"}
+    assert body["completed_phases"] == body["total_phases"] == 3
+    assert body["result"]["errores"] == {}
+
+
+def test_clean_batch_saves_valid_snapshot_without_computing_dashboards(monkeypatch):
+    from app.routes import pipeline
+    from app.restore_cache import valid_restore_snapshot
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Cleaning must not eagerly compute metrics")
+
+    saved = {}
+    monkeypatch.setattr(pipeline, "_metrics_sync", unexpected)
+    def store(_dataset, _user, snapshots, _state):
+        saved.update(snapshots)
+        return {}
+    monkeypatch.setattr(pipeline, "_store_restore_snapshots_parallel", store)
+    manifest = {"hojas": [{"nombre": name, "procesar": True, "rules": {},
+                            "mapping": {}, "scope": {}, "eliminar_duplicados": False}
+                           for name in ("Enero", "Febrero")]}
+    result = pipeline._clean_batch_sync("batch.xlsx", _book(), manifest, "dataset", "user", 42, _restore_state())
+    assert result["persistencia_errores"] == {}
+    assert set(saved) == {"Enero", "Febrero"}
+    for snapshot in saved.values():
+        assert snapshot["metrics"] is None
+        assert valid_restore_snapshot(snapshot, "limpio", **{
+            f"expected_{key}": snapshot[key] for key in
+            ("revision", "source_sha256", "rules_hash", "mapping_hash", "sheet")
+        }) is not None
 
 
 def _book() -> bytes:

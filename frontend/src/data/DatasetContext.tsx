@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { clearAnalysisCaches, clearAnalysisRuntimeCaches } from '../lib/analysisCache'
-import { analysisScopesEqual, normalizedRestoredSelection } from '../lib/multiSheet'
+import { analysisScopesEqual, normalizedRestoredSelection, scopeForActiveSheet } from '../lib/multiSheet'
 import {
   clearRelationshipDashboardCaches,
   clearRelationshipDashboardRuntimeCaches,
@@ -136,6 +136,7 @@ interface DatasetState {
   selectedSheets: string[]
   sheetErrors: Record<string, string>
   analysisScope: AnalysisScope | null
+  analysisScopeChosen: boolean
   businessFilters: BusinessFilters
   sheetManifest: SheetManifest | null
   combineSheets: boolean
@@ -214,6 +215,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [selectedSheets, setSelectedSheetsState] = useState<string[]>([])
   const [sheetErrors, setSheetErrors] = useState<Record<string, string>>({})
   const [analysisScope, setAnalysisScopeState] = useState<AnalysisScope | null>(null)
+  const [analysisScopeChosen, setAnalysisScopeChosen] = useState(false)
   const [businessFilters, setBusinessFilters] = useState<BusinessFilters>({})
   const [combineSheets, setCombineSheets] = useState(false)
   const [selectionMode, setSelectionMode] = useState<'all' | 'custom'>('all')
@@ -233,6 +235,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const setSheet = useCallback((newSheet: string | null) => {
     const session = newSheet ? sheetSessions[newSheet] : undefined
     setSheetState(newSheet)
+    setAnalysisScopeState((previous) => scopeForActiveSheet(previous, newSheet))
     setStandardizationState(session?.standardization ?? null)
     setCleaningState(session?.cleaning ?? null)
     setMetricsState(null)
@@ -277,11 +280,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
         ? previous
         : (sheets.length ? sheets : [activeSheet])
     ))
-    setAnalysisScopeState((previous) => previous ?? {
-      mode: 'single',
-      sheets: [activeSheet],
-      active_sheet: activeSheet,
-    })
+    if (activate) setAnalysisScopeState((previous) => scopeForActiveSheet(previous, activeSheet))
     return true
   }, [])
 
@@ -299,6 +298,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setMetricsStale(false)
     if (activate) {
       if (activeSheet) setSheetState(activeSheet)
+      setAnalysisScopeState((previous) => scopeForActiveSheet(previous, activeSheet))
       setCleaningState(result)
       setMonthsAvailable([])
       setPeriod(ALL_PERIOD)
@@ -387,6 +387,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       setSelectedSheetsState([])
       setSheetErrors({})
       setAnalysisScopeState(null)
+      setAnalysisScopeChosen(false)
       setBusinessFilters({})
       setCombineSheets(false)
       setSelectionMode('all')
@@ -471,9 +472,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       restoredSelection.length > 0 ? restoredSelection : restoredAvailableSheets,
     )
     setSheetErrors(options?.sheetErrors ?? {})
-    setAnalysisScopeState(options?.analysisScope ?? (
-      activeSheet ? { mode: 'single', sheets: [activeSheet], active_sheet: activeSheet } : null
-    ))
+    setAnalysisScopeState(scopeForActiveSheet(options?.analysisScope, activeSheet))
+    setAnalysisScopeChosen(Boolean(options?.analysisScope))
     setBusinessFilters({})
     setCombineSheets(Boolean(options?.combineSheets))
     setSelectionMode(options?.selectionMode ?? 'all')
@@ -503,6 +503,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     setSelectedSheetsState([])
     setSheetErrors({})
     setAnalysisScopeState(null)
+    setAnalysisScopeChosen(false)
     setBusinessFilters({})
     setCombineSheets(false)
     setSelectionMode('all')
@@ -576,6 +577,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const setAnalysisScope = useCallback((scope: AnalysisScope | null) => {
+    setAnalysisScopeChosen(true)
     if (analysisScopesEqual(analysisScope, scope)) return
     setAnalysisScopeState(scope)
     setMetricsState(null)
@@ -645,6 +647,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       selectedSheets,
       sheetErrors,
       analysisScope,
+      analysisScopeChosen,
       businessFilters,
       sheetManifest,
       combineSheets,
@@ -691,6 +694,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       selectedSheets,
       sheetErrors,
       analysisScope,
+      analysisScopeChosen,
       businessFilters,
       sheetManifest,
       combineSheets,

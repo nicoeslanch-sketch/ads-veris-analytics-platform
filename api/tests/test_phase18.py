@@ -202,11 +202,11 @@ def test_ventas_exponen_agrupaciones_flexibles(stress_book):
 def test_descuentos_flexibles_separan_valores_fuera_de_rango():
     frame = pd.DataFrame({
         "Fecha": ["01/01/2025"] * 9,
-        "Monto": [100, 200, 300, 400, 500, 600, 700, 800, 900],
+        "Ventas": [100, 200, 300, 400, 500, 600, 700, 800, 900],
         "Descuento_Pct": [0, 0.03, 0.08, 0.15, 0.40, 0.75, 1.10, -0.20, None],
     })
 
-    result = compute_metrics(frame, {"fecha": "Fecha", "monto": "Monto"})
+    result = compute_metrics(frame, {"fecha": "Fecha", "monto": "Ventas"})
     grouping = next(
         item for item in result["agrupaciones_flexibles"]
         if item["columna"] == "Descuento_Pct"

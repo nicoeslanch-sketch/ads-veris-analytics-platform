@@ -907,6 +907,10 @@ def analyze_and_clean(
         df.attrs = copy.deepcopy(standardized[0].attrs)
         std_report = copy.deepcopy(standardized[1])
     loaded_original = df_original.copy()
+    # Pandas deep-copies attrs on every Series operation. Keep row provenance
+    # outside the working frames, then reattach it once the audit is complete.
+    df.attrs.pop(SOURCE_ROWS_ATTR, None)
+    loaded_original.attrs.pop(SOURCE_ROWS_ATTR, None)
     loaded_original.columns = df.columns
     source_rows = _source_rows(df_original)
     source_sheet = df_original.attrs.get(SOURCE_SHEET_ATTR)
@@ -1143,8 +1147,6 @@ def analyze_and_clean(
         # §5.1: sin imputación de nulos — nunca "0" en montos/costos/cantidades.
 
         rows_after, cols_after = len(df), len(df.columns)
-        df.attrs[SOURCE_ROWS_ATTR] = clean_source_rows
-        df.attrs[SOURCE_SHEET_ATTR] = source_sheet
         remaining = _detect_problems(
             df,
             column_types,
@@ -1189,6 +1191,12 @@ def analyze_and_clean(
     else:
         calidad_dimensiones_despues = dict(calidad_dimensiones_antes)
 
+    sales_evidence = line_sales_evidence(
+        df if apply else df_before_clean, roles,
+    ).to_dict()
+    df.attrs[SOURCE_ROWS_ATTR] = clean_source_rows
+    df.attrs[SOURCE_SHEET_ATTR] = source_sheet
+
     return {
         "resumen": {
             "filas_antes": rows_before,
@@ -1219,10 +1227,7 @@ def analyze_and_clean(
         "estandarizacion": std_report["cambios"],
         "column_types": column_types,
         "mapeo": roles,
-        "evidencia_venta_linea": line_sales_evidence(
-            df if apply else df_before_clean,
-            roles,
-        ).to_dict(),
+        "evidencia_venta_linea": sales_evidence,
         "reporte_calidad": per_column,
         "avisos": avisos,
         "duplicados_criterio": duplicados_criterio,

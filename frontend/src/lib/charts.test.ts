@@ -9,6 +9,17 @@ import {
 } from './charts'
 
 describe('visualizaciones honestas y estables', () => {
+  it('conserva ajustes negativos sin concentraciones mayores al 100 ni Pareto falso', () => {
+    for (const cumulative of [false, true]) {
+      const chart = prepareCategoricalChart([
+        { nombre: 'Completada', ingresos: 100, participacion_neta_pct: 1000 },
+        { nombre: 'Devolucion', ingresos: -90, participacion_neta_pct: -900 },
+      ], { cumulative })
+      expect(chart.kind).toBe('bars')
+      expect(chart.signed).toBe(true)
+      expect(chart.rows.reduce((sum, row) => sum + row.ingresos, 0)).toBe(10)
+    }
+  })
   it('separa escalas cuando costos o utilidad aplastan los ingresos', () => {
     expect(
       shouldSplitFinancialScale([

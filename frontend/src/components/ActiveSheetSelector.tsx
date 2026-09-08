@@ -44,6 +44,7 @@ export default function ActiveSheetSelector({
     sheetSessions,
     sheetManifest,
     analysisScope,
+    analysisScopeChosen,
     metrics,
     cleaning,
     setAnalysisScope,
@@ -108,6 +109,8 @@ export default function ActiveSheetSelector({
   const [detecting, setDetecting] = useState(false)
   const autoBusinessAttempt = useRef<string | null>(null)
   const manualModeSelected = useRef(false)
+  const relationshipRequest = useRef(0)
+  useEffect(() => () => { relationshipRequest.current += 1 }, [])
   // Cada vista conserva su selección. Antes una relación cambiaba la hoja
   // global y al volver a "Analizar una hoja" se calculaba otra hoja desde cero.
   const lastSingleSheet = useRef<string | null>(
@@ -204,6 +207,7 @@ export default function ActiveSheetSelector({
     if (
       !file ||
       !sheetManifest ||
+      analysisScopeChosen ||
       manualModeSelected.current ||
       detecting ||
       !shouldAutoBuildBusinessScope(
@@ -222,7 +226,7 @@ export default function ActiveSheetSelector({
     // `findRelationships` intentionally reads the current manifest. The
     // stable dataset/sheet signature above prevents request loops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysisScope, cleanedSheets, compatibleSheets, datasetId, detecting, file, pendingSelectedCount, selectedSheets, sheetManifest, storagePath])
+  }, [analysisScope, analysisScopeChosen, cleanedSheets, compatibleSheets, datasetId, detecting, file, pendingSelectedCount, selectedSheets, sheetManifest, storagePath])
 
   // Antes se ocultaba con una sola hoja limpia. Durante una limpieza
   // multihoja eso obligaba a refrescar para que el contexto restaurado
@@ -234,6 +238,10 @@ export default function ActiveSheetSelector({
     : cleanedSheets[0]
 
   const chooseSingle = (name: string) => {
+    manualModeSelected.current = true
+    relationshipRequest.current += 1
+    setDetecting(false)
+    setMode('single')
     lastSingleSheet.current = name
     setSheet(name)
     setAnalysisScope({ mode: 'single', sheets: [name], active_sheet: name })
@@ -272,6 +280,7 @@ export default function ActiveSheetSelector({
     requestedAppendSheets?: string[],
   ) {
     if (!file || !sheetManifest || detecting) return
+    const request = ++relationshipRequest.current
     setMode('append_join')
     setDetecting(true)
     setRelationMessage(null)
@@ -295,6 +304,7 @@ export default function ActiveSheetSelector({
           }),
         ),
       )
+      if (request !== relationshipRequest.current) return
       const serviceAnalysis = response.metrics?.analisis_negocio
       if (
         serviceWorkbook
@@ -378,15 +388,16 @@ export default function ActiveSheetSelector({
         )
       }
     } catch (err) {
+      if (request !== relationshipRequest.current) return
       setCandidates([])
       setRelationMessage(err instanceof ApiError ? err.message : 'No pudimos revisar las conexiones.')
     } finally {
-      setDetecting(false)
+      if (request === relationshipRequest.current) setDetecting(false)
     }
   }
 
   const selectMode = (next: Mode) => {
-    if (detecting || (next !== 'single' && pendingSelectedCount > 0)) return
+    if (next !== 'single' && (detecting || pendingSelectedCount > 0)) return
     if (next === 'append' && compatibleSheets.length < 2) return
     manualModeSelected.current = true
     setMode(next)

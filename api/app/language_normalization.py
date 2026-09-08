@@ -82,6 +82,33 @@ _VOCABULARY = frozenset(
     limpio limpia original reglas mapeo rol roles clave claves cardinalidad union
     seguridad sheet sheets privacidad soporte persona plan planes monedas coins relacion cobertura
     acid-test kpi kpis clp usd eur ars pen cop mxn gbp iva ebitda tir vp vf
+    hola buenas buenos saludos gracias ok perfecto listo mediana maximo minimo
+    confiar confianza numeros numero confirmar afirmacion afirmaciones
+    maxima minima minimo minimo monto netos concluir conclusion conclusiones resumelo
+    meta metas nuevos nuevas segmento segmentos predomina predominan predominante
+    mayor menor altos bajas bajo baja altos alto conteo comprometidas comprometidos
+    reposicion reponer disponible disponibilidad vencido vencidos moroso morosos
+    morosidad cartera cobrar conciliacion conciliar bancaria bancarias banco bancos
+    anulada anulado anuladas anulados pendiente pendientes aplicado aplicada
+    recibido recibida recepcion recepciones despachos despacho entregas entrega
+    factura facturas facturacion boleta boletas orden ordenes documento documental
+    contabilizar contados contar cuantos cuantas cuantos restantes conservados borrar
+    descargarlo descargas descargable descargas exportacion exportaciones descargas
+    servidor conexion conectar conectado conecto importo subir subi subido
+    tardando demora demorado demorar espera esperando avance progreso proceso
+    porcentaje porcentajes comision comisiones fraccion fracciones descuentos
+    comparabilidad comparable comparables desglose desgloses distribuir distribucion
+    positivo positivos negativos negativa negativas aprobado aprobada
+    neteo redondeo redondear decimales decimal separador separadores coma punto
+    tabla tablas encabezado encabezados columna columnas filas fila
+    portugues ingles espanol acentos tildes unicode codificacion utf latin
+    publicas privados permisos formato formatos delimitador tabulacion separacion
+    promedio ponderado ponderada peso pesos ponderacion desviacion estandar
+    cuartil cuartiles percentil percentiles histograma dispersion correlacion
+    acumulado acumulada acumulados acumuladas pareto frecuencia frecuencias
+    causacion causalidad causa causas causal ocurrido ocurrio incluye incluidos
+    encabezados repetidos conflicto conflictos conflictivo formato regional
+    factura facturas retencion retenciones cotizacion cotizaciones bruto brutos
     """.split()
 )
 
@@ -141,6 +168,25 @@ _TYPO_ALIASES = {
     "utlidad": "utilidad",
     "vetnas": "ventas",
     "vuena": "buena",
+    "servidro": "servidor",
+    "coneccion": "conexion",
+    "conecion": "conexion",
+    "conectividad": "conexion",
+    "duplciados": "duplicados",
+    "dupicados": "duplicados",
+    "dublicados": "duplicados",
+    "maxmio": "maximo",
+    "minmio": "minimo",
+    "medaina": "mediana",
+    "invetario": "inventario",
+    "sucusral": "sucursal",
+    "comprometdias": "comprometidas",
+    "categroia": "categoria",
+    "categroias": "categorias",
+    "porqe": "porque",
+    "pq": "porque",
+    "q": "que",
+    "xq": "porque",
 }
 
 
@@ -195,6 +241,16 @@ _JOINED_ALIASES = {
     "valorfuturo": "valor futuro",
     "valorpresente": "valor presente",
     "ventastotales": "ventas totales",
+    "cuantosduplicadoshay": "cuantos duplicados hay",
+    "cuantostocktengo": "cuanto stock tengo",
+    "bajoelminimo": "bajo el minimo",
+    "unidadescomprometidas": "unidades comprometidas",
+    "diferenciadeconteo": "diferencia de conteo",
+    "metaventaneta": "meta venta neta",
+    "metamargenbruto": "meta margen bruto",
+    "limitecreditopromedio": "limite credito promedio",
+    "porquedemoralalimpieza": "porque demora la limpieza",
+    "nosepudoconectaralservidor": "no se pudo conectar al servidor",
 }
 
 

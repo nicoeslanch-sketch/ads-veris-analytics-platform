@@ -1199,6 +1199,8 @@ def _group_answer(
         row = ranked[1]
     elif named:
         row = named[0]
+    elif _contains(question, "menos", "menor", "ultimo", "ultima"):
+        row = ranked[-1]
     else:
         row = ranked[0]
     value = _number(row.get("ingresos") if "ingresos" in row else row.get("valor"))
@@ -1209,14 +1211,20 @@ def _group_answer(
         position = "segunda" if article == "La" else "segundo"
     elif named:
         position = "consultada" if article == "La" else "consultado"
+    elif _contains(question, "menos", "menor", "ultimo", "ultima"):
+        position = "con menor ingreso"
     else:
         position = "líder"
     answer = f"{article} {label.lower()} {position} es {name}"
     if value is not None:
         answer += f", con {format_amount(value, currency)}"
-    share = _number(row.get("porcentaje") or row.get("participacion_pct"))
+    share = _number(row.get("participacion_bruta_pct"))
+    share_base = "de las ventas brutas positivas"
+    if share is None:
+        share = _number(row.get("porcentaje") if row.get("porcentaje") is not None else row.get("participacion_pct"))
+        share_base = "del total identificado"
     if share is not None:
-        answer += f" ({_percent(share)} del total identificado)"
+        answer += f" ({_percent(share)} {share_base})"
     answer += ". Revisa tambien la concentracion: un lider fuerte puede ser una ventaja comercial o un riesgo de dependencia."
     return _result(answer, key, metric_suggestions(metrics))
 
@@ -1312,9 +1320,21 @@ def _answer_inventory(metrics: dict[str, Any], question: str) -> dict[str, Any] 
     if not inventory:
         return None
     currency = str(metrics.get("moneda") or "CLP")
-    if _contains(question, "bajo minimo", "quiebre", "sin stock", "stock negativo"):
+    if _contains(question, "sucursal", "sucursales"):
+        rows = inventory.get("por_sucursal") or []
+        if rows:
+            ranked = sorted(rows, key=lambda row: _number(row.get("stock")) or 0)
+            row = ranked[0] if _contains(question, "menos", "menor") else ranked[-1]
+            return _result(f"{row['nombre']} tiene {_es_number(row.get('stock'))} unidades de stock y {_es_number(row.get('bajo_minimo'))} registros bajo minimo en el corte visible.", "metric_inventory_branch", metric_suggestions(metrics))
+    if _contains(question, "comprometidas", "comprometidos", "conteo"):
+        field = "diferencia_conteo" if "conteo" in question else "unidades_comprometidas"
+        value = _number(inventory.get(field))
+        label = "diferencia de conteo" if field == "diferencia_conteo" else "unidades comprometidas"
+        answer = f"El indicador de {label} es {_es_number(value)} unidades." if value is not None else f"No hay un indicador de {label} disponible."
+        return _result(answer, f"metric_inventory_{field}", metric_suggestions(metrics))
+    if _contains(question, "bajo minimo", "bajo el minimo", "quiebre", "sin stock", "stock negativo"):
         answer = (
-            f"Hay {_es_number(inventory.get('bajo_minimo'))} productos o registros bajo "
+            f"Hay {_es_number(inventory.get('bajo_minimo'))} registros bajo "
             f"el mínimo y {_es_number(inventory.get('stocks_negativos') or 0)} con stock negativo. "
             "Prioriza los que combinan quiebre, ventas recientes y mayor margen."
         )
@@ -1330,7 +1350,8 @@ def _answer_inventory(metrics: dict[str, Any], question: str) -> dict[str, Any] 
         answer = (
             f"El inventario contiene {_es_number(inventory.get('stock_total'))} unidades en "
             f"{_es_number(inventory.get('productos'))} productos, con "
-            f"{_es_number(inventory.get('bajo_minimo'))} bajo el mínimo."
+            f"{_es_number(inventory.get('bajo_minimo'))} registros bajo el mínimo. "
+            "Un producto puede aparecer en varias sucursales."
         )
         key = "metric_inventory"
     return _result(answer, key, metric_suggestions(metrics))
@@ -1454,27 +1475,37 @@ def _answer_ratio(metrics: dict[str, Any], question: str) -> dict[str, Any] | No
     return _result(answer, f"metric_ratio_{target}", metric_suggestions(metrics))
 
 
-def _generic_numeric_answer(metrics: dict[str, Any], question: str) -> dict[str, Any] | None:
+def _generic_numeric_answer(metrics: dict[str, Any], question: str, context: str = "") -> dict[str, Any] | None:
     generic = metrics.get("analisis_generico") or {}
     candidates = [row for row in (generic.get("numericas") or []) if isinstance(row, dict)]
-    question_words = set(question.split()) - {"cuanto", "cual", "total", "promedio", "mis", "mi", "es", "de", "del"}
+    stop = {"cuanto", "cuantas", "cual", "total", "promedio", "mediana", "maximo", "minimo", "mas", "alto", "bajo", "mis", "mi", "es", "de", "del", "el", "la", "y", "los", "las", "que", "es", "tengo"}
+    question_words = set(question.split()) - stop
     ranked: list[tuple[int, dict[str, Any]]] = []
     for row in candidates:
-        label = _normalize(row.get("etiqueta") or row.get("columna") or "")
+        label = _normalize(row.get("columna") or "")
         words = set(label.split())
-        score = len(question_words & words)
+        score = sum(4 if word in {"neto", "neta", "iva", "bruto", "bruta", "margen", "nuevos"} else 1 for word in question_words & words)
         if label and label in question:
             score += 4
         if score:
             ranked.append((score, row))
     if not ranked:
-        return None
+        if context and _contains(question, "maximo", "minimo", "mediana", "promedio", "media", "rango"):
+            return _generic_numeric_answer(metrics, f"{context} {question}")
+        subtype = generic.get("subtipo")
+        if candidates and ((subtype == "gastos" and _contains(question, "gaste", "gastos", "gasto")) or (subtype == "compras" and _contains(question, "compre", "compras"))):
+            ranked = [(1, candidates[0])]
+        else:
+            return None
     ranked.sort(key=lambda item: item[0], reverse=True)
     row = ranked[0][1]
-    wants_average = _contains(question, "promedio", "media")
-    value = row.get("promedio") if wants_average else row.get("total")
-    operation = "promedio" if wants_average else "total"
-    if value is None and not wants_average:
+    operations = [(match.start(), name) for name, pattern in (
+        ("maximo", r"\b(maximo|mas alto|mayor)\b"), ("minimo", r"\b(minimo|mas bajo|menor)\b"),
+        ("mediana", r"\bmediana\b"), ("promedio", r"\b(promedio|media)\b"),
+    ) for match in re.finditer(pattern, question)]
+    operation = max(operations)[1] if operations else "total"
+    value = row.get(operation)
+    if value is None and not operations:
         value = row.get(row.get("destacado") or "promedio")
         operation = str(row.get("destacado") or "promedio")
     if _number(value) is None:
@@ -1488,10 +1519,53 @@ def _generic_numeric_answer(metrics: dict[str, Any], question: str) -> dict[str,
     else:
         formatted = _es_number(value)
     return _result(
-        f"El {operation} de {label} es {formatted}. Este resultado usa los valores validos de la columna y no completa datos faltantes.",
+        f"{'La' if operation == 'mediana' else 'El'} {operation} de {label} es {formatted}. Este resultado usa los valores validos de la columna y no completa datos faltantes.",
         "metric_generic_numeric",
         metric_suggestions(metrics),
     )
+
+
+def _answer_generic_profile(metrics: dict[str, Any], question: str, history: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    generic = metrics.get("analisis_generico") or {}
+    if not generic:
+        return None
+    subtype = str(generic.get("subtipo") or "datos")
+    currency = str(metrics.get("moneda") or "CLP")
+    context = _previous_user_message(history)
+    def formatted(value: Any, fmt: str | None) -> str:
+        return format_amount(value, currency) if fmt == "moneda" else _percent(value) if fmt == "porcentaje" else _es_number(value)
+
+    if _contains(question, "resumen", "conclusion", "panorama", "resumelo"):
+        facts = []
+        for row in (generic.get("numericas") or [])[:3]:
+            operation = row.get("destacado") or "total"
+            value = row.get(operation)
+            if _number(value) is not None:
+                facts.append(f"{operation} de {row['columna']}: {formatted(value, row.get('formato'))}")
+        return _result(f"La hoja de {subtype} contiene {_es_number(generic.get('registros'))} registros. " + "; ".join(facts) + ". Los valores corresponden a esta hoja y sus filtros; metas, precios y limites de credito no son ingresos realizados.", "metric_generic_overview", metric_suggestions(metrics))
+    if _contains(question, "cuantos clientes", "cuantos proveedores", "cuantas sucursales", "cuantos registros", "cuantos trabajadores"):
+        return _result(f"La hoja de {subtype} contiene {_es_number(generic.get('registros'))} registros. Es un conteo de filas, no una garantia de entidades unicas; revisa duplicados e identificadores.", "metric_generic_count", metric_suggestions(metrics))
+
+    for breakdown in generic.get("desgloses") or []:
+        dimension_words = set(_normalize(breakdown.get("dimension") or "").split()) - {"de", "id", "gasto"}
+        if dimension_words & set(question.split()) and _contains(question, "cuanto", "monto", "total", "gaste", "compra"):
+            rows = breakdown.get("valores") or []
+            if rows:
+                description = "; ".join(f"{row['nombre']}: {formatted(row['valor'], breakdown.get('formato'))}" for row in rows[:5])
+                return _result(f"{breakdown['operacion']} de {breakdown['columna']} por {breakdown['dimension']}: {description}. Se muestran los primeros {min(5, len(rows))} grupos; no son necesariamente el total de la hoja.", "metric_generic_breakdown", metric_suggestions(metrics))
+    for distribution in generic.get("distribuciones") or []:
+        words = set(_normalize(distribution.get("columna") or "").split()) - {"de", "id", "gasto"}
+        if words & set(question.split()):
+            rows = distribution.get("valores") or []
+            if rows:
+                row = max(rows, key=lambda item: item.get("registros", 0))
+                return _result(f"En {distribution['columna']} predomina {row['nombre']}, con {_es_number(row['registros'])} registros. Esta distribucion cuenta filas, no montos.", "metric_generic_distribution", metric_suggestions(metrics))
+    evolution = generic.get("evolucion") or {}
+    if evolution.get("valores") and _contains(question, "mejor mes", "peor mes", "tendencia", "evolucion", "mes mas"):
+        rows = sorted(evolution["valores"], key=lambda row: row["valor"])
+        row = rows[0] if _contains(question, "peor", "menor", "menos") else rows[-1]
+        return _result(f"El mes {'menor' if row is rows[0] else 'mayor'} en {evolution['columna']} es {row['mes']}: {formatted(row['valor'], evolution.get('formato'))}. Mayor gasto no significa mejor desempeno; compara periodos con cobertura equivalente.", "metric_generic_trend", metric_suggestions(metrics))
+    return _generic_numeric_answer(metrics, question, context)
 
 
 def _answer_overview(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -1627,7 +1701,17 @@ def answer_metrics_question(
         if collection_answer is not None:
             return collection_answer
     if _contains(question, "calidad", "datos sucios", "advertencias", "problemas de datos", "duplicados"):
+        if _contains(question, "descargar", "exportar", "borrar", "eliminar") and _contains(question, "sin", "puedo"):
+            return _result("Si. Puedes limpiar y descargar conservando los duplicados. Solo se eliminan repeticiones exactas del original cuando lo confirmas; los conflictos de ID y las coincidencias por normalizacion se conservan para revision.", "metric_download_duplicates", metric_suggestions(metrics))
         return _answer_quality(metrics)
+
+    if _contains(original_question, "si los dejo", "si los conservo", "cambia el total") and _contains(_recent_conversation_text(history), "duplicados"):
+        return _answer_quality(metrics)
+    generic_answer = _answer_generic_profile(metrics, original_question, history)
+    if generic_answer is not None:
+        return generic_answer
+    if metrics.get("analisis_inventario") and _contains(question, "inventario", "stock", "sucursal", "comprometidas", "conteo", "bajo el minimo", "resumen", "conclusion"):
+        return _answer_inventory(metrics, question)
 
     if _contains(question, "ingresos", "ingreso total", "ventas totales", "venta total", "facturacion", "cuanto vendi"):
         return _answer_income(metrics)
@@ -1723,6 +1807,13 @@ def answer_metrics_question(
     if _contains(question, "cliente", "concentracion de clientes"):
         customers = metrics.get("clientes") or {}
         rows = customers.get("top") or []
+        unique = _number(customers.get("unicos"))
+        if unique is not None and _contains(question, "cuantos", "cantidad", "numero de", "total de clientes"):
+            return _result(
+                f"Hay {_es_number(unique)} clientes unicos identificados en el alcance visible. "
+                "El conteo usa los identificadores presentes; no equivale al numero de ventas.",
+                "metric_customer_count", metric_suggestions(metrics),
+            )
         if rows:
             answer = _group_answer(metrics, rows, "Cliente", "metric_top_customer", question)
             unique = _number(customers.get("unicos"))

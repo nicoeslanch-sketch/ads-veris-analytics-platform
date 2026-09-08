@@ -42,14 +42,14 @@ ARTICLES: list[dict[str, Any]] = [
     article("large_file", "importacion", "Archivos grandes", ["archivo grande", "pesa mucho", "limite", "15 mb", "demora al subir"], "El flujo clásico admite hasta 15 MB por fuente. Para reducir el tiempo elimina hojas decorativas, imágenes, fórmulas volátiles y columnas completamente vacías; conserva las tablas y sus identificadores."),
     article("standardization", "estandarizacion", "Qué hace Estandarización", ["estandarizacion", "estandarizar", "roles de columna", "mapeo"], "Estandarización detecta tipos y propone roles como fecha, monto, producto o cliente. No cambia cifras: prepara un mapeo verificable para que los cálculos posteriores usen la columna correcta."),
     article("mapping_wrong", "estandarizacion", "Corregir un mapeo", ["mapeo incorrecto", "columna incorrecta", "detecta mal", "rol equivocado"], "En Estandarización revisa la columna asignada a cada rol y cámbiala antes de continuar. Un monto de costo asignado como venta puede alterar todos los indicadores; la corrección queda ligada al dataset."),
-    article("cleaning", "limpieza", "Qué hace Limpieza", ["que limpia", "limpieza", "datos sucios", "reglas automaticas"], "Limpieza corrige formatos, nulos, duplicados y tipos según reglas visibles. Antes de aplicar puedes revisar problemas y activar o desactivar reglas. El resultado conserva trazabilidad del antes y después."),
+    article("cleaning", "limpieza", "Qué hace Limpieza", ["que limpia", "limpieza", "datos sucios", "reglas automaticas"], "Limpieza normaliza formatos, tipos y representaciones de vacíos según reglas visibles. No inventa datos faltantes ni elimina duplicados sin tu confirmación. Antes de aplicar puedes revisar problemas y activar o desactivar reglas; el resultado conserva trazabilidad del antes y después."),
     article("cleaning_slow", "limpieza", "Limpieza lenta", ["limpieza lenta", "demora limpiar", "tarda demasiado", "timeout limpieza"], "La primera limpieza de un libro grande puede tardar porque se inspeccionan todas sus hojas. No cierres la pestaña. Las operaciones repetidas reutilizan resultados cuando el archivo, las reglas y la hoja no cambiaron; si aparece un timeout, reintenta una vez y abre Ver detalle."),
     article("download_slow", "limpieza", "Descarga limpia lenta", ["descarga lenta", "demora descargar", "tres minutos", "timeout descarga"], "Exportar un Excel limpio requiere reconstruir todas las hojas y estilos compatibles, por eso suele tardar más que descargar CSV. Si solo necesitas datos, elige CSV; para libros multihoja usa Excel y mantén la pestaña abierta hasta terminar."),
     article("download_clean", "limpieza", "Descargar datos limpios", ["descargar excel limpio", "descargar archivo limpio", "descargar base limpia", "como descargo", "exportar datos limpios"], "Después de aplicar la limpieza, abre Limpieza y usa Descargar datos limpios. Elige Excel para conservar las hojas y la auditoría, o CSV para una salida más liviana. La descarga usa la misma configuración de reglas, mapeo y duplicados que quedó guardada para el dataset."),
     article("duplicates", "calidad", "Duplicados", ["duplicados", "filas repetidas", "id duplicado", "eliminar duplicados"], "No se decide un duplicado solo por posición. La plataforma compara claves y contenido, muestra cuántos detectó y aplica la regla elegida. Si un ID se repite con información distinta, debe revisarse como conflicto y no borrarse arbitrariamente."),
     article("missing", "calidad", "Valores faltantes", ["nulos", "vacios", "faltan datos", "sin valor"], "Los valores faltantes no deben inventarse. La limpieza puede normalizar vacíos, pero los indicadores omiten o muestran sin dato según el cálculo. Revisa cobertura antes de interpretar un KPI."),
     article("dates", "calidad", "Fechas y periodos", ["fecha incorrecta", "periodo", "mes", "ano", "año", "fecha texto"], "La plataforma intenta normalizar fechas reales y fechas escritas como texto. Si un periodo no aparece, revisa que su columna esté mapeada como fecha y que no mezcle formatos incompatibles o años de dos dígitos ambiguos."),
-    article("sheet_public", "google_sheets", "Compartir Google Sheets", ["google sheets privado", "sheet privada", "compartir enlace", "hoja publica", "permiso google"], "Para conectar una hoja sin OAuth, en Google Sheets usa Compartir → Cualquier persona con el enlace → Lector. ADS Veris descarga únicamente la pestaña indicada por el enlace y no recibe tu contraseña de Google."),
+    article("sheet_public", "google_sheets", "Compartir Google Sheets", ["google sheets privado", "sheet privada", "compartir enlace", "hoja publica", "permiso google"], "La conexión por enlace necesita acceso de lectura y descarga solo la pestaña indicada. No publiques una hoja privada con datos sensibles para conectarla: puedes descargarla como XLSX y subir ese archivo. Para una hoja que sí puedes compartir, revisa sus permisos de lector. ADS Veris no recibe tu contraseña de Google."),
     article("sheet_import", "google_sheets", "Conectar Google Sheets", ["conectar google sheets", "importar sheet", "pegar link", "enlace google"], "Ve a Conectores, pega la URL de la pestaña y elige Conectar. Cada enlace queda guardado como fuente y pasa por Estandarización y Limpieza igual que un Excel."),
     article("sheet_multiple", "google_sheets", "Varias hojas de Google", ["varias hojas google", "multiples links", "más de una sheet", "varias pestañas"], "Puedes registrar varios enlaces. Si son pestañas del mismo documento, abre cada pestaña y copia su URL con el gid correspondiente. ADS Veris las conserva como fuentes independientes para evitar mezclas silenciosas."),
     article("sheet_refresh", "google_sheets", "Actualizar Google Sheets", ["actualizar google sheets", "sincronizar", "cambios en sheet", "refrescar fuente"], "En Conectores usa Comprobar cambios o Actualizar. Al detectar una versión nueva, ADS Veris la vuelve a llevar por Estandarización y Limpieza; así un cambio remoto no reemplaza cálculos sin validación."),
@@ -126,6 +126,15 @@ ARTICLES: list[dict[str, Any]] = [
 ]
 
 
+ARTICLES.extend([
+    article("batch_progress", "limpieza", "Progreso por hoja", ["por que demora la limpieza", "porque demora la limpieza", "limpieza tarda", "error limpiar", "limpieza con errores", "servidor al limpiar"], "La limpieza multihoja muestra el avance de apertura, procesamiento y guardado. Cada hoja conserva sus reglas y la decision de duplicados. Si una hoja falla, revisa su detalle y reintenta las pendientes. Un error de conexion no demuestra que se hayan perdido datos: Historial permite recuperar el estado confirmado por el servidor.", "¿El error aparece al abrir, procesar o guardar?", 90),
+    article("joined_import", "google_sheets", "Importar Google Sheets", ["como importo google sheets", "importo google", "conectar las hojas google"], "En Conectores pega el enlace de la pestaña de Google Sheets. Debe ser accesible en modo lectura; no publiques una hoja con informacion sensible. El enlace con gid identifica una pestaña. La fuente importada pasa por el mismo motor de estandarizacion y limpieza.", "¿Tienes el enlace de la pestaña que necesitas?", 85),
+    article("ambiguous_values", "calidad", "Valores ambiguos", ["numero ambiguo", "fecha ambigua", "valor ilegible", "no interpreta", "31 de febrero", "dato dudoso"], "Si una fecha o cifra no se puede interpretar con seguridad, se conserva el texto original y se señala para revision. No se sustituye por cero ni se inventa un valor. Los indicadores declaran la cobertura y omiten los valores no interpretables del calculo que los requiere.", "¿Qué columna y valor necesitas revisar?", 80),
+    article("id_conflicts", "relaciones", "Conflictos entre identificadores", ["id repetido distinto", "conflicto de id", "ids conflictivos", "mismo id diferente", "relacion por nombre"], "Solo se conectan tablas con claves empresariales verificables. Si un ID apunta a dos datos distintos en la maestra, la relacion puede multiplicar filas: se bloquea o se excluye esa clave del indicador con una advertencia. Nunca se resuelve inventando una coincidencia por parecido del nombre.", "¿Qué identificador comparten las dos hojas?", 80),
+    article("goals_not_sales", "analisis", "Metas y resultados reales", ["meta no es venta", "metas son ingresos", "clientes meta", "meta nuevos clientes"], "Una meta es un objetivo, no un resultado realizado. Se compara con ventas o clientes reales del mismo periodo y sucursal solo cuando existen fuentes vinculables. Sin esa evidencia, se muestra la meta por separado y no se calcula cumplimiento.", "¿Quieres revisar una meta o su cumplimiento?", 80),
+])
+
+
 def normalize(text: str) -> str:
     return normalize_basic(text)
 
@@ -133,7 +142,8 @@ def normalize(text: str) -> str:
 def rank_articles(message: str, articles: list[dict[str, Any]] | None = None) -> list[tuple[float, dict[str, Any]]]:
     normalized = normalize_query(message)
     padded = f" {normalized} "
-    words = set(normalized.split())
+    stop_words = {"a", "al", "de", "del", "el", "la", "los", "las", "en", "por", "que", "como", "y", "un", "una", "es", "mi", "mis", "lo", "se"}
+    words = set(normalized.split()) - stop_words
     ranked: list[tuple[float, dict[str, Any]]] = []
     for item in articles or ARTICLES:
         trigger_scores: list[float] = []
@@ -147,14 +157,14 @@ def rank_articles(message: str, articles: list[dict[str, Any]] | None = None) ->
             if f" {trigger_norm} " in padded:
                 trigger_scores.append(8 + len(trigger_norm.split()) * 2)
             else:
-                trigger_words = set(trigger_norm.split())
+                trigger_words = set(trigger_norm.split()) - stop_words
                 if trigger_words:
                     trigger_scores.append(4 * len(words & trigger_words) / len(trigger_words))
         # Los triggers de un articulo son sinonimos, no evidencia acumulable.
         # Usar el mejor evita que una entrada generica con muchos sinonimos
         # desplace a una frase exacta y mas especifica.
         score = max(trigger_scores, default=0.0)
-        title_words = set(normalize(str(item.get("title") or "")).split())
+        title_words = set(normalize(str(item.get("title") or "")).split()) - stop_words
         score += 2 * len(words & title_words)
         score += min(int(item.get("priority") or 0), 100) / 100
         if score > 0:
@@ -169,6 +179,9 @@ def answer_for(
     metrics: dict[str, Any] | None = None,
     history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    normalized = normalize_query(message)
+    if normalized in {"hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "saludos"}:
+        return {"answer": "Hola. Puedo ayudarte con el archivo activo, sus indicadores y el proceso de limpieza. ¿Qué necesitas revisar?", "matched_key": "greeting", "confidence": "high", "suggestions": ["Mis ingresos totales", "Calidad y duplicados", "Descargar datos limpios"]}
     metric_answer = answer_metrics_question(message, metrics, history)
     if metric_answer is not None:
         return metric_answer

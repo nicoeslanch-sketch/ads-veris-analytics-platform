@@ -714,7 +714,13 @@ def detect_non_sales_profile(
         return "compras"
     if (
         has_compact("idgasto", "fechagasto", "totalgasto", "categoriagasto")
-        and has_compact("tipogasto", "estadogasto", "proveedor")
+        and (
+            has_compact("tipogasto", "estadogasto", "proveedor")
+            or sum(
+                has_compact(marker)
+                for marker in ("idgasto", "fechagasto", "totalgasto", "categoriagasto")
+            ) >= 2
+        )
     ):
         return "gastos"
     if (
@@ -1008,6 +1014,10 @@ def compute_metrics(
 ) -> dict:
     """`currency_hint` viene del pipeline (detección sobre los valores CRUDOS,
     antes de que la estandarización quite los símbolos de moneda)."""
+    # Metrics use aggregate provenance, not the per-row list. Avoid propagating
+    # that large list into every temporary Series without mutating cached data.
+    df = df.copy(deep=False)
+    df.attrs.pop("source_rows", None)
     # Fase 11 §9.2: el mapeo manual se FUSIONA con el automático. Antes un
     # override parcial (ej: solo "monto") reemplazaba el mapeo completo y
     # hacía desaparecer fecha/categoría/canal detectados → dashboard vacío.
@@ -1875,6 +1885,12 @@ def compute_metrics(
             if unique < 2 or (unique > 30 and not percentage_column):
                 continue
             has_priority = any(token in normalized for token in priority_tokens)
+            if not percentage_column and not has_priority:
+                numeric = _numeric_series(selection, name)
+                if float(numeric.notna().sum()) / max(int(filled.sum()), 1) >= 0.8:
+                    continue
+                if "fecha" in normalized or pd.api.types.is_datetime64_any_dtype(values):
+                    continue
             candidates.append((-1 if percentage_column else (0 if has_priority else 1), name))
         candidates.sort()
         flexibles: list[dict] = []
@@ -1945,6 +1961,8 @@ def compute_metrics(
         result["ventas_por_canal"] = []
         result["top_productos"] = []
         result["proyeccion"] = None
+        for key in ("clientes", "por_dia_semana", "agrupaciones_flexibles", "distribucion_montos"):
+            result.pop(key, None)
 
     def _column_containing(*tokens: str) -> str | None:
         return next(
@@ -2309,6 +2327,7 @@ def compute_metrics(
                 "negativo: pueden ser ajustes pendientes o errores de captura."
             )
     elif not transactional_profile:
+        df = selection
         _non_sales_contract("generico", "registros")
         valid_cells = int(sum((~physical_missing_mask(df[column])).sum() for column in df.columns))
         total_cells = max(int(df.shape[0] * df.shape[1]), 1)
@@ -2399,7 +2418,7 @@ def compute_metrics(
             numeric_values = _numeric_series(df, name)
             numeric_ratio = float(numeric_values.notna().sum()) / max(int(filled.sum()), 1)
             unique = values[filled].astype(str).str.strip().nunique()
-            if numeric_ratio >= 0.8 and unique > 1:
+            if numeric_ratio >= 0.8:
                 valid = numeric_values.dropna().astype(float)
                 formato, destacado = _numeric_format(normalized)
                 if formato == "porcentaje" and not valid.empty:
@@ -2448,6 +2467,26 @@ def compute_metrics(
         numericas = [item for _, item, _ in numericas_candidatas[:8]]
         distribuciones = [item for _, item in distribuciones_candidatas[:6]]
 
+        breakdowns = []
+        for _, numeric, numeric_values in numericas_candidatas[:3]:
+            for _, distribution in distribuciones_candidatas[:4]:
+                dimension = distribution["columna"]
+                grouped_frame = pd.DataFrame({
+                    "grupo": df[dimension].fillna("").astype(str).str.strip().replace("", "Sin clasificar"),
+                    "valor": numeric_values,
+                }).dropna(subset=["valor"])
+                grouped = grouped_frame.groupby("grupo")["valor"]
+                values = grouped.mean() if numeric["destacado"] == "promedio" else grouped.sum(min_count=1)
+                values = values.sort_values(ascending=False)
+                breakdowns.append({
+                    "columna": numeric["columna"], "dimension": dimension,
+                    "operacion": numeric["destacado"], "formato": numeric["formato"],
+                    "valores_totales": int(len(values)),
+                    "valores": [{"nombre": str(key), "valor": round(float(value), 2),
+                                 "registros": int(grouped.count().get(key, 0))}
+                                for key, value in values.head(12).items()],
+                })
+
         evolution = None
         date_column = roles.get("fecha") or next(
             (
@@ -2487,6 +2526,7 @@ def compute_metrics(
             "columnas_disponibles": [str(column) for column in df.columns],
             "subtipo": subtype,
             "distribuciones": distribuciones,
+            "desgloses": breakdowns,
             "numericas": numericas,
             "evolucion": evolution,
         }

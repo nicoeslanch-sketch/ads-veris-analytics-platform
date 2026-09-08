@@ -77,6 +77,7 @@ export interface PreparedCategoricalChart {
   total: number
   totalGroups: number
   groupedCount: number
+  signed?: boolean
 }
 
 export interface PrepareCategoricalChartOptions {
@@ -217,6 +218,19 @@ export function prepareCategoricalChart(
 
   if (!rows.length) {
     return { kind: 'bars', rows, total, totalGroups, groupedCount: 0 }
+  }
+
+  if (rows.some((row) => row.ingresos < 0)) {
+    // Signed net amounts are not a composition: refunds can make shares >100%.
+    const orderedByMagnitude = [...rows].sort((a, b) => Math.abs(b.ingresos) - Math.abs(a.ingresos))
+    const visible = orderedByMagnitude.slice(0, 10)
+    const groupedCount = Math.max(totalGroups - visible.length, 0)
+    if (groupedCount) visible.push({
+      nombre: `Otros (${groupedCount})`,
+      ingresos: total - visible.reduce((sum, row) => sum + row.ingresos, 0),
+      participacion: 0, acumulado: 0, categorias_agrupadas: groupedCount,
+    })
+    return { kind: 'bars', rows: visible, total, totalGroups, groupedCount, signed: true }
   }
 
   const topShare = Math.max(...rows.map((row) => row.participacion))

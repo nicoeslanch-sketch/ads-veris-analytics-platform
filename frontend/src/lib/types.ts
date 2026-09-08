@@ -1347,6 +1347,14 @@ export interface MetricsResult {
       valores: Array<{ nombre: string; registros: number }>
       valores_totales: number
     }>
+    desgloses?: Array<{
+      columna: string
+      dimension: string
+      operacion: 'total' | 'promedio'
+      formato: 'moneda' | 'porcentaje' | 'numero'
+      valores_totales: number
+      valores: Array<{ nombre: string; valor: number; registros: number }>
+    }>
     numericas?: Array<{
       columna: string
       /** Etiqueta semántica segura para montos operacionales. */
