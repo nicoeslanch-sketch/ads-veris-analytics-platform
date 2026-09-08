@@ -280,7 +280,9 @@ def create_export_cache_signed_url(storage_path: str, filename: str) -> str:
             detail="Supabase Storage no devolvió una URL de descarga.",
         )
     if signed.startswith("/"):
-        signed = f"{settings.supabase_url.rstrip('/')}{signed}"
+        # Storage returns /object/sign/... relative to its /storage/v1 API.
+        prefix = "" if signed.startswith("/storage/v1/") else "/storage/v1"
+        signed = f"{settings.supabase_url.rstrip('/')}{prefix}{signed}"
     separator = "&" if "?" in signed else "?"
     return f"{signed}{separator}download={quote(filename, safe='')}"
 

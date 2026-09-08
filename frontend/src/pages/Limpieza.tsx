@@ -1127,17 +1127,17 @@ export default function Limpieza() {
       )}
 
       {applying && cleaningProgress && (
-        <div className="mb-4 flex items-center gap-3 rounded-xl border border-teal/25 bg-teal/[0.06] px-4 py-3 text-sm text-navy">
+        <div role="status" className="mb-4 flex min-w-0 items-center gap-3 rounded-xl border border-teal/25 bg-teal/[0.06] px-4 py-3 text-sm text-navy">
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-teal" />
           {cleaningProgress.phase === 'processing' ? (
-            <p>
+            <p className="min-w-0 break-words">
               <strong>
-                Limpiando {cleaningProgress.total} hoja{cleaningProgress.total === 1 ? '' : 's'} del libro…
+                Limpieza en curso: {cleaningProgress.current} de {cleaningProgress.total} hojas procesadas.
               </strong>{' '}
-              Se procesan juntas en un solo paso; puede tardar un momento. No necesitas abrir ni limpiar las hojas una por una.
+              {cleaningProgress.sheet}
             </p>
           ) : (
-            <p>
+            <p className="min-w-0 break-words">
               <strong>Guardando resultados ({cleaningProgress.current} de {cleaningProgress.total})…</strong>{' '}
               {cleaningProgress.sheet}
             </p>

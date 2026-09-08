@@ -326,10 +326,11 @@ def test_export_cache_storage_uploads_with_upsert_and_reads_404_as_miss(monkeypa
 
     class SignedResponse:
         status_code = 200
+        signed_path = "/object/sign/datasets/file?token=abc"
 
         @staticmethod
         def json():
-            return {"signedURL": "/storage/v1/object/sign/datasets/file?token=abc"}
+            return {"signedURL": SignedResponse.signed_path}
 
     def fake_sign(url, json, headers, timeout):
         captured.update({"sign_url": url, "sign_json": json})
@@ -341,5 +342,13 @@ def test_export_cache_storage_uploads_with_upsert_and_reads_404_as_miss(monkeypa
     )
 
     assert captured["sign_json"] == {"expiresIn": 300}
-    assert signed.startswith("https://cache-test.supabase.co/")
+    assert signed.startswith("https://cache-test.supabase.co/storage/v1/object/sign/")
     assert "download=Ventas%20limpio.xlsx" in signed
+    for path in (
+        "/storage/v1/object/sign/datasets/file?token=abc",
+        "https://cache-test.supabase.co/storage/v1/object/sign/datasets/file?token=abc",
+    ):
+        SignedResponse.signed_path = path
+        assert storage.create_export_cache_signed_url(
+            "user/.exports/dataset/xlsx.bin", "Ventas limpio.xlsx"
+        ) == signed

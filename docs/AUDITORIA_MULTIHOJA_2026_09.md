@@ -20,6 +20,10 @@ anteriores; no reutiliza sus cifras ni presupone que se eliminaron duplicados.
   usa procedencia inmutable. Las filas originales siguen siendo trazables.
 - Los trabajos terminados liberan la funcion que retenia el archivo cargado.
   La cola tiene un limite y nunca descarta trabajos activos para hacer espacio.
+- La comprobacion en produccion detecto que la URL firmada de exportacion usaba
+  una ruta relativa de Storage sin el prefijo /storage/v1. El XLSX quedaba guardado
+  pero la redireccion fallaba. Se corrige la ruta y se prueban las tres variantes
+  de URL: relativa al API, relativa al proyecto y absoluta.
 - Gastos con encabezados explicitos, incluso en tablas pequenas, no se presentan
   como ventas. Las metas constantes siguen apareciendo como indicadores.
 - Los perfiles operacionales no conservan graficos comerciales residuales.
