@@ -46,6 +46,11 @@ main :where(button, a) {
   position: relative;
 }
 
+.dashboard-enhanced-card > :is(h2, h3, h4, div:has(> h2, > h3, > h4)):first-child {
+  min-height: 2rem;
+  padding-right: 4.75rem;
+}
+
 @media (min-width: 768px) {
   .dashboard-balanced-grid > :last-child:nth-child(odd) {
     grid-column: 1 / -1;
@@ -98,6 +103,14 @@ main :where(button, a) {
 .dashboard-card-expanded .recharts-responsive-container {
   height: min(62vh, 680px) !important;
   min-height: 420px !important;
+}
+
+.dashboard-card-expanded > .dashboard-card-actions {
+  right: 7rem;
+}
+
+.dashboard-card-expanded > :is(h2, h3, h4, div:has(> h2, > h3, > h4)):first-child {
+  padding-right: 11rem;
 }
 
 .dashboard-expanded-close {

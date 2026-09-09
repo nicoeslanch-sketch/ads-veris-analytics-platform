@@ -50,10 +50,36 @@ test('auditoria opcional del libro desafiante real', async ({ page }, testInfo) 
   await expect(page.getByText(money(expense), { exact: true }).first()).toBeVisible({ timeout: 120_000 })
   const breakdown = page.getByLabel('Desglose operativo')
   await expect(breakdown).toBeVisible()
+  const breakdownCard = page.locator('[data-dashboard-card]').filter({ has: breakdown })
+  const expectClearToolbar = async () => {
+    await expect(breakdownCard.getByRole('button', { name: 'Ampliar gráfico', exact: true })).toBeVisible()
+    const overlaps = await breakdownCard.evaluate((card) => {
+      const header = card.firstElementChild!
+      const controls = [...card.querySelectorAll('.dashboard-card-actions button'), ...document.querySelectorAll('.dashboard-expanded-close')]
+      const contents = [header, ...header.querySelectorAll('h2,h3,h4,select')]
+      return contents.some((content) => controls.some((control) => {
+        const a = content.getBoundingClientRect()
+        const b = control.getBoundingClientRect()
+        // The header reserves padding; only its content box must stay clear.
+        const right = content === header ? a.right - parseFloat(getComputedStyle(header).paddingRight) : a.right
+        return a.left < b.right && right > b.left && a.top < b.bottom && a.bottom > b.top
+      }))
+    })
+    expect(overlaps).toBe(false)
+  }
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await breakdownCard.hover()
+  await expectClearToolbar()
+  await breakdownCard.getByRole('button', { name: 'Ampliar gráfico', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Cerrar gráfico ampliado' })).toBeVisible()
+  await expectClearToolbar()
+  await page.getByRole('button', { name: 'Cerrar gráfico ampliado' }).click()
   await breakdown.scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('gastos-desktop.png') })
   await page.setViewportSize({ width: 390, height: 844 })
   await breakdown.scrollIntoViewIfNeeded()
+  await breakdown.focus()
+  await expectClearToolbar()
   const overflow = await page.evaluate(() => ({ content: document.documentElement.scrollWidth, viewport: innerWidth }))
   expect(overflow.content).toBeLessThanOrEqual(overflow.viewport + 1)
   await page.screenshot({ path: testInfo.outputPath('gastos-mobile.png') })

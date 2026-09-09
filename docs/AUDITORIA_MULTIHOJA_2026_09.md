@@ -37,6 +37,10 @@ anteriores; no reutiliza sus cifras ni presupone que se eliminaron duplicados.
   manualmente. Esa decision se conserva al navegar entre Resumen y Explorar.
 - Leyendas largas se distribuyen en HTML ajustable; tarjetas y valores tienen
   restricciones de ancho. Clics y CTR usan ejes distintos.
+- La comprobacion visual posterior del 9 de septiembre detecto que los botones
+  flotantes de ampliar/descargar podian tapar el selector del grafico al pasar
+  el cursor. Los encabezados reservan espacio estable para esos controles,
+  tambien en la vista ampliada, sin mover el contenido al aparecer los botones.
 - Una pestana abierta antes de un despliegue podia pedir un modulo que ya no
   existia y quedar en blanco. El limite de errores de cada vista mantiene la
   navegacion y el dataset activo, y ofrece recargar sin borrar la seleccion.
@@ -92,6 +96,11 @@ por regresiones tambien con palabras unidas. Las sugerencias iniciales cambian
 segun el perfil; una hoja de gastos no ofrece ingresos como primera pregunta.
 Si faltan fuentes para liquidez, el bot indica que necesita activos y pasivos
 corrientes de la misma fecha, sin inventar el indicador.
+
+Despues del despliegue se comprobaron otras seis preguntas en produccion:
+mejor mes, seguimiento al peor mes, la variante unida quemesvendimas,
+ventas frente a ganancia, cuantogastetotal y liquidez. Las cifras mensuales
+y de gastos coincidieron con el dashboard y la referencia revisada.
 
 ## Reproduccion
 
