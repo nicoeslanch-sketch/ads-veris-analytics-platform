@@ -5,6 +5,18 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const demoCsv = resolve(here, '../../api/demo/demo_empresa_ficticia.csv')
 
+test('un modulo no disponible conserva la navegacion y el dataset activo', async ({ page }) => {
+  await page.route('**/src/pages/Explorar.tsx*', (route) => route.abort('failed'))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Ver demo ficticia' }).click()
+  await expect(page.getByText('Demo — Comercial Andes SpA')).toBeVisible()
+  await page.getByRole('link', { name: /Explorar datos/ }).first().click()
+  await expect(page.getByRole('heading', { name: 'No se pudo cargar esta vista' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Recargar pagina' })).toBeEnabled()
+  await page.getByRole('link', { name: 'Resumen', exact: true }).first().click()
+  await expect(page.getByText('Demo — Comercial Andes SpA')).toBeVisible()
+})
+
 test('demo ficticia navega sin escrituras y vuelve al estado vacío', async ({ page }) => {
   await page.goto('/')
 

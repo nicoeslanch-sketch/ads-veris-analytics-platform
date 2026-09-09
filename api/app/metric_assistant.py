@@ -1444,7 +1444,11 @@ def _answer_ratio(metrics: dict[str, Any], question: str) -> dict[str, Any] | No
         return None
     ratio = next((row for row in _ratio_candidates(metrics) if row.get("id") == target), None)
     if ratio is None or _number(ratio.get("valor")) is None:
-        required = ", ".join((ratio or {}).get("requiere") or [])
+        balance_requirements = {
+            "liquidez_corriente": ["activos corrientes", "pasivos corrientes de la misma fecha"],
+            "prueba_acida": ["activos corrientes", "inventarios", "pasivos corrientes de la misma fecha"],
+        }
+        required = ", ".join((ratio or {}).get("requiere") or balance_requirements.get(target, []))
         suffix = f" Se requieren: {required}." if required else ""
         return _result(
             f"{(ratio or {}).get('nombre') or target.replace('_', ' ').title()} no esta disponible con las fuentes actuales.{suffix}",
@@ -1629,6 +1633,16 @@ def answer_metrics_question(
             metric_suggestions(metrics),
         )
     question = _with_conversation_context(original_question, history)
+    if (
+        re.search(r"\b(que|cual)\b.*\bmes\b", question)
+        and re.search(r"\b(vendi|vendimos|vendo|vendemos|vendio|vendieron|ventas|ingresos|facture|facturamos|facturacion|recaude|recaudamos|gaste|gastamos|gasto|gastos)\b", question)
+    ):
+        if re.search(r"\b(menos|menor|menores|minimo)\b", question):
+            question += " peor mes"
+            original_question += " peor mes"
+        elif re.search(r"\b(mas|mayor|mayores|maximo)\b", question):
+            question += " mejor mes"
+            original_question += " mejor mes"
 
     definition_only = _contains(
         question,
@@ -1712,6 +1726,9 @@ def answer_metrics_question(
         return generic_answer
     if metrics.get("analisis_inventario") and _contains(question, "inventario", "stock", "sucursal", "comprometidas", "conteo", "bajo el minimo", "resumen", "conclusion"):
         return _answer_inventory(metrics, question)
+
+    if _contains(question, "mejor mes", "peor mes", "mes fue mejor", "mes fue peor"):
+        return _answer_trend(metrics, question)
 
     if _contains(question, "ingresos", "ingreso total", "ventas totales", "venta total", "facturacion", "cuanto vendi"):
         return _answer_income(metrics)

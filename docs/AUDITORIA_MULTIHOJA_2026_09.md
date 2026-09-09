@@ -37,6 +37,9 @@ anteriores; no reutiliza sus cifras ni presupone que se eliminaron duplicados.
   manualmente. Esa decision se conserva al navegar entre Resumen y Explorar.
 - Leyendas largas se distribuyen en HTML ajustable; tarjetas y valores tienen
   restricciones de ancho. Clics y CTR usan ejes distintos.
+- Una pestana abierta antes de un despliegue podia pedir un modulo que ya no
+  existia y quedar en blanco. El limite de errores de cada vista mantiene la
+  navegacion y el dataset activo, y ofrece recargar sin borrar la seleccion.
 
 ## Evidencia de datos
 
@@ -56,6 +59,13 @@ sumas de ventas de los tres periodos coinciden con los KPI, aplicando las reglas
 explicitas de exclusion de anulaciones y filas TOTAL, conservando devoluciones,
 nulos identificados y duplicados no eliminados.
 
+La comprobacion en produccion repitio la limpieza de las 15 hojas sin errores
+ni eliminaciones. El archivo descargado del sitio se abrio con openpyxl:
+contiene las 16 hojas de origen y las hojas Observaciones, Auditoria y
+Manifest. Sus conteos, 174 repeticiones normalizadas y sumas de ventas
+coinciden con la referencia independiente. La descarga se verifico despues
+de corregir la ruta de Storage, no solo con un exportador local.
+
 La limpieza optimizada reproduce los informes anteriores para las 16 hojas y
 conserva la procedencia de cada fila. Bajo el mismo perfilador, la limpieza de
 una hoja de 4.057 registros bajo de 7,683 a 3,106 segundos. No es una promesa de
@@ -74,10 +84,19 @@ Las respuestas financieras siguen usando la biblioteca existente y solo afirman
 cifras presentes en las metricas. Ventas no demuestra utilidad, inventario no es
 caja y una meta no es ingreso realizado.
 
+Una conversacion adicional de 15 preguntas en la interfaz de produccion cubrio
+ventas, ganancia, clientes unicos, meses extremos, duplicados, UF, relaciones,
+gastos, IVA, neto, maximos, categorias, liquidez y descarga. Revelo una confusion
+entre preguntas sobre el mes con mas ventas y ayuda de fechas, ahora cubierta
+por regresiones tambien con palabras unidas. Las sugerencias iniciales cambian
+segun el perfil; una hoja de gastos no ofrece ingresos como primera pregunta.
+Si faltan fuentes para liquidez, el bot indica que necesita activos y pasivos
+corrientes de la misma fecha, sin inventar el indicador.
+
 ## Reproduccion
 
-Verificacion previa a publicacion: 791 pruebas de backend, 143 pruebas unitarias
-de frontend y 15 recorridos de navegador aprobados. El recorrido del libro real
+Verificacion previa a publicacion: 798 pruebas de backend, 145 pruebas unitarias
+de frontend y 16 recorridos de navegador aprobados. El recorrido del libro real
 reconcilia los KPI de ventas con la exportacion independiente y verifica los
 desgloses operacionales en escritorio y movil. Compilacion de produccion y
 control de dependencias tambien completados.

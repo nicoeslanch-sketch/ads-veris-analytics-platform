@@ -5,6 +5,7 @@ import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 import AiPanel from './AiPanel'
 import DatasetBootstrap from './DatasetBootstrap'
+import ViewErrorBoundary from './ViewErrorBoundary'
 import { DemoBanner } from '../../demo/DemoBanner'
 
 /** Rutas donde vive el panel derecho del Asistente IA (Fase 7 §4):
@@ -81,7 +82,9 @@ export default function AppShell() {
             <DatasetBootstrap />
             {/* Fase 14: etiqueta persistente mientras la demo ficticia está activa */}
             <DemoBanner />
-            <Outlet />
+            <ViewErrorBoundary key={pathname}>
+              <Outlet />
+            </ViewErrorBoundary>
           </main>
 
           {/* Panel IA escritorio: solo montado cuando es visible */}

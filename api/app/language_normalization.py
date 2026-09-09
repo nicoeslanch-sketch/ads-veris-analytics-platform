@@ -109,6 +109,9 @@ _VOCABULARY = frozenset(
     causacion causalidad causa causas causal ocurrido ocurrio incluye incluidos
     encabezados repetidos conflicto conflictos conflictivo formato regional
     factura facturas retencion retenciones cotizacion cotizaciones bruto brutos
+    vendi vendimos vendo vendemos vendio vendieron facture facturamos
+    recaude recaudamos gaste gastamos mayores menores
+    vendedor vendedores vendedora vendedoras ejecutivo ejecutivos asesor asesores
     """.split()
 )
 

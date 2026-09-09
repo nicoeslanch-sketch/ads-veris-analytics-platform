@@ -137,6 +137,7 @@ def test_statistic_follow_up_changes_operation_not_column():
     ("diferenciadeconteo", "diferencia de conteo"),
     ("cual es la medaina", "cual es la mediana"),
     ("categroia", "categoria"),
+    ("quien es mi mejor vendedor", "quien es mi mejor vendedor"),
     ("SKU-003 PROV-017", "sku 003 prov 017"),
     ("no se pudo conectar al servidro", "no se pudo conectar al servidor"),
 ])
@@ -161,3 +162,27 @@ def test_inventory_conversation_routes_before_sales_dimensions():
         assert answer["matched_key"].startswith("metric_inventory")
         assert expected in answer["answer"]
         history.append({"role": "user", "content": question})
+
+
+@pytest.mark.parametrize(("question", "key", "value"), [
+    ("que mes vendi mas", "metric_best_month", "$300"),
+    ("quemesvendimas", "metric_best_month", "$300"),
+    ("en que mes vendimos menos", "metric_worst_month", "$100"),
+    ("cual es el mes con mayores ingresos", "metric_best_month", "$300"),
+    ("en que mes facture menos", "metric_worst_month", "$100"),
+])
+def test_natural_month_questions_read_the_dashboard(question, key, value):
+    answer = answer_for(question, metrics={
+        "moneda": "CLP", "evolucion_mensual": [
+            {"mes": "2026-01", "ingresos": 100},
+            {"mes": "2026-02", "ingresos": 300},
+        ],
+    })
+    assert answer["matched_key"] == key
+    assert value in answer["answer"]
+
+
+def test_missing_liquidity_explains_which_balance_sources_are_needed():
+    answer = answer_for("tengo buena liquidez", metrics=_expenses())
+    assert "activos corrientes" in answer["answer"]
+    assert "pasivos corrientes" in answer["answer"]

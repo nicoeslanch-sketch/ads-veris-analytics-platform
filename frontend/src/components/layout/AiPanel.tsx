@@ -65,6 +65,24 @@ export function hasAssistantMetricFilters(
   return Boolean(period.from || period.to || Object.keys(businessFilters).length > 0)
 }
 
+export function initialMetricSuggestions(metrics: Partial<MetricsResult>): string[] {
+  const quality = '¿Qué problemas de calidad debo revisar?'
+  if (metrics.analisis_negocio?.perfil === 'cobranza_nominal') {
+    return ['¿Cuánto recaudo de cobranza y cuánto queda fuera?',
+      '¿Qué equipo aporta más a la cobranza?', '¿Qué tendencia hay en la cobranza?', quality]
+  }
+  if (metrics.analisis_inventario) {
+    return ['¿Cuántas unidades tengo en stock?', '¿Cuántos registros están bajo el mínimo?',
+      '¿Qué sucursal tiene más stock?', quality]
+  }
+  if (metrics.analisis_generico) {
+    return ['Dame un resumen de esta hoja', '¿Qué conclusión general sacas de mis datos?',
+      '¿Cuántos registros tengo?', quality]
+  }
+  return ['¿Cuáles son mis ingresos totales?', '¿En qué moneda están mis datos?',
+    '¿Qué conclusión general sacas de mis datos?', quality]
+}
+
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'drawer' } = {}) {
@@ -240,20 +258,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         }
       }
       if (!generateSummary) {
-        const collectionProfile = m.analisis_negocio?.perfil === 'cobranza_nominal'
-        setBotSuggestions(collectionProfile
-          ? [
-              '¿Cuánto recaudo de cobranza y cuánto queda fuera?',
-              '¿Qué equipo aporta más a la cobranza?',
-              '¿Cuál fue la semana con mayor recaudación?',
-              '¿Qué problemas de calidad debo revisar?',
-            ]
-          : [
-              '¿Cuáles son mis ingresos totales?',
-              '¿En qué moneda están mis datos?',
-              '¿Qué conclusión general sacas de mis datos?',
-              '¿Qué problemas de calidad debo revisar?',
-            ])
+        setBotSuggestions(initialMetricSuggestions(m))
         return
       }
       setLoadingLabel('Generando resumen con IA…')
