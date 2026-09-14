@@ -158,4 +158,10 @@ def conversation_scenarios():
             ("cuantas unidades vendi en Sur", ["no", "medida"]),
             ("cuantos ingresos tuvo el cliente Cliente B", ["no", "Cliente B"]),
         ]),
+        ("production_followups", sales, [
+            ("hola, cuantosingresos tengo?", ["$600"]),
+            ("y esos ingresos son ganancias o plata cobrada?", ["No son equivalentes", "pagos recibidos", "costos"]),
+            ("y en que moneda estan? son UF?", ["CLP", "pesos chilenos"]),
+            ("si conservo los duplicados puedo descargar igual?", ["descargar conservando", "confirmas"]),
+        ]),
     ]

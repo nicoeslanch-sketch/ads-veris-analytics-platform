@@ -8,7 +8,7 @@ inteligencia artificial general. La biblioteca financiera existente sigue siendo
 la fuente de las explicaciones; las cifras proceden de los indicadores visibles.
 
 La ronda inicial encontro 22 fallos en 29 turnos sinteticos. Tras corregirlos y
-ampliar el ensayo, pasan **84 turnos en 19 conversaciones**. Las conversaciones
+ampliar el ensayo, pasan **88 turnos en 20 conversaciones**. Las conversaciones
 incluyen cambios de tema, comparaciones, cortes temporales, correcciones y
 preguntas sobre importacion, descarga, limpieza y soporte.
 
@@ -41,18 +41,31 @@ preguntas sobre importacion, descarga, limpieza y soporte.
 `python scripts/exercise_assistant.py --output tmp/bot-conversation-final.json`
 genera las conversaciones completas, expectativas y tiempos con datos ficticios.
 Los archivos de salida quedan ignorados por Git. La corrida final registro una
-mediana de 1,224 ms y p95 de 7,501 ms por respuesta interna local: **no son
+mediana de 0,712 ms y p95 de 3,982 ms por respuesta interna local: **no son
 latencias de red ni una medicion de usuarios concurrentes en Render**.
 
-`api/tests/test_assistant_conversation_audit.py` agrega 82 casos automatizados,
-incluyendo las 19 conversaciones, matriz de erratas/mes/moneda, contextos
+`api/tests/test_assistant_conversation_audit.py` agrega 86 casos automatizados,
+incluyendo las 20 conversaciones, matriz de erratas/mes/moneda, contextos
 invalidos, cache y rechazo de subtotales desconocidos. Las 130 pruebas anteriores
 de soporte, lenguaje financiero y regresiones tambien pasan.
 
 `frontend/e2e/bot_context.spec.ts` verifica el contrato real de indicadores,
 historial, cambio de hoja/periodo, respuestas tardias y texto largo. El endpoint
 de respuesta se simula en esas tres pruebas para controlar las carreras; las
-84 conversaciones anteriores ejecutan el motor real, no respuestas simuladas.
+88 turnos anteriores ejecutan el motor real, no respuestas simuladas.
+
+La conversacion adicional en la plataforma publicada detecto dos ajustes:
+explicar ingresos versus utilidad/cobranza en vez de repetir el total, y no
+duplicar una respuesta cuando dos frases preguntan lo mismo sobre la moneda.
+Ambos casos se incorporaron a las regresiones. Tambien se comprobo una consulta
+mensual con palabras unidas y la descarga conservando duplicados.
+
+La primera solicitud publicada tuvo un rechazo transitorio de autenticacion;
+las siguientes respondieron sin cerrar la sesion. No se atribuye una causa sin
+logs. El manejo de errores ahora distingue fallos de conexion con el servicio
+de claves (503, reintentar) de firmas/sesiones invalidas (401), sin debilitar
+la validacion ni exponer tokens o detalles internos. Cuatro pruebas adicionales
+cubren indisponibilidad, clave desconocida y emisor ES256 en produccion.
 
 ## Limites
 

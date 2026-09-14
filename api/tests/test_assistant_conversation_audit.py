@@ -126,3 +126,16 @@ def test_rate_limiter_reclaims_expired_users(monkeypatch):
     monkeypatch.setattr(assistant, '_last_rate_sweep', 0)
     assistant._guard_rate('active')
     assert set(requests) == {'active'}
+
+
+def test_rephrased_currency_question_is_not_answered_twice():
+    response = answer_for('y en que moneda estan? son UF?', metrics=sales_metrics())
+    assert response['answer'].count('La moneda detectada') == 1
+    assert response['matched_key'] != 'conversation_multiple'
+
+
+@pytest.mark.parametrize('question', ['y eso es ganancia?', 'y eso es plata cobrada?'])
+def test_income_followup_explains_distinction_instead_of_repeating_total(question):
+    response = answer_for(question, metrics=sales_metrics(), history=[{'role': 'user', 'content': 'cuantos ingresos tengo'}])
+    assert response['matched_key'] == 'conversation_financial_distinction'
+    assert 'No son equivalentes' in response['answer']

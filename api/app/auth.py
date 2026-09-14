@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import jwt
-from jwt.exceptions import PyJWKClientError
+from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -78,6 +78,9 @@ def _decode(token: str, settings: Settings) -> dict:
         try:
             client = _jwks_client(jwks_url)
             signing_key = client.get_signing_key_from_jwt(token)
+        except PyJWKClientConnectionError:
+            # A key-service outage does not establish that the session is invalid.
+            raise
         except PyJWKClientError as exc:
             raise jwt.InvalidTokenError(
                 f"No se pudo validar la clave pública JWKS: {exc}"
@@ -122,6 +125,12 @@ def get_current_user(
 
     try:
         claims = _decode(credentials.credentials, settings)
+    except PyJWKClientConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No se pudo contactar al servicio de verificacion de acceso. Intenta nuevamente en unos segundos; no necesitas cerrar sesion.",
+            headers={"Retry-After": "5"},
+        )
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

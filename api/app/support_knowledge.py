@@ -188,6 +188,9 @@ def answer_for(
         ) if part.strip(' ¿,.')]
         if len(parts) > 1:
             answers = [answer_for(part, articles, metrics, history, _compound=False) for part in parts[:3]]
+            answers = list({answer['answer']: answer for answer in answers}.values())
+            if len(answers) == 1 and len(parts) <= 3:
+                return answers[0]
             suggestions = list(dict.fromkeys(item for answer in answers for item in answer.get('suggestions', [])))
             content = '\n\n'.join(f"{index}. {answer['answer']}" for index, answer in enumerate(answers, 1))
             if len(parts) > 3:
@@ -197,6 +200,22 @@ def answer_for(
                 "suggestions": suggestions[:4]}
     message = re.sub(r"^(?:hola|muchas gracias|gracias|por favor)[, ]+(?:y\s+)?(?=\S)", "", message, flags=re.I)
     normalized = normalize_query(message)
+    financial_topics = (
+        r"\b(ingresos|ventas|facturacion)\b",
+        r"\b(ganancia|ganancias|utilidad|beneficio|beneficios)\b",
+        r"\b(caja|cobranza|cobros|cobrado|cobrada|recaudacion)\b",
+    )
+    distinction = bool(re.search(r"\b(son|es|significa|equivale|equivalen|igual|iguales|diferencia)\b", normalized))
+    topic_context = normalized
+    if distinction and re.search(r"\b(eso|esos|esa|esas)\b", normalized):
+        previous = next((str(item.get('content') or '') for item in reversed(history or []) if item.get('role') == 'user'), '')
+        topic_context += ' ' + normalize_query(previous)
+    if distinction and sum(bool(re.search(pattern, topic_context)) for pattern in financial_topics) >= 2:
+        return {
+            "answer": "No son equivalentes. Los ingresos por ventas no son ganancia ni dinero cobrado. La utilidad descuenta los costos y gastos que correspondan a su definicion; la cobranza registra pagos recibidos, que pueden corresponder a ventas de otro periodo. El saldo de caja tambien depende de pagos, financiamiento y saldo inicial. No se puede deducir caja ni utilidad completa solo del total de ingresos: hay que revisar fuentes, fechas y cobertura.",
+            "matched_key": "conversation_financial_distinction", "confidence": "high",
+            "suggestions": ["Mis ingresos totales", "Mi utilidad y margen", "Cobertura de costos", "Flujo de caja"],
+        }
     if 'resumen' in normalized and 'explorar' in normalized:
         return {"answer": "Resumen presenta los KPIs y graficos del alcance visible. Explorar ofrece una lectura explicativa: evidencia numerica, diferencias entre grupos, cobertura de las conexiones por ID, limites y siguientes comprobaciones. Una diferencia observada no demuestra por si sola una causa.", "matched_key": "explore", "confidence": "high", "suggestions": ["Filtros activos", "Calidad de los datos"]}
     if 'no se pudo conectar al servidor' in normalized:

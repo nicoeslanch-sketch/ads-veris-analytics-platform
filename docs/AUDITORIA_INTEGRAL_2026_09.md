@@ -14,17 +14,17 @@ se incluyen en Git. Las pruebas no generaron carga contra produccion.
 
 | Verificacion | Resultado |
 | --- | --- |
-| Suite completa de API | 976 aprobadas; 29 avisos |
+| Suite completa de API | 984 aprobadas; 29 avisos |
 | Regresion de version/migracion posterior | 15 aprobadas |
 | Tests unitarios frontend | 180 aprobados en 22 archivos |
 | Navegacion Chromium | 19 aprobadas; una prueba opcional omitida |
-| Conversaciones reproducibles del bot | 84 turnos, 19 conversaciones, cero fallos de las aserciones definidas |
+| Conversaciones reproducibles del bot | 88 turnos, 20 conversaciones, cero fallos de las aserciones definidas |
 | Compilacion frontend | Correcta |
 | Dependencias Python y npm de produccion | Sin vulnerabilidades conocidas en los inventarios auditados |
 | Revision visual | Explorar escritorio/movil y ajuste de textos largos del bot |
 
 Las pruebas del bot combinan respuestas reales del motor con pruebas de
-interfaz que simulan el transporte. No equivalen a 84 mensajes enviados al
+interfaz que simulan el transporte. No equivalen a 88 mensajes enviados al
 servicio publico ni demuestran que cualquier pregunta pueda responderse.
 
 ## Informes detallados
