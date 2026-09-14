@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildExplorationModel, explainExploration, explorationValue, type ExplorationMeasure } from './explorationAnalysis'
+import { buildExplorationModel, explainExploration, explorationValue, explorationActions, type ExplorationMeasure } from './explorationAnalysis'
 import type { MetricsResult } from './types'
 
 function base(overrides: Partial<MetricsResult> = {}): MetricsResult {
@@ -12,6 +12,30 @@ function base(overrides: Partial<MetricsResult> = {}): MetricsResult {
   }
 }
 const measure = (overrides: Partial<ExplorationMeasure> = {}): ExplorationMeasure => ({ id: 'total', label: 'Total', value: 300, format: 'moneda', formula: 'Suma', series: [], dimensions: [], ...overrides })
+
+describe('explorationActions', () => {
+  it('keeps decisions brief and does not equate revenue with profit', () => {
+    const actions = explorationActions(measure({ id: 'ingresos', dimensions: [{ name: 'Producto', groups: [{ name: 'A', value: 100 }, { name: 'B', value: -20 }] }] }), base())
+    expect(actions.length).toBeLessThanOrEqual(3)
+    expect(actions[0].evidence).toContain('100 CLP')
+    expect(actions[0].action).toContain('no garantizan más utilidad')
+    expect(actions[1].action).toContain('No elimines')
+  })
+  it('does not recommend cutting high costs automatically', () => {
+    const actions = explorationActions(measure({ id: 'costo', dimensions: [{ name: 'Producto', groups: [{ name: 'A', value: 100 }] }] }), base())
+    expect(actions[0].action).toContain('no demuestra ineficiencia')
+  })
+  it('only suggests inactivity checks from backend ID evidence', () => {
+    const selected = measure({ id: 'ingresos' })
+    expect(explorationActions(selected, base()).some((row) => /sin ventas/.test(row.title))).toBe(false)
+    const metrics = base({ actividad_productos: { clave: 'id_producto', fecha_corte: '2026-06-30', meses_revisados: ['2026-04', '2026-05', '2026-06'], productos_revisados: 2, total_sin_ventas: 1, limite: 'Alcance observado', productos: [{ id: '001', nombre: 'Invierno', ultima_venta: '2026-02-01', meses_sin_venta_observada: 4, ingresos_historicos: 900 }] } })
+    const action = explorationActions(selected, metrics)[0]
+    expect(action.evidence).toContain('4 meses sin ventas positivas observadas')
+    expect(action.action).toContain('estacionalidad')
+    expect(action.action).toContain('No equivale a falta de demanda')
+    expect(explorationActions(measure({ id: 'costo' }), metrics)[0].title).not.toMatch(/sin ventas/)
+  })
+})
 
 describe('explainExploration', () => {
   it('compares consecutive full months with measured amounts', () => {

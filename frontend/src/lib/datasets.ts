@@ -5,7 +5,8 @@ sesión, no hacen nada y devuelven null. El pipeline funciona igual en memoria;
 la persistencia agrega historial y permite retomar archivos después.
 */
 
-import { supabase, supabaseAnonKey, supabaseUrl } from './supabase'
+import { supabase } from './supabase'
+import { apiPost, buildFileForm } from './api'
 import {
   DEFAULT_CLEANING_OPTIONS,
   type CleanResult,
@@ -25,17 +26,11 @@ async function getUserId(): Promise<string | null> {
 }
 
 /** Sube el archivo a Storage bajo {user_id}/... y devuelve el storage_path. */
-export async function uploadToStorage(file: File): Promise<string | null> {
+export async function uploadToStorage(file: File, signal?: AbortSignal): Promise<string | null> {
   const userId = await getUserId()
   if (!supabase || !userId) return null
-  const path = `${userId}/${Date.now()}_${file.name.replace(/[^\w.\-]+/g, '_')}`
-  const { error } = await supabase.storage.from(BUCKET).upload(path, file)
-  if (error) {
-    // Best-effort, pero el motivo debe ser visible para diagnosticar (RLS, bucket, red)
-    console.warn('[persistencia] Falló la subida a Storage:', error.message)
-    return null
-  }
-  return path
+  const result = await apiPost<{ storage_path: string }>('/storage/upload', buildFileForm(file), { signal })
+  return result.storage_path
 }
 
 export interface ConsolidationUploadOptions {
@@ -74,34 +69,15 @@ export async function uploadConsolidationDataset(
   file: File,
   options: ConsolidationUploadOptions = {},
 ): Promise<UploadedDataset> {
-  if (!supabase || !supabaseUrl || !supabaseAnonKey) throw new Error('La carga de archivos no está configurada.')
+  if (!supabase) throw new Error('La carga de archivos no está configurada.')
   if (!/\.(csv|xlsx)$/i.test(file.name)) throw new Error('Usa un archivo CSV o Excel (.xlsx).')
   const { data: sessionData } = await supabase.auth.getSession()
   const session = sessionData.session
   if (!session) throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.')
-  const safeName = file.name.replace(/[^\w.\-]+/g, '_')
-  const path = `${session.user.id}/${Date.now()}_${crypto.randomUUID()}_${safeName}`
-  const encodedPath = path.split('/').map(encodeURIComponent).join('/')
-  await new Promise<void>((resolve, reject) => {
-    const request = new XMLHttpRequest()
-    const abort = () => request.abort()
-    request.open('POST', `${supabaseUrl}/storage/v1/object/${BUCKET}/${encodedPath}`)
-    request.setRequestHeader('Authorization', `Bearer ${session.access_token}`)
-    request.setRequestHeader('apikey', supabaseAnonKey!)
-    request.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
-    request.setRequestHeader('x-upsert', 'false')
-    request.upload.onprogress = (event) => {
-      if (event.lengthComputable) options.onProgress?.(Math.round((event.loaded / event.total) * 100))
-    }
-    request.onerror = () => reject(new Error('La conexión se interrumpió durante la carga.'))
-    request.onabort = () => reject(new DOMException('Carga cancelada.', 'AbortError'))
-    request.onload = () => request.status >= 200 && request.status < 300
-      ? resolve()
-      : reject(new Error('Storage rechazó el archivo. Revisa el tamaño y vuelve a intentar.'))
-    options.signal?.addEventListener('abort', abort, { once: true })
-    request.onloadend = () => options.signal?.removeEventListener('abort', abort)
-    request.send(file)
-  })
+  if (file.size > 15 * 1024 * 1024) throw new Error('La carga protegida actual admite hasta 15 MB. La consolidación de archivos mayores requiere habilitar infraestructura dedicada.')
+  options.onProgress?.(0)
+  const uploaded = await apiPost<{ storage_path: string }>('/storage/upload', buildFileForm(file), { signal: options.signal })
+  const path = uploaded.storage_path
   const { data, error } = await supabase.from('datasets').insert({
     user_id: session.user.id,
     name: file.name,

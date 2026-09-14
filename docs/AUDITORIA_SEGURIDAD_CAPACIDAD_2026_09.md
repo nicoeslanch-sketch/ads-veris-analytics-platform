@@ -1,5 +1,7 @@
 # Auditoria defensiva y capacidad, septiembre de 2026
 
+Actualizacion del 14 de septiembre: ver [cuotas gestionadas y bases de escalado](ESCALADO_Y_SEGURIDAD_2026_09_14.md). El diagnostico de retencion blanda de este documento corresponde al estado anterior.
+
 ## Dictamen
 
 La plataforma es adecuada para una prueba piloto controlada, no para prometer capacidad empresarial ilimitada. La configuracion de Render consultada en modo lectura confirma **plan free, una instancia y un proceso Uvicorn**. El presupuesto conocido del servicio es 512 MiB. El frontend estatico en Vercel y los archivos en Supabase no consumen esa RAM mientras nadie los procesa.

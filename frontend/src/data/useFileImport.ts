@@ -101,16 +101,23 @@ export function useFileImport() {
       demo.exit()
       setUploaded(selected, null, null)
       // Persistencia best-effort: Storage + fila en datasets (si hay Supabase)
-      const storagePath = await uploadToStorage(selected)
+      let storagePath: string | null = null
+      try {
+        storagePath = await uploadToStorage(selected, controller.signal)
+      } catch (uploadError) {
+        if (uploadError instanceof ApiError && uploadError.status === 507) throw uploadError
+        if (!isCurrent()) return false
+        setPersistWarning((uploadError instanceof Error ? uploadError.message : 'No se pudo guardar el archivo.') + ' El análisis seguirá en esta sesión, sin persistencia del archivo.')
+      }
       if (!isCurrent()) return false
       const datasetId = await insertDataset(selected, storagePath, options.source ?? 'excel_csv')
       if (!isCurrent()) return false
       if (supabaseConfigured && (!storagePath || !datasetId)) {
         // No bloquea el pipeline, pero el usuario debe saber que no quedó guardado
-        setPersistWarning(
+        setPersistWarning((previous) => previous ?? (
           'Tu archivo se procesará igual, pero no se pudo guardar en el historial ' +
-            '(revisa el bucket y las políticas RLS en Supabase).',
-        )
+            'para retomarlo después.'
+        ))
       }
       if (!setUploadPersistence(selected, datasetId, storagePath)) return false
 

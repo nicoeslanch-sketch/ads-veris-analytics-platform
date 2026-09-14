@@ -1094,6 +1094,15 @@ export interface BusinessAnalysis {
 }
 
 export interface MetricsResult {
+  actividad_productos?: {
+    clave: string
+    fecha_corte: string
+    meses_revisados: string[]
+    productos_revisados: number
+    total_sin_ventas: number
+    productos: Array<{ id: string; nombre: string; ultima_venta: string; meses_sin_venta_observada: number; ingresos_historicos: number }>
+    limite: string
+  }
   archivo: string
   calidad_datos: number
   moneda: string

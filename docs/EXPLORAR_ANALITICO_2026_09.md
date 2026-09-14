@@ -1,5 +1,7 @@
 # Explorar: lectura analitica fundamentada
 
+La presentacion de seis bloques descrita abajo fue reemplazada el 14 de septiembre por graficos con lectura breve y detalles plegados. Ver [la actualizacion](ESCALADO_Y_SEGURIDAD_2026_09_14.md).
+
 ## Cambio de experiencia
 
 Explorar deja de reutilizar los paneles de Resumen. Presenta una lectura propia

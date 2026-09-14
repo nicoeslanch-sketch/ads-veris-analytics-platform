@@ -192,6 +192,31 @@ export function buildExplorationModel(m: MetricsResult): ExplorationModel {
 
 export interface ExplorationReading { title: string; evidence: string; meaning: string; next: string }
 
+export function explorationActions(measure: ExplorationMeasure, metrics: MetricsResult, dimension?: string, from?: string | null, to?: string | null): Array<{ title: string; evidence: string; action: string }> {
+  const actions: Array<{ title: string; evidence: string; action: string }> = []
+  const selected = measure.dimensions.find((row) => row.name === dimension) ?? measure.dimensions[0]
+  const groups = selected?.groups.filter((row) => valid(row.value)).slice().sort((a, b) => b.value! - a.value!) ?? []
+  const leader = groups[0]
+  const fmt = (value: number | null) => explorationValue(value, measure.format, metrics.moneda)
+  const activity = metrics.actividad_productos
+  if (measure.id === 'ingresos' && activity?.productos.length) {
+    const product = activity.productos[0]
+    actions.push({ title: 'Revisar productos sin ventas recientes', evidence: product.nombre + ': ' + product.meses_sin_venta_observada + ' meses sin ventas positivas observadas al ' + activity.fecha_corte + '. Última venta: ' + product.ultima_venta + '.', action: 'Verifica stock, estacionalidad y cobertura del archivo; prueba precio o marketing antes de reducir reposición o reasignar presupuesto. No equivale a falta de demanda.' })
+  }
+  if (leader) {
+    const expense = /costo|gasto|inversion/i.test(measure.id + ' ' + measure.label)
+    const loss = groups.slice().reverse().find((row) => row.value! < 0)
+    actions.push({ title: expense ? 'Revisar costos o gastos destacados' : measure.id === 'ingresos' ? 'Priorizar una revisión comercial' : 'Comparar el grupo destacado', evidence: leader.name + ' registra ' + fmt(leader.value) + ' en ' + (selected?.name ?? 'el desglose') + '; es el mayor valor entre los grupos disponibles.', action: expense ? 'Contrasta volumen, contratos y necesidad del gasto antes de recortar; un importe alto no demuestra ineficiencia.' : measure.id === 'ingresos' ? 'Comprueba margen, disponibilidad y recurrencia antes de reforzar compras o promoción; más ingresos no garantizan más utilidad.' : 'Revisa el tamaño y la cobertura del grupo antes de atribuirle mejor desempeño.' })
+    if (loss) actions.push({ title: 'Investigar valores negativos', evidence: loss.name + ': ' + fmt(loss.value) + '.', action: 'Contrasta devoluciones, descuentos, costos y ajustes. No elimines el registro ni cambies el signo sin comprobar el origen.' })
+  }
+  const movement = explainExploration(measure, metrics.moneda, dimension, from, to).find((row) => row.title.startsWith('Dónde se concentra'))
+  if (movement) actions.push({ title: movement.title, evidence: movement.evidence, action: movement.next })
+  const coverage = metrics.analisis_negocio?.estado_resultados?.cobertura_costos_pct ?? metrics.kpis.cobertura_costos?.pct
+  if (coverage != null && coverage < 99.5 && (measure.id === 'ingresos' || measure.id === 'utilidad')) actions.push({ title: 'Completar costos antes de reinvertir', evidence: explorationValue(coverage, 'porcentaje', metrics.moneda) + ' de cobertura de costos.', action: 'Completa los costos por ID y vigencia antes de usar el margen para decidir qué producto financiar.' })
+  if (!actions.length) actions.push({ title: 'Validar la base de la decisión', evidence: measure.formula, action: 'Comprueba unidad, fechas y registros disponibles antes de comparar resultados o asignar presupuesto.' })
+  return actions.slice(0, 3)
+}
+
 export function explainExploration(measure: ExplorationMeasure, currency: string, dimension?: string, from?: string | null, to?: string | null): ExplorationReading[] {
   const output: ExplorationReading[] = []
   const fmt = (value: number | null) => explorationValue(value, measure.format, currency)

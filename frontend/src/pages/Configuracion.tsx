@@ -12,6 +12,7 @@ import { BadgeCheck, Crown, Loader2, Save, ShieldCheck, Sparkles, Wand2 } from '
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
+import StorageUsage from '../components/StorageUsage'
 import { useAuth } from '../auth/AuthContext'
 import { useAccess } from '../lib/access'
 import { apiGet } from '../lib/api'
@@ -249,6 +250,7 @@ export default function Configuracion() {
         </Card>
 
         <div className="flex flex-col gap-6">
+          {user && supabaseConfigured && <StorageUsage />}
           {/* Estado de la cuenta: consultas IA */}
           <Card>
             <div className="flex items-center gap-2">
