@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from .auth import AuthenticatedUser, get_current_user
 from .config import Settings, get_settings
 from .version import ENGINE_VERSION, LATEST_MIGRATION, commit_sha
+from .request_security import RequestSecurityMiddleware
+from .processing_capacity import ProcessingCapacityMiddleware
 from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
 from .routes.assistant import router as assistant_router
@@ -68,6 +70,14 @@ app = FastAPI(
     version=ENGINE_VERSION,
 )
 
+app.add_middleware(ProcessingCapacityMiddleware)
+
+app.add_middleware(
+    RequestSecurityMiddleware,
+    max_body_bytes=settings.request_body_max_bytes,
+    max_json_bytes=settings.request_json_max_bytes,
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -75,6 +85,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After", "Content-Disposition"],
 )
 
 

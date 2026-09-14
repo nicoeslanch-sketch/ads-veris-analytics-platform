@@ -10,8 +10,9 @@ navegador lo procese igual que un archivo subido (Storage + /standardize).
 
 import hashlib
 import re
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from urllib.parse import unquote
+from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,7 +26,7 @@ from ..storage import MAX_DOWNLOAD_BYTES
 
 router = APIRouter(prefix="/connectors", dependencies=[Depends(get_current_user)])
 
-_SHEET_ID_RE = re.compile(r"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]{20,})")
+_SHEET_ID_RE = re.compile(r"^/spreadsheets/d/([a-zA-Z0-9_-]{20,256})(?:/|$)")
 _GID_RE = re.compile(r"[#?&]gid=(\d+)")
 _FILENAME_RE = re.compile(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', re.IGNORECASE)
 _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._ -]+")
@@ -62,7 +63,12 @@ def _sanitize_filename(filename: str) -> str:
 
 def _parse_sheet_url(url: str) -> tuple[str, str]:
     """Extrae (sheet_id, gid) de una URL de Google Sheets; 400 si no lo es."""
-    match = _SHEET_ID_RE.search(url)
+    try:
+        parsed = urlsplit(url.strip())
+        valid_origin = parsed.scheme == "https" and parsed.hostname == "docs.google.com" and parsed.port in (None, 443) and not parsed.username and not parsed.password
+        match = _SHEET_ID_RE.match(parsed.path) if valid_origin else None
+    except ValueError:
+        match = None
     if not match:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -70,7 +76,40 @@ def _parse_sheet_url(url: str) -> tuple[str, str]:
             "(docs.google.com/spreadsheets/d/...).",
         )
     gid_match = _GID_RE.search(url)
-    return match.group(1), gid_match.group(1) if gid_match else "0"
+    gid = gid_match.group(1) if gid_match else "0"
+    if len(gid) > 20:
+        raise HTTPException(status_code=400, detail="El identificador de hoja no es valido.")
+    return match.group(1), gid
+
+
+def _validate_google_download_url(url: str) -> None:
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname or ""
+        allowed = host in {"docs.google.com", "accounts.google.com", "googleusercontent.com"} or host.endswith(".googleusercontent.com")
+        valid = parsed.scheme == "https" and allowed and parsed.port in (None, 443) and not parsed.username and not parsed.password
+    except ValueError:
+        valid = False
+    if not valid:
+        raise HTTPException(status_code=502, detail="Google Sheets devolvio una redireccion no permitida.")
+
+
+@contextmanager
+def _google_csv_response(url: str):
+    # Validate every hop before making a request; checking response.url after
+    # follow_redirects would be too late to prevent an internal-network fetch.
+    for _ in range(6):
+        _validate_google_download_url(url)
+        with httpx.stream("GET", url, follow_redirects=False, timeout=30) as response:
+            if response.status_code in {301, 302, 303, 307, 308}:
+                location = response.headers.get("location")
+                if not location:
+                    raise HTTPException(status_code=502, detail="Google Sheets devolvio una redireccion incompleta.")
+                url = urljoin(url, location)
+                continue
+            yield response
+            return
+    raise HTTPException(status_code=502, detail="Google Sheets devolvio demasiadas redirecciones.")
 
 
 def _download_sheet_csv(sheet_id: str, gid: str) -> tuple[str, bytes]:
@@ -79,9 +118,7 @@ def _download_sheet_csv(sheet_id: str, gid: str) -> tuple[str, bytes]:
         f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
     )
     try:
-        with httpx.stream(
-            "GET", export_url, follow_redirects=True, timeout=30
-        ) as response:
+        with _google_csv_response(export_url) as response:
             if response.status_code in (401, 403):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,

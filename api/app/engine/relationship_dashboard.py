@@ -177,7 +177,10 @@ def _service_temporal_dashboard(
     """Dashboards auditables para los dos cruces temporales del modelo servicio."""
 
     strategy = relationship.get("join_strategy")
-    if strategy == "vigencia_por_fecha":
+    if strategy == "vigencia_por_fecha" and (
+        _sheet_kind(left_name, left) == "horas_tecnicos"
+        and _sheet_kind(right_name, right) == "tarifas_tecnicos"
+    ):
         tech_left = find_column(left.columns, "cod", "tecnico")
         work_date = find_column(left.columns, "fecha")
         hours_col = find_column(left.columns, "horas")
@@ -820,6 +823,27 @@ def build_relationship_dashboard(
         "purpose": purpose,
     }
 
+    # Currency validation applies before every cost strategy, including as-of
+    # history. Otherwise a temporal branch can bypass the regular join guard.
+    if purpose in {"ventas_costos", "compras_costos"}:
+        currency_sheets = append_sheets or [left_name]
+        detections = [
+            results.get(sheet, {}).get("_moneda")
+            for sheet in [*currency_sheets, right_name]
+        ]
+        typed_detections = [
+            detection for detection in detections
+            if isinstance(detection, CurrencyDetection)
+        ]
+        if typed_detections and (
+            any(detection.mixta for detection in typed_detections)
+            or len({detection.dominante for detection in typed_detections}) > 1
+        ):
+            return _empty_dashboard(
+                relation_meta, template, currency,
+                "Las hojas usan monedas incompatibles; los costos y la utilidad quedan bloqueados.",
+            )
+
     temporal_dashboard = _service_temporal_dashboard(
         left_name,
         left,
@@ -841,7 +865,7 @@ def build_relationship_dashboard(
 
     if _sheet_kind(right_name, right) == "historial_costos" and purpose == "ventas_costos":
         product_key = (
-            left_mapping.get("producto")
+            (left_keys[0] if left_keys and left_keys[0] in left.columns else None)
             or find_column(left.columns, "sku", "producto")
             or find_column(left.columns, "id", "producto")
         )
@@ -921,29 +945,6 @@ def build_relationship_dashboard(
         return _empty_dashboard(
             relation_meta, template, currency, stats.reason or "La relación no es segura."
         )
-
-    # Bloqueo de monedas incompatibles cuando la relación calcula costos.
-    if purpose in {"ventas_costos", "compras_costos"}:
-        currency_sheets = append_sheets or [left_name]
-        detections = [
-            results.get(sheet, {}).get("_moneda")
-            for sheet in [*currency_sheets, right_name]
-        ]
-        typed_detections = [
-            detection
-            for detection in detections
-            if isinstance(detection, CurrencyDetection)
-        ]
-        if typed_detections and (
-            any(detection.mixta for detection in typed_detections)
-            or len({detection.dominante for detection in typed_detections}) > 1
-        ):
-            return _empty_dashboard(
-                relation_meta,
-                template,
-                currency,
-                "Las hojas usan monedas incompatibles; los costos y la utilidad quedan bloqueados.",
-            )
 
     join = {
         "left_sheet": left_name,

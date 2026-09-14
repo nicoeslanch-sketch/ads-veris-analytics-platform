@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     analysis_redis_url: str = ""
     analysis_cache_ttl_seconds: int = 30 * 60
     analysis_lock_ttl_seconds: int = 10 * 60
+    analysis_max_jobs_per_user: int = 3
+    analysis_queue_input_bytes: int = 32 * 1024 * 1024
+    analysis_user_input_bytes: int = 16 * 1024 * 1024
+    analysis_retry_retention_seconds: int = 600
+    request_json_max_bytes: int = 2 * 1024 * 1024
+    request_body_max_bytes: int = 16 * 1024 * 1024
 
     # ── Fase 10: cuenta administradora de respaldo ──
     # El panel /admin acepta también a este correo aunque profiles.is_admin
@@ -147,6 +153,12 @@ class Settings(BaseSettings):
             raise ValueError("Los límites de disco y chunk de consolidación deben ser positivos.")
         if self.analysis_cache_ttl_seconds < 1 or self.analysis_lock_ttl_seconds < 1:
             raise ValueError("Los TTL de análisis compartido deben ser positivos.")
+        if self.analysis_max_jobs_per_user < 1:
+            raise ValueError("El limite de trabajos por usuario debe ser positivo.")
+        if min(self.analysis_queue_input_bytes, self.analysis_user_input_bytes, self.analysis_retry_retention_seconds) < 1:
+            raise ValueError("Los presupuestos de entrada y retencion de trabajos deben ser positivos.")
+        if not 0 < self.request_json_max_bytes <= self.request_body_max_bytes:
+            raise ValueError("Los limites HTTP deben ser positivos y JSON no debe superar el total.")
         if self.ads_coins_advanced_message_cost < 1:
             raise ValueError("El costo del chat avanzado en ADS Coins debe ser positivo.")
         return self

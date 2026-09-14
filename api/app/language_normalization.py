@@ -112,6 +112,8 @@ _VOCABULARY = frozenset(
     vendi vendimos vendo vendemos vendio vendieron facture facturamos
     recaude recaudamos gaste gastamos mayores menores
     vendedor vendedores vendedora vendedoras ejecutivo ejecutivos asesor asesores
+    enero febrero marzo abril mayo junio julio agosto septiembre setiembre octubre noviembre diciembre
+    ayer trimestre semestre pasado siguiente respecto versus crecieron crecio subio bajo
     """.split()
 )
 
@@ -190,6 +192,10 @@ _TYPO_ALIASES = {
     "pq": "porque",
     "q": "que",
     "xq": "porque",
+    "enreo": "enero",
+    "febreo": "febrero",
+    "marso": "marzo",
+    "septiempre": "septiembre",
 }
 
 

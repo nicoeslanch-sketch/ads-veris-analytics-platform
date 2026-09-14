@@ -9,11 +9,13 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any, Callable
 
 from fastapi import HTTPException
 
 from .config import Settings
+from .processing_capacity import HEAVY_WORK_SLOT
 from .shared_analysis import SharedAnalysisCoordinator, coordinator_for, shared_key_digest
 
 TERMINAL = {"completed", "failed", "cancelled"}
@@ -47,6 +49,12 @@ class AnalysisJobManager:
     ) -> None:
         self.coordinator = coordinator or coordinator_for(settings)
         self.max_jobs = max_jobs
+        self.max_jobs_per_user = settings.analysis_max_jobs_per_user
+        self.max_input_bytes = settings.analysis_queue_input_bytes
+        self.max_user_input_bytes = settings.analysis_user_input_bytes
+        self.retry_retention_seconds = settings.analysis_retry_retention_seconds
+        self.input_bytes: dict[tuple[str, str], int] = {}
+        self.retry_deadlines: dict[tuple[str, str], float] = {}
         self.jobs: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
         self.producers: dict[tuple[str, str], Callable[[], dict[str, Any]]] = {}
         self.lock = threading.Lock()
@@ -56,10 +64,25 @@ class AnalysisJobManager:
         # a la vez y mantiene libre el event loop para estado y navegación.
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-job")
 
+    def _release_input_locked(self, identity: tuple[str, str]) -> None:
+        self.producers.pop(identity, None)
+        self.input_bytes.pop(identity, None)
+        self.retry_deadlines.pop(identity, None)
+
+    def _prune_input_locked(self) -> None:
+        expired = [key for key, deadline in self.retry_deadlines.items() if deadline <= monotonic()]
+        for key in expired:
+            self._release_input_locked(key)
+
     def _remember(self, user_id: str, job: dict[str, Any]) -> dict[str, Any]:
         identity = (user_id, str(job["job_id"]))
         with self.lock:
+            self._prune_input_locked()
             self.jobs[identity] = copy.deepcopy(job)
+            if job.get("status") == "completed":
+                self._release_input_locked(identity)
+            elif job.get("status") in {"failed", "cancelled"} and identity in self.producers:
+                self.retry_deadlines.setdefault(identity, monotonic() + self.retry_retention_seconds)
             self.jobs.move_to_end(identity)
             while len(self.jobs) > self.max_jobs:
                 removed = next((key for key, value in self.jobs.items()
@@ -67,7 +90,7 @@ class AnalysisJobManager:
                 if removed is None:
                     break
                 self.jobs.pop(removed)
-                self.producers.pop(removed, None)
+                self._release_input_locked(removed)
         self.coordinator.store_job(user_id, str(job["job_id"]), job)
         return copy.deepcopy(job)
 
@@ -84,7 +107,11 @@ class AnalysisJobManager:
         user_id: str,
         idempotency_key: tuple[Any, ...],
         producer: Callable[[], dict[str, Any]],
+        *,
+        retained_input_bytes: int = 0,
     ) -> dict[str, Any]:
+        if retained_input_bytes < 0:
+            raise ValueError("retained_input_bytes must be nonnegative")
         job_id = shared_key_digest(idempotency_key)[:32]
         existing = self.get(user_id, job_id)
         identity = (user_id, job_id)
@@ -112,15 +139,41 @@ class AnalysisJobManager:
             "error": None,
         }
         with self.lock:
-            active = sum(value.get("status") not in TERMINAL for value in self.jobs.values())
-            if active >= self.max_jobs:
-                raise HTTPException(status_code=429, detail="Hay demasiados procesos pendientes. Espera a que termine uno y vuelve a intentar.")
+            # Recheck and reserve atomically: concurrent requests must not all
+            # pass the cap before _remember registers their queued jobs.
+            current = self.jobs.get(identity)
+            if current and identity in self.producers and current.get("status") not in TERMINAL:
+                return copy.deepcopy(current)
+            if current and current.get("status") == "completed":
+                return copy.deepcopy(current)
+            self._check_capacity_locked(user_id)
+            self._prune_input_locked()
+            retained = sum(size for key, size in self.input_bytes.items() if key != identity)
+            user_retained = sum(size for key, size in self.input_bytes.items() if key != identity and key[0] == user_id)
+            if retained + retained_input_bytes > self.max_input_bytes or user_retained + retained_input_bytes > self.max_user_input_bytes:
+                raise HTTPException(status_code=429, detail="La cola alcanzo su presupuesto de archivos en memoria. Espera a que termine un proceso y vuelve a intentar.", headers={"Retry-After": "10"})
+            self.input_bytes[identity] = retained_input_bytes
+            self.retry_deadlines.pop(identity, None)
             self.producers[identity] = producer
+            self.jobs[identity] = copy.deepcopy(job)
         self._remember(user_id, job)
         self.executor.submit(self._run, user_id, job_id)
         return copy.deepcopy(job)
 
+    def _check_capacity_locked(self, user_id: str) -> None:
+        active = [key for key, value in self.jobs.items() if value.get("status") not in TERMINAL]
+        if len(active) >= self.max_jobs:
+            raise HTTPException(status_code=429, detail="Hay demasiados procesos pendientes. Espera a que termine uno y vuelve a intentar.", headers={"Retry-After": "10"})
+        if sum(key[0] == user_id for key in active) >= self.max_jobs_per_user:
+            raise HTTPException(status_code=429, detail="Ya tienes varios procesos pendientes. Espera a que termine uno antes de iniciar otro.", headers={"Retry-After": "10"})
+
     def _run(self, user_id: str, job_id: str) -> None:
+        # Legacy HTTP calls and background jobs share the same memory budget.
+        # Waiting here does not consume an ASGI/threadpool worker or reject jobs.
+        with HEAVY_WORK_SLOT:
+            self._execute(user_id, job_id)
+
+    def _execute(self, user_id: str, job_id: str) -> None:
         identity = (user_id, job_id)
         job = self.get(user_id, job_id)
         with self.lock:
@@ -180,7 +233,7 @@ class AnalysisJobManager:
         if job.get("status") == "completed":
             # Completed closures can retain entire uploaded workbooks.
             with self.lock:
-                self.producers.pop(identity, None)
+                self._release_input_locked(identity)
 
     def cancel(self, user_id: str, job_id: str) -> dict[str, Any] | None:
         job = self.get(user_id, job_id)
@@ -195,25 +248,32 @@ class AnalysisJobManager:
         job = self.get(user_id, job_id)
         identity = (user_id, job_id)
         with self.lock:
+            self._prune_input_locked()
             producer = self.producers.get(identity)
-        if job is None or producer is None or job.get("status") not in {"failed", "cancelled"}:
-            return job
-        job.update(
-            status="queued",
-            phase="queued",
-            completed_phases=0,
-            attempt=int(job.get("attempt", 1)) + 1,
-            cancel_requested=False,
-            result=None,
-            error=None,
-            updated_at=_now(),
-        )
+            current = self.jobs.get(identity)
+            if current is not None:
+                job = copy.deepcopy(current)
+            if job is None or producer is None or job.get("status") not in {"failed", "cancelled"}:
+                return job
+            self._check_capacity_locked(user_id)
+            self.retry_deadlines.pop(identity, None)
+            job.update(
+                status="queued",
+                phase="queued",
+                completed_phases=0,
+                attempt=int(job.get("attempt", 1)) + 1,
+                cancel_requested=False,
+                result=None,
+                error=None,
+                updated_at=_now(),
+            )
+            self.jobs[identity] = copy.deepcopy(job)
         self._remember(user_id, job)
         self.executor.submit(self._run, user_id, job_id)
         return job
 
 
-_MANAGERS: dict[tuple[str, int, int], AnalysisJobManager] = {}
+_MANAGERS: dict[tuple[Any, ...], AnalysisJobManager] = {}
 _MANAGERS_LOCK = threading.Lock()
 
 
@@ -222,6 +282,10 @@ def manager_for(settings: Settings) -> AnalysisJobManager:
         settings.analysis_redis_url,
         settings.analysis_cache_ttl_seconds,
         settings.analysis_lock_ttl_seconds,
+        settings.analysis_max_jobs_per_user,
+        settings.analysis_queue_input_bytes,
+        settings.analysis_user_input_bytes,
+        settings.analysis_retry_retention_seconds,
     )
     with _MANAGERS_LOCK:
         if key not in _MANAGERS:

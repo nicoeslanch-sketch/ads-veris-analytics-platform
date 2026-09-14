@@ -409,8 +409,12 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
 
     await page.getByRole('link', { name: /Explorar datos/ }).first().click()
     await expect(page.getByText('Datos que estas analizando')).toBeVisible()
-    await expect(page.getByText('Explorar · confiabilidad del margen')).toBeVisible()
-    await expect(page.getByText('¿Qué tan explicable es la utilidad?')).toBeVisible()
+    const analysis = page.getByTestId('exploration-analysis')
+    await expect(analysis.getByRole('heading', { name: 'Lectura del análisis' })).toBeVisible()
+    await expect(analysis.getByRole('heading', { name: 'Qué limita las conclusiones' })).toBeVisible()
+    await expect(analysis.getByText('Cobertura de costos:', { exact: false })).toBeVisible()
+    await expect(analysis.getByText('El margen solo describe la base con ingresos y costos pareados', { exact: false })).toBeVisible()
+    await expect(analysis.locator('.recharts-wrapper')).toHaveCount(0)
 })
 
 test('permite revisar una limpieza terminada y volver a limpiar sin subir el archivo', async ({ page }, testInfo) => {
@@ -506,8 +510,13 @@ test('Resumen prioriza y Explorar profundiza en una hoja operacional', async ({ 
   await expect(page.getByText('Diccionario rápido de la hoja')).toHaveCount(0)
 
   await page.getByRole('link', { name: /Explorar datos/ }).first().click()
-  await expect(page.getByText('Explorar · entender causas')).toBeVisible({ timeout: 90_000 })
-  await expect(page.getByText('Diccionario rápido de la hoja')).toBeVisible()
+  const analysis = page.getByTestId('exploration-analysis')
+  await expect(analysis.getByRole('heading', { name: 'Lectura del análisis' })).toBeVisible({ timeout: 90_000 })
+  await expect(analysis.getByText('3 registros y 6 columnas', { exact: false })).toBeVisible()
+  await expect(analysis.getByLabel('Medida analizada')).toBeVisible()
+  await expect(analysis.getByText('Mediana:', { exact: false })).toBeVisible()
+  await expect(analysis.getByText('La completitud no garantiza que los valores sean correctos.', { exact: false })).toBeVisible()
+  await expect(analysis.locator('.recharts-wrapper')).toHaveCount(0)
 })
 
 test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', async ({ page }, testInfo) => {
@@ -606,18 +615,24 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await expect(page.getByText('ADS Veris no prorratea ni inventa resultados', { exact: false })).toBeVisible()
 
   await page.getByRole('link', { name: /Explorar datos/ }).first().click()
-  await expect(page.getByText('Explorar · entender causas')).toBeVisible({ timeout: 90_000 })
+  const analysis = page.getByTestId('exploration-analysis')
+  await expect(analysis.getByRole('heading', { name: 'Lectura del análisis' })).toBeVisible({ timeout: 90_000 })
   await expect(page.getByText('Qué requiere tu atención')).toHaveCount(0)
-  await expect(page.getByLabel('Sucursal')).toHaveValue('Centro')
-  await page.getByLabel('Categoría').selectOption({ label: 'Servicios' })
-  const productAnalysis = page
-    .getByRole('heading', { name: 'Qué productos explican la utilidad' })
-    .locator('..')
-    .locator('..')
-  await expect(productAnalysis.getByText('Servicio A', { exact: true })).toBeVisible({ timeout: 90_000 })
-  await expect(productAnalysis.getByText('Servicio B', { exact: true })).toHaveCount(0)
-  await expect(productAnalysis.getByText('Servicio C', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('Calidad de las relaciones')).toBeVisible()
+  await expect(page.getByLabel(/^Sucursal/)).toHaveValue('Centro')
+  await page.getByLabel(/^Categoría/).selectOption({ label: 'Servicios' })
+  await expect(analysis.getByLabel('Medida analizada')).toBeVisible({ timeout: 90_000 })
+  await analysis.getByLabel('Medida analizada').selectOption('utilidad')
+  await analysis.getByLabel('Desglose analizado').selectOption('productos')
+  await expect(analysis.getByRole('heading', { name: 'Diferencias por productos' })).toBeVisible()
+  await analysis.getByText('Evidencia numérica del análisis', { exact: true }).click()
+  const productEvidence = analysis.locator('details')
+  await expect(productEvidence.getByText('Servicio A', { exact: false })).toBeVisible()
+  await expect(productEvidence.getByText('Servicio B', { exact: false })).toHaveCount(0)
+  await expect(productEvidence.getByText('Servicio C', { exact: false })).toHaveCount(0)
+  await expect(productEvidence.getByText('3.000 CLP', { exact: true })).toBeVisible()
+  await expect(analysis.getByRole('heading', { name: 'Qué aportan las conexiones' })).toBeVisible()
+  await expect(analysis.getByText('La cobertura mide correspondencias', { exact: false })).toBeVisible()
+  await expect(analysis.locator('.recharts-wrapper')).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
   const mobileOverflow = await page.evaluate(() => ({
     viewport: window.innerWidth,
@@ -672,11 +687,21 @@ test('perfil de cobranza nominal adapta KPI, filtros y detalle sin inventar tran
   await expect(page.getByText('$180', { exact: true }).first()).toBeVisible({ timeout: 90_000 })
 
   await page.getByRole('link', { name: /Explorar datos/ }).first().click()
-  await expect(page.getByText('Recaudación por equipo y subgrupo')).toBeVisible({ timeout: 90_000 })
-  await expect(page.getByRole('cell', { name: 'EST. JURIDICO LEXCO' })).toBeVisible()
-  await expect(page.getByText('Recaudación por forma de pago')).toBeVisible()
-  await expect(page.getByText('Recaudación por periodo cotizado')).toBeVisible()
-  await expect(page.getByText('Descripción del pago')).toBeVisible()
+  const analysis = page.getByTestId('exploration-analysis')
+  await expect(analysis.getByRole('heading', { name: 'Lectura del análisis' })).toBeVisible({ timeout: 90_000 })
+  await expect(analysis.getByText('Recaudación de cobranza: 180 CLP.', { exact: true })).toBeVisible()
+  await analysis.getByText('Evidencia numérica del análisis', { exact: true }).click()
+  const evidence = analysis.locator('details')
+  await expect(evidence.getByText('JUDICIAL / EST. JURIDICO LEXCO', { exact: true })).toBeVisible()
+  await expect(evidence.getByText('100 CLP', { exact: true }).first()).toBeVisible()
+  for (const dimension of ['Forma de pago', 'Período cotizado', 'Descripción del pago']) {
+    await analysis.getByLabel('Desglose analizado').selectOption(dimension)
+    await expect(analysis.getByRole('heading', { name: `Diferencias por ${dimension}` })).toBeVisible()
+    await expect(evidence.getByRole('heading', { name: dimension, exact: true })).toBeVisible()
+  }
+  await analysis.getByLabel('Medida analizada').selectOption('recaudacion_total')
+  await expect(analysis.getByText('Recaudación total: 180 CLP.', { exact: true })).toBeVisible()
+  await expect(analysis.getByLabel('Desglose analizado').locator('option')).toHaveCount(1)
   await page.screenshot({ path: testInfo.outputPath('cobranza-explorar.png'), fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
   const overflow = await page.evaluate(() => ({

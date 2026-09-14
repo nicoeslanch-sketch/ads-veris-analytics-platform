@@ -152,6 +152,11 @@ def _with_conversation_context(
         "moneda",
         "calidad",
         "duplicados",
+        "clientes",
+        "transacciones",
+        "ticket",
+        "unidades",
+        "producto",
     )
     if question.startswith("y ") and _contains(question, *explicit_topics):
         return question
@@ -1080,7 +1085,9 @@ def _answer_margin(metrics: dict[str, Any]) -> dict[str, Any]:
     kpis = metrics.get("kpis") or {}
     margin = _kpi_value(kpis.get("margen_utilidad_pct"))
     if margin is None:
-        return _answer_profit(metrics)
+        answer = _answer_profit(metrics)
+        answer["answer"] = "No hay un margen confiable publicado. " + answer["answer"]
+        return answer
     answer = (
         f"El margen publicado es {_percent(margin)}: por cada 100 unidades monetarias "
         f"de la base comparable quedan aproximadamente {_es_number(margin, decimals=1)} "
@@ -1225,7 +1232,7 @@ def _group_answer(
         share_base = "del total identificado"
     if share is not None:
         answer += f" ({_percent(share)} {share_base})"
-    answer += ". Revisa tambien la concentracion: un lider fuerte puede ser una ventaja comercial o un riesgo de dependencia."
+    answer += f". La comparacion abarca los {len(ranked)} grupos publicados; si el grafico es un top, no representa todos los grupos del archivo."
     return _result(answer, key, metric_suggestions(metrics))
 
 
@@ -1625,7 +1632,7 @@ def answer_metrics_question(
     original_question = normalize_query(message)
     if not original_question:
         return None
-    if _contains(original_question, "gracias", "muchas gracias"):
+    if original_question in {"gracias", "muchas gracias", "muchas gracias por todo", "ok gracias"}:
         return _result(
             "De nada. Seguiré usando las cifras y filtros visibles, y te avisaré cuando "
             "falte una fuente en vez de completar el dato por mi cuenta.",
@@ -1633,6 +1640,9 @@ def answer_metrics_question(
             metric_suggestions(metrics),
         )
     question = _with_conversation_context(original_question, history)
+    correction = re.search(r"\bsino\s+(?:a |al |la |el )*(.+)$", original_question) or re.search(r"\bme refiero\s+(?:a |al |la |el )*(.+)$", original_question)
+    if correction:
+        original_question = question = correction.group(1)
     if (
         re.search(r"\b(que|cual)\b.*\bmes\b", question)
         and re.search(r"\b(vendi|vendimos|vendo|vendemos|vendio|vendieron|ventas|ingresos|facture|facturamos|facturacion|recaude|recaudamos|gaste|gastamos|gasto|gastos)\b", question)
@@ -1653,6 +1663,12 @@ def answer_metrics_question(
     ) and not _contains(question, "mi ", "mis ", "tengo", "dio", "resultado")
     if definition_only:
         return None
+
+    if re.search(r"\b(convertir|convierte|convertirlo|pasar|pasalo)\b", question) and _contains(question, "pesos", "uf", "dolares", "clp", "usd"):
+        return _result(
+            "Para convertir necesito el tipo de cambio y la fecha aplicable a cada monto; para UF, el valor oficial de la UF de esa fecha. No hago una conversion automatica ni sustituyo la moneda del archivo por una tasa inventada.",
+            "metric_currency_conversion_unavailable", metric_suggestions(metrics), "medium",
+        )
 
     if _contains(
         original_question,
@@ -1714,6 +1730,10 @@ def answer_metrics_question(
         collection_answer = _answer_collection_question(metrics, collection, question)
         if collection_answer is not None:
             return collection_answer
+    from .assistant_queries import answer_scoped_question
+    scoped_answer = answer_scoped_question(original_question if correction else message, metrics, history)
+    if scoped_answer is not None:
+        return scoped_answer
     if _contains(question, "calidad", "datos sucios", "advertencias", "problemas de datos", "duplicados"):
         if _contains(question, "descargar", "exportar", "borrar", "eliminar") and _contains(question, "sin", "puedo"):
             return _result("Si. Puedes limpiar y descargar conservando los duplicados. Solo se eliminan repeticiones exactas del original cuando lo confirmas; los conflictos de ID y las coincidencias por normalizacion se conservan para revision.", "metric_download_duplicates", metric_suggestions(metrics))
@@ -1814,7 +1834,7 @@ def answer_metrics_question(
         if _normalize(row.get("nombre") or "")
         and re.search(rf"\b{re.escape(_normalize(row.get('nombre') or ''))}\b", question)
     ]
-    if _contains(question, "top producto", "mejor producto", "producto lider", "que producto") or len(mentioned_products) >= 2:
+    if _contains(question, "top producto", "mejor producto", "producto lider", "que producto", "producto principal", "segundo producto") or len(mentioned_products) >= 2:
         return _group_answer(metrics, product_rows, "Producto", "metric_top_product", question)
     if _contains(question, "categoria", "rubro lider"):
         return _group_answer(metrics, metrics.get("por_categoria") or [], "Categoría", "metric_top_category", question)

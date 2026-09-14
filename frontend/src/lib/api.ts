@@ -26,6 +26,8 @@ const JSON_TIMEOUT_MS = 90_000
 const GET_TIMEOUT_MS = 60_000
 const STREAM_TOTAL_TIMEOUT_MS = 180_000
 const STREAM_IDLE_TIMEOUT_MS = 45_000
+const PROCESSING_BUSY_RETRIES = 3
+const MAX_PROCESSING_WAIT_MS = 30_000
 
 interface ApiRequestOptions {
   timeoutMs?: number
@@ -64,14 +66,55 @@ async function fetchWithTimeout(
   if (externalSignal?.aborted) controller.abort()
   else externalSignal?.addEventListener('abort', forwardAbort, { once: true })
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await fetch(url, { ...init, signal: controller.signal })
+      if (attempt >= PROCESSING_BUSY_RETRIES || response.status !== 429) return response
+      const retryAfter = response.headers.get('Retry-After')
+      if (!retryAfter) return response
+      const delayMs = /^\d+$/.test(retryAfter.trim())
+        ? Number(retryAfter) * 1_000
+        : Date.parse(retryAfter) - Date.now()
+      if (!Number.isFinite(delayMs) || delayMs < 0 || delayMs > MAX_PROCESSING_WAIT_MS) return response
+      let rejection: unknown
+      try {
+        rejection = await response.clone().json()
+      } catch {
+        return response
+      }
+      // Only this admission response guarantees the operation never started.
+      if (!rejection || typeof rejection !== 'object'
+        || !('code' in rejection) || rejection.code !== 'PROCESSING_BUSY') return response
+      await waitBeforeProcessingRetry(Math.max(delayMs, 1_000), controller.signal)
+    }
+  } catch (error) {
+    if (externalSignal?.aborted) throw new ApiError(0, 'La solicitud fue cancelada.')
+    throw error
   } finally {
     clearTimeout(timer)
     externalSignal?.removeEventListener('abort', forwardAbort)
   }
 }
 
+function waitBeforeProcessingRetry(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 function connectionError(err: unknown, fallback: string): ApiError {
+  if (err instanceof ApiError) return err
   if (err instanceof DOMException && err.name === 'AbortError') {
     return new ApiError(0, 'La solicitud tardó demasiado y se canceló. Vuelve a intentar.')
   }

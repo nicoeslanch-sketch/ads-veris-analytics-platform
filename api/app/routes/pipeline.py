@@ -5242,6 +5242,7 @@ async def standardize_batch(
             lambda: _standardize_batch_sync(
                 filename, content, names, dataset_id, user.id, revision, state,
             ),
+            retained_input_bytes=len(content),
         )
     return await run_in_threadpool(
         _standardize_batch_sync,
@@ -5416,6 +5417,7 @@ async def clean_batch(
             lambda: _clean_batch_sync(
                 filename, content, sheet_manifest, dataset_id, user.id, revision, state,
             ),
+            retained_input_bytes=len(content),
         )
     response = await run_in_threadpool(
         _clean_batch_sync,
@@ -5510,6 +5512,7 @@ async def clean_export_job(
         user.id,
         ("clean_export", user.id, dataset_id, identity),
         producer,
+        retained_input_bytes=len(content),
     )
 
 
@@ -5747,7 +5750,7 @@ async def _prepare_metrics_computation(
     business_filters: str | None = Form(None),
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
-) -> tuple[tuple, Callable[[], dict]]:
+) -> tuple[tuple, Callable[[], dict], int]:
     # Fase 14 (P0): /metrics reprocesa el archivo completo (caché aparte) —
     # sin esta puerta, una cuenta sin plan tenía el dashboard gratis.
     await run_in_threadpool(
@@ -5787,7 +5790,7 @@ async def _prepare_metrics_computation(
             dataset_id,
             user.id,
             parsed_business_filters,
-        )
+        ), len(content)
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     rules_dict = _validate_rules(_parse_json_field(rules, "rules"))
     scope_dict = _validate_scope(_parse_json_field(scope, "scope") or None)
@@ -5822,7 +5825,7 @@ async def _prepare_metrics_computation(
         revision,
         parsed_business_filters,
         user.id,
-    )
+    ), len(content)
 
 
 @router.post("/metrics")
@@ -5846,7 +5849,7 @@ async def metrics(
 ) -> dict:
     """Contrato sincrónico conservado para clientes antiguos y pruebas."""
 
-    _job_key, producer = await _prepare_metrics_computation(
+    _job_key, producer, _input_bytes = await _prepare_metrics_computation(
         file,
         storage_path,
         dataset_id,
@@ -5886,7 +5889,7 @@ async def create_metrics_job(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    job_key, producer = await _prepare_metrics_computation(
+    job_key, producer, input_bytes = await _prepare_metrics_computation(
         file,
         storage_path,
         dataset_id,
@@ -5904,7 +5907,7 @@ async def create_metrics_job(
         user,
         settings,
     )
-    return manager_for(settings).submit(user.id, job_key, producer)
+    return manager_for(settings).submit(user.id, job_key, producer, retained_input_bytes=input_bytes)
 
 
 @router.get("/analysis/jobs/{job_id}")

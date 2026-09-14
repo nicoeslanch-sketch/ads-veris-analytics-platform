@@ -145,6 +145,8 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   const activationRequest = useRef(0)
   const activationAbortRef = useRef<AbortController | null>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
+  const botAbortRef = useRef<AbortController | null>(null)
+  const botScopeRef = useRef<string | null>(null)
   // Métricas locales al panel (pueden venir del contexto o fetchearse aquí)
   const localMetrics = useRef<MetricsResult | null>(null)
 
@@ -152,6 +154,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     return () => {
       activationAbortRef.current?.abort()
       streamAbortRef.current?.abort()
+      botAbortRef.current?.abort()
     }
   }, [])
 
@@ -278,10 +281,24 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     }
   }
 
+  const resetBotConversation = () => {
+    botAbortRef.current?.abort()
+    botAbortRef.current = null
+    setBotSending(false)
+    setBotMessages([])
+    setBotInput('')
+    setBotError(null)
+  }
+
   // Disparar activación: una vez por archivo cuando cleaning esté listo
   useEffect(() => {
     if (!active || !file) {
       if (!active) {
+        if (botScopeRef.current !== null) {
+          resetBotConversation()
+          botScopeRef.current = null
+          setBotSuggestions(['¿Cómo conecto Google Sheets?', '¿Qué diferencia hay entre Resumen y Explorar?'])
+        }
         activationRequest.current += 1
         activationAbortRef.current?.abort()
         streamAbortRef.current?.abort()
@@ -312,6 +329,10 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       manifest: sheetManifest,
     })
     const activationKey = `${mode}:${fileKey}`
+    if (botScopeRef.current !== fileKey) {
+      resetBotConversation()
+      botScopeRef.current = fileKey
+    }
     if (fetchedForFile.current === activationKey) return
     fetchedForFile.current = activationKey
     const visibleMetrics = hasAssistantMetricFilters(period, businessFilters)
@@ -423,6 +444,9 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     setBotError(null)
     setBotMessages((current) => [...current, { role: 'user', content: clean }])
     setBotSending(true)
+    const controller = new AbortController()
+    botAbortRef.current = controller
+    const isCurrent = () => botAbortRef.current === controller && !controller.signal.aborted
     try {
       const response = await apiPostJson<BotResponse>('/assistant/bot', {
         message: clean,
@@ -431,15 +455,20 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
           role: message.role,
           content: message.content,
         })),
-      })
+      }, { signal: controller.signal })
+      if (!isCurrent()) return
       setBotMessages((current) => [...current, { role: 'assistant', content: response.answer }])
       setBotSuggestions(response.suggestions)
     } catch (err) {
+      if (!isCurrent()) return
       const detail = err instanceof ApiError ? err.message : 'No pude consultar la guía automática.'
       setBotError(detail)
       setBotMessages((current) => [...current, { role: 'assistant', content: `⚠️ ${detail}` }])
     } finally {
-      setBotSending(false)
+      if (isCurrent()) {
+        botAbortRef.current = null
+        setBotSending(false)
+      }
     }
   }
 
@@ -461,8 +490,8 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
           {botMessages.map((message, index) => <ChatBubble key={index} msg={message} />)}
           {botSending && <div className="flex items-center gap-2 text-xs text-white/45"><Loader2 className="h-3.5 w-3.5 animate-spin text-teal" /> Buscando la respuesta aprobada…</div>}
           {loading && active && <div className="flex items-center gap-2 text-xs text-white/45"><Loader2 className="h-3.5 w-3.5 animate-spin text-teal" /> Cargando indicadores del archivo…</div>}
-          {botMessages.length === 0 && botSuggestions.map((suggestion) => (
-            <button key={suggestion} onClick={() => void sendBotMessage(suggestion)} disabled={loading} className="rounded-lg bg-white/5 px-3 py-2 text-left text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-50">{suggestion}</button>
+          {!botSending && botSuggestions.slice(0, 4).map((suggestion) => (
+            <button key={suggestion} onClick={() => void sendBotMessage(suggestion)} disabled={loading} className="break-words rounded-lg bg-white/5 px-3 py-2 text-left text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-50">{suggestion}</button>
           ))}
           {botError && <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] text-coral">{botError}</p>}
           <div ref={bottomRef} />
@@ -470,7 +499,8 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         <div className="border-t border-white/10 p-3">
           <div className="flex items-end gap-2 rounded-lg bg-white/5 px-3 py-2">
             <textarea value={botInput} onChange={(event) => setBotInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendBotMessage(botInput) } }} rows={1} maxLength={1200} disabled={loading} placeholder="Pregunta por tus cifras o por una función…" className="max-h-24 min-h-5 w-full resize-none bg-transparent text-sm text-white placeholder:text-white/30 outline-none disabled:cursor-wait" />
-            <button onClick={() => void sendBotMessage(botInput)} disabled={!botInput.trim() || botSending || loading} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal disabled:bg-white/10"><ArrowUp className="h-3.5 w-3.5" /></button>
+            <button title="Nueva conversación" aria-label="Nueva conversación" onClick={resetBotConversation} disabled={loading || botMessages.length === 0} className="flex h-7 w-7 shrink-0 items-center justify-center disabled:opacity-30"><RefreshCw className="h-3.5 w-3.5" /></button>
+            <button title="Enviar pregunta" aria-label="Enviar pregunta" onClick={() => void sendBotMessage(botInput)} disabled={!botInput.trim() || botSending || loading} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal disabled:bg-white/10"><ArrowUp className="h-3.5 w-3.5" /></button>
           </div>
           <p className="mt-1.5 text-center text-[10px] text-white/25">Para un caso particular, abre Ayuda y conversa con soporte humano.</p>
         </div>
@@ -733,7 +763,7 @@ function ChatBubble({ msg }: { msg: Message }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+        className={`max-w-[90%] whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg px-3 py-2 text-xs leading-relaxed ${
           isUser ? 'bg-teal/20 text-white' : 'bg-white/5 text-white/85'
         }`}
       >

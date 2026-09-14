@@ -233,7 +233,8 @@ def test_clean_export_job_prepares_download_through_job_manager(
     calls = []
 
     class ImmediateManager:
-        def submit(self, user_id, job_key, producer):
+        def submit(self, user_id, job_key, producer, *, retained_input_bytes):
+            assert retained_input_bytes > 0
             calls.append((user_id, job_key))
             return {
                 "job_id": "export-job-1",

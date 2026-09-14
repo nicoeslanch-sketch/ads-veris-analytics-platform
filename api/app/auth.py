@@ -32,11 +32,20 @@ class AuthenticatedUser:
 @lru_cache(maxsize=8)
 def _jwks_client(jwks_url: str) -> jwt.PyJWKClient:
     """Instancia de PyJWKClient cacheada por URL; renueva claves cada 5 min."""
-    return jwt.PyJWKClient(jwks_url, cache_keys=True, lifespan=300)
+    # Per-key caching has no TTL and can keep a revoked signing key forever.
+    return jwt.PyJWKClient(jwks_url, cache_keys=False, lifespan=300, timeout=5)
 
 
 def _decode(token: str, settings: Settings) -> dict:
     """Decodifica y valida el JWT según el algoritmo declarado en el header."""
+    if len(token) > 16_384:
+        raise jwt.InvalidTokenError("Token invalido.")
+    required = ["exp", "sub", "aud"]
+    issuer = None
+    if settings.app_env.strip().lower() == "production":
+        required.extend(["iss", "role"])
+        issuer = f"{settings.supabase_url.rstrip('/')}/auth/v1"
+    validation = {"options": {"require": required}, "issuer": issuer}
     try:
         header = jwt.get_unverified_header(token)
     except jwt.DecodeError as exc:
@@ -50,12 +59,14 @@ def _decode(token: str, settings: Settings) -> dict:
             raise jwt.InvalidTokenError(
                 "Token HS256 recibido pero SUPABASE_JWT_SECRET no está configurado."
             )
-        return jwt.decode(
+        claims = jwt.decode(
             token,
             settings.supabase_jwt_secret,
             algorithms=["HS256"],
             audience="authenticated",
+            **validation,
         )
+        return _validate_identity(claims, settings)
 
     # ── ES256 / RS256 — JWKS (Supabase ECC/P-256 signing keys) ───────────
     if alg in ("ES256", "RS256"):
@@ -71,14 +82,25 @@ def _decode(token: str, settings: Settings) -> dict:
             raise jwt.InvalidTokenError(
                 f"No se pudo validar la clave pública JWKS: {exc}"
             ) from exc
-        return jwt.decode(
+        claims = jwt.decode(
             token,
             signing_key.key,
             algorithms=["ES256", "RS256"],
             audience="authenticated",
+            **validation,
         )
+        return _validate_identity(claims, settings)
 
     raise jwt.InvalidTokenError(f"Algoritmo de firma no soportado: {alg}.")
+
+
+def _validate_identity(claims: dict, settings: Settings) -> dict:
+    subject = claims.get("sub")
+    if not isinstance(subject, str) or not subject.strip() or len(subject) > 128:
+        raise jwt.InvalidTokenError("Token sin identidad valida.")
+    if settings.app_env.strip().lower() == "production" and claims.get("role") != "authenticated":
+        raise jwt.InvalidTokenError("Token de usuario requerido.")
+    return claims
 
 
 def get_current_user(
@@ -105,10 +127,10 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="La sesión expiró. Inicia sesión nuevamente.",
         )
-    except jwt.InvalidTokenError as exc:
+    except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc) or "Token inválido.",
+            detail="Token invalido. Inicia sesion nuevamente.",
         )
 
     return AuthenticatedUser(

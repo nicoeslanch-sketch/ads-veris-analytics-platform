@@ -589,7 +589,7 @@ def _business_filter_dimensions(
     branches = frames.get((kinds.get("sucursales") or [None])[0]) if kinds.get("sucursales") else None
     sellers = frames.get((kinds.get("vendedores") or [None])[0]) if kinds.get("vendedores") else None
 
-    product_key = mapping.get("producto") or _entity_key(sales.columns, "producto")
+    product_key = _entity_key(sales.columns, "producto") or mapping.get("producto")
     product_ref_key = (
         _entity_key(products.columns, "producto")
         if products is not None
@@ -758,6 +758,15 @@ def _applicable_unit_cost(
         if cost_history is not None
         else None
     )
+    history_end = (
+        _first_column(
+            cost_history.columns,
+            (("fecha", "hasta"), ("vigencia", "hasta"),
+             ("fecha", "fin"), ("effective", "to")),
+        )
+        if cost_history is not None
+        else None
+    )
     cost = empty_cost.copy()
     source = empty_source.copy()
     historical_rows = 0
@@ -769,15 +778,17 @@ def _applicable_unit_cost(
                 "_key": _keys(cost_history[history_key]),
                 "_effective": _dates(cost_history, history_date),
                 "_cost": numeric_series(cost_history, history_cost),
+                "_until": _dates(cost_history, history_end),
             }
-        ).dropna(subset=["_key", "_effective", "_cost"])
+        ).dropna(subset=["_key", "_effective"])
         duplicate_key_date = history.duplicated(["_key", "_effective"], keep=False)
         conflicting_pairs = {
             (str(key), date)
             for (key, date), group in history.loc[duplicate_key_date].groupby(
                 ["_key", "_effective"], sort=False
             )
-            if group["_cost"].nunique(dropna=True) > 1
+            if group["_cost"].nunique(dropna=False) > 1
+            or group["_until"].nunique(dropna=False) > 1
         }
         if conflicting_pairs:
             keep = pd.Series(
@@ -787,9 +798,16 @@ def _applicable_unit_cost(
                 ],
                 index=history.index,
             )
-            history = history.loc[keep]
+            history.loc[~keep, "_cost"] = float("nan")
+        # Invalid or conflicting versions remain as barriers: dropping them
+        # would silently carry an older cost across an uncertifiable period.
+        history.loc[history["_cost"].le(0), "_cost"] = float("nan")
+        if history_end:
+            declared_end = ~physical_missing_mask(cost_history[history_end])
+            invalid_end = declared_end.reindex(history.index) & history["_until"].isna()
+            invalid_interval = history["_until"].lt(history["_effective"])
+            history.loc[invalid_end | invalid_interval, "_cost"] = float("nan")
         history = history.drop_duplicates(["_key", "_effective"], keep="last")
-        history = history[history["_cost"] > 0]
         if not history.empty:
             usable_history = True
             left = pd.DataFrame(
@@ -808,7 +826,10 @@ def _applicable_unit_cost(
                 direction="backward",
                 allow_exact_matches=True,
             )
-            valid = matched["_cost"].notna()
+            valid = matched["_cost"].notna() & (
+                matched["_until"].isna()
+                | matched["_effective"].le(matched["_until"])
+            )
             positions = matched.loc[valid, "_row"].astype(int)
             cost.iloc[positions] = matched.loc[valid, "_cost"].astype(float).to_numpy()
             source.iloc[positions] = "historial_asof"
@@ -945,6 +966,8 @@ def _formula_controls(frames: dict[str, pd.DataFrame], kinds: dict[str, list[str
         )
         unit_cost = numeric_series(frame, find_column(frame.columns, "costo", "unitario"))
         discount = numeric_series(frame, find_column(frame.columns, "descuento")).fillna(0)
+        freight_column = _first_column(frame.columns, (("flete", "total"), ("flete",)))
+        freight = numeric_series(frame, freight_column) if freight_column else 0.0
         net = numeric_series(frame, _net_amount_column(frame.columns, domain="compra"))
         tax = numeric_series(frame, find_column(frame.columns, "iva"))
         total = numeric_series(
@@ -953,7 +976,7 @@ def _formula_controls(frames: dict[str, pd.DataFrame], kinds: dict[str, list[str
         )
         source_rows = list(frame.attrs.get("adsveris_source_rows", []))
         controls.append({"hoja": name, **formula_mismatch(
-            "neto_compra", net, quantity * unit_cost * (1 - discount),
+            "neto_compra", net, quantity * unit_cost * (1 - discount) + freight,
             source_rows=source_rows, eligible=discount.between(0, 1),
         ).to_dict()})
         controls.append({"hoja": name, **formula_mismatch(
@@ -1833,7 +1856,7 @@ def analyze_business_workbook(
     date_col = mapping.get("fecha") or _event_date_column(sales.columns, "venta")
     amount_col = _net_amount_column(sales.columns, domain="venta") or mapping.get("monto")
     quantity_col = mapping.get("cantidad") or find_column(sales.columns, "cantidad")
-    product_key = mapping.get("producto") or _entity_key(sales.columns, "producto")
+    product_key = _entity_key(sales.columns, "producto") or mapping.get("producto")
     client_key = mapping.get("cliente") or find_column(sales.columns, "id", "cliente")
     document_key = _first_column(
         sales.columns,

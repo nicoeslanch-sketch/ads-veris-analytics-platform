@@ -178,13 +178,36 @@ def answer_for(
     articles: list[dict[str, Any]] | None = None,
     metrics: dict[str, Any] | None = None,
     history: list[dict[str, Any]] | None = None,
+    *,
+    _compound: bool = True,
 ) -> dict[str, Any]:
+    collection_difference = 'cobranza' in normalize_basic(message) and 'queda fuera' in normalize_basic(message)
+    if _compound and not collection_difference:
+        parts = [part.strip(' ¿,.') for part in re.split(
+            r"[?;]+|\by\s+(?=(?:cu[aá]ntos?|cu[aá]les?|c[oó]mo|qu[eé])\b)", message, flags=re.I,
+        ) if part.strip(' ¿,.')]
+        if len(parts) > 1:
+            answers = [answer_for(part, articles, metrics, history, _compound=False) for part in parts[:3]]
+            suggestions = list(dict.fromkeys(item for answer in answers for item in answer.get('suggestions', [])))
+            content = '\n\n'.join(f"{index}. {answer['answer']}" for index, answer in enumerate(answers, 1))
+            if len(parts) > 3:
+                content += '\n\nRespondi las tres primeras preguntas. Continuemos con las restantes en el siguiente mensaje.'
+            return {"answer": content, "matched_key": "conversation_multiple", "confidence": min(
+                (answer['confidence'] for answer in answers), key=lambda value: {'low': 0, 'medium': 1, 'high': 2}[value]),
+                "suggestions": suggestions[:4]}
+    message = re.sub(r"^(?:hola|muchas gracias|gracias|por favor)[, ]+(?:y\s+)?(?=\S)", "", message, flags=re.I)
     normalized = normalize_query(message)
+    if 'resumen' in normalized and 'explorar' in normalized:
+        return {"answer": "Resumen presenta los KPIs y graficos del alcance visible. Explorar ofrece una lectura explicativa: evidencia numerica, diferencias entre grupos, cobertura de las conexiones por ID, limites y siguientes comprobaciones. Una diferencia observada no demuestra por si sola una causa.", "matched_key": "explore", "confidence": "high", "suggestions": ["Filtros activos", "Calidad de los datos"]}
+    if 'no se pudo conectar al servidor' in normalized:
+        return {"answer": "El aviso de conexion no indica por si solo que tu Excel este mal. Comprueba tu conexion, espera si el servidor esta ocupado y reintenta desde Historial. Si persiste, abre Ayuda e indica si falla al abrir, limpiar, ver Resumen o descargar; no necesitas borrar el archivo para diagnosticarlo.", "matched_key": "conversation_server_error", "confidence": "high", "suggestions": ["Progreso por hoja", "Descargar datos limpios", "Soporte humano"]}
     if normalized in {"hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "saludos"}:
         return {"answer": "Hola. Puedo ayudarte con el archivo activo, sus indicadores y el proceso de limpieza. ¿Qué necesitas revisar?", "matched_key": "greeting", "confidence": "high", "suggestions": ["Mis ingresos totales", "Calidad y duplicados", "Descargar datos limpios"]}
     metric_answer = answer_metrics_question(message, metrics, history)
     if metric_answer is not None:
         return metric_answer
+    if not metrics and re.search(r"\b(cuanto|cuantos|cuanta|cuantas|mis|tengo|mejor|peor)\b", normalized) and re.search(r"\b(ingresos|ventas|gastos|clientes|stock|margen|mejor|peor)\b", normalized):
+        return {"answer": "No tengo indicadores de un archivo activo para responder esa cifra. Abre un archivo limpio en Resumen o Explorar y dime que indicador quieres revisar.", "matched_key": "conversation_no_metrics", "confidence": "medium", "suggestions": ["Como cargar un archivo", "Descargar datos limpios"]}
     catalog = articles or ARTICLES
     normalized = normalize_query(message)
     contextual_markers = (

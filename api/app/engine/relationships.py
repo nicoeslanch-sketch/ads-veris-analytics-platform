@@ -22,7 +22,7 @@ from typing import Any
 
 import pandas as pd
 
-from .business import _dates, _sheet_kind, _text_key
+from .business import _applicable_unit_cost, _dates, _sheet_kind, _text_key
 from .mapping import norm_key, resolve_mapping
 from .metrics import (
     CurrencyDetection,
@@ -30,6 +30,7 @@ from .metrics import (
 )
 from .multi_sheet import (
     MAX_RELATION_KEYS,
+    RELATION_MIN_COVERAGE,
     _candidate_pairs,
     append_compatible_frames,
     is_unit_cost_column,
@@ -279,6 +280,35 @@ def _unsupported_generic_pair(
     )
 
 
+def _historical_cost_relationship(
+    left: pd.DataFrame, right: pd.DataFrame, mapping: dict[str, str]
+) -> dict[str, Any] | None:
+    left_key = find_column(left.columns, "sku", "producto") or find_column(
+        left.columns, "id", "producto"
+    )
+    right_key = find_column(right.columns, "sku", "producto") or find_column(
+        right.columns, "id", "producto"
+    )
+    date_column = mapping.get("fecha") or find_column(left.columns, "fecha")
+    if not left_key or not right_key or not date_column:
+        return None
+    costs, sources, _ = _applicable_unit_cost(
+        left, left_key, _dates(left, date_column), None, None, None, right
+    )
+    matched = costs.notna() & sources.eq("historial_asof")
+    coverage = float(matched.sum()) / max(len(left), 1)
+    right_coverage = float(right[right_key].map(_text_key).notna().mean()) if len(right) else 0.0
+    safe = coverage >= RELATION_MIN_COVERAGE
+    return {
+        "left_keys": [left_key], "right_keys": [right_key],
+        "coverage_left": round(coverage, 4),
+        "coverage_right": round(right_coverage, 4),
+        "overlap": round(coverage, 4),
+        "cardinality": "muchos_a_uno_temporal", "safe": safe,
+        "reason": None if safe else "La cobertura de costos por fecha de vigencia es insuficiente.",
+    }
+
+
 def _consolidated_sales_relationships(
     frames: dict[str, pd.DataFrame],
     resolved: dict[str, dict[str, str]],
@@ -322,43 +352,29 @@ def _consolidated_sales_relationships(
         right_mapping = resolved[right_name]
         if right_kind not in supported_right_kinds:
             continue
+        currency_ok = all(
+            _currency_compatible("ventas_costos", sale_name, right_name, results)[0]
+            for sale_name in sales_names
+        ) if right_kind in {"costos", "historial_costos"} else True
+        if not currency_ok:
+            continue
         if right_kind == "historial_costos":
-            left_key = (
-                find_column(combined.columns, "sku", "producto")
-                or find_column(combined.columns, "id", "producto")
-            )
-            right_key = (
-                find_column(right.columns, "sku", "producto")
-                or find_column(right.columns, "id", "producto")
-            )
-            if not left_key or not right_key:
+            historical = _historical_cost_relationship(combined, right, combined_mapping)
+            if not historical or not historical["safe"]:
                 continue
-            left_values = {
-                _text_key(value) for value in combined[left_key] if _text_key(value)
-            }
-            right_values = {
-                _text_key(value) for value in right[right_key] if _text_key(value)
-            }
-            overlap = (
-                len(left_values & right_values) / max(len(left_values), 1)
-            )
             consolidated.append(
                 {
+                    **historical,
                     "id": relationship_id(
-                        "todas-las-ventas", right_name, [left_key], [right_key]
+                        "todas-las-ventas", right_name, historical["left_keys"], historical["right_keys"]
                     ),
                     "left_sheet": sales_names[0],
                     "append_sheets": sales_names,
                     "right_sheet": right_name,
-                    "left_keys": [left_key],
-                    "right_keys": [right_key],
                     "type": "left",
                     "template": "sales_costs",
                     "label": f"Todas las ventas ↔ {right_name}",
                     "purpose": "ventas_costos",
-                    "coverage_left": round(overlap, 4),
-                    "coverage_right": 1.0,
-                    "overlap": round(overlap, 4),
                     "cardinality": "muchos_a_uno_temporal",
                     "safe": True,
                     "recommended": False,
@@ -608,33 +624,7 @@ def detect_relationship_catalog(
         # como muchos-a-uno y no debe aparecer como disponible.
         right_eval = right
         if temporal_history:
-            left_key = (
-                find_column(left.columns, "sku", "producto")
-                or find_column(left.columns, "id", "producto")
-            )
-            right_key = (
-                find_column(right.columns, "sku", "producto")
-                or find_column(right.columns, "id", "producto")
-            )
-            if not left_key or not right_key:
-                continue
-            left_values = {
-                _text_key(value) for value in left[left_key] if _text_key(value)
-            }
-            right_values = {
-                _text_key(value) for value in right[right_key] if _text_key(value)
-            }
-            coverage = len(left_values & right_values) / max(len(left_values), 1)
-            best = {
-                "left_keys": [left_key],
-                "right_keys": [right_key],
-                "coverage_left": round(coverage, 4),
-                "coverage_right": 1.0,
-                "overlap": round(coverage, 4),
-                "cardinality": "muchos_a_uno_temporal",
-                "safe": True,
-                "reason": None,
-            }
+            best = _historical_cost_relationship(left, right, resolved[left_name])
             had_candidates = True
         else:
             best, had_candidates = _best_relationship_for_pair(
@@ -685,6 +675,11 @@ def detect_relationship_catalog(
             # una invariancia financiera (filas, ventas, cantidades o costos).
             # La probamos antes de publicarla: el selector manual solo muestra
             # conexiones que realmente pueden ejecutarse con este archivo.
+            if temporal_history:
+                # The as-of strategy was validated above. An equality join on
+                # product alone would reject legitimate historical versions.
+                relationships.append(entry)
+                continue
             try:
                 join_related_frames(
                     {left_name: left, right_name: right_eval},

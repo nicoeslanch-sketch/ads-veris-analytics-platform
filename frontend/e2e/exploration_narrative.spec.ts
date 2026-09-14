@@ -1,0 +1,35 @@
+import { expect, test } from '@playwright/test'
+
+test('Explorar explica evidencia, conserva controles y no desborda en movil', async ({ page }, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Ver demo ficticia' }).click()
+  await page.getByRole('link', { name: /Explorar datos/ }).first().click()
+  const analysis = page.getByTestId('exploration-analysis')
+  await expect(analysis.getByRole('heading', { name: 'Lectura del análisis' })).toBeVisible()
+  await expect(analysis.getByRole('heading', { name: 'Qué muestran las diferencias' })).toBeVisible()
+  await expect(analysis.getByRole('heading', { name: 'Qué limita las conclusiones' })).toBeVisible()
+  await expect(analysis.getByRole('heading', { name: 'Siguiente comprobación' })).toBeVisible()
+  await expect(analysis.locator('.recharts-wrapper')).toHaveCount(0)
+  await expect(page.getByLabel('Período del análisis')).toBeVisible()
+  const metric = analysis.getByLabel('Medida analizada')
+  await metric.selectOption('costo')
+  await expect(analysis.getByText('Costo conocido:', { exact: false }).first()).toBeVisible()
+  await metric.selectOption('ingresos')
+  await analysis.getByLabel('Desglose analizado').selectOption({ label: 'Producto' })
+  await expect(analysis.getByRole('heading', { name: 'Diferencias por Producto' })).toBeVisible()
+  await analysis.getByText('Evidencia numérica del análisis', { exact: true }).click()
+  await expect(analysis.getByRole('heading', { name: 'Serie del período' })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('exploration-desktop.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true)
+  const overflowingText = await analysis.evaluate((root) => [...root.querySelectorAll('p,h2,h3,dt,dd,li,button,select')].filter((element) => {
+    const rect = element.getBoundingClientRect()
+    return rect.width > 0 && element.scrollWidth > element.clientWidth + 2
+  }).map((element) => element.textContent))
+  expect(overflowingText).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath('exploration-mobile.png'), fullPage: true })
+  expect(errors).toEqual([])
+})

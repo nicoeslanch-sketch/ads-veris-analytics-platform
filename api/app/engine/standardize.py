@@ -193,19 +193,31 @@ def map_unique(series: pd.Series, func) -> pd.Series:
 def normalize_headers(df: pd.DataFrame) -> int:
     """Limpia encabezados in-place. Devuelve cuántos cambiaron."""
     changes = 0
-    seen: dict[str, int] = {}
-    new_columns: list[str] = []
+    bases = []
     for index, col in enumerate(df.columns):
         name = re.sub(r"\s+", " ", str(col)).strip()
         if not name or name.lower().startswith("unnamed"):
             name = f"columna_{index + 1}"
-        if name != str(col):
-            changes += 1
+        bases.append(name)
+    reserved = {strip_accents_lower(name) for name in bases}
+    seen: set[str] = set()
+    next_suffix: dict[str, int] = {}
+    new_columns: list[str] = []
+    for col, base in zip(df.columns, bases, strict=True):
+        name = base
         key = strip_accents_lower(name)
-        count = seen.get(key, 0)
-        seen[key] = count + 1
-        if count:
-            name = f"{name}_{count + 1}"
+        if key in seen:
+            # Preserve explicit names such as Monto_2 instead of colliding
+            # with them when renaming a second Monto column.
+            suffix = next_suffix.get(key, 2)
+            candidate_key = strip_accents_lower(f"{base}_{suffix}")
+            while candidate_key in reserved or candidate_key in seen:
+                suffix += 1
+                candidate_key = strip_accents_lower(f"{base}_{suffix}")
+            name = f"{base}_{suffix}"
+            next_suffix[key] = suffix + 1
+        seen.add(strip_accents_lower(name))
+        if name != str(col):
             changes += 1
         new_columns.append(name)
     df.columns = new_columns
