@@ -1632,6 +1632,20 @@ def answer_metrics_question(
     original_question = normalize_query(message)
     if not original_question:
         return None
+    inactivity = r"(sin ventas|sin vender|no se venden|no se vendieron|producto.*estancad)"
+    previous = " ".join(normalize_query(str(row.get("content") or "")) for row in (history or [])[-2:])
+    if re.search(inactivity, original_question) or (re.search(inactivity, previous) and re.search(r"(que hago|retiro|reinviert|marketing|dejo de invertir)", original_question)):
+        activity = metrics.get("actividad_productos")
+        if not isinstance(activity, dict):
+            return _result("No hay evidencia suficiente por ID y fechas para identificar productos sin ventas durante tres meses completos consecutivos. Un producto ausente del ranking no demuestra que no se venda. Revisa cobertura temporal e identificadores.", "metric_product_activity_missing", ["Calidad de los datos"], "medium")
+        if re.search(r"\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|20\d{2})\b", original_question):
+            return _result("El diagnóstico de inactividad corresponde al corte y filtros actuales. No tengo un diagnóstico independiente para ese otro período: cambia los filtros en Explorar y vuelve a consultar.", "metric_product_activity_scope", ["Filtros activos"], "medium")
+        raw_rows = activity.get("productos")
+        rows = [row for row in raw_rows if isinstance(row, dict)] if isinstance(raw_rows, list) else []
+        evidence = "; ".join(f"{row.get('nombre')} (ID {row.get('id')}): {row.get('meses_sin_venta_observada')} meses sin ventas positivas observadas" for row in rows[:3])
+        if not rows:
+            evidence = "No se detectaron productos que cumplan ese criterio en los IDs y fechas observados"
+        return _result(evidence + f". Corte: {activity.get('fecha_corte')}. No demuestra falta de demanda: comprueba stock, cobertura del archivo y estacionalidad; luego evalua precio, marketing o rediseño antes de reducir compras o reinvertir. La rentabilidad exige costos pareados.", "metric_product_activity", ["Cobertura de costos", "Calidad de los datos"])
     if original_question in {"gracias", "muchas gracias", "muchas gracias por todo", "ok gracias"}:
         return _result(
             "De nada. Seguiré usando las cifras y filtros visibles, y te avisaré cuando "

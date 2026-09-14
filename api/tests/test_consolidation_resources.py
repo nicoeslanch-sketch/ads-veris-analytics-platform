@@ -260,6 +260,8 @@ def test_retry_reuses_only_identical_immutable_artifact(tmp_path, monkeypatch):
             yield b"derived-content"
 
     monkeypatch.setattr("app.consolidation.ingestion.httpx.post", lambda *_args, **_kwargs: Conflict())
+    monkeypatch.setattr("app.storage_capacity.reserve_capacity", lambda *_: None)
+    monkeypatch.setattr("app.storage_capacity.settle_capacity", lambda *_: None)
     monkeypatch.setattr("app.consolidation.ingestion.httpx.stream", lambda *_args, **_kwargs: Existing())
     upload_consolidation_artifact(
         artifact,

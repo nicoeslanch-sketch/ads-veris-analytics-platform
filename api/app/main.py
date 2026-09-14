@@ -24,6 +24,7 @@ from .routes.me import router as me_router
 from .routes.pipeline import router as pipeline_router
 from .routes.plans import router as plans_router
 from .routes.retention import router as retention_router
+from .routes.storage_upload import router as storage_upload_router
 from .routes.support import router as support_router
 from .consolidation.router import router as consolidation_router
 
@@ -71,6 +72,7 @@ app = FastAPI(
 )
 
 app.add_middleware(ProcessingCapacityMiddleware)
+app.include_router(storage_upload_router)
 
 app.add_middleware(
     RequestSecurityMiddleware,

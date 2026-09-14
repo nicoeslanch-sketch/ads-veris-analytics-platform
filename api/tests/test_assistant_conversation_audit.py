@@ -73,6 +73,28 @@ def test_unknown_entity_is_not_fuzzy_replaced():
     assert 'Marven Ltda' in answer['answer'] and '$200' in answer['answer']
 
 
+def test_product_decision_conversation_uses_ids_and_avoids_unsupported_advice():
+    metrics = sales_metrics()
+    question = 'Que productos llevan meses sin vender'
+    assert answer_for(question, metrics=metrics)['matched_key'] == 'metric_product_activity_missing'
+    metrics['actividad_productos'] = {'fecha_corte': '2026-06-30', 'productos': [
+        {'id': '001', 'nombre': 'Producto Azul', 'meses_sin_venta_observada': 4}]}
+    history = []
+    for question in ['Que productos llevan meses sin vender', 'Y que hago', 'Entonces lo retiro']:
+        answer = answer_for(question, metrics=metrics, history=history)
+        assert 'ID 001' in answer['answer']
+        assert 'No demuestra falta de demanda' in answer['answer']
+        history += [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer['answer']}]
+
+
+@pytest.mark.parametrize('question', ['cuota de almacenamiento', 'error 507', 'espacio lleno', 'cuantos archivos puedo guardar'])
+def test_storage_quota_answers_are_not_financial_loan_advice(question):
+    answer = answer_for(question)
+    assert answer['matched_key'] == 'storage_quota'
+    assert 'sin borrar' in answer['answer']
+    assert 'duplicados' in answer['answer']
+
+
 @pytest.mark.parametrize('metrics', [
     {'clientes': {'top': 'mal'}}, {'analisis_generico': {'evolucion': 'mal'}},
     {'analisis_negocio': {'cobranza': {'kpis': []}}}, {'analisis_productos': 'mal'},

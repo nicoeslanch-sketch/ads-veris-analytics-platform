@@ -32,6 +32,7 @@ from .standardize import (
     semantic_missing_mask,
 )
 from .quality import line_sales_evidence, structural_total_mask
+from .product_activity import product_activity
 
 FINANCIAL_RATIOS = [
     "roa",
@@ -1690,6 +1691,10 @@ def compute_metrics(
             selection[roles[canal_role]], amounts, group_costs
         )
     if roles.get("producto"):
+        if transactional_profile and not currency.mixta and has_dates:
+            activity = product_activity(selection, roles["producto"], dates_all[mask], amounts, evolucion)
+            if activity:
+                result["actividad_productos"] = activity
         productos_completos = _group_sum(
             selection[roles["producto"]], amounts, group_costs
         )

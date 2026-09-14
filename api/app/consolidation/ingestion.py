@@ -406,6 +406,8 @@ def upload_consolidation_artifact(
     settings: Settings | None = None,
 ) -> None:
     """Sube un artefacto inmutable; un objeto existente no se reemplaza."""
+    from ..storage_capacity import safe_storage_write
+
     cfg = settings or get_settings()
     normalized = normalize_user_storage_path(storage_path, user_id)
     encoded = "/".join(quote(part, safe="") for part in normalized.split("/"))
@@ -419,7 +421,8 @@ def upload_consolidation_artifact(
     }
     with local_path.open("rb") as content:
         try:
-            response = httpx.post(url, headers=headers, content=content, timeout=300)
+            response = safe_storage_write(normalized, local_path.stat().st_size, "artifact", cfg,
+                                          lambda: httpx.post(url, headers=headers, content=content, timeout=300))
         except httpx.HTTPError as exc:
             raise HTTPException(502, f"No se pudo guardar el artefacto: {exc.__class__.__name__}.") from exc
     if response.status_code == 409:

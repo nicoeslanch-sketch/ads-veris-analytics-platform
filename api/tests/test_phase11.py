@@ -318,6 +318,8 @@ def test_export_cache_storage_uploads_with_upsert_and_reads_404_as_miss(monkeypa
         return CreatedResponse()
 
     monkeypatch.setattr(storage.httpx, "post", fake_post)
+    monkeypatch.setattr("app.storage_capacity.reserve_capacity", lambda *_: None)
+    monkeypatch.setattr("app.storage_capacity.settle_capacity", lambda *_: None)
     storage.upload_export_cache("user/.exports/dataset/xlsx.cache", b"durable")
 
     assert captured["content"] == b"durable"

@@ -18,6 +18,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from .config import get_settings
+from .storage_capacity import safe_storage_write
 
 MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
 MAX_EXPORT_CACHE_BYTES = 64 * 1024 * 1024
@@ -222,7 +223,8 @@ def upload_export_cache(storage_path: str, content: bytes) -> None:
         "x-upsert": "true",
     }
     try:
-        response = httpx.post(url, content=content, headers=headers, timeout=120)
+        response = safe_storage_write(storage_path, len(content), "artifact", settings,
+                                      lambda: httpx.post(url, content=content, headers=headers, timeout=120))
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
