@@ -114,6 +114,7 @@ _VOCABULARY = frozenset(
     vendedor vendedores vendedora vendedoras ejecutivo ejecutivos asesor asesores
     enero febrero marzo abril mayo junio julio agosto septiembre setiembre octubre noviembre diciembre
     ayer trimestre semestre pasado siguiente respecto versus crecieron crecio subio bajo
+    almacenamiento almacenar guardado guardar guardados espacio lleno llena cuota cuotas
     """.split()
 )
 
@@ -196,6 +197,9 @@ _TYPO_ALIASES = {
     "febreo": "febrero",
     "marso": "marzo",
     "septiempre": "septiembre",
+    "almacenamieto": "almacenamiento",
+    "almacenamineto": "almacenamiento",
+    "archibos": "archivos",
 }
 
 
@@ -260,6 +264,11 @@ _JOINED_ALIASES = {
     "limitecreditopromedio": "limite credito promedio",
     "porquedemoralalimpieza": "porque demora la limpieza",
     "nosepudoconectaralservidor": "no se pudo conectar al servidor",
+    "cuantosarchivospuedoguardar": "cuantos archivos puedo guardar",
+    "cuantosarchivospuedosubir": "cuantos archivos puedo subir",
+    "cuotadealmacenamiento": "cuota de almacenamiento",
+    "espaciolleno": "espacio lleno",
+    "cuantoespaciotengo": "cuanto espacio tengo",
 }
 
 

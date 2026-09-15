@@ -87,7 +87,12 @@ def test_product_decision_conversation_uses_ids_and_avoids_unsupported_advice():
         history += [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer['answer']}]
 
 
-@pytest.mark.parametrize('question', ['cuota de almacenamiento', 'error 507', 'espacio lleno', 'cuantos archivos puedo guardar'])
+@pytest.mark.parametrize('question', [
+    'cuota de almacenamiento', 'error 507', 'espacio lleno', 'cuantos archivos puedo guardar',
+    'cuantosarchivospuedoguardar', 'cuatnosarchivospuedoguardar', 'cuantosarchibospuedoguardar',
+    'cuantosarchivospuedosubir', 'cuotadealmacenamiento', 'cuota de almacenamieto',
+    'cuantoespaciotengo', 'espaciolleno', 'limite de almacenamiento',
+])
 def test_storage_quota_answers_are_not_financial_loan_advice(question):
     answer = answer_for(question)
     assert answer['matched_key'] == 'storage_quota'

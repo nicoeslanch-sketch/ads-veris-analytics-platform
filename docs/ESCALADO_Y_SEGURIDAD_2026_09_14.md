@@ -98,12 +98,14 @@ costos conectados por SKU. El primer calculo aun tardo varios minutos: esta
 entrega no declara resuelta la latencia de procesamiento. El bot se probo con
 preguntas de inactividad y seguimiento; se corrigio una repeticion cuando no
 habia evidencia temporal suficiente, conservando la distincion entre guia
-general y diagnostico de un producto concreto.
+general y diagnostico de un producto concreto. Tambien se corrigio la pregunta
+real `cuantosarchivospuedoguardar` y se anadieron nueve variantes de cuota,
+palabras unidas y errores de escritura como regresiones.
 
 Pruebas de la entrega: suite backend previa de 1.013 casos aprobados, mas cuatro
-regresiones del seguimiento conversacional; frontend 186 aprobados y flujo
+regresiones del seguimiento conversacional y nueve de escritura; frontend 186 aprobados y flujo
 Playwright 19 aprobados / 1 omitido (libro real opcional). El ultimo cambio de
-version/cuotas se comprobo con 30 casos y la suite conversacional con 95.
+version/cuotas se comprobo con 30 casos y la suite conversacional con 104.
 Avisos pendientes del advisor:
 [MFA](https://supabase.com/docs/guides/auth/auth-mfa) y
 [proteccion de contrasenas filtradas](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
