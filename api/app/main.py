@@ -5,6 +5,8 @@ Fase 1: pipeline /standardize, /clean y /metrics (SPEC §6), protegido con JWT.
 """
 
 import logging
+import threading
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,7 @@ from .config import Settings, get_settings
 from .version import ENGINE_VERSION, LATEST_MIGRATION, commit_sha
 from .request_security import RequestSecurityMiddleware
 from .processing_capacity import ProcessingCapacityMiddleware
+from .durable_analysis import durable_mode
 from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
 from .routes.assistant import router as assistant_router
@@ -65,10 +68,31 @@ if _violations:
         "Startup failed: insecure production configuration — " + "; ".join(_violations)
     )
 
+@asynccontextmanager
+async def lifespan(_app):
+    worker = None
+    thread = None
+    if durable_mode(settings) == "embedded":
+        from .analysis_worker import AnalysisWorker
+        worker = AnalysisWorker(settings)
+        thread = threading.Thread(target=worker.run, name="durable-analysis", daemon=True)
+        thread.start()
+    try:
+        yield
+    finally:
+        if worker:
+            worker.shutdown()
+        # Bounded shutdown. A terminated attempt is recovered by its lease;
+        # an uninterruptible pandas call must not block deployment indefinitely.
+        if thread:
+            thread.join(timeout=1)
+
+
 app = FastAPI(
     title="ADS Veris — Motor de datos",
     description="Estandarización, limpieza y métricas para la plataforma de análisis.",
     version=ENGINE_VERSION,
+    lifespan=lifespan,
 )
 
 app.add_middleware(ProcessingCapacityMiddleware)
@@ -124,6 +148,7 @@ def version() -> dict:
         "engine_version": ENGINE_VERSION,
         "database_migration": LATEST_MIGRATION,
         "environment": settings.app_env,
+        "analysis_worker_mode": durable_mode(settings),
     }
 
 

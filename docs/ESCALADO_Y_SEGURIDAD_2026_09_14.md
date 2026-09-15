@@ -1,5 +1,9 @@
 # Explorar, seguridad y bases de capacidad
 
+Actualizacion posterior: [cola persistente de analisis](COLA_DURABLE_2026_09_15.md).
+Los trabajos de fuentes guardadas ya admiten recuperacion en PostgreSQL; el
+consumidor independiente sigue preparado, sin contratar.
+
 ## Alcance y estado
 
 Esta entrega reduce texto en Explorar, introduce evidencia de inactividad por ID,

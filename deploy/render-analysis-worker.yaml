@@ -1,0 +1,30 @@
+# Preparado, NO contratado ni aplicado. Requiere aprobar el costo del servicio.
+# Aplicar migracion, desplegar worker y poner ANALYSIS_DURABLE_MODE=external en
+# la API. No sincronizar el Blueprint de consolidacion para crear este worker.
+services:
+  - type: worker
+    name: ads-veris-analysis-worker
+    runtime: python
+    repo: https://github.com/nicoeslanch-sketch/ads-veris-analytics-platform
+    branch: main
+    rootDir: api
+    region: virginia
+    plan: standard
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.analysis_worker
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ANALYSIS_DURABLE_MODE
+        value: external
+      - key: ANALYSIS_WORKER_POLL_SECONDS
+        value: "5"
+      - key: PLAN_ENFORCEMENT
+        value: "true"
+      - key: DEV_AUTH_BYPASS
+        value: "false"

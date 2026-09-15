@@ -129,6 +129,7 @@ from ..storage import (
 from ..version import ENGINE_VERSION, SERVICE_MODEL_VERSION
 from ..shared_analysis import coordinator_for
 from ..analysis_jobs import manager_for, report_job_progress
+from ..durable_analysis import DurableAnalysisRepository, use_durable_source
 
 router = APIRouter()
 
@@ -5233,6 +5234,11 @@ async def standardize_batch(
             status_code=503,
             detail="No se pudo reservar una revisión segura para guardar las hojas.",
         )
+    if request.url.path.endswith("/jobs") and use_durable_source(settings, file, storage_path, dataset_id):
+        return await run_in_threadpool(
+            DurableAnalysisRepository(settings).enqueue, user.id, dataset_id, storage_path,
+            "standardize_batch", {"sheets": names, "revision": revision, "restore_state": state},
+        )
     filename, content = await _read_input(file, storage_path, user)
     if request.url.path.endswith("/jobs"):
         return manager_for(settings).submit(
@@ -5407,6 +5413,11 @@ async def clean_batch(
             status_code=503,
             detail="No se pudo reservar una revisión segura para guardar la limpieza.",
         )
+    if request.url.path.endswith("/jobs") and use_durable_source(settings, file, storage_path, dataset_id):
+        return await run_in_threadpool(
+            DurableAnalysisRepository(settings).enqueue, user.id, dataset_id, storage_path,
+            "clean_batch", {"manifest": sheet_manifest, "revision": revision, "restore_state": state},
+        )
     filename, content = await _read_input(file, storage_path, user)
     if request.url.path.endswith("/jobs"):
         return manager_for(settings).submit(
@@ -5484,13 +5495,18 @@ async def clean_export_job(
     export_format = (format or fmt).strip().lower()
     if export_format not in {"csv", "xlsx"}:
         raise HTTPException(status_code=422, detail="El formato debe ser 'csv' o 'xlsx'.")
-    filename, content = await _read_input(file, storage_path, user)
     sheet_manifest = _parse_sheet_manifest(manifest)
     if sheet_manifest is None:
         raise HTTPException(status_code=422, detail="Envía un manifiesto de hojas.")
     resolved_scope = _resolve_export_analysis_scope(
         sheet_manifest, combinar_hojas, analysis_scope
     )
+    if use_durable_source(settings, file, storage_path, dataset_id):
+        return await run_in_threadpool(
+            DurableAnalysisRepository(settings).enqueue, user.id, dataset_id, storage_path,
+            "clean_export", {"manifest": sheet_manifest, "format": export_format, "analysis_scope": resolved_scope},
+        )
+    filename, content = await _read_input(file, storage_path, user)
     identity = _export_cache_identity(
         content, sheet_manifest, export_format, resolved_scope
     )
@@ -5889,6 +5905,24 @@ async def create_metrics_job(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
+    if use_durable_source(settings, file, storage_path, dataset_id):
+        await run_in_threadpool(require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings)
+        sheet_manifest = _parse_sheet_manifest(manifest)
+        filters = _validate_business_filters(_parse_json_field(business_filters, "business_filters") if business_filters else None)
+        if sheet_manifest is not None:
+            if not analysis_scope:
+                raise HTTPException(422, "Las metricas multihoja requieren analysis_scope.")
+            options = {"manifest": sheet_manifest,
+                       "analysis_scope": _parse_analysis_scope(analysis_scope, [entry["nombre"] for entry in sheet_manifest["hojas"]])}
+        else:
+            options = {"mapping": _validate_mapping(_parse_json_field(mapping, "mapping") or None),
+                       "rules": _validate_rules(_parse_json_field(rules, "rules")),
+                       "scope": _validate_scope(_parse_json_field(scope, "scope") or None),
+                       "revision": revision, "eliminar_duplicados": eliminar_duplicados,
+                       "sheet": _clean_sheet_param(sheet)}
+        options.update(date_from=date_from, date_to=date_to, business_filters=filters)
+        return await run_in_threadpool(DurableAnalysisRepository(settings).enqueue,
+                                      user.id, dataset_id, storage_path, "metrics", options)
     job_key, producer, input_bytes = await _prepare_metrics_computation(
         file,
         storage_path,
@@ -5910,15 +5944,21 @@ async def create_metrics_job(
     return manager_for(settings).submit(user.id, job_key, producer, retained_input_bytes=input_bytes)
 
 
+def _job_repository(settings: Settings, job_id: str):
+    return DurableAnalysisRepository(settings) if job_id.startswith("dq_") else manager_for(settings)
+
+
 @router.get("/analysis/jobs/{job_id}")
 async def get_analysis_job(
     job_id: str,
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    job = manager_for(settings).get(user.id, job_id)
+    job = await run_in_threadpool(_job_repository(settings, job_id).get, user.id, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="El trabajo de análisis no existe.")
+    if job_id.startswith("dq_") and job.get("status") == "completed":
+        _restore_response_cache_invalidate(user.id)
     return job
 
 
@@ -5928,7 +5968,7 @@ async def cancel_analysis_job(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    job = manager_for(settings).cancel(user.id, job_id)
+    job = await run_in_threadpool(_job_repository(settings, job_id).cancel, user.id, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="El trabajo de análisis no existe.")
     return job
@@ -5940,7 +5980,7 @@ async def retry_analysis_job(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    job = manager_for(settings).retry(user.id, job_id)
+    job = await run_in_threadpool(_job_repository(settings, job_id).retry, user.id, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="El trabajo de análisis no existe.")
     if job.get("status") not in {"queued", "running", "completed"}:

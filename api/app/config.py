@@ -1,4 +1,5 @@
 import re
+from typing import Literal
 from functools import lru_cache
 
 from pydantic import model_validator
@@ -86,6 +87,10 @@ class Settings(BaseSettings):
     analysis_queue_input_bytes: int = 32 * 1024 * 1024
     analysis_user_input_bytes: int = 16 * 1024 * 1024
     analysis_retry_retention_seconds: int = 600
+    # auto: persistent queue + one embedded consumer in production only.
+    # external: API enqueues, python -m app.analysis_worker consumes elsewhere.
+    analysis_durable_mode: Literal["auto", "off", "embedded", "external"] = "auto"
+    analysis_worker_poll_seconds: float = 5.0
     request_json_max_bytes: int = 2 * 1024 * 1024
     request_body_max_bytes: int = 16 * 1024 * 1024
 
@@ -155,6 +160,8 @@ class Settings(BaseSettings):
             raise ValueError("Los TTL de análisis compartido deben ser positivos.")
         if self.analysis_max_jobs_per_user < 1:
             raise ValueError("El limite de trabajos por usuario debe ser positivo.")
+        if not 1 <= self.analysis_worker_poll_seconds <= 60:
+            raise ValueError("El intervalo del worker debe estar entre 1 y 60 segundos.")
         if min(self.analysis_queue_input_bytes, self.analysis_user_input_bytes, self.analysis_retry_retention_seconds) < 1:
             raise ValueError("Los presupuestos de entrada y retencion de trabajos deben ser positivos.")
         if not 0 < self.request_json_max_bytes <= self.request_body_max_bytes:
