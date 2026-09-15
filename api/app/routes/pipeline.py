@@ -3491,7 +3491,8 @@ def _metrics_multi_from_processed(
     # resuelven con Items, Tarifas y Gastos. Intentar materializar primero un
     # join genérico bloqueaba la visión aun cuando las 11 fuentes estaban
     # completas. El modelo controlado valida toda la red antes de publicar KPI.
-    service_business = (
+    report_job_progress("business", 0, 2)
+    business_analysis = (
         analyze_business_workbook(
             frames,
             mappings,
@@ -3504,8 +3505,8 @@ def _metrics_multi_from_processed(
         else None
     )
     if (
-        isinstance(service_business, dict)
-        and service_business.get("perfil") == "servicios_tecnicos"
+        isinstance(business_analysis, dict)
+        and business_analysis.get("perfil") == "servicios_tecnicos"
     ):
         base_name = next(
             (
@@ -3520,6 +3521,7 @@ def _metrics_multi_from_processed(
             ),
             next(iter(frames)),
         )
+        report_job_progress("metrics", 1, 2)
         computed = compute_metrics(
             frames[base_name],
             mappings.get(base_name),
@@ -3550,9 +3552,11 @@ def _metrics_multi_from_processed(
         computed["calidad_datos"] = round(
             sum(qualities) / max(len(qualities), 1), 1
         )
-        computed["analisis_negocio"] = service_business
+        computed["analisis_negocio"] = business_analysis
+        report_job_progress("metrics", 2, 2)
         return computed
 
+    report_job_progress("metrics", 1, 2)
     try:
         if business_view:
             # Mantener las tarjetas genéricas de costo cuando el maestro admite
@@ -3640,7 +3644,9 @@ def _metrics_multi_from_processed(
         "conservados": max(detected_duplicates - removed_duplicates, 0),
     }
     if business_view or has_collection_dashboard_profile(frames):
-        business = analyze_business_workbook(
+        # Business-view inputs and filters have not changed since detection.
+        # Reuse even a None result: unsupported workbooks need no second pass.
+        business = business_analysis if business_view else analyze_business_workbook(
             frames,
             mappings,
             results,
@@ -3650,6 +3656,7 @@ def _metrics_multi_from_processed(
         )
         if business is not None:
             computed["analisis_negocio"] = business
+    report_job_progress("metrics", 2, 2)
     return computed
 
 
