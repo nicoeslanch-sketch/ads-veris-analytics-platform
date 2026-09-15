@@ -626,6 +626,8 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await analysis.getByLabel('Medida analizada').selectOption('utilidad')
   await analysis.getByLabel('Desglose analizado').selectOption('productos')
   await expect(analysis.getByRole('heading', { name: 'Utilidad sobre base con costo por productos' })).toBeVisible()
+  await expect(analysis.getByRole('heading', { name: 'Comparar rentabilidad del grupo' })).toBeVisible()
+  await expect(analysis.getByRole('heading', { name: 'Revisar costos o gastos destacados' })).toHaveCount(0)
   await analysis.getByText('Evidencia numérica del análisis', { exact: true }).click()
   const productEvidence = analysis.locator('details')
   await expect(productEvidence.getByText('Servicio A', { exact: false })).toBeVisible()

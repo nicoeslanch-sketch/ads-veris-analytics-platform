@@ -43,3 +43,11 @@ se separasen incorrectamente como palabras distintas.
 La prueba de liberacion de usuarios expirados del limitador usa un reloj
 monotonico simulado. Antes dependia de que la maquina llevara mas de un minuto
 encendida; el cambio es solo de prueba, no reduce el limite de peticiones.
+
+## Texto De Explorar
+
+La etiqueta `Utilidad sobre base con costo` activaba por error una recomendacion
+de recorte de gastos al coincidir la palabra `costo`. La clasificacion ahora
+prioriza utilidad/margen y propone comparar rentabilidad, volumen y cobertura.
+Pruebas: 191 casos de frontend, build de produccion y recorrido empresarial
+en escritorio/movil con una asercion especifica sobre esta recomendacion.

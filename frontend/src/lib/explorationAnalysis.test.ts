@@ -25,6 +25,12 @@ describe('explorationActions', () => {
     const actions = explorationActions(measure({ id: 'costo', dimensions: [{ name: 'Producto', groups: [{ name: 'A', value: 100 }] }] }), base())
     expect(actions[0].action).toContain('no demuestra ineficiencia')
   })
+  it('does not mistake profit on a matched-cost base for an expense', () => {
+    const actions = explorationActions(measure({ id: 'utilidad', label: 'Utilidad sobre base con costo', dimensions: [{ name: 'Canal', groups: [{ name: 'Online', value: 100 }] }] }), base())
+    expect(actions[0].title).toBe('Comparar rentabilidad del grupo')
+    expect(actions[0].action).toContain('no implica mayor margen ni caja disponible')
+    expect(actions[0].action).not.toContain('recortar')
+  })
   it('only suggests inactivity checks from backend ID evidence', () => {
     const selected = measure({ id: 'ingresos' })
     expect(explorationActions(selected, base()).some((row) => /sin ventas/.test(row.title))).toBe(false)
