@@ -167,6 +167,7 @@ def test_rate_limiter_reclaims_expired_users(monkeypatch):
     requests = assistant.defaultdict(assistant.deque, {'expired': assistant.deque([old])})
     monkeypatch.setattr(assistant, '_requests', requests)
     monkeypatch.setattr(assistant, '_last_rate_sweep', 0)
+    monkeypatch.setattr(assistant, 'monotonic', lambda: 120.0)
     assistant._guard_rate('active')
     assert set(requests) == {'active'}
 

@@ -69,7 +69,7 @@ class BotRequest(BaseModel):
         # coercing missing values to zero or discarding unfamiliar metric fields.
         object_paths = (
             "kpis.cobertura_costos", "kpis.devoluciones", "analisis_generico.evolucion",
-            "analisis_negocio.cobranza", "analisis_negocio.filtros", "analisis_negocio.filtros.aplicados",
+            "analisis_negocio.cobranza", "analisis_negocio.estado_resultados", "analisis_negocio.filtros", "analisis_negocio.filtros.aplicados",
             "analisis_negocio.cobranza.kpis", "analisis_negocio.cobranza.periodo",
             "analisis_negocio.cobranza.comparacion", "analisis_productos.costos",
             "analisis_productos.precios_lista", "analisis_productos.margen_potencial", "indicadores_financieros.items",

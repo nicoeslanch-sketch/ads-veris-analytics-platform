@@ -43,7 +43,7 @@ _VOCABULARY = frozenset(
     inversion inversiones largo liquidez limpiar limpieza lo los margen margenes mayor
     mejor mejores menor mes meses mi mis moneda monedas monto montos movimiento
     movimientos negocio neta netas neto nivel nombre notas obligacion obligaciones
-    operativo operativos pago pagos patrimonio periodo periodos peor perdida perdidas
+    operativo operativos operacional operacionales pago pagos patrimonio periodo periodos peor perdida perdidas
     pesos plazo por porcentaje porciones presupuesto presupuestos prestamo prestamos primero primeros producto productos
     promedio proyectado proyectados proyeccion proyectar proveedor proveedores prueba publica privada
     que quiero ratio ratios razon recaudacion recomendacion recomendaciones registro

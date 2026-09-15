@@ -1002,6 +1002,85 @@ def _answer_currency(metrics: dict[str, Any]) -> dict[str, Any]:
     return _result(answer, "metric_currency", metric_suggestions(metrics))
 
 
+def _answer_business_finances(metrics: dict[str, Any], question: str) -> dict[str, Any] | None:
+    business = metrics.get("analisis_negocio") or {}
+    statement = business.get("estado_resultados")
+    if business.get("perfil") == "cobranza_nominal" or not isinstance(statement, dict):
+        return None
+    coverage_question = _contains(question, "cobertura de costos", "costos completos", "costos es completa")
+    overview = _contains(question, "conclusion", "recomendacion", "como esta mi negocio", "resume mis datos",
+                         "resumelo", "en una frase", "que opinas", "analiza mi negocio", "que deberia hacer")
+    income_question = _contains(question, "ingresos", "ingreso total", "ventas totales", "venta total", "facturacion", "cuanto vendi")
+    cost_question = _contains(question, "mis costos", "costos totales", "costo total", "costo conocido")
+    expense_question = _contains(question, "gastos", "cuanto gaste")
+    profit_question = _contains(question, "ganancia", "utilidad", "beneficio", "cuanto gane", "cuanto ganamos")
+    margin_question = _contains(question, "margen", "rentabilidad de venta")
+    if not any((coverage_question, overview, income_question, cost_question, expense_question, profit_question, margin_question)):
+        return None
+    if re.search(r"\b(mes|meses|tendencia|evolucion|producto|productos|categoria|categorias|canal|canales|sucursal|sucursales|cliente|clientes|vendedor|vendedores)\b", question) and not coverage_question:
+        if profit_question or margin_question or cost_question or expense_question:
+            return _result("Esa medida necesita su desglose y filtro especificos. Revisa la medida en Explorar; no usare el total del negocio como si fuera el resultado de un producto, segmento o mes.",
+                           "metric_business_breakdown_needed", metric_suggestions(metrics), "medium")
+        return None
+
+    # The business dashboard has its own exclusions and matched-cost base.
+    # Missing business values must never fall back to generic, unfiltered KPIs.
+    certified = _contains(question, "certificable", "certificado")
+    coverage_key = "cobertura_costos_certificable_pct" if certified else "cobertura_costos_pct"
+    if coverage_question and _contains(question, "historica", "historico"):
+        coverage_key = "cobertura_costos_historica_pct"
+    coverage = _number(statement.get(coverage_key))
+    coverage_text = (
+        f"La cobertura de costos es {_percent(coverage)}"
+        if coverage is not None else "No hay una cobertura de costos publicada"
+    )
+    coverage_text += "; utilidad y margen solo describen la base con ingreso y costo pareados."
+    suggestions = metric_suggestions(metrics)
+    confidence = "medium" if coverage is None or coverage < 99.5 else "high"
+    if coverage_question:
+        return _result(coverage_text, "metric_business_cost_coverage", suggestions, confidence)
+    if metrics.get("moneda_mixta") or metrics.get("datos_monetarios_disponibles") is False:
+        return _result("No hay importes publicables para este alcance: separa las monedas incompatibles antes de interpretar el resultado.",
+                       "metric_business_finances_unavailable", suggestions, "medium")
+
+    currency = str(metrics.get("moneda") or "CLP")
+    facts = []
+    if income_question or overview:
+        income = _number(statement.get("ventas_observadas"))
+        facts.append(f"Ingresos: {format_amount(income, currency)}" if income is not None else "Ingresos no disponibles")
+    if cost_question:
+        cost = _number(statement.get("costo_venta_conocido"))
+        facts.append(f"Costo de venta conocido: {format_amount(cost, currency)}" if cost is not None else "Costo de venta conocido no disponible")
+    if expense_question:
+        expense = _number(statement.get("gastos_operacionales"))
+        facts.append(f"Gastos operacionales: {format_amount(expense, currency)}" if expense is not None else "Gastos operacionales no disponibles")
+    if profit_question or margin_question or overview:
+        if _contains(question, "neta", "neto") and not overview:
+            facts.append("No hay una utilidad neta publicable en este modelo; la utilidad bruta no descuenta todos los gastos e impuestos")
+        else:
+            operational = _contains(question, "operacional", "operativa", "operativo")
+            profit_key, margin_key, label = (
+                ("resultado_operacional_certificable", "margen_operacional_certificable_pct", "Resultado operacional certificable") if operational and certified else
+                ("resultado_operacional", "margen_operacional_pct", "Resultado operacional") if operational else
+                ("utilidad_certificable", "margen_certificable_pct", "Utilidad bruta certificable") if certified else
+                ("utilidad_bruta", "margen_bruto_pct", "Utilidad bruta sobre ventas con costo conocido")
+            )
+            profit, margin = _number(statement.get(profit_key)), _number(statement.get(margin_key))
+            if profit_question or overview:
+                facts.append(f"{label}: {format_amount(profit, currency)}" if profit is not None else f"{label}: no disponible")
+            if margin_question or profit_question or overview:
+                facts.append(f"Margen de esa base: {_percent(margin)}" if margin is not None else "Margen de esa base: no disponible")
+    answer = ". ".join(facts) + f".{_currency_note(metrics)}"
+    if cost_question or profit_question or margin_question or overview:
+        answer += " " + coverage_text
+        answer += " No equivale a utilidad neta ni a caja disponible."
+    elif expense_question:
+        answer += " Los gastos operacionales son distintos del costo de venta conocido."
+    else:
+        answer += " Ingresos no equivale a utilidad ni a dinero cobrado."
+    return _result(answer, "metric_business_finances", suggestions, confidence)
+
+
 def _answer_income(metrics: dict[str, Any]) -> dict[str, Any] | None:
     kpis = metrics.get("kpis") or {}
     income_kpi = kpis.get("ingresos_totales")
@@ -1770,6 +1849,9 @@ def answer_metrics_question(
     generic_answer = _answer_generic_profile(metrics, original_question, history)
     if generic_answer is not None:
         return generic_answer
+    business_answer = _answer_business_finances(metrics, question)
+    if business_answer is not None:
+        return business_answer
     if metrics.get("analisis_inventario") and _contains(question, "inventario", "stock", "sucursal", "comprometidas", "conteo", "bajo el minimo", "resumen", "conclusion"):
         return _answer_inventory(metrics, question)
 
