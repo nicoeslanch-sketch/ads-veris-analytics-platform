@@ -3,7 +3,7 @@
 ## Alcance y estado
 
 Esta entrega reduce texto en Explorar, introduce evidencia de inactividad por ID,
-y prepara/aplica una cuota central de Storage mediante subidas controladas.
+y aplica una cuota central de Storage mediante subidas controladas.
 No certifica usuarios simultaneos ni convierte todavia el pipeline clasico en
 una cola durable con workers independientes. No se contrato ningun plan.
 
@@ -60,8 +60,11 @@ refleja el tamano esperado. No borrar reservas inciertas por antiguedad sin
 comprobar que no existe una escritura pendiente.
 
 Orden de activacion: migracion de reservas; API nueva y comprobacion; frontend
-con subida gestionada; cierre de INSERT directo al bucket mediante una segunda
-migracion. No cerrar la politica antes de que ambos despliegues esten listos.
+con subida gestionada; cierre de INSERT/UPDATE directo al bucket mediante una
+segunda migracion. Ambas fases estan aplicadas; la segunda es
+`20260915004403_require_managed_storage_uploads` (fecha UTC). Se verificaron sus
+politicas RESTRICTIVE para authenticated y se conservaron las politicas de lectura.
+No cerrar la politica antes de que ambos despliegues esten listos.
 Las pestañas antiguas requieren recarga para usar la nueva ruta de subida.
 La consolidacion experimental de mas de 15 MiB queda fuera de este camino y
 requiere ingesta y worker dedicados; no se habilito en produccion.
@@ -88,6 +91,22 @@ borde, alertas operativas y restauracion comprobada de backups. La cuota nueva
 cubre objetos Storage, NO todos los bytes de tablas, snapshots JSON, logs,
 transferencia o facturacion de proveedores. Un pentest independiente sigue siendo
 recomendable antes de tratar informacion especialmente sensible a gran escala.
+
+La verificacion en la sesion de produccion mostro la cuota (46,1/500 MiB,
+9/50 originales) y el analisis del libro PYME con las tres hojas de ventas y
+costos conectados por SKU. El primer calculo aun tardo varios minutos: esta
+entrega no declara resuelta la latencia de procesamiento. El bot se probo con
+preguntas de inactividad y seguimiento; se corrigio una repeticion cuando no
+habia evidencia temporal suficiente, conservando la distincion entre guia
+general y diagnostico de un producto concreto.
+
+Pruebas de la entrega: suite backend previa de 1.013 casos aprobados, mas cuatro
+regresiones del seguimiento conversacional; frontend 186 aprobados y flujo
+Playwright 19 aprobados / 1 omitido (libro real opcional). El ultimo cambio de
+version/cuotas se comprobo con 30 casos y la suite conversacional con 95.
+Avisos pendientes del advisor:
+[MFA](https://supabase.com/docs/guides/auth/auth-mfa) y
+[proteccion de contrasenas filtradas](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
 
 ## De que depende la capacidad
 

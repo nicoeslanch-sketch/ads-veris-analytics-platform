@@ -1634,9 +1634,21 @@ def answer_metrics_question(
         return None
     inactivity = r"(sin ventas|sin vender|no se venden|no se vendieron|producto.*estancad)"
     previous = " ".join(normalize_query(str(row.get("content") or "")) for row in (history or [])[-2:])
-    if re.search(inactivity, original_question) or (re.search(inactivity, previous) and re.search(r"(que hago|retiro|reinviert|marketing|dejo de invertir)", original_question)):
+    decision_followup = bool(re.search(inactivity, previous) and re.search(r"(que hago|retiro|reinviert|marketing|dej(?:o|ar) de invertir)", original_question))
+    if re.search(inactivity, original_question) or decision_followup:
         activity = metrics.get("actividad_productos")
         if not isinstance(activity, dict):
+            if decision_followup:
+                return _result(
+                    "Antes de retirar o reinvertir en productos sin ventas, comprueba cuatro cosas: "
+                    "1) que el historial por ID incluya todos los meses y canales; "
+                    "2) si hubo stock disponible; 3) si la demanda es estacional; "
+                    "4) el margen con costos completos. Si la baja persiste, prueba un ajuste "
+                    "acotado de precio, promocion o presentacion y compara resultados. "
+                    "Es una guia de revision, no un diagnostico de un producto de tu archivo: "
+                    "todavia falta evidencia para recomendar retirarlo.",
+                    "metric_product_activity_guidance", ["Cobertura de costos", "Calidad de los datos"], "medium",
+                )
             return _result("No hay evidencia suficiente por ID y fechas para identificar productos sin ventas durante tres meses completos consecutivos. Un producto ausente del ranking no demuestra que no se venda. Revisa cobertura temporal e identificadores.", "metric_product_activity_missing", ["Calidad de los datos"], "medium")
         if re.search(r"\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|20\d{2})\b", original_question):
             return _result("El diagnóstico de inactividad corresponde al corte y filtros actuales. No tengo un diagnóstico independiente para ese otro período: cambia los filtros en Explorar y vuelve a consultar.", "metric_product_activity_scope", ["Filtros activos"], "medium")

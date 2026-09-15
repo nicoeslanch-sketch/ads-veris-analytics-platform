@@ -95,6 +95,22 @@ def test_storage_quota_answers_are_not_financial_loan_advice(question):
     assert 'duplicados' in answer['answer']
 
 
+@pytest.mark.parametrize('followup', ['Y que hago', 'Entonces lo retiro', 'Y que hago antes de dejar de invertir en uno', 'Pruebo marketing'])
+def test_product_decision_without_evidence_still_offers_bounded_guidance(followup):
+    metrics = sales_metrics()
+    question = 'Que productos llevan meses sin vender'
+    first = answer_for(question, metrics=metrics)
+    history = [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': first['answer']}]
+    answer = answer_for(followup, metrics=metrics, history=history)
+    assert answer['matched_key'] == 'metric_product_activity_guidance'
+    assert answer['confidence'] == 'medium'
+    for word in ['stock', 'estacional', 'costos completos', 'falta evidencia']:
+        assert word in answer['answer']
+    assert 'Producto Azul' not in answer['answer']
+    unrelated = answer_for('cuanto vendi en enero', metrics=metrics, history=history)
+    assert unrelated['matched_key'] != 'metric_product_activity_guidance'
+
+
 @pytest.mark.parametrize('metrics', [
     {'clientes': {'top': 'mal'}}, {'analisis_generico': {'evolucion': 'mal'}},
     {'analisis_negocio': {'cobranza': {'kpis': []}}}, {'analisis_productos': 'mal'},
