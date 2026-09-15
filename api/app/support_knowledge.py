@@ -128,6 +128,10 @@ ARTICLES: list[dict[str, Any]] = [
 
 
 ARTICLES.extend([
+    article("platform_capacity", "rendimiento", "Usuarios simultáneos de la plataforma", ["usuarios simultaneos", "usuarios pueden usar", "usuarios soporta", "personas al mismo tiempo", "usar la plataforma al mismo tiempo", "capacidad de la plataforma", "depende de render"], "No hay una cifra certificada de usuarios simultáneos. El límite inicial es un trabajo pesado en ejecución; no significa un único usuario conectado. La capacidad depende de CPU, memoria, tamaño y complejidad de los archivos, consultas y almacenamiento. Render ejecuta el motor, Vercel sirve la interfaz y Supabase aporta datos y archivos. Aumentar un plan ayuda, pero hacen falta pruebas de carga y separar el procesamiento para estimar una capacidad real.", "¿Quieres saber qué hace la cola o cómo protege la limpieza?", 90),
+    article("queue_recovery", "rendimiento", "Recuperación de trabajos guardados", ["reinicia el servidor", "reinicio del servidor", "pierdo la limpieza", "recuperar trabajo", "recuperacion de trabajos", "interrumpe el proceso"], "Los trabajos de análisis, estandarización y limpieza por lote, y exportación multihoja de fuentes guardadas registran su estado en una cola persistente. Tras una interrupción pueden recuperarse con intentos limitados; algunas fases se ejecutan de nuevo, no se continúa desde una celda exacta. No es una garantía para archivos enviados directamente sin fuente guardada ni para todas las rutas síncronas. Revisa el estado confirmado en Historial antes de volver a subir el archivo.", "¿El trabajo está pendiente, en ejecución o terminó con un error?", 90),
+    article("queue_speed", "rendimiento", "Cola de procesamiento y velocidad", ["cola de procesamiento", "que hace la cola", "la cola hace", "cola mas rapida", "cola acelera", "que es la cola"], "La cola organiza los trabajos y conserva su estado; no añade CPU ni acelera por sí sola el cálculo del Excel. Evita acumular archivos completos en memoria mientras esperan y limita cuántos trabajos se admiten. Un primer análisis pesado puede seguir tardando minutos; un resultado compatible ya guardado se reutiliza. El consumidor actual comparte recursos con la API: un proceso independiente está preparado, pero todavía no está contratado.", "¿Quieres revisar recuperación, capacidad o el efecto sobre la limpieza?", 90),
+    article("queue_correctness", "rendimiento", "Efecto de la cola sobre la limpieza y descarga", ["cola afecta la limpieza", "cola cambia la limpieza", "cola elimina duplicados", "cola afecta la descarga", "afecta en algo la limpieza", "sigue limpiando igual"], "La cola conserva las mismas reglas, mapeos, filtros y decisión sobre duplicados. No omite pasos de limpieza para ahorrar tiempo ni borra duplicados sin la decisión elegida. La exportación usa esa configuración; el trabajo no anuncia una descarga lista si no pudo guardar su resultado. Una cuota llena, una fuente eliminada o una conexión interrumpida todavía pueden requerir corregir el problema y reintentar; no se promete que toda descarga siempre termine.", "¿Quieres revisar el estado del trabajo o la cuota de almacenamiento?", 90),
     article("batch_progress", "limpieza", "Progreso por hoja", ["por que demora la limpieza", "porque demora la limpieza", "limpieza tarda", "error limpiar", "limpieza con errores", "servidor al limpiar"], "La limpieza multihoja muestra el avance de apertura, procesamiento y guardado. Cada hoja conserva sus reglas y la decision de duplicados. Si una hoja falla, revisa su detalle y reintenta las pendientes. Un error de conexion no demuestra que se hayan perdido datos: Historial permite recuperar el estado confirmado por el servidor.", "¿El error aparece al abrir, procesar o guardar?", 90),
     article("joined_import", "google_sheets", "Importar Google Sheets", ["como importo google sheets", "importo google", "conectar las hojas google"], "En Conectores pega el enlace de la pestaña de Google Sheets. Debe ser accesible en modo lectura; no publiques una hoja con informacion sensible. El enlace con gid identifica una pestaña. La fuente importada pasa por el mismo motor de estandarizacion y limpieza.", "¿Tienes el enlace de la pestaña que necesitas?", 85),
     article("ambiguous_values", "calidad", "Valores ambiguos", ["numero ambiguo", "fecha ambigua", "valor ilegible", "no interpreta", "31 de febrero", "dato dudoso"], "Si una fecha o cifra no se puede interpretar con seguridad, se conserva el texto original y se señala para revision. No se sustituye por cero ni se inventa un valor. Los indicadores declaran la cobertura y omiten los valores no interpretables del calculo que los requiere.", "¿Qué columna y valor necesitas revisar?", 80),
@@ -201,6 +205,19 @@ def answer_for(
                 "suggestions": suggestions[:4]}
     message = re.sub(r"^(?:hola|muchas gracias|gracias|por favor)[, ]+(?:y\s+)?(?=\S)", "", message, flags=re.I)
     normalized = normalize_query(message)
+    # A question about processing rules is not a request to count duplicates.
+    if re.search(r"\b(limpieza|descarga|descargar|duplicados)\b", normalized) and re.search(
+        r"\b(afecta|cambia|eliminar|elimina|omite|igual|puedo)\b", normalized,
+    ):
+        previous_context = ' '.join(normalize_basic(item.get('content') or '') for item in (history or [])[-2:])
+        queue_context = bool(re.search(r"\bcola\b", normalized)) or bool(
+            re.search(r"\b(eso|y)\b", normalized)
+            and re.search(r"\b(cola|usuarios|reinicia|reinicio)\b", previous_context)
+        )
+        if queue_context:
+            item = next(row for row in ARTICLES if row['key'] == 'queue_correctness')
+            return {"answer": item['response'], "matched_key": item['key'], "confidence": "high",
+                    "suggestions": ["Cuota de almacenamiento", "Recuperación de trabajos guardados", "Descargar datos limpios"]}
     financial_topics = (
         r"\b(ingresos|ventas|facturacion)\b",
         r"\b(ganancia|ganancias|utilidad|beneficio|beneficios)\b",

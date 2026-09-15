@@ -115,12 +115,21 @@ _VOCABULARY = frozenset(
     enero febrero marzo abril mayo junio julio agosto septiembre setiembre octubre noviembre diciembre
     ayer trimestre semestre pasado siguiente respecto versus crecieron crecio subio bajo
     almacenamiento almacenar guardado guardar guardados espacio lleno llena cuota cuotas
+    usuario usuarios simultaneo simultaneos simultaneamente concurrencia plataforma
+    personas soporta soportar usar usarse usarla pueden mismo cola colas procesamiento
+    reinicia reiniciar reinicio reinicios interrumpe interrupcion pierde pierdo perdido
+    recupera recuperar recuperacion acelera afecta cambia correccion
     """.split()
 )
 
 
 # Errores frecuentes observados en conversaciones reales y variantes foneticas.
 _TYPO_ALIASES = {
+    "usaurios": "usuarios",
+    "usuairos": "usuarios",
+    "simultaneoss": "simultaneos",
+    "reinico": "reinicio",
+    "prosesamiento": "procesamiento",
     "analis": "analisis",
     "anlisis": "analisis",
     "balanse": "balance",
@@ -206,6 +215,8 @@ _TYPO_ALIASES = {
 # Atajos muy habituales. El segmentador cubre otras combinaciones, mientras estas
 # entradas permiten tolerar incluso una pequena errata dentro de una frase pegada.
 _JOINED_ALIASES = {
+    "cuantosusuariospuedenusarlaplataforma": "cuantos usuarios pueden usar la plataforma",
+    "cuantosusuariossoporta": "cuantos usuarios soporta",
     "analisisfinanciero": "analisis financiero",
     "analisisvertical": "analisis vertical",
     "analisishorizontal": "analisis horizontal",

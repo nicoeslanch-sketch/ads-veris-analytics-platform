@@ -73,9 +73,22 @@ la admision falla con 503; no crea silenciosamente otra cola local con duplicado
 
 ## Verificacion
 
-Regresion local: 1.047 pruebas backend y 190 frontend aprobadas; build de
+Regresion local: 1.087 pruebas backend y 190 frontend aprobadas; build de
 produccion correcto; Playwright 19 aprobadas y 1 auditoria opcional omitida.
 Los escenarios incluyen multihoja, descarga, relaciones y conversaciones del bot.
+
+Verificacion en produccion de `1257d76`: Render declara modo `embedded` y la
+migracion esperada; Vercel publica el mismo commit. El analisis del libro PYME
+termino en 146 segundos, intento 1, con 172.983 bytes de resultado persistente.
+Conservo ingresos de 13.753.355.801 CLP. Reabrir Explorar recupero ese resultado
+sin otro trabajo ni intento. Una consulta sin sesion al ID real devolvio 401.
+Esta medicion individual no es un benchmark de concurrencia ni prueba una
+interrupcion real del proceso en produccion.
+
+El bot distingue ingresos, utilidad y caja con los indicadores publicados.
+Se incorporaron cuatro guias sobre capacidad, cola, recuperacion y efectos en
+la limpieza, con pruebas de erratas, palabras pegadas y cambios de tema. No
+promete una capacidad certificada ni descargas infalibles.
 
 Pruebas SQL reales, en una transaccion revertida: idempotencia, propiedad,
 limite global de ejecucion, validacion de fuente, recuperacion tras lease vencido,
