@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import csv
+from datetime import date, timedelta
 import io
 import json
 import math
@@ -118,11 +119,13 @@ class Lab:
         self.peak = {}
         self.stop = threading.Event()
         self.report = {'scope': 'ephemeral local Supabase; not production capacity certification',
+                       'commit_sha': os.environ.get('GITHUB_SHA', 'local'),
                        'parameters': {'accounts': args.clients, 'rows': args.rows, 'seconds': args.seconds},
                        'cpu_count': os.cpu_count(), 'checks': {}, 'passed': False,
                        'safety': {'production_requests': 0, 'customer_files_read': 0}}
         self.tmp = tempfile.TemporaryDirectory(prefix='ads-capacity-')
         self.env = {**os.environ, 'CAPACITY_LAB_ISOLATED': '1', 'APP_ENV': 'development',
+                    'GIT_SHA': os.environ.get('GITHUB_SHA', 'local'),
                     'SUPABASE_URL': self.base, 'SUPABASE_SERVICE_ROLE_KEY': self.status['SERVICE_ROLE_KEY'],
                     'SUPABASE_JWT_SECRET': self.status['JWT_SECRET'], 'SUPABASE_STORAGE_BUCKET': 'datasets',
                     'DEV_AUTH_BYPASS': 'false', 'PLAN_ENFORCEMENT': 'true',
@@ -310,6 +313,7 @@ class Lab:
         # Two consumers must still respect the one-running-job database limit.
         self.start('worker', '--worker')
         in_flight, completed, sequences = {}, [], [0] * len(self.accounts)
+        timings = {}
         max_running, submitted = 0, 0
         next_submit = [start] * len(self.accounts)
         with ThreadPoolExecutor(max_workers=len(self.accounts)) as executor:
@@ -318,9 +322,9 @@ class Lab:
                 if now - start > self.args.seconds + 180:
                     raise TimeoutError('Queue did not drain within 180 seconds')
                 for i, account in enumerate(self.accounts):
-                    if i not in in_flight and now >= next_submit[i] and now - start < self.args.seconds and submitted < 40:
+                    if i not in in_flight and now >= next_submit[i] and now - start < self.args.seconds and submitted < 300:
                         sequences[i] += 1
-                        day = f'2026-02-{sequences[i]:02}'
+                        day = (date(2026, 2, 1) + timedelta(days=sequences[i] - 1)).isoformat()
                         in_flight[i] = self.submit(account, day)
                         submitted += 1
                         next_submit[i] = now + 10
@@ -331,18 +335,23 @@ class Lab:
                         job = in_flight.pop(i)
                         self.verify_result(job, result)
                         completed.append({'id': job['id'], 'observed_seconds': round(time.monotonic() - job['start'], 3)})
-                running = self.sql("select count(*) from app_private.analysis_queue_jobs where status='running';")
+                # Capture timings before the bounded operational queue evicts
+                # older results. Do not increase production retention for a test.
+                state = self.sql("select json_build_object('running', (select count(*) from "
+                                 "app_private.analysis_queue_jobs where status='running'), 'completed', "
+                                 "(select coalesce(json_agg(json_build_object('id',job_id,"
+                                 "'wait',extract(epoch from started_at-created_at),"
+                                 "'processing',extract(epoch from updated_at-started_at))), '[]'::json) "
+                                 "from app_private.analysis_queue_jobs where status='completed'));")
+                timings.update({row['id']: row for row in state['completed']})
+                running = state['running']
                 max_running = max(max_running, running)
                 assert running <= 1, 'Global concurrency limit violated'
                 time.sleep(.5)
         elapsed = time.monotonic() - start
         assert len(completed) == submitted and submitted >= len(self.accounts)
         ids = {job['id'] for job in completed}
-        records = self.sql("select coalesce(json_agg(json_build_object('id',job_id,"
-                           "'wait',extract(epoch from started_at-created_at),"
-                           "'processing',extract(epoch from updated_at-started_at))), '[]'::json) "
-                           "from app_private.analysis_queue_jobs where status='completed';")
-        records = [row for row in records if row['id'] in ids]
+        records = [row for key, row in timings.items() if key in ids]
         assert len(records) == submitted
         self.report['sustained'] = {'submitted': submitted, 'completed': len(completed),
                                     'elapsed_seconds': round(elapsed, 3), 'observed_max_running': max_running,
@@ -350,7 +359,7 @@ class Lab:
                                     'queue_wait_seconds': quantiles([row['wait'] for row in records]),
                                     'processing_seconds': quantiles([row['processing'] for row in records]),
                                     'end_to_end_seconds': quantiles([row['observed_seconds'] for row in completed]),
-                                    'offered_load': 'closed loop, one outstanding/account, >=10s between starts, max 40 jobs'}
+                                    'offered_load': 'closed loop, one outstanding/account, >=10s between starts, max 300 jobs'}
         self.report['checks'].update(all_synthetic_totals_match=True, two_consumers_respect_global_limit=True)
 
     def run(self):

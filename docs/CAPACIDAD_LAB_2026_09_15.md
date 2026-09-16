@@ -30,7 +30,7 @@ de produccion, red de Render, latencia geograficamente distribuida ni facturacio
 
 Parametros acotados: 2-10 cuentas, 100-10.000 filas/CSV, 60-300 segundos de carga.
 Un trabajo pendiente por cuenta, al menos 10 segundos entre inicios y maximo
-40 trabajos. Drenaje maximo de 180 segundos. Es una carga cerrada controlada,
+300 trabajos. Drenaje maximo de 180 segundos. Es una carga cerrada controlada,
 no una busqueda del punto de saturacion ni una prueba de muchas horas.
 
 El artefacto JSON registra p50/p95/max de HTTP, espera en cola, ejecucion y tiempo
@@ -60,3 +60,48 @@ Antes de ofrecer un SLA: aprobar presupuesto, crear staging separado, repetir
 con XLSX multihoja representativos y carga sostenida mas larga, medir memoria
 total y latencia de red, y comprobar backup/restauracion. No aumentar workers
 ni cuotas de produccion solo a partir de estos resultados.
+
+## Correcciones encontradas al preparar el entorno
+
+La migracion de permisos `20260914004735` asumia que existia
+`public.rls_auto_enable()`, una funcion que puede instalar la plataforma alojada
+pero no viene en una base nueva del CLI. Se hizo condicional solo esa revocacion:
+si existe se conserva el endurecimiento; no se crean funciones vacias ni se
+rebajan permisos. El cambio permite reproducir el esquema desde cero; no exige
+volver a aplicar esa migracion en la base de produccion ya migrada.
+
+El consumidor externo incrementaba la espera tambien al encontrar una cola
+vacia, hasta 60 segundos. Ahora mantiene el intervalo configurado en una cola
+sana (5 segundos por defecto, 1 en el laboratorio). El backoff hasta 60 segundos
+se conserva para errores de conexion y se reinicia al recuperar el servicio.
+Tres pruebas cubren inactividad prolongada, fallos y recuperacion.
+
+Regresion local tras esos cambios: 1.131 pruebas backend aprobadas. El CI de
+`9ade9a8` tambien aprobo backend, frontend, build, E2E y dependencias.
+
+## Primera ejecucion
+
+[Run 35039757641](https://github.com/nicoeslanch-sketch/ads-veris-analytics-platform/actions/runs/35039757641),
+commit `9ade9a8`, runner Linux de 4 CPU, 5 cuentas, CSV de 4.000 filas cada uno:
+
+| Medida | Resultado |
+| --- | ---: |
+| Analisis correctos / admitidos | 40 / 40 |
+| Ventana observada | 120,29 s |
+| Espera en cola p95 | 3,135 s |
+| Calculo p95 | 0,929 s |
+| Tiempo completo p95 | 4,723 s |
+| Admision HTTP p95 | 61,997 ms |
+| Consulta de estado HTTP p95 | 94,241 ms |
+| Pico de RSS API / consumidor individual | 187,74 / 156,80 MiB |
+| Recuperacion tras caida del consumidor | 121,784 s, intento 2 |
+
+Todos los controles de aislamiento, cuota de cola, cancelacion, reinicio e
+idempotencia pasaron. El 429 fue provocado y esperado. Cero peticiones de carga
+a produccion y cero archivos de clientes leidos.
+
+Esta primera version tenia un tope de 40 trabajos, por lo que parte de la
+ventana quedo sin nuevas admisiones. Sus 19,952 trabajos/minuto son el ritmo
+observado de una prueba acotada, NO la capacidad maxima del sistema. La siguiente
+version mantiene carga durante la ventana (hasta 300 trabajos) y conserva las
+mediciones antes de la eliminacion normal de resultados antiguos en la cola.
