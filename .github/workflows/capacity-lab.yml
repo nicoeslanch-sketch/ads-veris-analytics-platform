@@ -28,8 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      LAB: ${{ runner.temp }}/ads-capacity-lab
-      STATUS_FILE: ${{ runner.temp }}/capacity-status.json
+      LAB: /tmp/ads-capacity-lab-${{ github.run_id }}
+      STATUS_FILE: /tmp/capacity-status-${{ github.run_id }}.json
       CLIENTS: ${{ inputs.clients }}
       ROWS: ${{ inputs.rows }}
       SECONDS: ${{ inputs.seconds }}
