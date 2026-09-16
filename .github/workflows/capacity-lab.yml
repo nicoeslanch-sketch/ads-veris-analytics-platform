@@ -32,7 +32,7 @@ jobs:
       STATUS_FILE: /tmp/capacity-status-${{ github.run_id }}.json
       CLIENTS: ${{ inputs.clients }}
       ROWS: ${{ inputs.rows }}
-      SECONDS: ${{ inputs.seconds }}
+      DURATION_SECONDS: ${{ inputs.seconds }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -60,7 +60,7 @@ jobs:
         run: >-
           python scripts/benchmark_durable_local.py
           --status-file "$STATUS_FILE" --clients "$CLIENTS" --rows "$ROWS"
-          --seconds "$SECONDS" --output artifacts/capacity-lab.json
+          --seconds "$DURATION_SECONDS" --output artifacts/capacity-lab.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
