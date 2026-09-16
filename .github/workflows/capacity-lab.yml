@@ -1,0 +1,73 @@
+name: Capacity lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      clients:
+        description: Synthetic authenticated accounts (2-10)
+        default: '5'
+        required: true
+      rows:
+        description: Rows per synthetic CSV (100-10000)
+        default: '4000'
+        required: true
+      seconds:
+        description: Sustained observation window (60-300)
+        default: '120'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-capacity-lab
+  cancel-in-progress: false
+
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      LAB: ${{ runner.temp }}/ads-capacity-lab
+      STATUS_FILE: ${{ runner.temp }}/capacity-status.json
+      CLIENTS: ${{ inputs.clients }}
+      ROWS: ${{ inputs.rows }}
+      SECONDS: ${{ inputs.seconds }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+      - run: pip install -r api/requirements.txt
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.0
+      - name: Start disposable Supabase (no production secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$LAB"
+          supabase init --workdir "$LAB" --yes
+          mkdir -p "$LAB/supabase/migrations"
+          cp supabase/migrations/*.sql "$LAB/supabase/migrations/"
+          supabase start --workdir "$LAB" -x studio,realtime,analytics,vector,imgproxy,edge-runtime 2>&1 | sed -E 's/eyJ[A-Za-z0-9_.-]+/[LOCAL-JWT-REDACTED]/g; s/sb_secret_[A-Za-z0-9_-]+/[LOCAL-KEY-REDACTED]/g'
+          supabase status --workdir "$LAB" -o json > "$STATUS_FILE"
+          chmod 600 "$STATUS_FILE"
+          psql --version
+      - name: Real queue, separate processes, bounded load and crash recovery
+        run: >-
+          python scripts/benchmark_durable_local.py
+          --status-file "$STATUS_FILE" --clients "$CLIENTS" --rows "$ROWS"
+          --seconds "$SECONDS" --output artifacts/capacity-lab.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capacity-lab-${{ github.run_id }}
+          path: artifacts/capacity-lab.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Stop disposable infrastructure
+        if: always()
+        run: supabase stop --workdir "$LAB" --no-backup
