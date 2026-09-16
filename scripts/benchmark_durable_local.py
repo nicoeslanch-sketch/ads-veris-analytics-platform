@@ -232,7 +232,7 @@ class Lab:
         return result
 
     def verify_result(self, job, result):
-        assert result['status'] == 'completed', f"Job ended as {result['status']}"
+        assert result['status'] == 'completed', f"Job ended as {result['status']}: {result.get('error')}"
         assert result['result']['kpis']['ingresos_totales']['valor'] == job['expected'], 'Incorrect income total'
 
     def wait_result(self, job, timeout=240):

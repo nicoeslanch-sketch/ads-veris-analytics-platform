@@ -165,13 +165,17 @@ class AnalysisWorker:
             except Exception:
                 logger.exception("durable_analysis_queue_unavailable")
                 worked = False
+                delay = min(60, delay * 1.5)
+            else:
+                # An empty healthy queue is not an outage. External consumers
+                # have no in-process wake signal from the API.
+                delay = self.settings.analysis_worker_poll_seconds
             if worked:
                 gc.collect()
                 delay = self.settings.analysis_worker_poll_seconds
                 continue
             WAKE.wait(delay)
             WAKE.clear()
-            delay = min(60, delay * 1.5)
 
     def shutdown(self):
         self.stop.set()

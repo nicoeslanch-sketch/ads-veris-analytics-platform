@@ -138,6 +138,34 @@ def test_worker_does_not_claim_while_legacy_work_owns_memory_slot():
     assert not repo.calls
 
 
+@pytest.mark.parametrize('outcomes,expected', [
+    ([False] * 12, [5] * 12),
+    ([RuntimeError(), RuntimeError(), False, False], [7.5, 11.25, 5, 5]),
+    ([RuntimeError()] * 12, [7.5, 11.25, 16.875, 25.3125, 37.96875, 56.953125] + [60] * 6),
+])
+def test_worker_only_backs_off_on_queue_failure(monkeypatch, outcomes, expected):
+    from app import analysis_worker as module
+    worker = AnalysisWorker(settings(analysis_worker_poll_seconds=5), FakeRepository())
+    pending = iter(outcomes)
+    waits = []
+
+    def run_once():
+        value = next(pending)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def wait(delay):
+        waits.append(delay)
+        if len(waits) == len(outcomes):
+            worker.stop.set()
+
+    monkeypatch.setattr(worker, 'run_once', run_once)
+    monkeypatch.setattr(module, 'WAKE', Mock(wait=wait))
+    worker.run()
+    assert waits == expected
+
+
 def test_worker_hides_unexpected_exception_details():
     repo = FakeRepository()
     def execute(*_):

@@ -52,7 +52,7 @@ jobs:
           supabase init --workdir "$LAB" --yes
           mkdir -p "$LAB/supabase/migrations"
           cp supabase/migrations/*.sql "$LAB/supabase/migrations/"
-          supabase start --workdir "$LAB" -x studio,realtime,analytics,vector,imgproxy,edge-runtime 2>&1 | sed -E 's/eyJ[A-Za-z0-9_.-]+/[LOCAL-JWT-REDACTED]/g; s/sb_secret_[A-Za-z0-9_-]+/[LOCAL-KEY-REDACTED]/g'
+          supabase start --workdir "$LAB" -x studio,realtime,logflare,vector,imgproxy,edge-runtime 2>&1 | sed -E 's/eyJ[A-Za-z0-9_.-]+/[LOCAL-JWT-REDACTED]/g; s/sb_secret_[A-Za-z0-9_-]+/[LOCAL-KEY-REDACTED]/g'
           supabase status --workdir "$LAB" -o json > "$STATUS_FILE"
           chmod 600 "$STATUS_FILE"
           psql --version
