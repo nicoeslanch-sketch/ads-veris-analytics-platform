@@ -105,3 +105,79 @@ ventana quedo sin nuevas admisiones. Sus 19,952 trabajos/minuto son el ritmo
 observado de una prueba acotada, NO la capacidad maxima del sistema. La siguiente
 version mantiene carga durante la ventana (hasta 300 trabajos) y conserva las
 mediciones antes de la eliminacion normal de resultados antiguos en la cola.
+
+## Prueba ampliada del 16 de septiembre
+
+[Run 35079093577](https://github.com/nicoeslanch-sketch/ads-veris-analytics-platform/actions/runs/35079093577),
+commit `6b2dac5`, runner Linux de 4 CPU. Diez cuentas independientes y diez CSV
+sinteticos de 10.000 filas cada uno; filtros sucesivos, no 300 importaciones nuevas.
+La API y dos consumidores son procesos separados en el mismo runner, no maquinas
+de Render con recursos dedicados. Autenticacion, base de datos y Storage reales.
+
+| Medida | Resultado |
+| --- | ---: |
+| Analisis correctos / admitidos | 300 / 300 |
+| Duracion de la carga | 300,186 s |
+| Ritmo ofrecido y completado aproximado | 60 trabajos/minuto |
+| Espera en cola p50 / p95 / maxima | 2,389 / 3,648 / 10,584 s |
+| Calculo p50 / p95 / maximo | 0,423 / 0,515 / 1,590 s |
+| Tiempo completo p50 / p95 / maximo | 3,377 / 4,507 / 11,538 s |
+| Admision HTTP p95 | 55,616 ms |
+| Consulta de estado HTTP p95 | 116,290 ms |
+| Pico RSS de API / consumidor individual | 217,99 / 196,64 MiB |
+| Recuperacion de caida | 122,052 s; mismo ID; intento 2; total correcto |
+
+Pasaron aislamiento entre cuentas, JWT obligatorio, denegacion de RPC privada,
+idempotencia, persistencia tras reiniciar la API, cancelacion, cuota por cuenta
+y coordinacion de los dos consumidores con un solo trabajo pesado simultaneo.
+El unico 429 fue solicitado por el escenario de cuota, no un fallo inesperado.
+Las 1.873 consultas de estado registradas respondieron HTTP 200. No se tocaron
+datos de clientes ni se enviaron peticiones de carga a produccion.
+
+El escenario cumple los objetivos numericos de latencia de este laboratorio.
+No permite afirmar cuantos usuarios soporta un plan Render: faltan red real,
+limites de CPU/RAM del plan, XLSX complejos, importaciones/exportaciones repetidas,
+mezcla realista y mayor duracion. El RSS medido no incluye Supabase ni demuestra
+el margen de memoria de archivos grandes. No se cambio la concurrencia global.
+
+Evidencia completa, sin credenciales y conservada en Git:
+[primera prueba](evidence/capacity-lab-35039757641.json) y
+[prueba ampliada](evidence/capacity-lab-35079093577.json).
+
+Publicacion verificada: Vercel Ready en `6b2dac5`; API Render en `65e3553`, el
+ultimo cambio de codigo de API de esta etapa. Los commits posteriores modifican
+laboratorio/documentacion. Produccion conserva `embedded`: no se contrato ni se
+activo un servicio de procesamiento externo. En una comprobacion de disponibilidad
+la primera consulta de version agoto 30 segundos y la siguiente respondio bien;
+no se atribuye una causa sin telemetria y no cuenta como prueba de latencia cloud.
+
+## Criterios propuestos para el piloto, todavia no certificados
+
+Estos umbrales son objetivos internos de aceptacion, no promesas contractuales.
+El laboratorio informa tiempos; no aprueba automaticamente un plan comercial.
+
+| Control | Objetivo inicial |
+| --- | --- |
+| Totales y aislamiento | Cero resultados incorrectos o acceso entre cuentas |
+| Tareas admitidas | Cero tareas perdidas o duplicadas tras reinicios |
+| API ligera: admision y consulta de estado | p95 menor de 1 segundo |
+| CSV de 10.000 filas del escenario definido | p95 completo menor de 30 segundos |
+| Recuperacion del consumidor interrumpido | Menos de 180 segundos con infraestructura disponible |
+| Recursos de cada instancia elegida | Pico menor del 75% de su limite de RAM; sin OOM ni reinicios |
+| Errores HTTP inesperados bajo carga aceptada | Menos de 0,1%; informar por separado los 429 esperados |
+
+Antes de aprobar: repetir en staging separado durante al menos dos horas, con
+datos sinteticos representativos, flujos frios/calientes y una mezcla explicita
+de lectura, subida, limpieza y descarga. Medir errores, admisiones/rechazos,
+cola, memoria total y CPU por instancia. Revisar percentiles por tipo de archivo,
+no mezclar lecturas de cache rapidas con importaciones lentas en un solo promedio.
+
+Incluir XLSX de una y varias hojas, formatos heterogeneos, archivos cercanos al
+limite permitido, concurrencia entre cuentas y descargas tras cambiar de proceso.
+Los tiempos de XLSX grandes necesitan objetivos propios obtenidos de esa prueba;
+no se les asigna el umbral del CSV pequeno. Mantener 1 plaza de calculo hasta
+demostrar margen de RAM y CPU antes de aumentar a 2.
+
+Un resultado satisfactorio certificaria solamente la configuracion, mezcla,
+tamano, concurrencia y duracion efectivamente ensayados. No demuestra seguridad
+absoluta ni capacidad ilimitada, y no sustituye auditoria ni prueba de respaldo.

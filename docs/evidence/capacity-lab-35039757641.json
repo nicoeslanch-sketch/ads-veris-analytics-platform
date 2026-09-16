@@ -1,0 +1,95 @@
+{
+  "scope": "ephemeral local Supabase; not production capacity certification",
+  "parameters": {
+    "accounts": 5,
+    "rows": 4000,
+    "seconds": 120
+  },
+  "cpu_count": 4,
+  "checks": {
+    "idempotency": true,
+    "api_restart_preserves_queue": true,
+    "unauthenticated_rejected": true,
+    "cross_account_isolation": true,
+    "private_rpc_denied": true,
+    "per_account_admission_limit": true,
+    "queued_cancellation": true,
+    "worker_crash_recovers_without_lost_job": true,
+    "all_synthetic_totals_match": true,
+    "two_consumers_respect_global_limit": true
+  },
+  "passed": true,
+  "safety": {
+    "production_requests": 0,
+    "customer_files_read": 0
+  },
+  "queue_limits": {
+    "singleton": true,
+    "max_active": 32,
+    "max_user_active": 3,
+    "max_running": 1
+  },
+  "version": {
+    "status": "ok",
+    "commit_sha": "desconocido",
+    "engine_version": "0.32.0",
+    "database_migration": "20260915013758",
+    "environment": "development",
+    "analysis_worker_mode": "external"
+  },
+  "recovery": {
+    "seconds_after_kill": 121.784,
+    "attempts": 2,
+    "correct_total": true
+  },
+  "sustained": {
+    "submitted": 40,
+    "completed": 40,
+    "elapsed_seconds": 120.29,
+    "observed_max_running": 1,
+    "jobs_per_minute": 19.952,
+    "queue_wait_seconds": {
+      "count": 40,
+      "median": 1.506,
+      "p95": 3.135,
+      "max": 5.337
+    },
+    "processing_seconds": {
+      "count": 40,
+      "median": 0.396,
+      "p95": 0.929,
+      "max": 1.662
+    },
+    "end_to_end_seconds": {
+      "count": 40,
+      "median": 2.157,
+      "p95": 4.723,
+      "max": 6.07
+    },
+    "offered_load": "closed loop, one outstanding/account, >=10s between starts, max 40 jobs"
+  },
+  "peak_process_rss_mib": {
+    "api": 187.74,
+    "fault_worker": 54.34,
+    "worker": 156.8
+  },
+  "http_ms": {
+    "admission": {
+      "count": 45,
+      "median": 50.226,
+      "p95": 61.997,
+      "max": 115.749
+    },
+    "poll": {
+      "count": 419,
+      "median": 29.202,
+      "p95": 94.241,
+      "max": 185.565
+    }
+  },
+  "http_status_counts": {
+    "200": 419,
+    "202": 44,
+    "429": 1
+  }
+}
