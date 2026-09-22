@@ -82,7 +82,8 @@ class SecurityLab:
         self.checks["dataset_rls_isolates_accounts"] = True
         functions = ["reserve_ai_quota(uuid,uuid,text,jsonb)", "settle_ai_quota(uuid,uuid,boolean)",
                      "admin_commercial_operation(uuid,uuid,uuid,text,jsonb)",
-                     "adjust_ads_coins(uuid,bigint,text,text,jsonb)", "ensure_monthly_ads_allowance(uuid)"]
+                     "adjust_ads_coins(uuid,bigint,text,text,jsonb)", "ensure_monthly_ads_allowance(uuid)",
+                     "admin_support_operation(uuid,uuid,uuid,text,text)"]
         for func in functions:
             for role in ("anon", "authenticated"):
                 assert self.sql(f"select has_function_privilege('{role}','public.{func}','execute')") == "f"
@@ -131,6 +132,14 @@ class SecurityLab:
         assert self.sql(f"select plan from public.profiles where id='{foreign}'") == "basico"
         assert self.rpc("cleaning_addons_balance", {"p_user_id": foreign}) == 3
         assert self.sql(f"select count(*) from public.ads_coin_transactions where user_id='{foreign}'") == "0"
+        conversation = str(uuid4())
+        self.sql(f"insert into public.support_conversations(id,user_id) values('{conversation}','{foreign}');")
+        for action in ("support_chat_reply", "support_chat_closed"):
+            self.rpc("admin_support_operation", {"p_admin_id": admin, "p_operation_id": str(uuid4()),
+                "p_resource_id": conversation, "p_action": action, "p_message": "Synthetic reply"}, expected=400)
+        assert self.sql(f"select count(*) from public.support_messages where conversation_id='{conversation}'") == "0"
+        assert self.sql(f"select status from public.support_conversations where id='{conversation}'") == "open"
+        self.checks["support_reply_and_close_roll_back_if_audit_fails"] = True
         self.sql("drop trigger lab_reject_audit on public.admin_audit; drop function app_private.lab_reject_audit();")
         self.checks["audit_failure_rolls_back_plan_credits_and_coins"] = True
         coin = {"p_user_id": foreign, "p_amount": 10, "p_reason": "lab", "p_reference_key": str(uuid4()), "p_metadata": {}}
@@ -142,6 +151,14 @@ class SecurityLab:
             self.concurrent(lambda _: self.rpc("ensure_monthly_ads_allowance", {"p_user_id": owner}))
         assert self.sql(f"select balance from public.ads_coin_wallets where user_id='{owner}'") == "500"
         self.checks["plan_upgrade_only_grants_difference_and_downgrade_no_regrant"] = True
+        reply = {"p_admin_id": admin, "p_operation_id": str(uuid4()), "p_resource_id": conversation,
+                 "p_action": "support_chat_reply", "p_message": "Synthetic reply"}
+        self.concurrent(lambda _: self.rpc("admin_support_operation", reply))
+        assert self.sql(f"select count(*) from public.support_messages where conversation_id='{conversation}'") == "1"
+        self.checks["support_reply_idempotent"] = True
+        for privilege in ("update", "delete", "truncate"):
+            assert self.sql(f"select has_table_privilege('service_role','public.admin_audit','{privilege}')") == "f"
+        self.checks["backend_cannot_rewrite_audit_history"] = True
 
 
 def main():

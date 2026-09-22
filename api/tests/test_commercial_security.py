@@ -126,3 +126,21 @@ def test_manual_plan_route_cannot_impersonate_payment():
     with pytest.raises(HTTPException) as exc:
         admin.set_user_plan("admin", "user", "gold", configured(), source="pasarela")
     assert exc.value.status_code == 422
+
+
+def test_request_ids_are_server_generated_and_not_reused(client):
+    one = client.get("/health", headers={"X-Request-ID": "untrusted-value"})
+    two = client.get("/health")
+    assert len(one.headers["X-Request-ID"]) == 32
+    assert one.headers["X-Request-ID"] != two.headers["X-Request-ID"]
+
+
+def test_error_logs_do_not_include_query_or_customer_path(client, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    response = client.get("/not-found-private-customer?card_number=secret-value")
+    assert response.status_code == 404
+    events = [r.message for r in caplog.records if '"event":"http_request"' in r.message]
+    assert len(events) == 1
+    assert '"status":404' in events[0]
+    assert "private-customer" not in events[0] and "secret-value" not in events[0]

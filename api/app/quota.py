@@ -194,27 +194,6 @@ def check_quota(user_id: str, settings: Settings) -> dict | None:
     }
 
 
-def record_usage(user_id: str, kind: str, settings: Settings) -> None:
-    """Registra una consulta consumida (tras una llamada exitosa). Best-effort."""
-    if not _configured(settings):
-        return
-    try:
-        response = httpx.post(
-            _rest(settings, "ai_usage"),
-            json={"user_id": user_id, "kind": kind},
-            headers={**_headers(settings), "Prefer": "return=minimal"},
-            timeout=_TIMEOUT,
-        )
-        if response.status_code >= 400:
-            # Típico: migración 0006/0009 sin ejecutar → PostgREST responde 404/400
-            print(
-                f"[quota] ai_usage respondió {response.status_code} al registrar consumo "
-                "(¿están ejecutadas las migraciones 0006 y 0009?)."
-            )
-    except httpx.HTTPError as exc:
-        print(f"[quota] No se pudo registrar el consumo de IA ({exc.__class__.__name__}).")
-
-
 def usage_info(user_id: str, settings: Settings) -> dict:
     """Estado del cupo de insights para la página Configuración."""
     if not _configured(settings):
@@ -250,15 +229,11 @@ def usage_info(user_id: str, settings: Settings) -> dict:
 
 
 def addons_balance(user_id: str, settings: Settings) -> int:
-    """Saldo de créditos addon = suma del ledger plan_addons (migración 0009)."""
-    response = httpx.get(
-        _rest(settings, "plan_addons"),
-        params={"user_id": f"eq.{user_id}", "select": "credits"},
-        headers=_headers(settings),
-        timeout=_TIMEOUT,
-    )
-    response.raise_for_status()
-    return sum(int(row.get("credits") or 0) for row in response.json())
+    """Sum in PostgreSQL, not a truncated REST page of ledger entries."""
+    result = commercial_rpc("cleaning_addons_balance", {"p_user_id": user_id}, settings)
+    if type(result) is not int:
+        raise HTTPException(503, "No se pudo verificar el saldo de creditos.")
+    return result
 
 
 def cleaning_limit_for(plan: str, settings: Settings) -> int:
@@ -321,38 +296,6 @@ def check_cleaning_quota(user_id: str, settings: Settings) -> dict | None:
     }
 
 
-def record_cleaning_usage(user_id: str, settings: Settings, consume_addon: bool) -> None:
-    """Registra un intento de limpieza dirigida consumido. Best-effort.
-
-    Si el intento excede la base mensual, descuenta 1 crédito addon insertando
-    una fila negativa en el ledger plan_addons (auditable: quién/cuándo).
-    """
-    if not _configured(settings):
-        return
-    record_usage(user_id, "cleaning", settings)
-    if not consume_addon:
-        return
-    try:
-        response = httpx.post(
-            _rest(settings, "plan_addons"),
-            json={
-                "user_id": user_id,
-                "credits": -1,
-                "granted_by": "sistema",
-                "note": "Consumo de limpieza dirigida IA",
-            },
-            headers={**_headers(settings), "Prefer": "return=minimal"},
-            timeout=_TIMEOUT,
-        )
-        if response.status_code >= 400:
-            print(
-                f"[quota] plan_addons respondió {response.status_code} al descontar "
-                "un crédito (¿está ejecutada la migración 0009?)."
-            )
-    except httpx.HTTPError as exc:
-        print(f"[quota] No se pudo descontar el crédito addon ({exc.__class__.__name__}).")
-
-
 def cleaning_usage_info(user_id: str, settings: Settings) -> dict:
     """Estado del cupo de limpieza dirigida para Planes y Configuración.
     La base depende del plan del usuario (Fase 8: 10 Analista / 25 Gold)."""
@@ -368,7 +311,7 @@ def cleaning_usage_info(user_id: str, settings: Settings) -> dict:
         plan, is_admin = get_profile_flags(user_id, settings)
         usadas = count_month_usage(user_id, settings, kinds=("cleaning",))
         addons = addons_balance(user_id, settings)
-    except httpx.HTTPError:
+    except (httpx.HTTPError, HTTPException):
         return {
             "disponible": False,
             "usadas_mes": 0,

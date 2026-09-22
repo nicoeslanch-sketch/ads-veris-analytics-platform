@@ -19,7 +19,6 @@ Los datos sensibles jamás salen: solo campos visibles del perfil (nunca
 contraseñas — Supabase Auth ni siquiera las expone).
 """
 
-from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import httpx
@@ -72,32 +71,6 @@ def _require_admin_sync(user_id: str, settings: Settings, email: str | None = No
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Esta sección es solo para la cuenta administradora de ADS Veris.",
         )
-
-
-def _audit(
-    settings: Settings,
-    admin_id: str,
-    action: str,
-    target_user_id: str | None = None,
-    detail: dict | None = None,
-) -> None:
-    """Registro best-effort en admin_audit: un fallo aquí no anula la acción."""
-    try:
-        response = httpx.post(
-            _rest(settings, "admin_audit"),
-            json={
-                "admin_id": admin_id,
-                "target_user_id": target_user_id,
-                "action": action,
-                "detail": detail or {},
-            },
-            headers={**_headers(settings), "Prefer": "return=minimal"},
-            timeout=_TIMEOUT,
-        )
-        if response.status_code >= 400:
-            print(f"[admin] admin_audit respondió {response.status_code} (¿migración 0010?).")
-    except httpx.HTTPError as exc:
-        print(f"[admin] No se pudo escribir en admin_audit ({exc.__class__.__name__}).")
 
 
 # ── Listado de cuentas ────────────────────────────────────────────────────────
@@ -343,6 +316,7 @@ async def admin_support_inbox(
 
 class AdminChatMessageBody(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    operation_id: UUID = Field(default_factory=uuid4)
 
 
 def _admin_conversations_sync(
@@ -429,30 +403,12 @@ def _admin_send_message_sync(
     settings: Settings,
     caller_email: str | None = None,
 ) -> dict:
-    detail = _admin_conversation_detail_sync(
-        caller_id, conversation_id, settings, caller_email
-    )["conversation"]
-    if detail["status"] != "open":
-        raise HTTPException(status_code=409, detail="La conversación está cerrada.")
-    response = httpx.post(
-        _rest(settings, "support_messages"),
-        json={
-            "conversation_id": conversation_id,
-            "sender_id": caller_id,
-            "sender_role": "admin",
-            "body": body.message.strip(),
-        },
-        headers={**_headers(settings), "Prefer": "return=minimal"},
-        timeout=_TIMEOUT,
-    )
-    response.raise_for_status()
-    _audit(
-        settings,
-        caller_id,
-        "support_chat_reply",
-        detail.get("user_id"),
-        {"conversation_id": conversation_id},
-    )
+    _require_admin_sync(caller_id, settings, caller_email)
+    commercial_rpc("admin_support_operation", {
+        "p_admin_id": caller_id, "p_operation_id": str(body.operation_id),
+        "p_resource_id": conversation_id, "p_action": "support_chat_reply",
+        "p_message": body.message.strip(),
+    }, settings)
     return _admin_conversation_detail_sync(
         caller_id, conversation_id, settings, caller_email
     )
@@ -464,40 +420,11 @@ def _admin_close_conversation_sync(
     settings: Settings,
     caller_email: str | None = None,
 ) -> dict:
-    detail = _admin_conversation_detail_sync(
-        caller_id, conversation_id, settings, caller_email
-    )["conversation"]
-    if detail["status"] == "closed":
-        return {"ok": True, "status": "closed"}
-    now = datetime.now(timezone.utc).isoformat()
-    system_message = httpx.post(
-        _rest(settings, "support_messages"),
-        json={
-            "conversation_id": conversation_id,
-            "sender_id": caller_id,
-            "sender_role": "system",
-            "body": "Conversación cerrada por el equipo de soporte ADS Veris.",
-        },
-        headers={**_headers(settings), "Prefer": "return=minimal"},
-        timeout=_TIMEOUT,
-    )
-    system_message.raise_for_status()
-    response = httpx.patch(
-        _rest(settings, "support_conversations"),
-        params={"id": f"eq.{conversation_id}"},
-        json={"status": "closed", "closed_at": now, "closed_by": caller_id},
-        headers={**_headers(settings), "Prefer": "return=representation"},
-        timeout=_TIMEOUT,
-    )
-    response.raise_for_status()
-    _audit(
-        settings,
-        caller_id,
-        "support_chat_closed",
-        detail.get("user_id"),
-        {"conversation_id": conversation_id},
-    )
-    return {"ok": True, "status": "closed"}
+    _require_admin_sync(caller_id, settings, caller_email)
+    return commercial_rpc("admin_support_operation", {
+        "p_admin_id": caller_id, "p_operation_id": str(uuid4()),
+        "p_resource_id": conversation_id, "p_action": "support_chat_closed",
+    }, settings)
 
 
 @router.get("/support/conversations")
@@ -603,6 +530,7 @@ async def admin_grant_ads_coins(
 
 class AttendBody(BaseModel):
     respuesta: str = Field(default="", max_length=2000)
+    operation_id: UUID = Field(default_factory=uuid4)
 
 
 def _attend_sync(
@@ -613,38 +541,14 @@ def _attend_sync(
     settings: Settings,
 ) -> dict:
     _require_admin_sync(caller_id, settings)
-    payload: dict = {"status": "atendida"}
-    if table == "support_requests":
-        payload["attended_at"] = datetime.now(timezone.utc).isoformat()
-        if body and body.respuesta.strip():
-            payload["respuesta"] = body.respuesta.strip()
-    try:
-        response = httpx.patch(
-            _rest(settings, table),
-            params={"id": f"eq.{request_id}"},
-            json=payload,
-            headers={**_headers(settings), "Prefer": "return=representation"},
-            timeout=_TIMEOUT,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"No se pudo contactar a Supabase: {exc.__class__.__name__}",
-        ) from exc
-    if response.status_code >= 400:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Supabase respondió {response.status_code} al atender la solicitud.",
-        )
-    rows = response.json()
-    if not rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No existe una solicitud con ese ID.",
-        )
+    if table not in {"support_requests", "addon_requests"}:
+        raise ValueError("Unsupported request table")
     action = "support_attended" if table == "support_requests" else "addon_attended"
-    _audit(settings, caller_id, action, rows[0].get("user_id"), {"request_id": request_id})
-    return {"ok": True, "id": request_id, "status": "atendida"}
+    return commercial_rpc("admin_support_operation", {
+        "p_admin_id": caller_id, "p_operation_id": str(body.operation_id if body else uuid4()),
+        "p_resource_id": request_id, "p_action": action,
+        "p_message": body.respuesta.strip() if body else "",
+    }, settings)
 
 
 @router.post("/support/{request_id}/attend")

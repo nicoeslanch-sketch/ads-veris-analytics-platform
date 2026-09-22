@@ -15,6 +15,7 @@ from .auth import AuthenticatedUser, get_current_user
 from .config import Settings, get_settings
 from .version import ENGINE_VERSION, LATEST_MIGRATION, commit_sha
 from .request_security import RequestSecurityMiddleware
+from .observability import RequestObservabilityMiddleware
 from .processing_capacity import ProcessingCapacityMiddleware
 from .durable_analysis import durable_mode
 from .routes.admin import router as admin_router
@@ -111,8 +112,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Retry-After", "Content-Disposition"],
+    expose_headers=["Retry-After", "Content-Disposition", "X-Request-ID"],
 )
+app.add_middleware(RequestObservabilityMiddleware)
 
 
 @app.middleware("http")

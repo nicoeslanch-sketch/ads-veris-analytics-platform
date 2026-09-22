@@ -48,6 +48,7 @@ interface CoinWallet {
   advanced_chat_cost: number
   advanced_chat_enabled: boolean
   purchases_enabled: boolean
+  advanced_messages_affordable?: number
 }
 
 interface BotResponse {
@@ -515,7 +516,13 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gold/15"><Lock className="h-6 w-6 text-gold" /></div>
           <div><p className="text-sm font-semibold text-white/90">Chat avanzado próximamente</p><p className="mt-2 text-xs leading-relaxed text-white/50">La arquitectura de ADS Coins y el chat sobre tus números ya está preparada, pero permanece cerrada para no consumir tokens ni cobrar monedas antes de habilitar la IA.</p></div>
-          <div className="rounded-xl bg-white/5 px-4 py-3 text-xs text-white/65"><Coins className="mx-auto mb-1.5 h-4 w-4 text-gold" />Saldo: <strong className="text-white">{coinWallet?.balance ?? 0} ADS Coins</strong><br />Costo proyectado: {assistantConfig?.advanced_message_cost ?? 5} por mensaje.</div>
+          <div className="rounded-lg bg-white/5 px-4 py-3 text-xs leading-relaxed text-white/65">
+            <Coins className="mx-auto mb-1.5 h-4 w-4 text-gold" />
+            Saldo: <strong className="text-white">{coinWallet?.available ? `${coinWallet.balance} ADS Coins` : 'No disponible'}</strong>
+            <p className="mt-2">Costo proyectado: {assistantConfig?.advanced_message_cost ?? 5} Coins por respuesta avanzada.</p>
+            {coinWallet?.available && <p>Equivalente proyectado: {coinWallet.advanced_messages_affordable ?? Math.floor(coinWallet.balance / Math.max(1, coinWallet.advanced_chat_cost))} respuestas.</p>}
+            <p className="mt-2 text-white/50">Créditos de uso, no dinero. Sin valor de retiro en pesos. Compras y consumo aún deshabilitados.</p>
+          </div>
           <button onClick={() => setMode('quick')} className="inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-white"><MessageCircle className="h-3.5 w-3.5" /> Volver a Ayuda rápida</button>
         </div>
         <DisabledInput />

@@ -276,7 +276,8 @@ def test_clean_assisted_instrucciones_no_reconocidas_422_sin_consumo(
     def _no_consumir(*args, **kwargs):
         raise AssertionError("No debe registrar consumo si la instrucción no se reconoce")
 
-    monkeypatch.setattr(pipeline_module.quota, "record_cleaning_usage", _no_consumir)
+    monkeypatch.setattr(pipeline_module.quota, "reserve_usage", _no_consumir)
+    monkeypatch.setattr(pipeline_module.quota, "settle_usage", _no_consumir)
     name, content = sample_csv
     response = client.post(
         "/clean/assisted",

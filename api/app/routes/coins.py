@@ -47,6 +47,9 @@ def _wallet_sync(user_id: str, settings: Settings) -> dict:
         "advanced_chat_enabled": settings.advanced_ai_enabled,
         "purchases_enabled": settings.ads_coin_purchases_enabled,
         "transactions": [],
+        "unit": "service_credit",
+        "cash_value_clp": None,
+        "advanced_messages_affordable": 0,
     }
     if not settings.supabase_url or not settings.supabase_service_role_key:
         return defaults
@@ -83,6 +86,7 @@ def _wallet_sync(user_id: str, settings: Settings) -> dict:
             "lifetime_earned": int(wallet.get("lifetime_earned") or 0),
             "lifetime_spent": int(wallet.get("lifetime_spent") or 0),
             "monthly_allowance": allowance,
+            "advanced_messages_affordable": int(wallet.get("balance") or 0) // max(1, settings.ads_coins_advanced_message_cost),
             "transactions": transactions_response.json(),
         }
     except (httpx.HTTPError, HTTPException):
