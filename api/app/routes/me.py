@@ -104,11 +104,6 @@ def _billing_identity_sync(user_id: str, settings: Settings) -> dict | None:
     return rows[0] if rows else None
 
 
-def _is_designated_admin(email: str | None, settings: Settings) -> bool:
-    configured_email = getattr(settings, "admin_email", "").strip().lower()
-    return bool(configured_email and email and email.strip().lower() == configured_email)
-
-
 def _build_access_sync(user_id: str, email: str | None, settings: Settings) -> dict:
     configured = bool(settings.supabase_url and settings.supabase_service_role_key)
     enforcement = bool(settings.plan_enforcement and configured)
@@ -119,10 +114,6 @@ def _build_access_sync(user_id: str, email: str | None, settings: Settings) -> d
         identity = None
     else:
         plan, is_admin = get_profile_flags(user_id, settings)
-        # Respaldo de bootstrap: el correo viene del JWT verificado. La
-        # migración 0018 mantiene is_admin en la base; esto evita una ventana
-        # sin acceso si la cuenta se creó después de una migración anterior.
-        is_admin = is_admin or _is_designated_admin(email, settings)
         # El estado del trial solo importa para cuentas sin plan pagado: las
         # demás no pagan la consulta extra.
         trial = (

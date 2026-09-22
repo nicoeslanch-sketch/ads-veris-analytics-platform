@@ -229,7 +229,8 @@ def test_clean_assisted_requiere_token(client, sample_csv):
     assert response.status_code == 401
 
 
-def test_clean_assisted_dirigida_por_columnas(client, auth_headers, sample_csv):
+def test_clean_assisted_dirigida_por_columnas(client, auth_headers, sample_csv, monkeypatch):
+    monkeypatch.setattr("app.quota.reserve_usage", lambda *args: None)
     """Sin Supabase (dev) el gating y la cuota quedan en fail-open: el flujo
     dirigido corre completo y devuelve el plan interpretado."""
     name, content = sample_csv
@@ -252,7 +253,8 @@ def test_clean_assisted_dirigida_por_columnas(client, auth_headers, sample_csv):
     assert any("dirigida" in a.lower() for a in body["avisos"])
 
 
-def test_clean_assisted_excluye_columnas_negadas(client, auth_headers, sample_csv):
+def test_clean_assisted_excluye_columnas_negadas(client, auth_headers, sample_csv, monkeypatch):
+    monkeypatch.setattr("app.quota.reserve_usage", lambda *args: None)
     name, content = sample_csv
     response = client.post(
         "/clean/assisted",
@@ -274,7 +276,8 @@ def test_clean_assisted_instrucciones_no_reconocidas_422_sin_consumo(
     def _no_consumir(*args, **kwargs):
         raise AssertionError("No debe registrar consumo si la instrucción no se reconoce")
 
-    monkeypatch.setattr(pipeline_module.quota, "record_cleaning_usage", _no_consumir)
+    monkeypatch.setattr(pipeline_module.quota, "reserve_usage", _no_consumir)
+    monkeypatch.setattr(pipeline_module.quota, "settle_usage", _no_consumir)
     name, content = sample_csv
     response = client.post(
         "/clean/assisted",

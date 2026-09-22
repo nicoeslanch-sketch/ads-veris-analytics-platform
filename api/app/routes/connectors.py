@@ -13,6 +13,7 @@ import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from urllib.parse import unquote, urljoin, urlsplit
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,6 +23,7 @@ from pydantic import BaseModel, Field
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import Capability, require_capability_for_user
 from ..config import Settings, get_settings
+from ..dataset_access import require_owned_dataset
 from ..storage import MAX_DOWNLOAD_BYTES
 
 router = APIRouter(prefix="/connectors", dependencies=[Depends(get_current_user)])
@@ -46,7 +48,7 @@ class SheetsModeRequest(BaseModel):
 
 
 class SheetsLinkRequest(BaseModel):
-    dataset_id: str | None = Field(default=None, max_length=80)
+    dataset_id: UUID | None = None
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -429,18 +431,22 @@ async def update_google_sheet_mode(
 
 @router.post("/sheets/sources/{source_id}/link")
 async def link_google_sheet_dataset(
-    source_id: str,
+    source_id: UUID,
     body: SheetsLinkRequest,
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
+    source_id = str(source_id)
+    dataset_id = str(body.dataset_id) if body.dataset_id else None
     source = await run_in_threadpool(_source_for_user_sync, source_id, user.id, settings)
+    if dataset_id is not None:
+        await run_in_threadpool(require_owned_dataset, dataset_id, user.id, settings)
     await run_in_threadpool(
         _patch_source_sync,
         source_id,
         user.id,
         {
-            "dataset_id": body.dataset_id,
+            "dataset_id": dataset_id,
             "content_hash": source.get("remote_hash") or source.get("content_hash"),
             "update_available": False,
             "last_status": "connected",
@@ -448,7 +454,7 @@ async def link_google_sheet_dataset(
         },
         settings,
     )
-    return {"ok": True, "dataset_id": body.dataset_id}
+    return {"ok": True, "dataset_id": dataset_id}
 
 
 @router.delete("/sheets/sources/{source_id}")

@@ -21,8 +21,6 @@ def require_consolidation_access(user: AuthenticatedUser, settings: Settings) ->
         return
     if settings.dev_auth_bypass and not settings.supabase_url:
         return
-    if settings.admin_email and user.email and user.email.casefold() == settings.admin_email.casefold():
-        return
     try:
         allowed = get_is_admin(user.id, settings)
     except httpx.HTTPError as exc:

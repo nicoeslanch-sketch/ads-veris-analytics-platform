@@ -138,7 +138,8 @@ export const PLAN_FEATURE_ROWS: PlanFeatureRow[] = [
  * (POST /addons/request) y el administrador activa el plan desde
  * "Administrar cuentas". Cuando exista la pasarela (Webpay/Flow/MercadoPago),
  * reemplaza el cuerpo de startCheckout por la redirección al checkout;
- * el webhook de pago confirmado llamará a set_user_plan en el backend. */
+ * la confirmación verificada del proveedor tendrá una operación transaccional
+ * propia; nunca se reutiliza la activación administrativa como webhook. */
 export interface CheckoutResult {
   redirected: boolean
   mensaje: string

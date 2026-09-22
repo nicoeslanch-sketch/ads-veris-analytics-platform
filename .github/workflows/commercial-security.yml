@@ -1,0 +1,49 @@
+name: Commercial security
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  database:
+    name: Commercial security - PostgreSQL isolation and concurrency
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LAB: /tmp/ads-security-${{ github.run_id }}
+      STATUS_FILE: /tmp/security-status-${{ github.run_id }}.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install httpx==0.28.1
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.0
+      - name: Start isolated database (no production secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$LAB"
+          supabase init --workdir "$LAB" --yes
+          mkdir -p "$LAB/supabase/migrations"
+          cp supabase/migrations/*.sql "$LAB/supabase/migrations/"
+          supabase start --workdir "$LAB" -x studio,realtime,logflare,vector,imgproxy,edge-runtime 2>&1 | sed -E 's/eyJ[A-Za-z0-9_.-]+/[LOCAL-JWT-REDACTED]/g; s/sb_secret_[A-Za-z0-9_-]+/[LOCAL-KEY-REDACTED]/g'
+          supabase status --workdir "$LAB" -o json > "$STATUS_FILE"
+          chmod 600 "$STATUS_FILE"
+      - name: Verify ownership, concurrency and audit rollback
+        run: python scripts/test_commercial_local.py --status-file "$STATUS_FILE" --output artifacts/commercial-security.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: commercial-security-${{ github.run_id }}
+          path: artifacts/commercial-security.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Stop disposable infrastructure
+        if: always()
+        run: supabase stop --workdir "$LAB" --no-backup

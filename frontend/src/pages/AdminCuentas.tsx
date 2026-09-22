@@ -10,7 +10,8 @@
  * El backend valida is_admin en cada endpoint: esta página es solo la vista.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createCommercialPoster } from '../lib/commercialCommands'
 import { Navigate } from 'react-router-dom'
 import {
   AlertCircle,
@@ -100,6 +101,7 @@ export default function AdminCuentas() {
   const [grantingTo, setGrantingTo] = useState<string | null>(null)
   const [grantingCoinsTo, setGrantingCoinsTo] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const postCommercial = useRef(createCommercialPoster()).current
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -136,7 +138,7 @@ export default function AdminCuentas() {
     setSavingPlan(userId)
     setNotice(null)
     try {
-      await apiPostJson(`/admin/accounts/${userId}/plan`, { plan })
+      await postCommercial(`/admin/accounts/${userId}/plan`, { plan })
       setNotice(`Plan ${planLabel(plan).replace('Plan ', '')} activado correctamente.`)
       setData((prev) =>
         prev
@@ -158,15 +160,15 @@ export default function AdminCuentas() {
   const otorgarTokens = async (userId: string) => {
     const cantidad = window.prompt('¿Cuántos tokens de limpieza dirigida quieres otorgar?', '5')
     if (!cantidad) return
-    const credits = Number.parseInt(cantidad, 10)
-    if (!Number.isFinite(credits) || credits <= 0) {
+    const credits = Number(cantidad)
+    if (!Number.isSafeInteger(credits) || credits <= 0 || credits > 1000) {
       setNotice('Cantidad inválida: escribe un número mayor que 0.')
       return
     }
     setGrantingTo(userId)
     setNotice(null)
     try {
-      const result = await apiPostJson<{ saldo: number }>('/admin/grant-credits', {
+      const result = await postCommercial<{ saldo: number }>('/admin/grant-credits', {
         user_id: userId,
         credits,
         note: 'Otorgado desde Administrar cuentas',
@@ -182,14 +184,14 @@ export default function AdminCuentas() {
   const otorgarAdsCoins = async (userId: string) => {
     const cantidad = window.prompt('¿Cuántos ADS Coins quieres otorgar?', '100')
     if (!cantidad) return
-    const amount = Number.parseInt(cantidad, 10)
-    if (!Number.isFinite(amount) || amount <= 0) {
+    const amount = Number(cantidad)
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1_000_000) {
       setNotice('Cantidad inválida: escribe un número mayor que 0.')
       return
     }
     setGrantingCoinsTo(userId)
     try {
-      const result = await apiPostJson<{ balance: number }>('/admin/grant-coins', {
+      const result = await postCommercial<{ balance: number }>('/admin/grant-coins', {
         user_id: userId,
         amount,
         note: 'Otorgado desde Administrar cuentas',

@@ -66,8 +66,8 @@ def _sin_plan(monkeypatch, trial=TRIAL_INACTIVO):
     monkeypatch.setattr("app.trials.get_trial_state", lambda uid, st: dict(trial))
 
 
-def test_correo_designado_recupera_rol_admin_en_contexto_de_acceso(monkeypatch):
-    """El JWT verificado cierra la ventana entre el alta y la migracion 0018."""
+def test_correo_designado_no_sustituye_rol_admin_en_base(monkeypatch):
+    """Solo el rol protegido de profiles concede acceso administrativo."""
     from app.routes import me as me_module
 
     monkeypatch.setattr(
@@ -77,11 +77,11 @@ def test_correo_designado_recupera_rol_admin_en_contexto_de_acceso(monkeypatch):
     result = me_module._build_access_sync(
         "admin-test", "servicios@adsveris.com", _settings_enforced()
     )
-    assert result["is_admin"] is True
-    assert result["plan_display"] == "Administrador"
+    assert result["is_admin"] is False
+    assert result["plan_display"] != "Administrador"
     from app.capabilities import Capability
 
-    assert set(result["capabilities"]) == {cap.value for cap in Capability}
+    assert set(result["capabilities"]) != {cap.value for cap in Capability}
 
 
 # ── Gates por HTTP: 403 real y CERO trabajo ejecutado ────────────────────────

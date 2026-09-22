@@ -32,7 +32,7 @@ from collections import OrderedDict
 
 import pandas as pd
 
-SUPPORTED_EXTENSIONS = (".csv", ".xlsx")
+from ..file_formats import SUPPORTED_EXTENSIONS
 MAX_ROWS = 200_000
 # Fase 12b §30: límites de superficie total (el caché por celdas y openpyxl
 # dimensionan la memoria por celdas, no por filas).

@@ -4,14 +4,12 @@ La billetera y el ledger ya son funcionales. Las compras y el consumo del chat
 avanzado permanecen apagados por feature flag hasta integrar pago e IA.
 """
 
-from datetime import datetime, timezone
-
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from ..auth import AuthenticatedUser, get_current_user
-from ..capabilities import get_profile_flags
+from ..commercial_rpc import commercial_rpc
 from ..config import Settings, get_settings
 
 router = APIRouter(prefix="/coins")
@@ -49,33 +47,16 @@ def _wallet_sync(user_id: str, settings: Settings) -> dict:
         "advanced_chat_enabled": settings.advanced_ai_enabled,
         "purchases_enabled": settings.ads_coin_purchases_enabled,
         "transactions": [],
+        "unit": "service_credit",
+        "cash_value_clp": None,
+        "advanced_messages_affordable": 0,
     }
     if not settings.supabase_url or not settings.supabase_service_role_key:
         return defaults
     try:
-        plan, is_admin = get_profile_flags(user_id, settings)
-        allowance = monthly_allowance(plan, is_admin)
-        month = datetime.now(timezone.utc).strftime("%Y-%m")
-        if allowance > 0:
-            httpx.post(
-                _rest(settings, "rpc/adjust_ads_coins"),
-                json={
-                    "p_user_id": user_id,
-                    "p_amount": allowance,
-                    "p_reason": "plan_monthly_allowance",
-                    "p_reference_key": f"plan:{plan}:{month}",
-                    "p_metadata": {"plan": plan, "month": month},
-                },
-                headers=_headers(settings),
-                timeout=_TIMEOUT,
-            ).raise_for_status()
-        else:
-            httpx.post(
-                _rest(settings, "ads_coin_wallets"),
-                json={"user_id": user_id},
-                headers={**_headers(settings), "Prefer": "resolution=ignore-duplicates,return=minimal"},
-                timeout=_TIMEOUT,
-            ).raise_for_status()
+        allowance_info = commercial_rpc("ensure_monthly_ads_allowance", {"p_user_id": user_id}, settings)
+        plan = allowance_info["plan"]
+        allowance = allowance_info["monthly_allowance"]
         wallet_response = httpx.get(
             _rest(settings, "ads_coin_wallets"),
             params={"user_id": f"eq.{user_id}", "select": "balance,lifetime_earned,lifetime_spent", "limit": "1"},
@@ -105,9 +86,10 @@ def _wallet_sync(user_id: str, settings: Settings) -> dict:
             "lifetime_earned": int(wallet.get("lifetime_earned") or 0),
             "lifetime_spent": int(wallet.get("lifetime_spent") or 0),
             "monthly_allowance": allowance,
+            "advanced_messages_affordable": int(wallet.get("balance") or 0) // max(1, settings.ads_coins_advanced_message_cost),
             "transactions": transactions_response.json(),
         }
-    except httpx.HTTPError:
+    except (httpx.HTTPError, HTTPException):
         # Despliegue compatible: si la migracion todavia no llego, el resto de
         # la plataforma sigue funcionando y la UI informa que la billetera se
         # encuentra en preparacion.

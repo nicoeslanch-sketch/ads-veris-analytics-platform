@@ -466,7 +466,7 @@ def test_ai_summary_error_del_proveedor_no_expone_detalle_crudo(monkeypatch, cli
         messages = _FakeMessages()
 
     monkeypatch.setattr(ai_routes, "_client", lambda settings: _FakeClient())
-    monkeypatch.setattr(ai_routes.quota, "check_quota", lambda user_id, settings: None)
+    monkeypatch.setattr(ai_routes.quota, "reserve_usage", lambda *args: None)
     monkeypatch.setattr(
         ai_routes, "require_capability_for_user", lambda user_id, cap, settings: "basico"
     )

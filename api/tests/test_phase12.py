@@ -229,7 +229,8 @@ def test_metricas_respetan_la_misma_decision_de_sesion(client, auth_headers):
     assert confirmed["kpis"]["ingresos_totales"]["valor"] == 100
 
 
-def test_limpieza_asistida_no_borra_por_instruccion_libre(client, auth_headers):
+def test_limpieza_asistida_no_borra_por_instruccion_libre(client, auth_headers, monkeypatch):
+    monkeypatch.setattr("app.quota.reserve_usage", lambda *args: None)
     csv = "Producto;Ventas\nA;100\nA;100\n"
     response = client.post(
         "/clean/assisted",

@@ -11,6 +11,8 @@ POST /admin/grant-credits — solo `profiles.is_admin`: otorga créditos de
                             insertar la fila por SQL en Supabase.
 """
 
+from uuid import UUID, uuid4
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
@@ -20,6 +22,7 @@ from .. import quota
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import get_is_admin, get_plan
 from ..config import Settings, get_settings
+from ..commercial_rpc import commercial_rpc
 
 router = APIRouter()
 
@@ -208,6 +211,7 @@ class GrantCreditsBody(BaseModel):
     user_id: str = Field(min_length=8, max_length=64)
     credits: int = Field(gt=0, le=1000)
     note: str = Field(default="", max_length=300)
+    operation_id: UUID = Field(default_factory=uuid4)
 
 
 def _grant_sync(caller_id: str, body: GrantCreditsBody, settings: Settings) -> dict:
@@ -217,54 +221,16 @@ def _grant_sync(caller_id: str, body: GrantCreditsBody, settings: Settings) -> d
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Solo un administrador puede otorgar créditos.",
             )
-        # El destinatario debe existir en profiles.
-        check = httpx.get(
-            _rest(settings, "profiles"),
-            params={"id": f"eq.{body.user_id}", "select": "id"},
-            headers=_headers(settings),
-            timeout=_TIMEOUT,
-        )
-        check.raise_for_status()
-        if not check.json():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No existe un usuario con ese ID en profiles.",
-            )
-        insert = httpx.post(
-            _rest(settings, "plan_addons"),
-            json={
-                "user_id": body.user_id,
-                "credits": body.credits,
-                "granted_by": caller_id,
-                "note": body.note.strip() or "Otorgado por administrador",
-            },
-            headers={**_headers(settings), "Prefer": "return=minimal"},
-            timeout=_TIMEOUT,
-        )
-        if insert.status_code >= 400:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Supabase respondió {insert.status_code} al otorgar créditos "
-                "(¿está ejecutada la migración 0009?).",
-            )
-        # Fase 10 §11.2: TODO otorgamiento manual queda en la misma auditoría
-        # que los cambios de plan (admin_audit, migración 0010).
-        from .admin import _audit
-
-        _audit(
-            settings,
-            caller_id,
-            "grant_credits",
-            body.user_id,
-            {"credits": body.credits, "note": body.note.strip()},
-        )
-        saldo = quota.addons_balance(body.user_id, settings)
+        return commercial_rpc("admin_commercial_operation", {
+            "p_admin_id": caller_id, "p_operation_id": str(body.operation_id),
+            "p_target_user_id": body.user_id, "p_action": "grant_credits",
+            "p_payload": {"credits": body.credits, "note": body.note.strip()},
+        }, settings)
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"No se pudo contactar a Supabase: {exc.__class__.__name__}",
         ) from exc
-    return {"otorgado": True, "user_id": body.user_id, "credits": body.credits, "saldo": saldo}
 
 
 @router.post("/admin/grant-credits")
