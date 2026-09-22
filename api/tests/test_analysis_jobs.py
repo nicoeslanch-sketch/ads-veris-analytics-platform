@@ -65,6 +65,23 @@ def test_job_can_be_cancelled_and_retried_without_duplicate_running_work():
     assert _wait(manager, "user", job["job_id"])["status"] == "completed"
 
 
+def test_stale_worker_update_cannot_erase_cancel_or_overwrite_retry():
+    manager = _manager()
+    try:
+        job = {'job_id': 'race', 'attempt': 1, 'status': 'running', 'cancel_requested': False}
+        manager._remember('user', job.copy())
+        manager.cancel('user', 'race')
+        stale = manager._remember('user', job.copy())
+        assert stale['cancel_requested'] is True
+        terminal = manager._remember('user', {**job, 'status': 'completed', 'result': {'private': 42}})
+        assert terminal['status'] == 'cancelled' and terminal['result'] is None
+        manager._remember('user', {**job, 'attempt': 2, 'status': 'queued'})
+        late = manager._remember('user', {**job, 'status': 'completed'})
+        assert late['attempt'] == 2 and late['status'] == 'queued'
+    finally:
+        manager.executor.shutdown(wait=True)
+
+
 def test_job_reports_real_sheet_progress_and_stops_at_cancel_boundary():
     manager = _manager()
     reached = threading.Event()

@@ -21,6 +21,8 @@
   al abrir Resumen. Distingue configuracion, preparacion, verificacion y pendientes.
 - Compras siguen desactivadas. Un flag aislado no puede habilitar checkout:
   produccion rechaza una configuracion que intente activarlo sin integracion.
+- Cola local: una actualizacion atrasada ya no puede borrar una cancelacion,
+  reabrir un trabajo terminal ni sobrescribir un reintento mas reciente.
 
 ## Operacion del doble factor
 
