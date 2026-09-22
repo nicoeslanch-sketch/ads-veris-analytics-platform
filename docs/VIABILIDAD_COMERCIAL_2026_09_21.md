@@ -12,7 +12,7 @@
 | Consejo | Decision y alcance |
 | --- | --- |
 | Repositorio privado | No ahora, por decision expresa. Ser publico no sustituye ni invalida la seguridad. Secret scanning y push protection estaban habilitados; no habia alertas abiertas reportadas. Eso no certifica ausencia de secretos en todo el historial. |
-| Proteger main | Aplicado: PR obligatorio, checks API/frontend/E2E/dependencias, rama actualizada, sin force push ni borrado, administradores incluidos. Cero aprobaciones de terceros obligatorias mientras exista un solo mantenedor. |
+| Proteger main | Aplicado: PR obligatorio, checks API/frontend/E2E/dependencias y laboratorio PostgreSQL, rama actualizada, sin force push ni borrado, administradores incluidos. Cero aprobaciones de terceros obligatorias mientras exista un solo mantenedor. Dependabot alerts y actualizaciones de seguridad habilitados; no se fusionan automaticamente. |
 | Ownership con service_role | Confirmado en el enlace Google Sheets. UUID y comprobacion de propietario en backend, mas FK compuesta dataset/propietario en PostgreSQL. La consulta de diagnostico en produccion no encontro enlaces cruzados existentes. No se asume que todo uso de service_role haya quedado centralizado. |
 | Cuotas IA atomicas | Reserva en PostgreSQL previa al proveedor. Cupo mensual, addon y limite de 12 intentos/minuto compartidos entre replicas. Fail-closed. SDK sin retries automaticos. |
 | Auditoria administrativa | Planes, creditos, Coins y soporte se modifican junto con su auditoria en una transaccion. Se revoca al backend la reescritura/borrado del historial de auditoria y del ledger de Coins. |
@@ -21,6 +21,7 @@
 | Organizations | No migrar masivamente ahora. No compartir contrasenas para simular equipos. Antes de lanzar equipos: memberships, invitaciones, roles, propiedad y migracion probada. |
 | Archivos grandes | Extraidos limites de formatos, acceso a datasets, RPC comerciales y observabilidad. No se reescribe el motor ni se cambia su semantica para reducir lineas. |
 | Observabilidad | Identificador de solicitud generado por servidor, cabecera X-Request-ID y logs de errores/solicitudes lentas con duracion y ruta parametrizada. No equivale todavia a APM, alarmas ni trazas distribuidas completas. |
+| Cabeceras web | CSP permite scripts propios y conexiones solo a la API/Supabase actuales, bloquea iframes externos del sitio, objetos y formularios a terceros. Nosniff y Permissions-Policy. Antes de integrar el formulario de Transbank, anadir solo sus origenes oficiales necesarios y probarlos; no ampliar a comodines. |
 | Formatos | Subida y loader comparten .xlsx/.csv. .xls/.tsv/.txt se rechazan antes de almacenarse en lugar de prometer un procesamiento inexistente. TSV puede convertirse a CSV; soporte nativo futuro requiere pruebas propias. |
 | Docker/API Gateway/MCP | No son necesarios para cerrar estos riesgos ni para este lanzamiento. Docker se usa solo en CI para una base desechable, no se agrega infraestructura permanente. |
 | Backups | Snapshots analiticos NO son respaldo de desastre. Sigue pendiente un respaldo verificable de PostgreSQL y objetos Storage, con restauracion ensayada y responsable operativo. |
@@ -68,7 +69,15 @@ Secuencia requerida antes de cobrar:
 - Pruebas HTTP locales aseguran que una reserva rechazada no llama al proveedor, un archivo ajeno no se vincula y un correo no sustituye el rol de base.
 - Reprocesado local del libro multioja suministrado: 16 hojas sin error de estandarizacion/limpieza; filas y procedencia conservadas; exportacion de 15 hojas de datos mas auxiliares; tres totales anuales de ventas reconciliados con suma independiente de celdas exportadas. Artefactos privados en `artifacts/`, no publicados en el repositorio.
 - Los duplicados se conservan por decision del usuario. Tras normalizar, algunas filas distintas en formato resultan iguales: eso no es perdida de filas ni permiso para borrarlas. No se certifica equivalencia universal con Power Query para cualquier archivo posible.
-- Ejecutar Playwright con el libro real para comprobar Resumen/Explorar, seleccion de hoja y desbordes desktop/mobile. Los resultados locales no son una certificacion de capacidad de Render.
+- Playwright local con el libro real: aprobado, Resumen/Explorar, seleccion de hoja, totales y desbordes desktop/mobile. Exportacion 28,719 s en este equipo; no es una promesa de latencia en Render. Pruebas locales: 1157 backend, 193 frontend antes de agregar las dos comprobaciones de cabeceras.
+- Laboratorio PostgreSQL ampliado aprobado: run 35674005485, 16 comprobaciones de seguridad. La evidencia usa el SHA de merge sintetico de GitHub, no un despliegue productivo.
+
+Supabase Security Advisor (21-09-2026) informa MFA insuficiente y proteccion de contrasenas filtradas deshabilitada. No se desactivan advertencias ni se contrata un plan para ocultarlas. La funcion `can_process_data()` es SECURITY DEFINER intencionalmente para las politicas comerciales, devuelve solo un booleano del usuario autenticado; merece seguimiento, no revocar su acceso sin sustituir esas politicas. Las seis tablas sin politicas de lectura de clientes son deliberadamente backend-only.
+
+Referencias de esos pendientes:
+- https://supabase.com/docs/guides/auth/auth-mfa
+- https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection
+- https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable
 
 ## Bloqueadores de lanzamiento comercial
 
