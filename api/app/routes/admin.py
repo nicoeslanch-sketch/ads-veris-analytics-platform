@@ -30,10 +30,18 @@ from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import PLAN_ORDER, get_is_admin, normalize_plan
 from ..config import Settings, get_settings
 from ..commercial_rpc import commercial_rpc
+from ..commercial_readiness import commercial_readiness
 
 router = APIRouter(prefix="/admin")
 
 _TIMEOUT = 15
+
+
+@router.get('/readiness')
+async def readiness(user: AuthenticatedUser = Depends(get_current_user),
+                    settings: Settings = Depends(get_settings)) -> dict:
+    await run_in_threadpool(_require_admin_sync, user.id, settings)
+    return await run_in_threadpool(commercial_readiness, user.id, settings)
 
 
 def _configured(settings: Settings) -> bool:

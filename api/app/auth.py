@@ -106,7 +106,7 @@ def _validate_identity(claims: dict, settings: Settings) -> dict:
     return claims
 
 
-def get_current_user(
+def get_verified_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
 ) -> AuthenticatedUser:
@@ -147,3 +147,14 @@ def get_current_user(
         email=claims.get("email"),
         claims=claims,
     )
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    settings: Settings = Depends(get_settings),
+) -> AuthenticatedUser:
+    from .account_security import require_account_mfa
+
+    user = get_verified_user(credentials, settings)
+    require_account_mfa(user.id, user.claims, settings)
+    return user

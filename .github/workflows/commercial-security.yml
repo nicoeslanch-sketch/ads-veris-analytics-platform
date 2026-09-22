@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install httpx==0.28.1
+      - run: pip install httpx==0.28.1 tomlkit==0.13.3
       - uses: supabase/setup-cli@v1
         with:
           version: 2.109.0
@@ -30,6 +30,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$LAB"
           supabase init --workdir "$LAB" --yes
+          python scripts/configure_security_lab.py "$LAB/supabase/config.toml"
           mkdir -p "$LAB/supabase/migrations"
           cp supabase/migrations/*.sql "$LAB/supabase/migrations/"
           supabase start --workdir "$LAB" -x studio,realtime,logflare,vector,imgproxy,edge-runtime 2>&1 | sed -E 's/eyJ[A-Za-z0-9_.-]+/[LOCAL-JWT-REDACTED]/g; s/sb_secret_[A-Za-z0-9_-]+/[LOCAL-KEY-REDACTED]/g'

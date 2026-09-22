@@ -78,6 +78,21 @@ class AnalysisJobManager:
         identity = (user_id, str(job["job_id"]))
         with self.lock:
             self._prune_input_locked()
+            current = self.jobs.get(identity)
+            if current:
+                current_attempt = int(current.get('attempt', 1))
+                incoming_attempt = int(job.get('attempt', 1))
+                if current_attempt > incoming_attempt or (
+                    current_attempt == incoming_attempt and current.get('status') in TERMINAL
+                ):
+                    job.update(copy.deepcopy(current))
+                elif current_attempt == incoming_attempt and current.get('cancel_requested'):
+                    # Cancellation is monotonic within an attempt, including a late completion.
+                    job['cancel_requested'] = True
+                    if job.get('status') in TERMINAL:
+                        job.update(status='cancelled', phase='cancelled', result=None)
+                    else:
+                        job['phase'] = 'cancelling'
             self.jobs[identity] = copy.deepcopy(job)
             if job.get("status") == "completed":
                 self._release_input_locked(identity)

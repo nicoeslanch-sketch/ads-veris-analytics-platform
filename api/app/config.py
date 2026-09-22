@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_jwt_secret: str = ""
     supabase_storage_bucket: str = "datasets"
+    # Always enforced in production; this switch also enables isolated tests.
+    mfa_enforcement: bool = False
 
     anthropic_api_key: str = ""
     anthropic_model: str = ""
@@ -95,9 +97,7 @@ class Settings(BaseSettings):
     request_body_max_bytes: int = 16 * 1024 * 1024
 
     # ── Fase 10: cuenta administradora de respaldo ──
-    # El panel /admin acepta también a este correo aunque profiles.is_admin
-    # no esté marcado todavía (bootstrap robusto: la migración 0010 depende
-    # de que la cuenta exista al ejecutarla). Vacío = solo is_admin.
+    # Legacy configuration only; authorization uses profiles.is_admin, never email.
     admin_email: str = "servicios@adsveris.com"
 
     # ── Fase 8: retención de archivos en Storage (por usuario) ──

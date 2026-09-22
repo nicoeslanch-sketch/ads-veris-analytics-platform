@@ -36,22 +36,21 @@ from ..capabilities import (
 )
 from ..config import Settings, get_settings
 from ..rut import is_valid_rut, mask_rut, normalize_rut
+from ..request_budget import consume_budget
 
 router = APIRouter(prefix="/me", dependencies=[Depends(get_current_user)])
 
-# ── Rate limiting de activación (en memoria, por usuario) ────────────────────
-# Ventana deslizante simple: N intentos por ventana, con buckets separados
-# para trial por usuario, trial por RUT y facturación por usuario. Vive en
-# memoria (una instancia); si la API escala horizontal, moverlo a la base. Se aplica ANTES
-# de tocar la RPC — y como la RPC solo es ejecutable por la service_role, el
-# límite no se puede esquivar hablándole directo a PostgREST.
+# Shared database limits in configured deployments; memory only for offline tests.
 _TRIAL_ATTEMPT_WINDOW_S = 600
 _TRIAL_ATTEMPT_MAX = 5
 _attempts: dict[str, list[float]] = {}
 _attempts_lock = threading.Lock()
 
 
-def _guard_activation_rate(bucket_key: str) -> None:
+def _guard_activation_rate(bucket_key: str, settings: Settings | None = None) -> None:
+    if settings and (settings.app_env.strip().lower() == 'production' or settings.supabase_service_role_key):
+        consume_budget(bucket_key, settings, limit=_TRIAL_ATTEMPT_MAX, window=_TRIAL_ATTEMPT_WINDOW_S)
+        return
     now = time.monotonic()
     with _attempts_lock:
         recent = [
@@ -218,7 +217,7 @@ async def activate_trial(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Activa la prueba gratuita de 15 días (una por usuario Y por RUT)."""
-    _guard_activation_rate(f"trial:user:{user.id}")
+    await run_in_threadpool(_guard_activation_rate, f"trial:user:{user.id}", settings)
     normalized = normalize_rut(body.rut)
     if not normalized or not is_valid_rut(normalized):
         raise HTTPException(
@@ -228,7 +227,7 @@ async def activate_trial(
         )
     # El mismo RUT no debe poder sondearse sin límite alternando usuarios:
     # también hay ventana por RUT normalizado (jamás se loguea el RUT).
-    _guard_activation_rate(f"trial:rut:{normalized}")
+    await run_in_threadpool(_guard_activation_rate, f"trial:rut:{normalized}", settings)
     if settings.supabase_url and settings.supabase_service_role_key:
         await run_in_threadpool(_guard_trial_eligibility_sync, user, settings)
     trial = await run_in_threadpool(
@@ -314,7 +313,7 @@ async def save_billing_identity(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Registra el RUT de facturación (empresa o responsable) para contratar."""
-    _guard_activation_rate(f"billing:user:{user.id}")
+    await run_in_threadpool(_guard_activation_rate, f"billing:user:{user.id}", settings)
     normalized = normalize_rut(body.rut)
     if not normalized or not is_valid_rut(normalized):
         raise HTTPException(

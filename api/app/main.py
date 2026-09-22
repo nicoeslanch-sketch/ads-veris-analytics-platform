@@ -30,6 +30,7 @@ from .routes.plans import router as plans_router
 from .routes.retention import router as retention_router
 from .routes.storage_upload import router as storage_upload_router
 from .routes.support import router as support_router
+from .routes.security import router as security_router
 from .consolidation.router import router as consolidation_router
 
 settings = get_settings()
@@ -55,6 +56,8 @@ def validate_production_config(cfg: Settings) -> list[str]:
         violations.append("PLAN_ENFORCEMENT=false (puertas comerciales apagadas)")
     if cfg.dev_auth_bypass:
         violations.append("DEV_AUTH_BYPASS=true (autenticación desactivada)")
+    if cfg.ads_coin_purchases_enabled:
+        violations.append("ADS_COIN_PURCHASES_ENABLED requiere una integracion de pagos aun no implementada")
     non_local = [
         o for o in cfg.cors_origins if "localhost" not in o and "127.0.0.1" not in o
     ]
@@ -112,7 +115,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Retry-After", "Content-Disposition", "X-Request-ID"],
+    expose_headers=["Retry-After", "Content-Disposition", "X-Request-ID", "X-Auth-Action"],
 )
 app.add_middleware(RequestObservabilityMiddleware)
 
@@ -163,6 +166,7 @@ def me(user: AuthenticatedUser = Depends(get_current_user)) -> dict:
 app.include_router(pipeline_router)
 app.include_router(me_router)
 app.include_router(ai_router)
+app.include_router(security_router)
 app.include_router(assistant_router)
 app.include_router(coins_router)
 app.include_router(connectors_router)
