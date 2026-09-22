@@ -259,8 +259,6 @@ def test_mapping_rol_invalido_422(client, auth_headers, sample_csv):
 
 
 def test_soporte_maximo_de_pendientes(client, auth_headers, monkeypatch):
-    import httpx as _httpx
-
     from app.config import get_settings
     from app.routes import support as support_module
 
@@ -268,11 +266,8 @@ def test_soporte_maximo_de_pendientes(client, auth_headers, monkeypatch):
     monkeypatch.setattr(settings, "supabase_url", "https://proyecto-test.supabase.co")
     monkeypatch.setattr(settings, "supabase_service_role_key", "service-key")
 
-    def fake_get(url, params=None, headers=None, timeout=None):
-        pendientes = [{"mensaje": f"pendiente {i}"} for i in range(3)]
-        return _httpx.Response(200, json=pendientes, request=_httpx.Request("GET", url))
-
-    monkeypatch.setattr(support_module.httpx, "get", fake_get)
+    monkeypatch.setattr(support_module, "consume_budget", lambda *a, **kw: None)
+    monkeypatch.setattr(support_module, "commercial_rpc", lambda *a: {"created": False, "reason": "pending_limit"})
     response = client.post(
         "/support/request",
         json={"mensaje": "otra consulta"},
@@ -282,8 +277,6 @@ def test_soporte_maximo_de_pendientes(client, auth_headers, monkeypatch):
 
 
 def test_soporte_mensaje_identico_pendiente_409(client, auth_headers, monkeypatch):
-    import httpx as _httpx
-
     from app.config import get_settings
     from app.routes import support as support_module
 
@@ -291,12 +284,8 @@ def test_soporte_mensaje_identico_pendiente_409(client, auth_headers, monkeypatc
     monkeypatch.setattr(settings, "supabase_url", "https://proyecto-test.supabase.co")
     monkeypatch.setattr(settings, "supabase_service_role_key", "service-key")
 
-    def fake_get(url, params=None, headers=None, timeout=None):
-        return _httpx.Response(
-            200, json=[{"mensaje": "ayuda con mi archivo"}], request=_httpx.Request("GET", url)
-        )
-
-    monkeypatch.setattr(support_module.httpx, "get", fake_get)
+    monkeypatch.setattr(support_module, "consume_budget", lambda *a, **kw: None)
+    monkeypatch.setattr(support_module, "commercial_rpc", lambda *a: {"created": False, "reason": "duplicate"})
     response = client.post(
         "/support/request",
         json={"mensaje": "ayuda con mi archivo"},

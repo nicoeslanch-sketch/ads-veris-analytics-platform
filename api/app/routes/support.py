@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 
 from ..auth import AuthenticatedUser, get_current_user
 from ..config import Settings, get_settings
+from ..commercial_rpc import commercial_rpc
+from ..request_budget import consume_budget
 
 router = APIRouter(prefix="/support")
 
@@ -49,65 +51,19 @@ class SupportMessageBody(BaseModel):
     page: str = Field(default="", max_length=120)
 
 
-# Fase 10 §12.2 — anti-abuso: máximo de solicitudes pendientes por usuario y
-# sin duplicar un mensaje idéntico que sigue pendiente.
-MAX_PENDING_PER_USER = 3
-
-
-def _guard_spam_sync(user_id: str, mensaje: str, settings: Settings) -> None:
-    try:
-        response = httpx.get(
-            _rest(settings, "support_requests"),
-            params={
-                "user_id": f"eq.{user_id}",
-                "status": "eq.pendiente",
-                "select": "mensaje",
-                "limit": str(MAX_PENDING_PER_USER + 1),
-            },
-            headers=_headers(settings),
-            timeout=_TIMEOUT,
-        )
-        response.raise_for_status()
-        pendientes = response.json()
-    except httpx.HTTPError:
-        return  # fail-open: un problema de red no debe bloquear pedir ayuda
-    if len(pendientes) >= MAX_PENDING_PER_USER:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Ya tienes {MAX_PENDING_PER_USER} solicitudes pendientes. "
-            "El equipo las está revisando; te responderemos a la brevedad.",
-        )
-    if any((p.get("mensaje") or "").strip() == mensaje for p in pendientes):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Ya registraste esa misma solicitud y sigue pendiente.",
-        )
-
-
 def _insert_sync(user_id: str, body: SupportRequestBody, settings: Settings) -> None:
-    _guard_spam_sync(user_id, body.mensaje.strip(), settings)
-    try:
-        response = httpx.post(
-            _rest(settings, "support_requests"),
-            json={
-                "user_id": user_id,
-                "mensaje": body.mensaje.strip(),
-                "pagina": body.pagina.strip() or None,
-            },
-            headers={**_headers(settings), "Prefer": "return=minimal"},
-            timeout=_TIMEOUT,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"No se pudo registrar tu solicitud: {exc.__class__.__name__}",
-        ) from exc
-    if response.status_code >= 400:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Supabase respondió {response.status_code} al guardar la solicitud "
-            "(¿está ejecutada la migración 0010?).",
-        )
+    consume_budget(f'support:request:{user_id}', settings, limit=5, window=600)
+    result = commercial_rpc('create_support_request_guarded', {
+        'p_user_id': user_id, 'p_message': body.mensaje.strip(), 'p_page': body.pagina.strip(),
+    }, settings)
+    if isinstance(result, dict) and result.get('created') is True:
+        return
+    reason = result.get('reason') if isinstance(result, dict) else None
+    if reason == 'duplicate':
+        raise HTTPException(409, 'Ya registraste esa misma solicitud y sigue pendiente.')
+    if reason == 'pending_limit':
+        raise HTTPException(429, 'Ya tienes 3 solicitudes pendientes. El equipo las esta revisando.')
+    raise HTTPException(503, 'No se pudo confirmar tu solicitud. Revisa su estado antes de reintentar.')
 
 
 @router.post("/request")
@@ -241,6 +197,7 @@ def _insert_conversation_sync(user_id: str, page: str, settings: Settings) -> st
 
 
 def _send_chat_message_sync(user_id: str, body: SupportMessageBody, settings: Settings) -> dict:
+    consume_budget(f'support:chat:{user_id}', settings, limit=12, window=60)
     _purge_stale_sync(settings)
     message = body.message.strip()
     if not message:

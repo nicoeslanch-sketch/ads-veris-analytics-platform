@@ -58,4 +58,4 @@ def test_production_es256_validates_project_after_key_recovery(monkeypatch, sign
             auth.get_current_user(credentials, settings)
         assert rejected.value.status_code == 401
     else:
-        assert auth.get_current_user(credentials, settings).id == "synthetic-user"
+        assert auth.get_verified_user(credentials, settings).id == "synthetic-user"

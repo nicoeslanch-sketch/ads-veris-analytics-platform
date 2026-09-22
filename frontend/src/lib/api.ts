@@ -68,6 +68,8 @@ async function fetchWithTimeout(
   try {
     for (let attempt = 0; ; attempt += 1) {
       const response = await fetch(url, { ...init, signal: controller.signal })
+      if (response.status === 403 && response.headers.get('X-Auth-Action') === 'mfa_required'
+        && typeof window !== 'undefined') window.dispatchEvent(new Event('ads:mfa-required'))
       if (attempt >= PROCESSING_BUSY_RETRIES || response.status !== 429) return response
       const retryAfter = response.headers.get('Retry-After')
       if (!retryAfter) return response

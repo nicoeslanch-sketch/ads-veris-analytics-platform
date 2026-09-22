@@ -46,6 +46,7 @@ def _settings_enforced() -> Settings:
 
 @pytest.fixture()
 def client(monkeypatch):
+    monkeypatch.setattr('app.routes.me.consume_budget', lambda *a, **kw: None)
     app.dependency_overrides[get_settings] = _settings_enforced
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
         id="user-test", email="t@example.cl", claims={}

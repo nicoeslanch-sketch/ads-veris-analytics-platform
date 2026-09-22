@@ -1,11 +1,16 @@
 """Real PostgreSQL/PostgREST security tests. Refuses non-loopback databases."""
 
 import argparse
+import base64
+import hashlib
+import hmac
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
 import subprocess
+import struct
+import time
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
@@ -30,6 +35,7 @@ class SecurityLab:
                     "PGOPTIONS": "-c statement_timeout=10000"}
         self.headers = {"apikey": status["SERVICE_ROLE_KEY"],
                         "Authorization": "Bearer " + status["SERVICE_ROLE_KEY"]}
+        self.anon_key = status['ANON_KEY']
         self.http = httpx.Client(timeout=20, trust_env=False)
         self.checks = {}
 
@@ -59,6 +65,89 @@ class SecurityLab:
     def reserve(self, uid, kind="summary", limit=2):
         return self.rpc("reserve_ai_quota", {"p_user_id": uid, "p_reservation_id": str(uuid4()),
                         "p_kind": kind, "p_limits": {"basico": limit, "analista": limit, "gold": limit}})
+
+    def test_mfa(self):
+        # All credentials are synthetic, short-lived and never included in the report.
+        email, password = f'{uuid4()}@example.invalid', f'Lab-{uuid4()}!'
+        r = self.http.post(self.base + '/auth/v1/admin/users', headers=self.headers,
+                           json={'email': email, 'password': password, 'email_confirm': True})
+        assert r.status_code in (200, 201), ('create synthetic account', r.status_code)
+        uid = r.json()['id']
+        r = self.http.post(self.base + '/auth/v1/token?grant_type=password', headers={'apikey': self.anon_key},
+                           json={'email': email, 'password': password})
+        assert r.status_code == 200, ('synthetic sign in', r.status_code)
+        aal1 = {'apikey': self.anon_key, 'Authorization': 'Bearer ' + r.json()['access_token']}
+        def profile(headers):
+            r = self.http.get(self.base + '/rest/v1/profiles', headers=headers,
+                              params={'id': 'eq.' + uid, 'select': 'id'})
+            assert r.status_code == 200, ('profile query', r.status_code)
+            return r.json()
+        assert profile(aal1) == [{'id': uid}]
+        r = self.http.post(self.base + '/auth/v1/factors', headers=aal1,
+                           json={'factor_type': 'totp', 'friendly_name': 'Synthetic lab'})
+        assert r.status_code == 200, ('synthetic enrollment', r.status_code)
+        factor, secret = r.json()['id'], r.json()['totp']['secret']
+        assert profile(aal1) == [{'id': uid}], 'An unverified factor must not lock out a customer'
+        challenge_url = self.base + '/auth/v1/factors/' + factor + '/challenge'
+        verify_url = self.base + '/auth/v1/factors/' + factor + '/verify'
+        r = self.http.post(challenge_url, headers=aal1, json={})
+        assert r.status_code == 200, ('challenge', r.status_code)
+        rejected = self.http.post(verify_url, headers=aal1, json={'challenge_id': r.json()['id'], 'code': 'invalid'})
+        assert rejected.status_code in (400, 422), ('invalid code', rejected.status_code)
+        r = self.http.post(challenge_url, headers=aal1, json={})
+        assert r.status_code == 200, ('fresh challenge', r.status_code)
+        digest = hmac.new(base64.b32decode(secret), struct.pack('>Q', int(time.time()) // 30), hashlib.sha1).digest()
+        offset = digest[-1] & 15
+        code = f'{(struct.unpack(">I", digest[offset:offset+4])[0] & 0x7fffffff) % 1000000:06d}'
+        r = self.http.post(verify_url, headers=aal1, json={'challenge_id': r.json()['id'], 'code': code})
+        assert r.status_code == 200, ('TOTP verification', r.status_code)
+        aal2 = {'apikey': self.anon_key, 'Authorization': 'Bearer ' + r.json()['access_token']}
+        assert profile(aal1) == []
+        assert profile(aal2) == [{'id': uid}]
+        r = self.http.get(self.base + '/rest/v1/profiles', headers=aal2, params={'select': 'id'})
+        assert r.status_code == 200 and r.json() == [{'id': uid}]
+        self.checks['real_totp_enrollment_wrong_code_aal1_denial_aal2_ownership'] = True
+        context = self.rpc('session_security_context', {'p_user_id': uid})
+        assert context == {'is_admin': False, 'has_mfa': True}
+        for headers in (aal1, aal2, {'apikey': self.anon_key}):
+            r = self.http.post(self.base + '/rest/v1/rpc/session_security_context', headers=headers,
+                               json={'p_user_id': uid})
+            assert r.status_code in (401, 403), ('private MFA lookup', r.status_code)
+        self.checks['mfa_context_rpc_not_public'] = True
+        admin = self.account(admin=True)
+        result = self.sql(f"begin; set local role authenticated; "
+                         f"select set_config('request.jwt.claims','{{\"sub\":\"{admin}\",\"aal\":\"aal1\"}}',true); "
+                         f"select count(*) from public.profiles where id='{admin}'; rollback;")
+        assert '\n0\n' in result
+        self.checks['admin_without_factor_has_no_direct_data_access'] = True
+        missing = self.sql("select count(*) from pg_tables t where schemaname='public' and rowsecurity "
+                           "and not exists (select 1 from pg_policies p where p.schemaname=t.schemaname "
+                           "and p.tablename=t.tablename and p.policyname='account_mfa_guard' and p.permissive='RESTRICTIVE');")
+        assert missing == '0', 'New RLS tables must also include the MFA guard'
+        assert self.sql("select count(*) from pg_policies where schemaname='storage' and tablename='objects' "
+                        "and policyname='account_mfa_guard' and permissive='RESTRICTIVE'") == '1'
+        self.checks['all_public_rls_tables_and_storage_have_restrictive_mfa_guard'] = True
+
+    def test_account_limits(self):
+        bucket = hashlib.sha256(str(uuid4()).encode()).hexdigest()
+        limits = self.concurrent(lambda _: self.rpc('consume_request_budget', {
+            'p_bucket_hash': bucket, 'p_limit': 5, 'p_window_seconds': 600}), 16)
+        assert sum(r['allowed'] for r in limits) == 5
+        assert all(1 <= r['retry_after'] <= 600 for r in limits if not r['allowed'])
+        self.checks['distributed_account_budget_five_of_sixteen'] = True
+        uid = self.account()
+        requests = self.concurrent(lambda i: self.rpc('create_support_request_guarded', {
+            'p_user_id': uid, 'p_message': f'Synthetic request {i}', 'p_page': '/lab'}))
+        assert sum(r['created'] for r in requests) == 3
+        uid = self.account()
+        requests = self.concurrent(lambda i: self.rpc('create_support_request_guarded', {
+            'p_user_id': uid, 'p_message': 'Same synthetic request', 'p_page': '/lab'}))
+        assert sum(r['created'] for r in requests) == 1
+        self.checks['support_pending_limit_and_duplicate_atomic_under_concurrency'] = True
+        for function in ['consume_request_budget(text,integer,integer)', 'create_support_request_guarded(uuid,text,text)']:
+            for role in ['anon', 'authenticated']:
+                assert self.sql(f"select has_function_privilege('{role}','public.{function}','execute')") == 'f'
+        self.checks['request_budget_and_support_rpc_service_only'] = True
 
     def run(self):
         assert self.sql("select count(*) from auth.users") == "0", "Refusing populated database"
@@ -159,6 +248,8 @@ class SecurityLab:
         for privilege in ("update", "delete", "truncate"):
             assert self.sql(f"select has_table_privilege('service_role','public.admin_audit','{privilege}')") == "f"
         self.checks["backend_cannot_rewrite_audit_history"] = True
+        self.test_mfa()
+        self.test_account_limits()
 
 
 def main():

@@ -8,6 +8,7 @@ import { AccessProvider } from './lib/access'
 import { DatasetProvider } from './data/DatasetContext'
 import { DemoProvider } from './demo/DemoContext'
 import ProtectedRoute from './auth/ProtectedRoute'
+import SecurityGate from './auth/SecurityGate'
 import AppShell from './components/layout/AppShell'
 import Login from './pages/Login'
 
@@ -90,6 +91,7 @@ export default function App() {
 
   return (
     <AuthProvider>
+      <SecurityGate>
       <AccessProvider>
       <DatasetProvider>
         <DemoProvider>
@@ -99,6 +101,7 @@ export default function App() {
         </DemoProvider>
       </DatasetProvider>
       </AccessProvider>
+      </SecurityGate>
     </AuthProvider>
   )
 }

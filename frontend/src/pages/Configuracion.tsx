@@ -13,6 +13,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import StorageUsage from '../components/StorageUsage'
+import MfaPanel from '../auth/MfaPanel'
 import { useAuth } from '../auth/AuthContext'
 import { useAccess } from '../lib/access'
 import { apiGet } from '../lib/api'
@@ -250,6 +251,7 @@ export default function Configuracion() {
         </Card>
 
         <div className="flex flex-col gap-6">
+          {user && supabaseConfigured && <Card><MfaPanel admin={isAdmin} /></Card>}
           {user && supabaseConfigured && <StorageUsage />}
           {/* Estado de la cuenta: consultas IA */}
           <Card>
