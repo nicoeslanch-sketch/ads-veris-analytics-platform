@@ -21,6 +21,16 @@ export function isTotpCode(code: string): boolean {
   return /^\d{6}$/.test(code)
 }
 
+export function normalizeMfaQr(qr: string): string {
+  if (!qr.startsWith('data:image/svg+xml;utf-8,') && !qr.startsWith('data:image/svg+xml,')) {
+    throw new Error('Invalid authenticator QR')
+  }
+  const comma = qr.indexOf(',')
+  const svg = qr.slice(comma + 1)
+  // Supabase JS prefixes raw SVG: encode fragments such as fill="#000" too.
+  return qr.slice(0, comma + 1) + (svg.trimStart().startsWith('<') ? encodeURIComponent(svg) : svg)
+}
+
 export function mfaErrorMessage(error: unknown): string {
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
   if (code.includes('rate_limit')) return 'Demasiados intentos. Espera un minuto antes de reintentar.'

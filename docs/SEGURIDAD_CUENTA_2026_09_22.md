@@ -45,11 +45,16 @@ El proyecto aun no tiene un servicio de respuesta a incidentes 24/7.
 
 ## Despliegue
 
-Aplicar migraciones solo despues de aprobar el laboratorio desechable.
-La migracion MFA afecta acceso directo a datos inmediatamente: coordinar con
-el despliegue del frontend y API, avisando al administrador. No enrolar cuentas
-reales con herramientas automatizadas. Verificar /version y el formulario sin
-capturar un QR real. Mantener compras desactivadas en todos los ambientes.
+Aplicar migraciones solo despues de aprobar el laboratorio desechable:
+1. `20260922013036` prepara los helpers de seguridad sin bloquear el frontend viejo.
+2. `20260922093037` prepara limites distribuidos y soporte atomico.
+3. Desplegar frontend/API y verificar /version y formulario sin capturar un QR real.
+4. `20260922095008` activa las politicas RLS de segundo factor.
+
+Avisar al administrador; no enrolar cuentas reales con herramientas automatizadas.
+Mantener compras desactivadas en todos los ambientes. Un rollback a frontend
+anterior a MFA no es compatible con las politicas activas: recuperar con una
+correccion hacia adelante, no retirando silenciosamente las protecciones.
 
 ## Evidencia requerida
 

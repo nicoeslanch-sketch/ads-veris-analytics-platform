@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isTotpCode, mfaErrorMessage, parseSessionSecurity } from './mfa'
+import { isTotpCode, mfaErrorMessage, normalizeMfaQr, parseSessionSecurity } from './mfa'
 
 describe('MFA input and server status', () => {
   it.each([null, {}, [], { enforced: 'false' }])('rejects incomplete status %s', value => {
@@ -13,6 +13,14 @@ describe('MFA input and server status', () => {
     expect(isTotpCode(value)).toBe(false)
   })
   it('preserves leading zeroes', () => { expect(isTotpCode('001234')).toBe(true) })
+  it('encodes raw SVG fragments and rejects remote QR images', () => {
+    const svg = '<svg><rect fill="#000"/></svg>'
+    expect(normalizeMfaQr('data:image/svg+xml;utf-8,' + svg)).toBe('data:image/svg+xml;utf-8,' + encodeURIComponent(svg))
+    expect(() => normalizeMfaQr('https://untrusted.invalid/qr')).toThrow()
+    expect(() => normalizeMfaQr('data:text/html,<svg/>')).toThrow()
+    const encoded = 'data:image/svg+xml,' + encodeURIComponent(svg)
+    expect(normalizeMfaQr(encoded)).toBe(encoded)
+  })
   it('does not expose raw provider diagnostics', () => {
     expect(mfaErrorMessage({ message: 'PRIVATE TOKEN', code: 'unexpected' })).not.toContain('PRIVATE TOKEN')
     expect(mfaErrorMessage({ code: 'mfa_verification_failed' })).toContain('incorrecto')

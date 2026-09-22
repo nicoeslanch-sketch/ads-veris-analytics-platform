@@ -6,7 +6,7 @@ async function mocks(page: Page, { loadError = false, sessionError = false, requ
     const factor = { id: 'synthetic-factor', friendly_name: 'Dispositivo de prueba', factor_type: 'totp', status: 'verified' };
     export const supabase = { auth: { mfa: {
       async listFactors() { return ${loadError} ? { error: { message: 'secret diagnostic' } } : { data: { all: verified ? [factor] : [], totp: verified ? [factor] : [] } }; },
-      async enroll() { return { data: { id: factor.id, totp: { secret: 'SYNTHETICKEY', qr_code: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect width="200" height="200" fill="white"/%3E%3C/svg%3E' } } }; },
+      async enroll() { return { data: { id: factor.id, totp: { secret: 'SYNTHETICKEY', qr_code: 'data:image/svg+xml;utf-8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect x="20" y="20" width="160" height="160" fill="#000"/></svg>' } } }; },
       async challengeAndVerify({code}) { if (code !== '123456') return { error: { code: 'mfa_verification_failed' } }; verified = true; return { data: {} }; },
       async unenroll() { verified = false; return { data: {} }; }
     }, async refreshSession() { return { data: {} }; } } };
@@ -58,6 +58,12 @@ for (const width of [390, 1280]) {
     await expect(page.getByText('Datos privados de prueba')).toHaveCount(0)
     await page.getByRole('button', { name: 'Configurar autenticador', exact: true }).click()
     await expect(page.getByRole('img', { name: 'QR privado' })).toBeVisible()
+    const rendered = await page.getByRole('img', { name: 'QR privado' }).evaluate((img: HTMLImageElement) => {
+      const canvas = document.createElement('canvas'); canvas.width = 200; canvas.height = 200
+      const ctx = canvas.getContext('2d')!; ctx.drawImage(img, 0, 0)
+      return [...ctx.getImageData(100, 100, 1, 1).data]
+    })
+    expect(rendered).toEqual([0, 0, 0, 255])
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.screenshot({ path: `test-results/mfa-${width}.png`, fullPage: true })
   })

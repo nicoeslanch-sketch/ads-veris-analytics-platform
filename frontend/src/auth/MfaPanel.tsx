@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Check, KeyRound, Loader2, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { isTotpCode, mfaErrorMessage } from './mfa'
+import { isTotpCode, mfaErrorMessage, normalizeMfaQr } from './mfa'
 
 interface Factor { id: string; friendly_name?: string; status: string; factor_type: string }
 interface Enrollment { id: string; qr: string; secret: string }
@@ -51,8 +51,7 @@ export default function MfaPanel({ required = false, admin = false, onVerified }
       friendlyName: `Autenticador ${new Date().toISOString()}` })
     if (result.error) throw result.error
     // Render provider SVG as an inert image, never as HTML. Keep secrets in memory only.
-    const qr = result.data.totp.qr_code
-    if (!qr.startsWith('data:image/svg+xml')) throw new Error('Invalid QR')
+    const qr = normalizeMfaQr(result.data.totp.qr_code)
     setEnrollment({ id: result.data.id, qr, secret: result.data.totp.secret })
     setCode('')
     setNotice('')
