@@ -81,3 +81,22 @@ test('MFA gate permits a customer without enrollment', async ({ page }) => {
   await page.goto('/e2e/fixtures/security.html?gate')
   await expect(page.getByText('Datos privados de prueba')).toBeVisible()
 })
+
+test('Commercial preparation stays compact and does not offer payment activation', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.route('**/src/lib/api.ts', route => route.fulfill({ contentType: 'application/javascript', body: `
+    export async function apiGet() { return { payment_activation_available:false,items:[
+      {id:'mfa',title:'Doble factor de esta cuenta',state:'ready',detail:'Verificado contra la cuenta.'},
+      {id:'payments',title:'Cobros con tarjeta',state:'deferred',detail:'Pospuestos por el titular. Sin pasarela ni cargos.'},
+      {id:'recovery',title:'Recuperacion ante desastre',state:'pending',detail:'Falta demostrar restauracion de base de datos y archivos desde una copia externa.'}
+    ]}; }
+  ` }))
+  await page.goto('/e2e/fixtures/security.html?readiness')
+  await expect(page.getByText('Cobros con tarjeta')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Preparacion comercial' }).click()
+  await expect(page.getByText('Cobros con tarjeta')).toBeVisible()
+  await expect(page.getByText('Pospuesto', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /activar|comprar|pagar/i })).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: 'test-results/readiness-390.png', fullPage: true })
+})
