@@ -6,8 +6,7 @@ gestiona todas las cuentas de la plataforma:
 GET  /admin/accounts                  — todas las cuentas con plan, uso y
                                         solicitudes pendientes (semáforo).
 POST /admin/accounts/{id}/plan        — activa un plan a mano (Básico/Analista/
-                                        Gold). La pasarela de pago del futuro
-                                        llamará la MISMA función set_user_plan.
+                                        Gold), con auditoría transaccional.
 GET  /admin/support                   — bandeja unificada: solicitudes de ayuda
                                         (support_requests) + tokens/upgrades
                                         (addon_requests).
@@ -21,7 +20,7 @@ contraseñas — Supabase Auth ni siquiera las expone).
 """
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -31,6 +30,7 @@ from pydantic import BaseModel, Field
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import PLAN_ORDER, get_is_admin, normalize_plan
 from ..config import Settings, get_settings
+from ..commercial_rpc import commercial_rpc
 
 router = APIRouter(prefix="/admin")
 
@@ -53,24 +53,13 @@ def _rest(settings: Settings, table: str) -> str:
 
 
 def _require_admin_sync(user_id: str, settings: Settings, email: str | None = None) -> None:
-    """503 sin Supabase, 403 si el caller no es administrador.
-
-    Bootstrap robusto (Fase 10): el correo ADMIN_EMAIL entra aunque
-    profiles.is_admin aún no esté marcado (la migración 0010 depende de que
-    la cuenta exista al ejecutarla; el correo del JWT viene verificado por
-    Supabase Auth, no es un dato editable por el usuario)."""
+    """503 sin Supabase, 403 sin rol protegido en la base de datos."""
     if not _configured(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="El panel de administración requiere Supabase configurado "
             "(y la migración 0010 ejecutada).",
         )
-    if (
-        settings.admin_email
-        and email
-        and email.strip().lower() == settings.admin_email.strip().lower()
-    ):
-        return
     try:
         is_admin = get_is_admin(user_id, settings)
     except httpx.HTTPError as exc:
@@ -229,6 +218,7 @@ async def admin_accounts(
 
 class SetPlanBody(BaseModel):
     plan: str = Field(min_length=3, max_length=20)
+    operation_id: UUID = Field(default_factory=uuid4)
 
 
 def set_user_plan(
@@ -237,51 +227,29 @@ def set_user_plan(
     plan: str,
     settings: Settings,
     source: str = "admin_manual",
+    operation_id: UUID | None = None,
 ) -> dict:
-    """Activa un plan para una cuenta. ÚNICA vía para cambiar planes.
-
-    TODO pasarela de pago (Fase 9): cuando exista el checkout, el webhook de
-    pago confirmado debe llamar ESTA misma función con source="pasarela" —
-    así el flujo manual y el automático comparten validación y auditoría.
-    """
+    """Manual admin activation only; payments need a verified payment receipt."""
+    if source != "admin_manual":
+        raise HTTPException(422, "Los pagos requieren una confirmacion de la pasarela.")
     normalized = normalize_plan(plan)
     if plan.strip().lower() not in PLAN_ORDER:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Plan desconocido: '{plan}'. Usa uno de {', '.join(PLAN_ORDER)}.",
         )
-    try:
-        response = httpx.patch(
-            _rest(settings, "profiles"),
-            params={"id": f"eq.{target_user_id}"},
-            json={"plan": normalized},
-            headers={**_headers(settings), "Prefer": "return=representation"},
-            timeout=_TIMEOUT,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"No se pudo contactar a Supabase: {exc.__class__.__name__}",
-        ) from exc
-    if response.status_code >= 400:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Supabase respondió {response.status_code} al cambiar el plan.",
-        )
-    if not response.json():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No existe un usuario con ese ID en profiles.",
-        )
-    _audit(settings, admin_id, "set_plan", target_user_id, {"plan": normalized, "source": source})
-    return {"ok": True, "user_id": target_user_id, "plan": normalized}
+    return commercial_rpc("admin_commercial_operation", {
+        "p_admin_id": admin_id, "p_operation_id": str(operation_id or uuid4()),
+        "p_target_user_id": target_user_id, "p_action": "set_plan",
+        "p_payload": {"plan": normalized, "source": source},
+    }, settings)
 
 
 def _set_plan_sync(
     caller_id: str, target: str, body: SetPlanBody, settings: Settings, caller_email: str | None = None
 ) -> dict:
     _require_admin_sync(caller_id, settings, caller_email)
-    return set_user_plan(caller_id, target, body.plan, settings)
+    return set_user_plan(caller_id, target, body.plan, settings, operation_id=body.operation_id)
 
 
 @router.post("/accounts/{target_user_id}/plan")
@@ -599,6 +567,7 @@ class GrantAdsCoinsBody(BaseModel):
     user_id: str = Field(min_length=10, max_length=80)
     amount: int = Field(gt=0, le=1_000_000)
     note: str = Field(default="Otorgado por soporte", max_length=300)
+    operation_id: UUID = Field(default_factory=uuid4)
 
 
 def _grant_ads_coins_sync(
@@ -608,30 +577,11 @@ def _grant_ads_coins_sync(
     caller_email: str | None = None,
 ) -> dict:
     _require_admin_sync(caller_id, settings, caller_email)
-    reference = f"admin:{caller_id}:{uuid4()}"
-    response = httpx.post(
-        _rest(settings, "rpc/adjust_ads_coins"),
-        json={
-            "p_user_id": body.user_id,
-            "p_amount": body.amount,
-            "p_reason": "admin_grant",
-            "p_reference_key": reference,
-            "p_metadata": {"note": body.note},
-        },
-        headers=_headers(settings),
-        timeout=_TIMEOUT,
-    )
-    response.raise_for_status()
-    rows = response.json()
-    balance = int(rows[0]["balance"]) if rows else 0
-    _audit(
-        settings,
-        caller_id,
-        "grant_ads_coins",
-        body.user_id,
-        {"amount": body.amount, "reference": reference},
-    )
-    return {"ok": True, "balance": balance, "amount": body.amount}
+    return commercial_rpc("admin_commercial_operation", {
+        "p_admin_id": caller_id, "p_operation_id": str(body.operation_id),
+        "p_target_user_id": body.user_id, "p_action": "grant_ads_coins",
+        "p_payload": {"amount": body.amount, "note": body.note},
+    }, settings)
 
 
 @router.post("/grant-coins")

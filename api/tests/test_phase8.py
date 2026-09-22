@@ -57,16 +57,14 @@ def test_admin_set_plan_actualiza_y_audita(client, auth_headers, monkeypatch):
 
     calls: list[tuple[str, str]] = []
 
-    def fake_patch(url, params=None, json=None, headers=None, timeout=None):
-        calls.append(("PATCH", url))
-        assert json == {"plan": "analista"}
-        return httpx.Response(200, json=[{"id": "target-1", "plan": "analista"}])
-
     def fake_post(url, params=None, json=None, headers=None, timeout=None):
         calls.append(("POST", url))
-        return httpx.Response(201, json=[])
+        assert json["p_action"] == "set_plan"
+        assert json["p_payload"] == {"plan": "analista", "source": "admin_manual"}
+        assert json["p_operation_id"]
+        return httpx.Response(200, request=httpx.Request("POST", url),
+                              json={"ok": True, "user_id": "target-1", "plan": "analista"})
 
-    monkeypatch.setattr(admin_module.httpx, "patch", fake_patch)
     monkeypatch.setattr(admin_module.httpx, "post", fake_post)
     response = client.post(
         "/admin/accounts/target-1/plan",
@@ -75,8 +73,8 @@ def test_admin_set_plan_actualiza_y_audita(client, auth_headers, monkeypatch):
     )
     assert response.status_code == 200
     assert response.json() == {"ok": True, "user_id": "target-1", "plan": "analista"}
-    assert any(m == "PATCH" and "profiles" in u for m, u in calls)
-    assert any(m == "POST" and "admin_audit" in u for m, u in calls)  # auditoría
+    assert len(calls) == 1
+    assert calls[0][1].endswith("/rpc/admin_commercial_operation")
 
 
 # ── Soporte (botón "¿Necesitas ayuda?") ──────────────────────────────────────

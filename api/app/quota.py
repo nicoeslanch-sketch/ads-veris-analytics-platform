@@ -13,15 +13,15 @@ y 0009) vía PostgREST con la service_role key (solo backend):
 Comportamiento compartido:
 - Supabase sin configurar (desarrollo local) → sin gating, devuelve None.
 - Cupo agotado → HTTP 429 con mensaje claro y CTA.
-- Error de red contra Supabase → fail-open documentado: se permite la consulta
-  y se registra el problema (la disponibilidad pesa más que una consulta sin
-  contar). Todo el módulo es síncrono: llamarlo con `run_in_threadpool`.
-
-Deuda conocida (PHASE_STATUS → Pendiente): el control es check-then-record,
-una ráfaga simultánea justo en el límite puede excederlo por pocas consultas.
+- Los endpoints reservan cupo atomicamente en PostgreSQL antes de trabajar.
+- Ante fallos de cuota no se llama al proveedor (fail-closed).
+- Las consultas informativas no sustituyen la reserva de cupo.
+Todo el modulo es sincrono: llamarlo con `run_in_threadpool`.
 """
 
 from datetime import datetime, timezone
+import logging
+from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException, status
@@ -34,10 +34,52 @@ from .capabilities import (
     normalize_plan,
 )
 from .config import Settings
+from .commercial_rpc import commercial_rpc
 
 _TIMEOUT = 10
 
 INSIGHT_KINDS = ("summary", "chat", "recommendation")
+logger = logging.getLogger(__name__)
+
+
+def reserve_usage(user_id: str, kind: str, settings: Settings) -> dict | None:
+    """Atomic quota + shared burst admission; never retry a provider call here."""
+    if kind not in (*INSIGHT_KINDS, "cleaning"):
+        raise ValueError("Unsupported quota kind")
+    if not _configured(settings) and getattr(settings, "dev_auth_bypass", False):
+        return None
+    limit = cleaning_limit_for if kind == "cleaning" else limit_for
+    result = commercial_rpc("reserve_ai_quota", {
+        "p_user_id": user_id, "p_reservation_id": str(uuid4()), "p_kind": kind,
+        "p_limits": {plan: limit(plan, settings) for plan in ("sin_plan", "basico", "analista", "gold")},
+    }, settings)
+    if not isinstance(result, dict) or type(result.get("allowed")) is not bool:
+        raise HTTPException(503, "No se pudo verificar tu cupo.")
+    if not result["allowed"]:
+        reason = result.get("reason")
+        if reason == "plan":
+            raise HTTPException(403, "Tu plan no incluye esta funcion. Revisa la pagina Planes.")
+        if reason == "burst":
+            raise HTTPException(429, "Demasiadas consultas al asistente. Espera un minuto.",
+                                headers={"Retry-After": "60"})
+        raise HTTPException(429, "Alcanzaste tu cupo disponible. Revisa el consumo en Planes.")
+    if not result.get("reservation_id"):
+        raise HTTPException(503, "No se pudo confirmar la reserva de cupo.")
+    return result
+
+
+def settle_usage(user_id: str, reservation: dict | None, success: bool, settings: Settings) -> None:
+    if not reservation:
+        return
+    try:
+        commercial_rpc("settle_ai_quota", {
+            "p_user_id": user_id, "p_reservation_id": reservation["reservation_id"],
+            "p_success": success,
+        }, settings)
+    except HTTPException:
+        # A failed settlement keeps the durable reservation charged. Do not
+        # turn a successful analysis into a retry that could spend twice.
+        logger.error("Quota settlement pending; reservation=%s", reservation["reservation_id"])
 
 
 def _headers(settings: Settings) -> dict:
@@ -70,6 +112,7 @@ def count_month_usage(
         "user_id": f"eq.{user_id}",
         "created_at": f"gte.{_month_start_iso()}",
         "select": "id",
+        "state": "neq.released",
     }
     if kinds:
         params["kind"] = f"in.({','.join(kinds)})"
@@ -83,7 +126,9 @@ def count_month_usage(
         response.raise_for_status()
     content_range = response.headers.get("content-range", "")
     total = content_range.split("/")[-1]
-    return int(total) if total.isdigit() else 0
+    if not total.isdigit():
+        raise httpx.RequestError("Missing quota count")
+    return int(total)
 
 
 def limit_for(plan: str, settings: Settings) -> int:
@@ -111,9 +156,7 @@ def check_quota(user_id: str, settings: Settings) -> dict | None:
         plan, is_admin = get_profile_flags(user_id, settings)
         usadas = count_month_usage(user_id, settings, kinds=INSIGHT_KINDS)
     except httpx.HTTPError as exc:
-        # Fail-open: no castigar al usuario por un problema de red interno.
-        print(f"[quota] No se pudo verificar el cupo de IA ({exc.__class__.__name__}); se permite la consulta.")
-        return None
+        raise HTTPException(503, "No se pudo verificar tu cupo de IA.") from exc
     if is_admin:
         return {
             "plan": plan,
@@ -247,11 +290,7 @@ def check_cleaning_quota(user_id: str, settings: Settings) -> dict | None:
         usadas = count_month_usage(user_id, settings, kinds=("cleaning",))
         addons = addons_balance(user_id, settings)
     except httpx.HTTPError as exc:
-        print(
-            f"[quota] No se pudo verificar el cupo de limpieza dirigida "
-            f"({exc.__class__.__name__}); se permite el intento."
-        )
-        return None
+        raise HTTPException(503, "No se pudo verificar tu cupo de limpieza.") from exc
     base = cleaning_limit_for(plan, settings)
     if is_admin:
         return {

@@ -5586,8 +5586,9 @@ async def clean_assisted(
     mapping_dict = _validate_mapping(_parse_json_field(mapping, "mapping") or None)
     sheet_name = _clean_sheet_param(sheet)
     state = _validate_restore_state(restore_state)
-    # 1) Cupo ANTES de gastar CPU (lanza 429 con CTA a Planes si no quedan intentos).
-    quota_info = await run_in_threadpool(quota.check_cleaning_quota, user.id, settings)
+    # An inexpensive preflight avoids parsing files for exhausted accounts.
+    # Admission is reserved atomically only after validating the instructions.
+    await run_in_threadpool(quota.check_cleaning_quota, user.id, settings)
 
     # 2) Interpretar instrucciones sobre las columnas reales del archivo.
     columns, auto_roles = await run_in_threadpool(
@@ -5613,16 +5614,21 @@ async def clean_assisted(
         )
     merged_rules = {**rules_dict, **plan.reglas_forzadas}
     scope = {"incluir": plan.columnas_incluir, "excluir": plan.columnas_excluir}
-    result = await run_in_threadpool(
-        _clean_sync, filename, content, merged_rules, True, mapping_dict, scope,
-        None, sheet_name, eliminar_duplicados, dataset_id, revision,
-    )
+    quota_info = await run_in_threadpool(quota.reserve_usage, user.id, "cleaning", settings)
+    try:
+        result = await run_in_threadpool(
+            _clean_sync, filename, content, merged_rules, True, mapping_dict, scope,
+            None, sheet_name, eliminar_duplicados, dataset_id, revision,
+        )
+    except Exception:
+        await run_in_threadpool(quota.settle_usage, user.id, quota_info, False, settings)
+        raise
     if revision is not None:
         result["revision"] = revision
 
-    # 4) Registrar el consumo (best-effort) SOLO tras un run exitoso.
+    # 4) Confirm the durable reservation; the addon was already reserved.
     consume_addon = bool(quota_info and quota_info.get("consume_addon"))
-    await run_in_threadpool(quota.record_cleaning_usage, user.id, settings, consume_addon)
+    await run_in_threadpool(quota.settle_usage, user.id, quota_info, True, settings)
 
     if quota_info:
         base = quota_info["base"]

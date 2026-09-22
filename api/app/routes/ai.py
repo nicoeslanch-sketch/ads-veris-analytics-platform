@@ -114,7 +114,8 @@ def _client(settings: Settings) -> AsyncAnthropic:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="El asistente no está disponible en este momento. Intenta de nuevo más tarde.",
         )
-    return AsyncAnthropic(api_key=settings.anthropic_api_key)
+    # One quota reservation funds one provider attempt, not hidden SDK retries.
+    return AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=0, timeout=60)
 
 
 def _model(settings: Settings) -> str:
@@ -308,7 +309,6 @@ async def ai_summary(
     )
     _check_metrics_size(body.metrics)
     _guard_monetary_integrity(body.metrics)
-    await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
         ctx = _metrics_context(body.metrics)
         prompt = (
@@ -320,6 +320,7 @@ async def ai_summary(
             "Ejemplo: SUGERENCIAS: ¿Cuál es el mes más fuerte?|¿Qué producto debo potenciar?|..."
         )
         client = _client(settings)
+        reservation = await run_in_threadpool(quota.reserve_usage, user.id, "summary", settings)
         response = await client.messages.create(
             model=_model(settings),
             max_tokens=1024,
@@ -366,7 +367,7 @@ async def ai_summary(
             "¿Qué debería priorizar el próximo mes?",
         ]
 
-    await run_in_threadpool(quota.record_usage, user.id, "summary", settings)
+    await run_in_threadpool(quota.settle_usage, user.id, reservation, True, settings)
     return {"resumen": resumen, "sugerencias": sugerencias}
 
 
@@ -385,7 +386,6 @@ async def ai_recommendation(
     )
     _check_metrics_size(body.metrics)
     _guard_monetary_integrity(body.metrics)
-    await run_in_threadpool(quota.check_quota, user.id, settings)
     try:
         ctx = _metrics_context(body.metrics)
         hallazgos_txt = "\n".join(f"- {h}" for h in body.hallazgos[:8])
@@ -400,6 +400,7 @@ async def ai_recommendation(
             "Ejemplo: PLAN: Renegocia el precio de X|Concentra promoción en el canal Y|Revisa el stock de Z"
         )
         client = _client(settings)
+        reservation = await run_in_threadpool(quota.reserve_usage, user.id, "recommendation", settings)
         response = await client.messages.create(
             model=_model(settings),
             max_tokens=1024,
@@ -436,7 +437,7 @@ async def ai_recommendation(
         recomendacion = parts[0].strip()
         plan = [p.strip() for p in parts[1].strip().split("|") if p.strip()][:3]
 
-    await run_in_threadpool(quota.record_usage, user.id, "recommendation", settings)
+    await run_in_threadpool(quota.settle_usage, user.id, reservation, True, settings)
     return {"recomendacion": recomendacion, "plan": plan}
 
 
@@ -453,7 +454,6 @@ async def ai_chat(
     )
     _check_metrics_size(body.metrics)
     _guard_monetary_integrity(body.metrics)
-    await run_in_threadpool(quota.check_quota, user.id, settings)
     ctx = _metrics_context(body.metrics)
 
     messages: list[dict] = []
@@ -476,6 +476,7 @@ async def ai_chat(
     messages.append({"role": "user", "content": body.pregunta})
 
     client = _client(settings)
+    reservation = await run_in_threadpool(quota.reserve_usage, user.id, "chat", settings)
 
     async def generate():
         try:
@@ -487,7 +488,7 @@ async def ai_chat(
             ) as stream:
                 async for text in stream.text_stream:
                     yield f"data: {json.dumps({'chunk': text})}\n\n"
-            await run_in_threadpool(quota.record_usage, user.id, "chat", settings)
+            await run_in_threadpool(quota.settle_usage, user.id, reservation, True, settings)
             yield "data: [DONE]\n\n"
         except Exception as exc:
             # Fase 10 §9.3: al cliente jamás se le filtran detalles internos
