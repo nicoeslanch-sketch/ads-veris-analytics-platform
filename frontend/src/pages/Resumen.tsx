@@ -438,7 +438,7 @@ export default function Resumen() {
       // queda "ya pedida" con la petición abortada, la página no carga jamás.
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
-  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable])
+  }, [demo.active, relationshipMode, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable])
 
   if (!ready && !demo.active) {
     return (

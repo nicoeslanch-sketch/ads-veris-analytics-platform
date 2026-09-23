@@ -42,3 +42,19 @@ def test_synthetic_oracle_matches_csv_and_accounts_are_distinct():
 def test_percentiles_use_nearest_rank_in_small_samples():
     assert lab.quantiles([]) == {'count': 0}
     assert lab.quantiles([1, 2, 3]) == {'count': 3, 'median': 2, 'p95': 3, 'max': 3}
+
+
+def test_workbook_oracle_reconciles_disjoint_periods():
+    from openpyxl import load_workbook
+    raw, totals, manifest, scope = lab.synthetic_workbook(100, 2)
+    workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    observed, ids = 0, []
+    for name in scope['sheets']:
+        for row in workbook[name].iter_rows(min_row=2, values_only=True):
+            ids.append(row[0].strip())
+            observed += int(str(row[5]).replace('$', '').replace('.', '').strip())
+    assert observed == sum(totals.values())
+    assert len(ids) == len(set(ids)) == 100
+    assert len(manifest['hojas']) == len(workbook.sheetnames) == 4
+    assert 'Productos' not in scope['sheets']
+    workbook.close()

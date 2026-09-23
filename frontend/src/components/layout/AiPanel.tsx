@@ -12,12 +12,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowUp, Bot, Coins, Crown, Loader2, Lock, MessageCircle, RefreshCw, Sparkles, Square, Star, TriangleAlert } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
+import { relationshipBotContext } from '../../lib/relationshipBotContext'
 import { useDemo } from '../../demo/DemoContext'
 import { useAccess } from '../../lib/access'
 import { ApiError, apiGet, apiPostJob, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
 import { metricsCacheKey, requestMetrics } from '../../lib/analysisCache'
 import { setActiveCurrency } from '../../lib/format'
-import { serializedAnalysisScope } from '../../lib/multiSheet'
+import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../../lib/multiSheet'
 import type { MetricsResult } from '../../lib/types'
 
 // ── Tipos locales ─────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   const {
     cleaning,
     metrics: contextMetrics,
+    relationshipDashboard,
     file,
     datasetId,
     storagePath,
@@ -112,6 +114,8 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     setMetrics: setContextMetrics,
   } = useDataset()
   const active = Boolean(cleaning && file)
+  const relationshipView = Boolean(analysisScope && ('relationship_id' in analysisScope && analysisScope.relationship_id
+    || analysisScope.mode === 'join'))
   const [mode, setMode] = useState<'quick' | 'advanced'>('quick')
   const [assistantConfig, setAssistantConfig] = useState<AssistantConfig | null>(null)
   const [coinWallet, setCoinWallet] = useState<CoinWallet | null>(null)
@@ -334,9 +338,19 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       resetBotConversation()
       botScopeRef.current = fileKey
     }
+    if (relationshipView && mode === 'quick') {
+      activationRequest.current += 1
+      activationAbortRef.current?.abort()
+      localMetrics.current = null
+      setLoading(false)
+      setBotError(null)
+      setBotSuggestions(['Resume esta conexion', 'Cual es mi utilidad', 'Cobertura de costos', 'Que debo revisar'])
+      return
+    }
     if (fetchedForFile.current === activationKey) return
     fetchedForFile.current = activationKey
     const visibleMetrics = hasAssistantMetricFilters(period, businessFilters)
+      || !metricsSnapshotMatchesScope(contextMetrics?.analysis_scope, analysisScope, sheet)
       ? null
       : contextMetrics
     void runActivation(file, storagePath, visibleMetrics, mode === 'advanced')
@@ -346,7 +360,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       if (fetchedForFile.current === activationKey) fetchedForFile.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, mode, advancedBlocked, file, datasetId, storagePath, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, cleaning])
+  }, [active, mode, advancedBlocked, file, datasetId, storagePath, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, cleaning, relationshipView])
 
   // Si las métricas llegan al contexto después (usuario visitó Resumen),
   // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.
@@ -354,12 +368,14 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     if (
       contextMetrics
       && active
+      && !relationshipView
+      && metricsSnapshotMatchesScope(contextMetrics.analysis_scope, analysisScope, sheet)
       && !hasAssistantMetricFilters(period, businessFilters)
     ) {
       setActiveCurrency(contextMetrics.moneda)
       localMetrics.current = contextMetrics
     }
-  }, [contextMetrics, active, period, businessFilters])
+  }, [contextMetrics, active, period, businessFilters, relationshipView, analysisScope, sheet])
 
   const sendMessage = async (text: string) => {
     const m = localMetrics.current
@@ -451,7 +467,8 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     try {
       const response = await apiPostJson<BotResponse>('/assistant/bot', {
         message: clean,
-        metrics: localMetrics.current,
+        metrics: relationshipView ? null : localMetrics.current,
+        relationship_dashboard: relationshipView ? relationshipBotContext(relationshipDashboard) : null,
         historial: botMessages.slice(-12).map((message) => ({
           role: message.role,
           content: message.content,
@@ -491,6 +508,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
           {botMessages.map((message, index) => <ChatBubble key={index} msg={message} />)}
           {botSending && <div className="flex items-center gap-2 text-xs text-white/45"><Loader2 className="h-3.5 w-3.5 animate-spin text-teal" /> Buscando la respuesta aprobada…</div>}
           {loading && active && <div className="flex items-center gap-2 text-xs text-white/45"><Loader2 className="h-3.5 w-3.5 animate-spin text-teal" /> Cargando indicadores del archivo…</div>}
+          {relationshipView && !relationshipDashboard && <p role="status" className="text-xs text-white/60">La conexion seleccionada se esta preparando. Las guias de la plataforma siguen disponibles.</p>}
           {!botSending && botSuggestions.slice(0, 4).map((suggestion) => (
             <button key={suggestion} onClick={() => void sendBotMessage(suggestion)} disabled={loading} className="break-words rounded-lg bg-white/5 px-3 py-2 text-left text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-50">{suggestion}</button>
           ))}

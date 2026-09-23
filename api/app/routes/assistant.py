@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field, field_validator
 from ..auth import AuthenticatedUser, get_current_user
 from ..config import Settings, get_settings
 from ..support_knowledge import ARTICLES, answer_for
+from ..relationship_assistant import RelationshipContext
+from ..request_budget import consume_budget
 
 router = APIRouter(prefix="/assistant")
 _TIMEOUT = 10
@@ -34,6 +36,7 @@ class BotMessage(BaseModel):
 class BotRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1200)
     metrics: dict | None = None
+    relationship_dashboard: RelationshipContext | None = None
     historial: list[BotMessage] = Field(default_factory=list, max_length=12)
 
     @field_validator("message")
@@ -234,20 +237,25 @@ async def ask_quick_help(
     user: AuthenticatedUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    _guard_rate(user.id)
+    if settings.supabase_url and settings.supabase_service_role_key:
+        await run_in_threadpool(consume_budget, 'assistant:' + user.id, settings, limit=20, window=60)
+    else:
+        _guard_rate(user.id)
     if body.metrics is not None and len(json.dumps(body.metrics)) > 200_000:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="El contexto de métricas es demasiado grande.",
         )
     history = [item.model_dump(mode="json") for item in body.historial]
-    result = await run_in_threadpool(answer_for, body.message, ARTICLES, body.metrics, history)
+    context = ({'relationship_dashboard': body.relationship_dashboard.model_dump()}
+               if body.relationship_dashboard is not None else body.metrics)
+    result = await run_in_threadpool(answer_for, body.message, ARTICLES, context, history)
     catalog = ARTICLES
     # Published metrics and conversation control do not depend on a database read.
     if not str(result.get("matched_key") or "").startswith(("metric_", "conversation_", "greeting")):
         catalog = await run_in_threadpool(_cached_catalog, settings)
         if catalog is not ARTICLES:
-            result = await run_in_threadpool(answer_for, body.message, catalog, body.metrics, history)
+            result = await run_in_threadpool(answer_for, body.message, catalog, context, history)
     return {
         **result,
         "mode": "deterministic",

@@ -1,0 +1,29 @@
+name: Public availability
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: public-availability
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.repository == 'nicoeslanch-sketch/ads-veris-analytics-platform' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Public checks and deduplicated incident
+        run: python scripts/check_public_availability.py --notify
+        env:
+          GH_TOKEN: ${{ github.token }}

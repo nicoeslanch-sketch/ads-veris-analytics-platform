@@ -1,4 +1,4 @@
-import { apiPost, buildDatasetForm } from './api'
+import { apiPost, apiPostJob, buildDatasetForm } from './api'
 import { formatNumber } from './format'
 import { clearSessionAnalysis, readSessionAnalysis, writeSessionAnalysis } from './sessionAnalysisCache'
 import { stableSerialize } from './stableSerialize'
@@ -173,7 +173,11 @@ export function coverageStateFromDays(days: number | null | undefined): Coverage
 }
 
 // ── Formato de valores del contrato ──────────────────────────────────────────
-const CURRENCY_PREFIX: Record<string, string> = { CLP: '$', USD: 'US$', EUR: '€' }
+const CURRENCY_PREFIX: Record<string, string> = { CLP: '$', UF: 'UF ', USD: 'US$', EUR: '€' }
+
+export function readableRelationshipLabel(value: string): string {
+  return value.replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
+}
 
 export function formatKpiValue(
   value: number | string | null,
@@ -184,8 +188,9 @@ export function formatKpiValue(
   if (typeof value === 'string') return value
   switch (format) {
     case 'currency': {
-      const prefix = CURRENCY_PREFIX[currency] ?? '$'
-      return `${prefix}${formatNumber(Math.round(value))}`
+      const prefix = CURRENCY_PREFIX[currency] ?? `${currency} `
+      const digits = currency === 'CLP' ? 0 : 2
+      return `${prefix}${new Intl.NumberFormat('es-CL', { maximumFractionDigits: digits }).format(value)}`
     }
     case 'percent':
       return `${formatNumber(Math.round(value * 10) / 10)}%`
@@ -216,7 +221,13 @@ export interface RelationshipRequestParams {
 const catalogCache = new Map<string, RelationshipCatalog>()
 const dashboardCache = new Map<string, RelationshipDashboard>()
 const catalogInFlight = new Map<string, Promise<RelationshipCatalog>>()
-const dashboardInFlight = new Map<string, Promise<RelationshipDashboard>>()
+interface DashboardRequest {
+  promise: Promise<RelationshipDashboard>
+  controller: AbortController
+  consumers: Set<AbortSignal>
+  persistent: boolean
+}
+const dashboardInFlight = new Map<string, DashboardRequest>()
 const MAX_RELATION_CACHE_ENTRIES = 30
 let relationshipCacheGeneration = 0
 
@@ -230,7 +241,24 @@ export function clearRelationshipDashboardRuntimeCaches() {
   catalogCache.clear()
   dashboardCache.clear()
   catalogInFlight.clear()
+  for (const request of dashboardInFlight.values()) request.controller.abort()
   dashboardInFlight.clear()
+}
+
+function subscribeDashboard(entry: DashboardRequest, signal?: AbortSignal) {
+  if (!signal) { entry.persistent = true; return }
+  const release = () => {
+    entry.consumers.delete(signal)
+    // Allow StrictMode/remount to re-adopt the same request before cancelling.
+    setTimeout(() => {
+      if (!entry.persistent && entry.consumers.size === 0) entry.controller.abort()
+    }, 250)
+  }
+  if (signal.aborted) { release(); return }
+  entry.consumers.add(signal)
+  signal.addEventListener('abort', release, { once: true })
+  const cleanup = () => signal.removeEventListener('abort', release)
+  void entry.promise.then(cleanup, cleanup)
 }
 
 function requestIdentity(params: RelationshipRequestParams): string {
@@ -261,8 +289,8 @@ export async function fetchRelationshipCatalog(
   if (pending) return pending
   const generation = relationshipCacheGeneration
   const started = performance.now()
-  const request = apiPost<RelationshipCatalog>(
-      '/sheets/relationship-catalog',
+  const request = apiPostJob<RelationshipCatalog>(
+      '/analysis/jobs/relationship-catalog',
       buildDatasetForm(params.file as File, params.storagePath, {
         manifest: JSON.stringify(params.manifest),
         ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
@@ -294,7 +322,7 @@ export async function fetchRelationshipDashboard(
   params: RelationshipRequestParams,
   relationship: CatalogRelationship,
   period: { from: string | null; to: string | null },
-  _consumerSignal?: AbortSignal,
+  consumerSignal?: AbortSignal,
 ): Promise<RelationshipDashboard> {
   const join = {
     left_sheet: relationship.left_sheet,
@@ -319,11 +347,18 @@ export async function fetchRelationshipDashboard(
     ?? readSessionAnalysis<RelationshipDashboard>('dashboard', key)
   if (cached) return remember(dashboardCache, key, cached)
   const pending = dashboardInFlight.get(key)
-  if (pending) return pending
+  if (pending && !pending.controller.signal.aborted) {
+    subscribeDashboard(pending, consumerSignal)
+    return pending.promise
+  }
   const generation = relationshipCacheGeneration
   const started = performance.now()
-  const request = apiPost<RelationshipDashboard>(
-      '/sheets/relationship-dashboard',
+  const entry: DashboardRequest = {
+    promise: Promise.resolve(null as unknown as RelationshipDashboard),
+    controller: new AbortController(), consumers: new Set(), persistent: false,
+  }
+  const request = apiPostJob<RelationshipDashboard>(
+      '/analysis/jobs/relationship-dashboard',
       buildDatasetForm(params.file as File, params.storagePath, {
         manifest: JSON.stringify(params.manifest),
         relationship: JSON.stringify(join),
@@ -331,22 +366,25 @@ export async function fetchRelationshipDashboard(
         ...(period.from ? { date_from: period.from } : {}),
         ...(period.to ? { date_to: period.to } : {}),
       }),
+      { signal: entry.controller.signal },
     )
     .then((result) => {
       console.info('[ADS Veris timing] relationship-dashboard', {
         durationMs: Math.round(performance.now() - started),
         relationship: relationship.id,
       })
-      if (generation === relationshipCacheGeneration) {
+      if (generation === relationshipCacheGeneration && !entry.controller.signal.aborted) {
         remember(dashboardCache, key, result)
         writeSessionAnalysis('dashboard', key, result, 12)
       }
       return result
     })
     .finally(() => {
-      if (dashboardInFlight.get(key) === request) dashboardInFlight.delete(key)
+      if (dashboardInFlight.get(key) === entry) dashboardInFlight.delete(key)
     })
-  dashboardInFlight.set(key, request)
+  entry.promise = request
+  dashboardInFlight.set(key, entry)
+  subscribeDashboard(entry, consumerSignal)
   return request
 }
 

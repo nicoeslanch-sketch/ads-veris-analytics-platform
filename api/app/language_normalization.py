@@ -363,6 +363,8 @@ def normalize_query(text: object) -> str:
     """Normaliza una consulta sin modificar identificadores desconocidos."""
 
     normalized = normalize_basic(text)
+    for split_word, corrected in (('ut lidad', 'utilidad'), ('in gresos', 'ingresos'), ('ren tabilidad', 'rentabilidad')):
+        normalized = re.sub(r'\b' + split_word + r'\b', corrected, normalized)
     if not normalized:
         return ""
     result: list[str] = []

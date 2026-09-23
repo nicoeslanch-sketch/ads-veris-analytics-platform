@@ -33,6 +33,7 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import AdminSupportChat from '../components/admin/AdminSupportChat'
 import CommercialReadiness from '../components/admin/CommercialReadiness'
+import OperationalHealth from '../components/admin/OperationalHealth'
 import { ApiError, apiGet, apiPostJson } from '../lib/api'
 import { normalizePlan, planLabel, type PlanCode } from '../lib/plans'
 import { usePlan } from '../lib/usePlan'
@@ -259,6 +260,7 @@ export default function AdminCuentas() {
       )}
 
       <CommercialReadiness />
+      <OperationalHealth />
       {/* Totales */}
       {data && (
         <div className="grid gap-4 sm:grid-cols-3">

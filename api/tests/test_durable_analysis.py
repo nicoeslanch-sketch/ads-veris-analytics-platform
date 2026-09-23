@@ -138,6 +138,25 @@ def test_worker_does_not_claim_while_legacy_work_owns_memory_slot():
     assert not repo.calls
 
 
+@pytest.mark.parametrize('kind,helper', [
+    ('relationship_catalog', '_relationship_catalog_cached_sync'),
+    ('relationship_dashboard', '_relationship_dashboard_cached_sync'),
+])
+def test_worker_uses_same_relationship_engine_and_checks_access(monkeypatch, kind, helper):
+    from app import capabilities, storage
+    access = Mock()
+    compute = Mock(return_value={'available': True, 'total': 42})
+    monkeypatch.setattr(capabilities, 'require_capability_for_user', access)
+    monkeypatch.setattr(storage, 'download_from_storage', lambda _: b'synthetic')
+    monkeypatch.setattr(pipeline, helper, compute)
+    current = job()
+    current.update(kind=kind, options={'manifest': {'hojas': []}, 'relationship': {'left_sheet': 'Ventas'}})
+    assert execute_job(current, settings())['total'] == 42
+    assert access.call_args.args[0] == OWNER
+    assert compute.call_args.args[-1] == OWNER
+    assert kind in durable.KINDS
+
+
 @pytest.mark.parametrize('outcomes,expected', [
     ([False] * 12, [5] * 12),
     ([RuntimeError(), RuntimeError(), False, False], [7.5, 11.25, 5, 5]),

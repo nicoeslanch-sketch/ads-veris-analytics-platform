@@ -101,6 +101,7 @@ export default function RelationshipWorkspace() {
     restoreState,
     setAnalysisScope,
     setMonthsAvailable,
+    setRelationshipDashboard,
   } = useDataset()
 
   const cleanedSheets = useMemo(
@@ -194,7 +195,7 @@ export default function RelationshipWorkspace() {
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifestKey, cleanedSheets.length, pendingCount, catalogRetry])
+  }, [manifestKey, cleanedSheets.length, pendingCount, catalogRetry, datasetId, storagePath, file])
 
   // ── Al elegir una relación, actualizar el alcance (persistente) ────────────
   const selectRelation = (relation: CatalogRelationship) => {
@@ -240,10 +241,13 @@ export default function RelationshipWorkspace() {
     const controller = new AbortController()
     setDashboardLoading(true)
     setDashboardError(null)
-    fetchRelationshipDashboard(params, selected, { from: period.from, to: period.to }, controller.signal)
+    setDashboard(null)
+    // A short debounce coalesces keyboard/click changes before admitting heavy work.
+    const timer = setTimeout(() => { void fetchRelationshipDashboard(params, selected, { from: period.from, to: period.to }, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return
         setDashboard(result)
+        setRelationshipDashboard(result)
         if (result.period.meses.length) setMonthsAvailable(result.period.meses)
       })
       .catch((err) => {
@@ -253,9 +257,10 @@ export default function RelationshipWorkspace() {
       .finally(() => {
         if (!controller.signal.aborted) setDashboardLoading(false)
       })
-    return () => controller.abort()
+    }, 180)
+    return () => { clearTimeout(timer); controller.abort() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, period.from, period.to, manifestKey, dashboardRetry])
+  }, [selectedId, period.from, period.to, manifestKey, dashboardRetry, datasetId, storagePath, file, setRelationshipDashboard])
 
   const validateDraft = async (draft: ManualJoinDraft): Promise<RelationshipCandidate | null> => {
     if (!params) return null

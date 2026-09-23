@@ -541,7 +541,7 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await page.getByRole('button', { name: 'Visión del negocio', exact: true }).click()
   await expect(page.getByText('Evolución del negocio')).toBeVisible()
   await expect(page.getByText('Utilidad y margen mensual')).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Conclusiones del periodo' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Conclusiones del periodo' })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Ventas y utilidad por categoría' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Ranking de vendedores por utilidad' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Ventas y margen por sucursal' })).toBeVisible()
@@ -589,7 +589,6 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   expect(layout.columns).toBe(2)
   expect(layout.width).toBeLessThanOrEqual(layout.clientWidth + 1)
   const orderedHeadings = [
-    'Conclusiones del periodo',
     'Evolución del negocio',
     'Utilidad y margen mensual',
     'Ventas y utilidad por categoría',
@@ -619,6 +618,7 @@ test('Resumen empresarial y Explorar diagnostico no se duplican ni desbordan', a
   await page.getByRole('link', { name: /Explorar datos/ }).first().click()
   const analysis = page.getByTestId('exploration-analysis')
   await expect(analysis.getByRole('heading', { name: 'Lectura del análisis' })).toBeVisible({ timeout: 90_000 })
+  await expect(analysis.getByRole('heading', { name: 'Conclusiones del periodo' })).toBeVisible()
   await expect(page.getByText('Qué requiere tu atención')).toHaveCount(0)
   await expect(page.getByLabel(/^Sucursal/)).toHaveValue('Centro')
   await page.getByLabel(/^Categoría/).selectOption({ label: 'Servicios' })

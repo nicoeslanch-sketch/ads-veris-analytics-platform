@@ -250,6 +250,24 @@ class SecurityLab:
         self.checks["backend_cannot_rewrite_audit_history"] = True
         self.test_mfa()
         self.test_account_limits()
+        self.test_operational_health()
+
+    def test_operational_health(self):
+        signature = 'public.operational_health(text,uuid,jsonb)'
+        for role in ('anon', 'authenticated'):
+            assert self.sql(f"select has_function_privilege('{role}','{signature}','execute')") == 'f'
+            assert self.sql(f"select has_table_privilege('{role}','app_private.operational_samples','select')") == 'f'
+        instance = str(uuid4())
+        data = self.rpc('operational_health', {'p_action': 'heartbeat', 'p_instance_id': instance,
+            'p_sample': {'requests': 20, 'errors': 5, 'limited': 1, 'slow': 2}})
+        assert data['http']['instances'] == 1 and data['http']['errors'] == 5
+        assert set(data) == {'sampled_at', 'http', 'queue', 'storage'}
+        assert data['storage']['limit_bytes'] > 0 and data['queue']['max_active'] > 0
+        self.rpc('operational_health', {'p_action': 'heartbeat', 'p_instance_id': instance,
+            'p_sample': {'requests': 1, 'errors': 2, 'limited': 0, 'slow': 0}}, expected=400)
+        self.sql(f"update app_private.operational_samples set updated_at=now()-interval '3 minutes' where instance_id='{instance}';")
+        assert self.rpc('operational_health', {})['http']['instances'] == 0
+        self.checks['operational_counters_private_bounded_and_staleness_detected'] = True
 
 
 def main():

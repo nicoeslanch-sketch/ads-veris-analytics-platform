@@ -1708,6 +1708,9 @@ def answer_metrics_question(
 
     if not isinstance(metrics, dict) or not metrics:
         return None
+    if isinstance(metrics.get('relationship_dashboard'), dict):
+        from .relationship_assistant import answer_relationship
+        return answer_relationship(message, metrics['relationship_dashboard'], history)
     original_question = normalize_query(message)
     if not original_question:
         return None

@@ -72,6 +72,7 @@ export default function Explorar() {
   // Métricas del rango seleccionado (uploadedAt distingue cargas con igual nombre)
   useEffect(() => {
     if (demo.active) return // la demo no consulta /metrics: snapshot congelado
+    if (relationshipMode) return
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Mapeo manual y reintento en la clave: cambiar el mapeo refresca el análisis
@@ -199,7 +200,7 @@ export default function Explorar() {
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo.active, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick])
+  }, [demo.active, relationshipMode, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick])
 
 
   const guardarAnalisis = (title: string, findings: string[]) => saveAnalysis(
@@ -224,13 +225,7 @@ export default function Explorar() {
       {businessUnavailable ? (
         <EmptyState icon={Search} title="No existen conexiones seguras entre las hojas." description="Sin correspondencias validadas no se construye un resultado conjunto." ctaLabel="Relacionar hojas a mano" onCta={() => setOpenRelationsNonce((nonce) => nonce + 1)} />
       ) : relationshipMode && !demo.active ? (
-        <>
-          {metrics && !metrics.moneda_mixta && <ExplorationAnalysis metrics={metrics} from={visiblePeriod.from} to={visiblePeriod.to} />}
-          <details className="mt-6 border-t border-navy/10 pt-4" open={!metrics}>
-            <summary className="cursor-pointer text-sm font-semibold text-navy">Comprobar y ajustar la relación entre hojas</summary>
-            <div className="mt-4"><RelationshipWorkspace /></div>
-          </details>
-        </>
+        <RelationshipWorkspace />
       ) : (
         <>
           <div className="mb-5 flex min-w-0 flex-wrap items-center gap-3">

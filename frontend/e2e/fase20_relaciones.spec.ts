@@ -92,6 +92,19 @@ test('Fase 20: botonera de 4 modos y workspace de relaciones', async ({ page }, 
   await expect(legend.filter({ hasText: 'Ventas netas' })).toBeVisible()
   await expect(legend.filter({ hasText: 'Costo de venta' })).toBeVisible()
   await expect(legend.filter({ hasText: 'Margen bruto' })).toBeVisible()
+  const bot = page.getByRole('complementary').filter({ has: page.getByRole('heading', { name: 'Asistente ADS Veris' }) })
+  let contextLabel = ''
+  await page.route('**/assistant/bot', async route => {
+    const payload = route.request().postDataJSON()
+    expect(payload.metrics).toBeNull()
+    expect(payload.relationship_dashboard.kpis.length).toBeGreaterThan(0)
+    contextLabel = payload.relationship_dashboard.relation.label
+    await route.fulfill({ json: { answer: `Relacion verificada: ${contextLabel}`, suggestions: [], confidence: 'high', coins_charged: 0 } })
+  })
+  await bot.getByPlaceholder('Pregunta por tus cifras o por una función…').fill('Mis ingresos')
+  await bot.getByRole('button', { name: 'Enviar pregunta', exact: true }).click()
+  await expect(bot.getByText('Relacion verificada: Todas las ventas ↔ Productos', { exact: true })).toBeVisible()
+  expect(contextLabel).toBe('Todas las ventas ↔ Productos')
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true)

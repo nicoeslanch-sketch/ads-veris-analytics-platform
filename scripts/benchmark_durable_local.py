@@ -72,6 +72,33 @@ def synthetic_csv(rows, account):
     return output.getvalue().encode(), daily_totals
 
 
+def synthetic_workbook(rows, account):
+    """Portable CI fixture; independent totals originate before XLSX encoding."""
+    from openpyxl import Workbook
+    workbook = Workbook(write_only=True)
+    sales = [workbook.create_sheet(name) for name in ('Ventas_Ene_Abr', 'Ventas_May_Ago', 'Ventas_Sep_Dic')]
+    header = ['ID Venta', 'Fecha', 'ID Producto', 'Canal', 'Cantidad', 'Monto Venta']
+    for sheet in sales:
+        sheet.append(header)
+    raw, totals = synthetic_csv(rows, account)
+    for i, row in enumerate(csv.DictReader(io.StringIO(raw.decode()))):
+        amount = int(row['Monto Venta'])
+        displayed = '$ ' + f'{amount:,}'.replace(',', '.') if i % 5 == 0 else amount
+        sales[(int(row['Fecha'][5:7]) - 1) // 4].append([
+            ' ' + row['ID Venta'] + ' ', row['Fecha'], row['Producto'], row['Canal'], 1, displayed])
+    products = workbook.create_sheet('Productos')
+    products.append(['ID Producto', 'Producto', 'Costo Unitario'])
+    for i in range(300):
+        products.append([f'P{i:04}', f'Producto {i}', 400 + i])
+    output = io.BytesIO()
+    workbook.save(output)
+    names = [sheet.title for sheet in sales]
+    manifest = {'hojas': [{'nombre': name, 'procesar': True, 'eliminar_duplicados': False}
+                           for name in names + ['Productos']]}
+    scope = {'mode': 'append', 'sheets': names}
+    return output.getvalue(), totals, manifest, scope
+
+
 def child_process(args):
     require_loopback_url(os.environ['SUPABASE_URL'])
     if os.environ.get('CAPACITY_LAB_ISOLATED') != '1':
@@ -120,7 +147,7 @@ class Lab:
         self.stop = threading.Event()
         self.report = {'scope': 'ephemeral local Supabase; not production capacity certification',
                        'commit_sha': os.environ.get('GITHUB_SHA', 'local'),
-                       'parameters': {'accounts': args.clients, 'rows': args.rows, 'seconds': args.seconds},
+                       'parameters': {'accounts': args.clients, 'rows': args.rows, 'seconds': args.seconds, 'format': args.format},
                        'cpu_count': os.cpu_count(), 'checks': {}, 'passed': False,
                        'safety': {'production_requests': 0, 'customer_files_read': 0}}
         self.tmp = tempfile.TemporaryDirectory(prefix='ads-capacity-')
@@ -201,21 +228,30 @@ class Lab:
                              headers={'apikey': self.status['ANON_KEY']},
                              json={'email': email, 'password': password}).json()['access_token']
         headers = {'Authorization': 'Bearer ' + token}
-        body, totals = synthetic_csv(self.args.rows, index)
+        manifest, scope = None, None
+        if self.args.format == 'xlsx':
+            body, totals, manifest, scope = synthetic_workbook(self.args.rows, index)
+            mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        else:
+            body, totals = synthetic_csv(self.args.rows, index)
+            mime = 'text/csv'
+        name = f'synthetic-{index}.{self.args.format}'
         path = self.request('POST', self.api + '/storage/upload', headers=headers,
-                            files={'file': (f'synthetic-{index}.csv', body, 'text/csv')}).json()['storage_path']
+                            files={'file': (name, body, mime)}).json()['storage_path']
         dataset_id = str(uuid4())
         self.request('POST', self.base + '/rest/v1/datasets', expected=201,
                      headers={**headers, 'apikey': self.status['ANON_KEY']},
-                     json={'id': dataset_id, 'user_id': user_id, 'name': f'synthetic-{index}.csv',
+                     json={'id': dataset_id, 'user_id': user_id, 'name': name,
                            'storage_path': path, 'source': 'excel_csv'})
-        return {'headers': headers, 'dataset_id': dataset_id, 'storage_path': path, 'totals': totals}
+        return {'headers': headers, 'dataset_id': dataset_id, 'storage_path': path, 'totals': totals,
+                'manifest': manifest, 'scope': scope}
 
     def submit(self, account, start_date, expected_status=202):
         begin = time.monotonic()
+        extras = {'manifest': json.dumps(account['manifest']), 'analysis_scope': json.dumps(account['scope'])} if account['manifest'] else {}
         response = self.request('POST', self.api + '/analysis/jobs/metrics', expected=expected_status,
                                 headers=account['headers'], data={'dataset_id': account['dataset_id'],
-                                'storage_path': account['storage_path'], 'date_from': start_date})
+                                'storage_path': account['storage_path'], 'date_from': start_date, **extras})
         self.samples.append({'route': 'admission', 'ms': (time.monotonic() - begin) * 1000,
                              'status': response.status_code})
         if expected_status != 202:
@@ -322,7 +358,7 @@ class Lab:
                 if now - start > self.args.seconds + 180:
                     raise TimeoutError('Queue did not drain within 180 seconds')
                 for i, account in enumerate(self.accounts):
-                    if i not in in_flight and now >= next_submit[i] and now - start < self.args.seconds and submitted < 300:
+                    if i not in in_flight and now >= next_submit[i] and now - start < self.args.seconds and submitted < 1800:
                         sequences[i] += 1
                         day = (date(2026, 2, 1) + timedelta(days=sequences[i] - 1)).isoformat()
                         in_flight[i] = self.submit(account, day)
@@ -359,8 +395,37 @@ class Lab:
                                     'queue_wait_seconds': quantiles([row['wait'] for row in records]),
                                     'processing_seconds': quantiles([row['processing'] for row in records]),
                                     'end_to_end_seconds': quantiles([row['observed_seconds'] for row in completed]),
-                                    'offered_load': 'closed loop, one outstanding/account, >=10s between starts, max 300 jobs'}
+                                    'offered_load': 'closed loop, one outstanding/account, >=10s between starts, max 1800 jobs'}
         self.report['checks'].update(all_synthetic_totals_match=True, two_consumers_respect_global_limit=True)
+
+    def prepare_workbooks(self):
+        if self.args.format != 'xlsx':
+            return
+        timings = {'standardize': [], 'clean': []}
+        for account in self.accounts:
+            manifest = account['manifest']
+            for kind, route, fields in (
+                ('standardize', '/standardize/batch/jobs', {'sheets': json.dumps([r['nombre'] for r in manifest['hojas']])}),
+                ('clean', '/clean/batch/jobs', {'manifest': json.dumps(manifest)}),
+            ):
+                started = time.monotonic()
+                ticket = self.request('POST', self.api + route, expected=202, headers=account['headers'],
+                    data={'dataset_id': account['dataset_id'], 'storage_path': account['storage_path'], **fields}).json()
+                job = {'id': ticket['job_id'], 'account': account}
+                while True:
+                    result = self.poll(job)
+                    if result['status'] in TERMINAL:
+                        assert result['status'] == 'completed', f'{kind} failed'
+                        payload = result['result']
+                        assert not payload['errores'] and not payload['persistencia_errores'], f'{kind} has partial failures'
+                        assert len(payload['resultados']) == 4
+                        timings[kind].append(time.monotonic() - started)
+                        break
+                    if time.monotonic() - started > 240:
+                        raise TimeoutError(f'{kind} exceeded its bounded deadline')
+                    time.sleep(.5)
+        self.report['preparation_seconds'] = {kind: quantiles(values) for kind, values in timings.items()}
+        self.report['checks']['four_sheet_standardization_cleaning_and_persistence'] = True
 
     def run(self):
         sampler = threading.Thread(target=self.sample_resources, daemon=True)
@@ -369,6 +434,7 @@ class Lab:
             first = self.preflight()
             print('Preflight passed; testing actual lease recovery (about two minutes).', flush=True)
             self.recovery(first)
+            self.prepare_workbooks()
             print('Crash recovery passed; starting bounded sustained workload.', flush=True)
             self.sustained()
             self.report['passed'] = True
@@ -405,6 +471,7 @@ def main():
     parser.add_argument('--clients', type=int, default=5)
     parser.add_argument('--rows', type=int, default=4000)
     parser.add_argument('--seconds', type=int, default=120)
+    parser.add_argument('--format', choices=['csv', 'xlsx'], default='csv')
     parser.add_argument('--serve', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--fault-marker', type=Path, help=argparse.SUPPRESS)
@@ -412,8 +479,8 @@ def main():
     if args.serve or args.worker:
         child_process(args)
         return
-    if not args.status_file or not args.output or not 2 <= args.clients <= 10 or not 100 <= args.rows <= 10000 or not 60 <= args.seconds <= 300:
-        parser.error('Require --status-file, --output; clients 2..10, rows 100..10000, seconds 60..300')
+    if not args.status_file or not args.output or not 2 <= args.clients <= 10 or not 100 <= args.rows <= 10000 or not 60 <= args.seconds <= 1800:
+        parser.error('Require --status-file, --output; clients 2..10, rows 100..10000, seconds 60..1800')
     block_external_connections()
     Lab(args).run()
 

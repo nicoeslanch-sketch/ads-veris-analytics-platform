@@ -87,6 +87,7 @@ export default function MfaPanel({ required = false, admin = false, onVerified }
   return <section aria-label="Verificacion en dos pasos" className="min-w-0 space-y-4 text-navy">
     <h2 className="flex items-center gap-2 text-base font-semibold"><ShieldCheck className="h-5 w-5 shrink-0 text-teal" /> Verificacion en dos pasos</h2>
     {required && <p className="text-sm text-navy/70">{admin ? 'La cuenta administradora requiere un autenticador para continuar.' : 'Confirma tu identidad con tu autenticador.'}</p>}
+    {!required && !admin && <p className="text-sm text-navy/70">Opcional para clientes. Puedes seguir entrando con correo y contrasena. Si activas un autenticador, tambien se pedira su codigo al iniciar sesion.</p>}
     {error && <p role="alert" className="text-sm text-coral">{error}</p>}
     {notice && <p role="status" className="text-sm text-green">{notice}</p>}
     {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Verificando...</p>}
