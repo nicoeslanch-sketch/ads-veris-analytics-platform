@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -13,7 +14,7 @@ from uuid import uuid4
 
 import httpx
 
-from recovery_backup import database_env, sql_json
+from recovery_backup import check_database_client, database_env, sql_json
 from recovery_restore_local import require_local, restore
 
 
@@ -21,6 +22,7 @@ def run(status):
     require_local(status['DB_URL'])
     require_local(status['API_URL'])
     env = database_env(status['DB_URL'])
+    check_database_client(env)
     assert sql_json('select to_json(count(*)) from auth.users;', env) == 0, 'Refusing populated lab'
     base = status['API_URL'].rstrip('/')
     key = status['SERVICE_ROLE_KEY']
@@ -51,7 +53,8 @@ def run(status):
                       'RESTIC_REPOSITORY': str(folder / 'encrypted'), 'RESTIC_PASSWORD_FILE': str(password_file)}
         def command(args, **kwargs):
             result = subprocess.run(args, env=backup_env, capture_output=True, timeout=300, **kwargs)
-            assert result.returncode == 0, ('recovery command failed', args[0], result.returncode)
+            codes = re.findall(rb'RECOVERY_ERROR:([A-Z_]+)', result.stderr)
+            assert result.returncode == 0, ('recovery command failed', args[0], result.returncode, codes)
             return result.stdout
         command(['restic', 'init', '--quiet'])
         started = time.monotonic()

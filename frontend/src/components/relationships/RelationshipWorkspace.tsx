@@ -195,7 +195,7 @@ export default function RelationshipWorkspace() {
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifestKey, cleanedSheets.length, pendingCount, catalogRetry])
+  }, [manifestKey, cleanedSheets.length, pendingCount, catalogRetry, datasetId, storagePath, file])
 
   // ── Al elegir una relación, actualizar el alcance (persistente) ────────────
   const selectRelation = (relation: CatalogRelationship) => {
@@ -260,7 +260,7 @@ export default function RelationshipWorkspace() {
     }, 180)
     return () => { clearTimeout(timer); controller.abort() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, period.from, period.to, manifestKey, dashboardRetry, datasetId, storagePath, file])
+  }, [selectedId, period.from, period.to, manifestKey, dashboardRetry, datasetId, storagePath, file, setRelationshipDashboard])
 
   const validateDraft = async (draft: ManualJoinDraft): Promise<RelationshipCandidate | null> => {
     if (!params) return null

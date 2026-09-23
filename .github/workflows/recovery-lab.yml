@@ -20,6 +20,14 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install httpx==0.28.1
+      - name: Install PostgreSQL 17 client matching the disposable server
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client-17
+          echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
       - name: Install pinned encrypted backup client
         shell: bash
         run: |

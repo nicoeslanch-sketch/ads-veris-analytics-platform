@@ -29,6 +29,18 @@ INVENTORY_SQL = """select coalesce(json_agg(t order by bucket_id,name),'[]') fro
  (select id,bucket_id,name,updated_at,metadata,owner_id from storage.objects) t;"""
 
 
+class RecoveryError(RuntimeError):
+    """A fixed diagnostic code, never provider output or customer data."""
+
+
+def check_database_client(env):
+    server = int(sql_json("select to_json(current_setting('server_version_num')::int);", env)) // 10000
+    result = subprocess.run(['pg_dump', '--version'], capture_output=True, timeout=15)
+    match = re.search(rb'PostgreSQL\) (\d+)', result.stdout)
+    if result.returncode or not match or int(match[1]) < server:
+        raise RecoveryError('POSTGRES_CLIENT_TOO_OLD')
+
+
 def database_env(url):
     parsed = urlsplit(url)
     if parsed.scheme not in ('postgres', 'postgresql') or not parsed.hostname or not parsed.username:
@@ -46,7 +58,7 @@ def sql_json(query, env):
     result = subprocess.run(['psql', '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', query],
                             env=env, capture_output=True, timeout=90)
     if result.returncode:
-        raise RuntimeError('Database inventory failed; diagnostics suppressed to protect credentials')
+        raise RecoveryError('DATABASE_INVENTORY_FAILED')
     return json.loads(result.stdout)
 
 
@@ -77,6 +89,7 @@ def copy_hashed(chunks, target):
 
 def stream_backup(output):
     env = database_env(os.environ['ADS_BACKUP_DB_URL'])
+    check_database_client(env)
     base = storage_base(os.environ['ADS_BACKUP_STORAGE_URL'])
     key = os.environ['ADS_BACKUP_SERVICE_KEY']
     headers = {'apikey': key, 'Authorization': 'Bearer ' + key}
@@ -98,7 +111,7 @@ def stream_backup(output):
                 with archive.open('database.dump', 'w', force_zip64=True) as target:
                     manifest['members']['database.dump'] = copy_hashed(iter(lambda: dump.stdout.read(CHUNK), b''), target)
                 if dump.wait(timeout=1800) != 0:
-                    raise RuntimeError('PostgreSQL dump failed')
+                    raise RecoveryError('POSTGRES_DUMP_FAILED')
             finally:
                 if dump.poll() is None:
                     dump.kill()
@@ -111,16 +124,16 @@ def stream_backup(output):
                 url = base + '/storage/v1/object/' + quote(bucket, safe='') + '/' + quote(name, safe='/')
                 with client.stream('GET', url, headers=headers) as response:
                     if response.status_code != 200:
-                        raise RuntimeError('Storage object could not be backed up')
+                        raise RecoveryError('STORAGE_DOWNLOAD_FAILED')
                     with archive.open(member, 'w', force_zip64=True) as target:
                         info = copy_hashed(response.iter_bytes(CHUNK), target)
                 total += info['bytes']
                 if total > MAX_TOTAL_BYTES or info['bytes'] != int((row.get('metadata') or {}).get('size', -1)):
-                    raise RuntimeError('Storage object size changed or exceeded budget')
+                    raise RecoveryError('STORAGE_SIZE_MISMATCH')
                 manifest['members'][member] = info
                 manifest['objects'].append({**row, 'member': member})
         if before != sql_json(INVENTORY_SQL, env):
-            raise RuntimeError('Storage changed during backup; retry during a quiet period')
+            raise RecoveryError('STORAGE_CHANGED_DURING_BACKUP')
         archive.writestr('manifest.json', json.dumps(manifest, ensure_ascii=True))
 
 
@@ -181,20 +194,21 @@ def main():
     else:
         state = readiness()
         if not all(state['tools'].values()) or not all(state['configured'].values()):
-            raise ValueError('Missing tools or protected environment configuration; run check')
+            raise RecoveryError('MISSING_BACKUP_CONFIGURATION')
         # A failed producer must never publish a seemingly successful snapshot.
         result = subprocess.run(['restic', 'backup', '--quiet', '--tag', 'ads-recovery-v1',
                                  '--stdin-filename', 'ads-recovery.zip', '--stdin-from-command', '--',
                                  sys.executable, str(Path(__file__).resolve()), 'stream'], timeout=7200)
         if result.returncode:
-            raise RuntimeError('Encrypted backup did not complete')
+            raise RecoveryError('ENCRYPTED_BACKUP_FAILED')
         print(json.dumps({'backup_completed': True, 'restore_verified': False}))
 
 
 if __name__ == '__main__':
     try:
         main()
-    except Exception:
+    except Exception as exc:
         # Do not emit provider URLs, object paths, credentials, or database diagnostics.
-        print('Recovery operation failed. Check configuration, tools, capacity and source consistency.', file=sys.stderr)
+        code = str(exc) if isinstance(exc, RecoveryError) else 'BACKUP_OPERATION_FAILED'
+        print('RECOVERY_ERROR:' + code, file=sys.stderr)
         raise SystemExit(1)
