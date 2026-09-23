@@ -14,15 +14,21 @@ comparacion de los dos Excel de PYME. Pagos apagados; sin compras autorizadas.
   clientes sin factor voluntario acceden con correo/contrasena. El titular
   confirmo que completo su autenticador y accedio a la plataforma.
 - Respaldo: herramientas cifradas implementadas; laboratorio verifico cifrado,
-  integridad y rechazo de respaldos parciales. Restauracion todavia en correccion.
+  integridad, rechazo de respaldos parciales, restauracion de datos/Auth/Storage,
+  ownership y descarga autenticada. Runs 35844587521 y 35846417096 aprobados.
   Pendiente destino confirmado y copia real de produccion. No hay copia de
   clientes publicada ni subida a GitHub.
 - Alertas: contador agregado acotado, latidos privados, umbrales y panel admin
-  implementados; 17 pruebas locales pasan. Pendiente validacion SQL en laboratorio,
-  despliegue y destino de notificaciones externas. No sustituye monitor externo.
-- Pendiente: prueba sostenida representativa y mediciones.
-- Pendiente: ampliar casos de limpieza, uniones y dialogos, requisitos comerciales.
-- Pendiente: propuestas diferenciadas Basico/Analista/Gold, sin publicar precios.
+  implementados y verificados en PostgreSQL y navegador. Monitor publico GitHub
+  preparado para detectar caidas sin datos de clientes. Pendiente despliegue y
+  comprobar recepcion de avisos. Saturacion interna sin canal externo aun.
+- Capacidad: 435/435 analisis en 15 min con 5 cuentas, XLSX de 4 hojas y 4.000
+  ventas, sin diferencias en los totales. Solo laboratorio aislado, no Render.
+- Bot: conversacion de 20 turnos y regresiones de fechas, cifras, rankings,
+  utilidad neta/bruta y cambios de conexion. Corregido relationship_id perdido
+  al consolidar periodos. CI completo aprobado en 4b02054.
+- Propuesta diferenciada Basico/Analista/Gold documentada, sin publicar precios
+  ni cambiar permisos. Requisitos comerciales requieren decisiones del titular.
 - Pendiente al finalizar lo anterior: Caso_PYME_Datos_Sucios.xlsx contra
   Control_Validacion_Caso_PYME.xlsx. El control no se sube a la plataforma.
 
