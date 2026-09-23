@@ -76,6 +76,13 @@ if _violations:
 async def lifespan(_app):
     worker = None
     thread = None
+    monitor = None
+    monitor_thread = None
+    if settings.app_env.strip().lower() == 'production' and settings.supabase_url:
+        from .operational_health import OperationalMonitor
+        monitor = OperationalMonitor(settings)
+        monitor_thread = threading.Thread(target=monitor.run, name='operational-monitor', daemon=True)
+        monitor_thread.start()
     if durable_mode(settings) == "embedded":
         from .analysis_worker import AnalysisWorker
         worker = AnalysisWorker(settings)
@@ -84,6 +91,10 @@ async def lifespan(_app):
     try:
         yield
     finally:
+        if monitor:
+            monitor.shutdown()
+        if monitor_thread:
+            monitor_thread.join(timeout=1)
         if worker:
             worker.shutdown()
         # Bounded shutdown. A terminated attempt is recovered by its lease;

@@ -21,7 +21,9 @@ import zipfile
 
 import httpx
 
-SCHEMAS = ('public', 'app_private', 'auth', 'storage', 'supabase_migrations')
+SCHEMAS = ('public', 'app_private', 'auth', 'storage')
+# Provider migration history belongs to the matching empty target, not its data.
+EXCLUDED_DATA = ('auth.schema_migrations', 'storage.migrations')
 CHUNK = 1024 * 1024
 MAX_OBJECTS = 100_000
 MAX_TOTAL_BYTES = 50 * 1024**3
@@ -55,10 +57,11 @@ def database_env(url):
 
 
 def sql_json(query, env):
-    result = subprocess.run(['psql', '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', query],
+    result = subprocess.run(['psql', '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=sqlstate', '-c', query],
                             env=env, capture_output=True, timeout=90)
     if result.returncode:
-        raise RecoveryError('DATABASE_INVENTORY_FAILED')
+        state = re.search(rb'(?:ERROR|FATAL):\s+([A-Z0-9]{5})\b', result.stderr)
+        raise RecoveryError('DATABASE_QUERY_' + (state[1].decode('ascii') if state else 'FAILED'))
     return json.loads(result.stdout)
 
 
@@ -100,12 +103,15 @@ def stream_backup(output):
         raise ValueError('Storage exceeds the backup safety limit')
     manifest = {'format': 1, 'created_at': datetime.now(timezone.utc).isoformat(),
                 'schemas': SCHEMAS, 'objects': [], 'members': {},
+                'migration_versions': sql_json("select coalesce(json_agg(version order by version),'[]') from supabase_migrations.schema_migrations;", env),
                 'limitations': ['Provider settings, passwords for database roles and provider encryption root keys require a separate recovery runbook.']}
     # ZIP is only a streaming container. Restic provides authenticated encryption.
     with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
         command = ['pg_dump', '--format=custom', '--no-owner', '--compress=0']
         for schema in SCHEMAS:
             command += ['--schema', schema]
+        for table in EXCLUDED_DATA:
+            command += ['--exclude-table-data', table]
         with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as dump:
             try:
                 with archive.open('database.dump', 'w', force_zip64=True) as target:

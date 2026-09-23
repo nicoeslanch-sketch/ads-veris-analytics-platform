@@ -6,6 +6,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from starlette.datastructures import MutableHeaders
+from .operational_health import request_window
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -33,6 +34,8 @@ class RequestObservabilityMiddleware:
             await self.app(scope, receive, traced_send)
         finally:
             elapsed = round((perf_counter() - started) * 1000, 1)
+            if scope.get('path') not in ('/health', '/version', '/admin/operations'):
+                request_window.record(status_code, elapsed)
             # Fast successful polls need no log line. Retain failures and slow
             # requests, with parameterized routes instead of dataset/user IDs.
             if status_code >= 400 or elapsed >= 1000:

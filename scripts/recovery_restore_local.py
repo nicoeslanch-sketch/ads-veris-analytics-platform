@@ -15,7 +15,7 @@ import zipfile
 
 import httpx
 
-from recovery_backup import CHUNK, SCHEMAS, database_env, sql_json, storage_base, verify_archive
+from recovery_backup import CHUNK, SCHEMAS, EXCLUDED_DATA, database_env, sql_json, storage_base, verify_archive
 
 
 def require_local(value):
@@ -30,19 +30,26 @@ def restore(path):
     require_local(base)
     env = database_env(db)
     manifest = verify_archive(path)
+    versions = sql_json("select coalesce(json_agg(version order by version),'[]') from supabase_migrations.schema_migrations;", env)
+    if versions != manifest.get('migration_versions'):
+        raise ValueError('Destination migrations do not match the backup')
     empty = sql_json("select json_build_object('users',(select count(*) from auth.users),"
                      "'datasets',(select count(*) from public.datasets),"
                      "'objects',(select count(*) from storage.objects));", env)
     if any(empty.values()):
         raise ValueError('Destination contains accounts or files; no data was changed')
     schemas = ','.join("'" + name + "'" for name in SCHEMAS)
+    excluded = ','.join("'" + name + "'" for name in EXCLUDED_DATA)
     # Matching migrations initialize seed rows. Clear them only on an empty,
     # explicitly selected disposable stack, never on a remote database.
-    truncate = sql_json("select to_json('truncate ' || string_agg(format('%I.%I',schemaname,tablename),',')"
-                        " || ' restart identity cascade') from pg_tables where schemaname in (" + schemas + ");", env)
-    sql_json("begin; set local session_replication_role=replica; " + truncate + "; commit; select 'true'::json;", env)
+    # DELETE avoids resetting sequences owned by Supabase's internal roles.
+    clear = sql_json("select to_json(string_agg(format('delete from %I.%I;',schemaname,tablename),' '))"
+                     " from pg_tables where schemaname in (" + schemas + ")"
+                     " and schemaname || '.' || tablename not in (" + excluded + ");", env)
+    sql_json("begin; set local session_replication_role=replica; " + clear + " commit; select 'true'::json;", env)
+    env['PGOPTIONS'] = '-c session_replication_role=replica'
     with zipfile.ZipFile(path) as archive:
-        with subprocess.Popen(['pg_restore', '--data-only', '--disable-triggers', '--no-owner',
+        with subprocess.Popen(['pg_restore', '--data-only', '--no-owner',
                                '--exit-on-error', '--single-transaction', '--dbname', env['PGDATABASE']],
                               env=env, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL) as process:

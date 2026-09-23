@@ -18,7 +18,7 @@ from recovery_backup import check_database_client, database_env, sql_json
 from recovery_restore_local import require_local, restore
 
 
-def run(status):
+def run(status, checks):
     require_local(status['DB_URL'])
     require_local(status['API_URL'])
     env = database_env(status['DB_URL'])
@@ -31,7 +31,6 @@ def run(status):
     email, password = uid + '@example.invalid', str(uuid4()) + 'aA1!'
     contents = b'ID,Fecha,Venta\nA,2026-01-01,669700\nB,2026-01-02,330300\n'
     object_path = uid + '/synthetic.csv'
-    checks = {}
     with httpx.Client(timeout=30, trust_env=False) as http, tempfile.TemporaryDirectory(prefix='ads-recovery-lab-') as folder:
         folder = Path(folder)
         account = http.post(base + '/auth/v1/admin/users', headers=headers,
@@ -115,9 +114,9 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     report = {'scope': 'disposable Supabase, same provider base schema and encryption root',
-              'production_requests': 0, 'customer_files': 0, 'passed': False}
+              'production_requests': 0, 'customer_files': 0, 'passed': False, 'checks': {}}
     try:
-        report['checks'] = run(json.loads(args.status_file.read_text(encoding='utf-8-sig')))
+        run(json.loads(args.status_file.read_text(encoding='utf-8-sig')), report['checks'])
         report['passed'] = True
     finally:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -6,15 +6,21 @@ comparacion de los dos Excel de PYME. Pagos apagados; sin compras autorizadas.
 
 ## Estado de esta etapa (trabajo en curso)
 
-- Implementado, por verificar: conclusiones en Explorar y numeros de relaciones
+- Verificado en CI (Playwright, tipos y build): conclusiones en Explorar y numeros de relaciones
   sin cortes, moneda UF explicita, etiquetas legibles.
-- Implementado, por verificar: relaciones en la cola durable existente, sin
+- Implementado y probado localmente/CI: relaciones en la cola durable existente, sin
   calculo generico duplicado en Explorar; contexto propio del bot por conexion.
 - Confirmado en codigo/pruebas previas: MFA obligatorio para administradores;
   clientes sin factor voluntario acceden con correo/contrasena. El titular
   confirmo que completo su autenticador y accedio a la plataforma.
-- Pendiente: respaldo cifrado DB + objetos, destino confirmado, restauracion aislada.
-- Pendiente: alertas operativas, prueba sostenida representativa y mediciones.
+- Respaldo: herramientas cifradas implementadas; laboratorio verifico cifrado,
+  integridad y rechazo de respaldos parciales. Restauracion todavia en correccion.
+  Pendiente destino confirmado y copia real de produccion. No hay copia de
+  clientes publicada ni subida a GitHub.
+- Alertas: contador agregado acotado, latidos privados, umbrales y panel admin
+  implementados; 17 pruebas locales pasan. Pendiente validacion SQL en laboratorio,
+  despliegue y destino de notificaciones externas. No sustituye monitor externo.
+- Pendiente: prueba sostenida representativa y mediciones.
 - Pendiente: ampliar casos de limpieza, uniones y dialogos, requisitos comerciales.
 - Pendiente: propuestas diferenciadas Basico/Analista/Gold, sin publicar precios.
 - Pendiente al finalizar lo anterior: Caso_PYME_Datos_Sucios.xlsx contra
