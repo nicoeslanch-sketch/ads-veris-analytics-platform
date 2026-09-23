@@ -67,6 +67,8 @@ def restore(path):
                     process.kill()
                     process.wait()
         key = os.environ['ADS_RESTORE_SERVICE_KEY']
+        ownership = sql_json("select coalesce(json_agg(t),'[]') from "
+                             "(select id,owner,owner_id from storage.objects) t;", env)
         headers = {'apikey': key, 'Authorization': 'Bearer ' + key, 'x-upsert': 'true'}
         with httpx.Client(timeout=120, trust_env=False, follow_redirects=False) as client:
             for row in manifest['objects']:
@@ -86,6 +88,16 @@ def restore(path):
                         digest.update(block)
                 if digest.hexdigest() != manifest['members'][row['member']]['sha256']:
                     raise RuntimeError('Restored object checksum mismatch')
+        # Storage upserts with service_role can replace ownership. Restore only
+        # the original authorization fields, not the new physical object version.
+        encoded = json.dumps(ownership).encode('utf-8').hex()
+        restored_owners = sql_json(
+            "with source as (select * from jsonb_to_recordset(convert_from(decode('" + encoded
+            + "','hex'),'UTF8')::jsonb) as x(id uuid,owner uuid,owner_id text)), "
+            "restored as (update storage.objects o set owner=s.owner,owner_id=s.owner_id "
+            "from source s where o.id=s.id returning o.id) select to_json(count(*)) from restored;", env)
+        if restored_owners != len(ownership):
+            raise RuntimeError('Restored object ownership mismatch')
     return {'restored': True, 'objects_verified': len(manifest['objects']), 'target': 'isolated-loopback'}
 
 

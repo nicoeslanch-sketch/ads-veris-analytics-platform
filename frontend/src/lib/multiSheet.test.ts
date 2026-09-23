@@ -361,9 +361,10 @@ describe('estado multihoja', () => {
     })
   })
 
-  it('conserva la conexión elegida sin cambiar el modo relación manual', () => {
+  it.each(['join', 'append_join'])('conserva la conexion elegida en %s', mode => {
     const storedScope = {
-      mode: 'join',
+      mode,
+      ...(mode === 'append_join' ? { append_sheets: ['Ventas_2025', 'Ventas_2026'] } : {}),
       sheets: ['Ventas_2025', 'Ventas_2026', 'Productos'],
       active_sheet: 'Ventas_2025',
       relationship_id: 'todas-ventas-costos',

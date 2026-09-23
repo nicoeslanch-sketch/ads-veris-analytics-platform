@@ -131,7 +131,7 @@ def validate_analysis_scope(raw: dict | None, available_sheets: list[str]) -> di
         raise ValueError("analysis_scope.active_sheet debe estar incluido en sheets.")
     normalized: dict[str, Any] = {"mode": mode, "sheets": sheets, "active_sheet": active_sheet}
     relationship_id = raw.get("relationship_id")
-    if mode == "join" and isinstance(relationship_id, str) and relationship_id.strip():
+    if mode in {"join", "append_join"} and isinstance(relationship_id, str) and relationship_id.strip():
         normalized["relationship_id"] = relationship_id.strip()
     selection_mode = raw.get("_selection_mode")
     if selection_mode in {"all", "custom"}:

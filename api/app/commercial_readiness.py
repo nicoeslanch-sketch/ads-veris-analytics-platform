@@ -26,8 +26,8 @@ def commercial_readiness(user_id: str, settings: Settings) -> dict:
             {'id': 'catalog', 'title': 'Precios y condiciones', 'state': 'pending',
              'detail': 'Falta aprobar precios en CLP, impuestos, renovacion, cancelacion y devoluciones.'},
             {'id': 'recovery', 'title': 'Recuperacion ante desastre', 'state': 'pending',
-             'detail': 'Falta demostrar restauracion de base de datos y archivos desde una copia externa. Los snapshots analiticos no la sustituyen.'},
+             'detail': 'Restauracion cifrada ensayada en laboratorio aislado. Falta destino externo aprobado, copia real y prueba de recuperacion de produccion. Los snapshots analiticos no la sustituyen.'},
             {'id': 'capacity', 'title': 'Capacidad comercial', 'state': 'pending',
-             'detail': 'Faltan pruebas sostenidas en la infraestructura objetivo y alertas operativas. No hay un numero certificado de usuarios simultaneos.'},
+             'detail': 'Laboratorio aislado y monitor agregado preparados. Faltan mediciones sostenidas en la infraestructura objetivo y avisos externos. No hay un numero certificado de usuarios simultaneos.'},
         ],
     }

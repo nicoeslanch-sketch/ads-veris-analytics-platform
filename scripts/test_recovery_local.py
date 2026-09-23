@@ -42,6 +42,10 @@ def run(status, checks):
         uploaded = http.post(base + '/storage/v1/object/datasets/' + object_path,
                              headers={**headers, 'Content-Type': 'text/csv'}, content=contents)
         assert uploaded.status_code in (200, 201), ('synthetic upload', uploaded.status_code)
+        sql_json(f"update storage.objects set owner='{uid}',owner_id='{uid}' "
+                 f"where bucket_id='datasets' and name='{object_path}'; select 'true'::json;", env)
+        original_ownership = sql_json("select json_build_object('id',id,'owner',owner,'owner_id',owner_id) "
+                                      f"from storage.objects where bucket_id='datasets' and name='{object_path}';", env)
         sql_json(f"insert into public.datasets(id,user_id,name,storage_path) values('{dataset}','{uid}',"
                  f"'Synthetic recovery','{object_path}'); select 'true'::json;", env)
         expected = sql_json(f"select row_to_json(d) from public.datasets d where id='{dataset}';", env)
@@ -96,12 +100,23 @@ def run(status, checks):
         restored = http.get(base + '/storage/v1/object/datasets/' + object_path, headers=headers)
         assert restored.status_code == 200 and restored.content == contents
         checks['dataset_metadata_and_file_bytes_restored'] = True
+        restored_ownership = sql_json("select json_build_object('id',id,'owner',owner,'owner_id',owner_id) "
+                                      f"from storage.objects where bucket_id='datasets' and name='{object_path}';", env)
+        assert restored_ownership == original_ownership
+        checks['storage_ownership_preserved'] = True
         login = http.post(base + '/auth/v1/token?grant_type=password', headers={'apikey': status['ANON_KEY']},
                           json={'email': email, 'password': password})
         assert login.status_code == 200, ('restored password login', login.status_code)
         jwt = login.json()['access_token']
         visible = http.get(base + '/rest/v1/datasets?select=id', headers={'apikey': status['ANON_KEY'], 'Authorization': 'Bearer ' + jwt})
         assert visible.status_code == 200 and visible.json() == [{'id': dataset}]
+        owned_file = http.get(base + '/storage/v1/object/authenticated/datasets/' + object_path,
+                              headers={'apikey': status['ANON_KEY'], 'Authorization': 'Bearer ' + jwt})
+        assert owned_file.status_code == 200 and owned_file.content == contents
+        anonymous = http.get(base + '/storage/v1/object/authenticated/datasets/' + object_path,
+                             headers={'apikey': status['ANON_KEY'], 'Authorization': 'Bearer ' + status['ANON_KEY']})
+        assert anonymous.status_code in (400, 401, 403, 404)
+        checks['restored_private_file_owner_only'] = True
         checks['restored_password_login_and_owner_access'] = True
         assert sql_json("select to_json(not has_function_privilege('authenticated','public.analysis_queue(text,uuid,text,jsonb,uuid)','execute'));", env)
         checks['private_queue_remains_inaccessible'] = True

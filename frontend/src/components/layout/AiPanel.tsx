@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowUp, Bot, Coins, Crown, Loader2, Lock, MessageCircle, RefreshCw, Sparkles, Square, Star, TriangleAlert } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
+import { relationshipBotContext } from '../../lib/relationshipBotContext'
 import { useDemo } from '../../demo/DemoContext'
 import { useAccess } from '../../lib/access'
 import { ApiError, apiGet, apiPostJob, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
@@ -467,7 +468,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       const response = await apiPostJson<BotResponse>('/assistant/bot', {
         message: clean,
         metrics: relationshipView ? null : localMetrics.current,
-        relationship_dashboard: relationshipView ? relationshipDashboard : null,
+        relationship_dashboard: relationshipView ? relationshipBotContext(relationshipDashboard) : null,
         historial: botMessages.slice(-12).map((message) => ({
           role: message.role,
           content: message.content,

@@ -370,10 +370,12 @@ def test_business_view_does_not_materialize_a_duplicate_cost_master():
     assert metrics["analisis_negocio"]["calidad"]["costos"]["conflictivas"] == 1
 
 
-def test_join_scope_preserves_relationship_id_without_changing_mode():
+@pytest.mark.parametrize("mode", ["join", "append_join"])
+def test_join_scope_preserves_relationship_id_without_changing_mode(mode):
     scope = validate_analysis_scope(
         {
-            "mode": "join",
+            "mode": mode,
+            **({"append_sheets": ["Ventas_2025", "Ventas_2026"]} if mode == "append_join" else {}),
             "sheets": ["Ventas_2025", "Ventas_2026", "Productos"],
             "active_sheet": "Ventas_2025",
             "relationship_id": "todas-ventas-costos",
@@ -388,7 +390,7 @@ def test_join_scope_preserves_relationship_id_without_changing_mode():
         ["Ventas_2025", "Ventas_2026", "Productos"],
     )
 
-    assert scope["mode"] == "join"
+    assert scope["mode"] == mode
     assert scope["relationship_id"] == "todas-ventas-costos"
 
 

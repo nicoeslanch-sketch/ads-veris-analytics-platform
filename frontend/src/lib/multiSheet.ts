@@ -127,6 +127,7 @@ export function publicAnalysisScope(value: unknown): AnalysisScope | null {
   if (value.mode === 'append_join') {
     const join = publicJoin(value.join)
     const appendSheets = stringList(value.append_sheets)
+    const relationshipId = typeof value.relationship_id === 'string' ? value.relationship_id.trim() : ''
     return join && appendSheets
       ? {
           mode: 'append_join',
@@ -134,6 +135,7 @@ export function publicAnalysisScope(value: unknown): AnalysisScope | null {
           append_sheets: appendSheets,
           active_sheet: value.active_sheet,
           join,
+          ...(relationshipId ? { relationship_id: relationshipId } : {}),
         }
       : null
   }
