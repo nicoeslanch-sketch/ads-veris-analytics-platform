@@ -1,0 +1,55 @@
+name: Recovery lab
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LAB: /tmp/ads-recovery-${{ github.run_id }}
+      STATUS_FILE: /tmp/recovery-status-${{ github.run_id }}.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install httpx==0.28.1
+      - name: Install pinned encrypted backup client
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_amd64.bz2 -o /tmp/restic.bz2
+          echo 'f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c  /tmp/restic.bz2' | sha256sum -c -
+          bunzip2 /tmp/restic.bz2
+          sudo install -m 755 /tmp/restic /usr/local/bin/restic
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.0
+      - name: Start disposable database and Storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$LAB"
+          supabase init --workdir "$LAB" --yes
+          mkdir -p "$LAB/supabase/migrations"
+          cp supabase/migrations/*.sql "$LAB/supabase/migrations/"
+          supabase start --workdir "$LAB" -x studio,realtime,logflare,vector,imgproxy,edge-runtime 2>&1 | sed -E 's/eyJ[A-Za-z0-9_.-]+/[LOCAL-JWT-REDACTED]/g; s/sb_secret_[A-Za-z0-9_-]+/[LOCAL-KEY-REDACTED]/g'
+          supabase status --workdir "$LAB" -o json > "$STATUS_FILE"
+          chmod 600 "$STATUS_FILE"
+      - name: Encrypt, delete synthetic data, restore and verify
+        run: python scripts/test_recovery_local.py --status-file "$STATUS_FILE" --output artifacts/recovery-lab.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recovery-lab-${{ github.run_id }}
+          path: artifacts/recovery-lab.json
+          retention-days: 14
+      - name: Stop disposable infrastructure
+        if: always()
+        run: supabase stop --workdir "$LAB" --no-backup

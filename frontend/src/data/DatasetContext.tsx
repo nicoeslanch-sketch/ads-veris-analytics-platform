@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { clearAnalysisCaches, clearAnalysisRuntimeCaches } from '../lib/analysisCache'
+import { stableSerialize } from '../lib/stableSerialize'
 import { analysisScopesEqual, normalizedRestoredSelection, scopeForActiveSheet } from '../lib/multiSheet'
 import {
   clearRelationshipDashboardCaches,
@@ -20,6 +21,7 @@ import type {
   BusinessFilters,
   CleanResult,
   MetricsResult,
+  RelationshipDashboard,
   SheetManifest,
   SheetProcessingStatus,
   StandardizeResult,
@@ -120,6 +122,8 @@ interface DatasetState {
   standardization: StandardizeResult | null
   cleaning: CleanResult | null
   metrics: MetricsResult | null
+  relationshipDashboard: RelationshipDashboard | null
+  setRelationshipDashboard: (result: RelationshipDashboard) => void
   uploadedAt: Date | null
   period: Period
   monthsAvailable: string[]
@@ -204,6 +208,9 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [standardization, setStandardizationState] = useState<StandardizeResult | null>(null)
   const [cleaning, setCleaningState] = useState<CleanResult | null>(null)
   const [metrics, setMetricsState] = useState<MetricsResult | null>(null)
+  const [relationshipSnapshot, setRelationshipSnapshot] = useState<{
+    file: File | null; key: string; dashboard: RelationshipDashboard
+  } | null>(null)
   const [uploadedAt, setUploadedAt] = useState<Date | null>(null)
   const [period, setPeriod] = useState<Period>(ALL_PERIOD)
   const [monthsAvailable, setMonthsAvailable] = useState<string[]>([])
@@ -628,6 +635,13 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     selection_mode: selectionMode,
   }), [analysisScope, availableSheets, combineSheets, selectedSheets, selectionMode, sheet, sheetErrors])
 
+  const relationshipKey = stableSerialize({ datasetId, storagePath, analysisScope, period, sheetManifest })
+  const relationshipDashboard = relationshipSnapshot?.file === file && relationshipSnapshot?.key === relationshipKey
+    ? relationshipSnapshot.dashboard : null
+  const setRelationshipDashboard = useCallback((dashboard: RelationshipDashboard) => {
+    setRelationshipSnapshot({ file, key: relationshipKey, dashboard })
+  }, [file, relationshipKey])
+
   const value = useMemo(
     () => ({
       file,
@@ -636,6 +650,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       standardization,
       cleaning,
       metrics,
+      relationshipDashboard,
+      setRelationshipDashboard,
       uploadedAt,
       period,
       monthsAvailable,
@@ -683,6 +699,8 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
       standardization,
       cleaning,
       metrics,
+      relationshipDashboard,
+      setRelationshipDashboard,
       uploadedAt,
       period,
       monthsAvailable,

@@ -251,3 +251,10 @@ supabase/.temp/
 REQ5325*.xlsx
 .vercel
 .env*
+
+# Disaster recovery material must never enter the public repository.
+backups/
+recovery-private/
+*.dump
+*.backup
+ads-recovery.zip

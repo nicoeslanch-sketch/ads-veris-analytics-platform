@@ -10,9 +10,17 @@ import {
   sortRelationships,
   templateLabel,
   usableRelationships,
+  readableRelationshipLabel,
 } from './relationshipDashboard'
 import { ANALYSIS_MODES, analysisLoadingOperation, internalModeForLabel } from './analysisModes'
 import type { CatalogRelationship } from './types'
+
+it('preserva UF y decimales sin etiquetarlos como pesos', () => {
+  expect(formatKpiValue(125.75, 'currency', 'UF')).toBe('UF 125,75')
+  expect(formatKpiValue(-10000079, 'currency', 'CLP')).toBe('$-10.000.079')
+  expect(formatKpiValue(125.75, 'currency', 'USD')).toBe('US$125,75')
+  expect(readableRelationshipLabel('Gastos_Operacionales + Sucursales')).toBe('Gastos Operacionales + Sucursales')
+})
 
 function relation(overrides: Partial<CatalogRelationship>): CatalogRelationship {
   return {

@@ -14,6 +14,7 @@ import {
   filterRelationships,
   sortRelationships,
   templateLabel,
+  readableRelationshipLabel,
 } from '../../lib/relationshipDashboard'
 
 const TEMPLATE_ICON: Partial<Record<RelationshipTemplate, typeof Boxes>> = {
@@ -137,21 +138,16 @@ export default function RelationshipCatalog({
                   }`}>
                     <Icon className={`h-4 w-4 ${accent}`} aria-hidden />
                   </span>
-                  <span className={`min-w-0 flex-1 break-words text-[13px] font-semibold leading-5 [overflow-wrap:anywhere] ${
+                  <span title={relation.label} className={`min-w-0 flex-1 break-words text-[13px] font-semibold leading-5 ${
                     active ? 'text-navy' : 'text-white'
                   }`}>
-                    {relation.label}
+                    {readableRelationshipLabel(relation.label)}
                   </span>
-                  {active && (
-                    <span className="shrink-0 rounded-full bg-teal px-2 py-0.5 text-[10px] font-semibold text-white">
-                      Activa
-                    </span>
-                  )}
                 </div>
                 <p className={`mt-1.5 break-words text-[11px] leading-4 [overflow-wrap:anywhere] ${active ? 'text-navy/70' : 'text-white/80'}`}>
                   {relation.append_sheets?.length
                     ? `${relation.append_sheets.length} hojas de ventas apiladas`
-                    : `${relation.left_sheet} + ${relation.right_sheet}`}
+                    : readableRelationshipLabel(`${relation.left_sheet} + ${relation.right_sheet}`)}
                 </p>
                 <p className={`mt-1 break-words text-[11px] leading-4 [overflow-wrap:anywhere] ${active ? 'text-navy/65' : 'text-white/75'}`}>
                   {relation.left_keys.join(' + ')} ↔ {relation.right_keys.join(' + ')}

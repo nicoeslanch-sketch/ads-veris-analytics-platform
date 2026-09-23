@@ -5,6 +5,7 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, Responsiv
 import { buildExplorationModel, explainExploration, explorationValue, explorationActions } from '../lib/explorationAnalysis'
 import { CHART, GRID_STROKE, AXIS_INK, truncateLabel } from '../lib/charts'
 import type { MetricsResult } from '../lib/types'
+import { BusinessConclusions } from './BusinessAnalysisPanel'
 
 export default function ExplorationAnalysis({ metrics, from, to, onSave }: {
   metrics: MetricsResult
@@ -37,6 +38,9 @@ export default function ExplorationAnalysis({ metrics, from, to, onSave }: {
 
   return (
     <div className="min-w-0 space-y-6 break-words [overflow-wrap:anywhere]" data-testid="exploration-analysis">
+      {metrics.analisis_negocio && !metrics.analisis_negocio.servicios
+        && metrics.analisis_negocio.perfil !== 'cobranza_nominal'
+        && <BusinessConclusions analysis={metrics.analisis_negocio} />}
       <section className="border-y border-navy/10 py-4" aria-labelledby="exploration-reading-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1 basis-56">

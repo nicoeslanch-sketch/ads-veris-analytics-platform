@@ -278,6 +278,97 @@ function BusinessTooltip({
   )
 }
 
+export function BusinessConclusions({ analysis }: { analysis: BusinessAnalysis }) {
+  const result = analysis.estado_resultados
+  const completeEvolution = analysis.evolucion.filter((row) => !row.parcial)
+  const latest = completeEvolution[completeEvolution.length - 1]
+  const previous = completeEvolution[completeEvolution.length - 2]
+  const partialMonth = [...analysis.evolucion].reverse().find((row) => row.parcial)
+  const qualityIssueCount = certificationBlockers(analysis).length
+  const usableContributions = (
+    rows: BusinessAnalysis['agrupaciones'][string] = [],
+  ) => rows.filter((row) => (
+    row.utilidad != null
+    && row.nombre.trim().toLocaleLowerCase('es-CL') !== 'sin clasificar'
+    && (row.participacion_pct ?? 0) < 99.95
+  ))
+  // Para una conclusión ejecutiva se prioriza categoría, luego producto y
+  // sucursal. Mezclar las tres listas podía elegir un grupo artificial o
+  // repetir el total completo como “Sin clasificar”.
+  const contributionRows = [
+    usableContributions(analysis.agrupaciones.categorias),
+    usableContributions(analysis.agrupaciones.productos),
+    usableContributions(analysis.agrupaciones.sucursales),
+  ].find((rows) => rows.length > 0) ?? []
+  const topContribution = [...contributionRows]
+    .sort((left, right) => (right.utilidad ?? 0) - (left.utilidad ?? 0))[0]
+  const latestSalesChange = latest && previous && previous.ventas !== 0
+    ? ((latest.ventas - previous.ventas) / Math.abs(previous.ventas)) * 100
+    : null
+  const partialConclusion = partialMonth?.variacion_ritmo_pct != null
+    ? `${formatMonthShort(partialMonth.mes)} está parcial (${partialMonth.cobertura_hasta_dia} de ${partialMonth.dias_del_mes} días): el ritmo diario ${
+        partialMonth.variacion_ritmo_pct >= 0 ? 'creció' : 'cayó'
+      } ${formatNumber(Math.abs(partialMonth.variacion_ritmo_pct))}% frente al mes completo anterior${
+        partialMonth.proyeccion_ritmo_mes_completo != null
+          ? `; al mismo ritmo cerraría cerca de ${money(partialMonth.proyeccion_ritmo_mes_completo)} (estimación)`
+          : ''
+      }.`
+    : null
+  const conclusions = [
+    partialConclusion ?? (
+      latestSalesChange == null
+        ? 'No existe un periodo anterior completo para medir crecimiento.'
+        : `Las ventas del último mes completo ${latestSalesChange >= 0 ? 'crecieron' : 'cayeron'} ${formatNumber(Math.abs(latestSalesChange))}% frente al mes completo anterior.`
+    ),
+    result.utilidad_bruta == null
+      ? 'No se puede explicar el cambio en utilidad hasta completar la relación de costos.'
+      : `La utilidad bruta conocida es ${money(result.utilidad_bruta)} con margen de ${percent(result.margen_bruto_pct)}.`,
+    topContribution
+      ? `${topContribution.nombre} es el mayor aporte identificable a la utilidad conocida (${money(topContribution.utilidad)}).`
+      : 'No hay una dimensión con costo pareado suficiente para atribuir la utilidad.',
+    qualityIssueCount > 0
+      ? `${formatNumber(qualityIssueCount)} alerta(s) pueden afectar la certificación de los indicadores.`
+      : 'No hay bloqueos de certificación pendientes en este análisis.',
+    result.cobertura_costos_certificable_pct < 95
+      ? `La principal oportunidad es elevar la cobertura de costos desde ${percent(result.cobertura_costos_certificable_pct)}.`
+      : 'La cobertura de costos permite comparar la rentabilidad con una base amplia.',
+  ]
+
+  return (
+      <section id="business-conclusions" className="border-y border-navy/10 py-4">
+        <h2 className="text-base font-semibold text-navy">Conclusiones del periodo</h2>
+        <p className="mt-1 text-xs text-navy/55">
+          Resultados deterministas sobre la información disponible; los datos parciales se indican expresamente.
+        </p>
+        <ol className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {conclusions.map((conclusion, index) => (
+            <li key={conclusion} className="rounded-lg border border-navy/10 bg-navy/[0.025] p-3">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-teal">
+                Conclusión {index + 1}
+              </span>
+              <p className="mt-1 text-xs leading-relaxed text-navy/70">{conclusion}</p>
+              {index < 3 ? (
+                <a
+                  href={index === 0 ? '/#business-trend' : '/#business-monthly-profitability'}
+                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
+                >
+                  Abrir gráfico
+                </a>
+              ) : (
+                <Link
+                  to="/alertas"
+                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
+                >
+                  Abrir detalle
+                </Link>
+              )}
+            </li>
+          ))}
+        </ol>
+      </section>
+  )
+}
+
 function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
   const result = analysis.estado_resultados
   const operation = analysis.operacion
@@ -488,88 +579,8 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
           : null,
     }))
   const qualityIssueCount = certificationBlockers(analysis).length
-  const usableContributions = (
-    rows: BusinessAnalysis['agrupaciones'][string] = [],
-  ) => rows.filter((row) => (
-    row.utilidad != null
-    && row.nombre.trim().toLocaleLowerCase('es-CL') !== 'sin clasificar'
-    && (row.participacion_pct ?? 0) < 99.95
-  ))
-  // Para una conclusión ejecutiva se prioriza categoría, luego producto y
-  // sucursal. Mezclar las tres listas podía elegir un grupo artificial o
-  // repetir el total completo como “Sin clasificar”.
-  const contributionRows = [
-    usableContributions(analysis.agrupaciones.categorias),
-    usableContributions(analysis.agrupaciones.productos),
-    usableContributions(analysis.agrupaciones.sucursales),
-  ].find((rows) => rows.length > 0) ?? []
-  const topContribution = [...contributionRows]
-    .sort((left, right) => (right.utilidad ?? 0) - (left.utilidad ?? 0))[0]
-  const latestSalesChange = latest && previous && previous.ventas !== 0
-    ? ((latest.ventas - previous.ventas) / Math.abs(previous.ventas)) * 100
-    : null
-  const partialConclusion = partialMonth?.variacion_ritmo_pct != null
-    ? `${formatMonthShort(partialMonth.mes)} está parcial (${partialMonth.cobertura_hasta_dia} de ${partialMonth.dias_del_mes} días): el ritmo diario ${
-        partialMonth.variacion_ritmo_pct >= 0 ? 'creció' : 'cayó'
-      } ${formatNumber(Math.abs(partialMonth.variacion_ritmo_pct))}% frente al mes completo anterior${
-        partialMonth.proyeccion_ritmo_mes_completo != null
-          ? `; al mismo ritmo cerraría cerca de ${money(partialMonth.proyeccion_ritmo_mes_completo)} (estimación)`
-          : ''
-      }.`
-    : null
-  const conclusions = [
-    partialConclusion ?? (
-      latestSalesChange == null
-        ? 'No existe un periodo anterior completo para medir crecimiento.'
-        : `Las ventas del último mes completo ${latestSalesChange >= 0 ? 'crecieron' : 'cayeron'} ${formatNumber(Math.abs(latestSalesChange))}% frente al mes completo anterior.`
-    ),
-    result.utilidad_bruta == null
-      ? 'No se puede explicar el cambio en utilidad hasta completar la relación de costos.'
-      : `La utilidad bruta conocida es ${money(result.utilidad_bruta)} con margen de ${percent(result.margen_bruto_pct)}.`,
-    topContribution
-      ? `${topContribution.nombre} es el mayor aporte identificable a la utilidad conocida (${money(topContribution.utilidad)}).`
-      : 'No hay una dimensión con costo pareado suficiente para atribuir la utilidad.',
-    qualityIssueCount > 0
-      ? `${formatNumber(qualityIssueCount)} alerta(s) pueden afectar la certificación de los indicadores.`
-      : 'No hay bloqueos de certificación pendientes en este análisis.',
-    result.cobertura_costos_certificable_pct < 95
-      ? `La principal oportunidad es elevar la cobertura de costos desde ${percent(result.cobertura_costos_certificable_pct)}.`
-      : 'La cobertura de costos permite comparar la rentabilidad con una base amplia.',
-  ]
-
   return (
     <div className="space-y-6">
-      <Card id="business-conclusions">
-        <h2 className="text-base font-semibold text-navy">Conclusiones del periodo</h2>
-        <p className="mt-1 text-xs text-navy/55">
-          Resultados deterministas sobre la información disponible; los datos parciales se indican expresamente.
-        </p>
-        <ol className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
-          {conclusions.map((conclusion, index) => (
-            <li key={conclusion} className="rounded-lg border border-navy/10 bg-navy/[0.025] p-3">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-teal">
-                Conclusión {index + 1}
-              </span>
-              <p className="mt-1 text-xs leading-relaxed text-navy/70">{conclusion}</p>
-              {index < 3 ? (
-                <a
-                  href={index === 0 ? '#business-trend' : '#business-monthly-profitability'}
-                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
-                >
-                  Abrir gráfico
-                </a>
-              ) : (
-                <Link
-                  to="/alertas"
-                  className="mt-2 inline-flex text-[11px] font-semibold text-teal hover:underline"
-                >
-                  Abrir detalle
-                </Link>
-              )}
-            </li>
-          ))}
-        </ol>
-      </Card>
 
       {visibleCards.length > 0 && (
       <KpiCarousel label="Indicadores del negocio">

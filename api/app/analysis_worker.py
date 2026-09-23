@@ -79,7 +79,9 @@ def execute_job(job: dict, settings: Settings) -> dict:
 
     kind = job["kind"]
     capabilities = {"metrics": Capability.VIEW_DASHBOARD, "standardize_batch": Capability.STANDARDIZE,
-                    "clean_batch": Capability.CLEAN, "clean_export": Capability.DOWNLOAD_CLEAN_DATASET}
+                    "clean_batch": Capability.CLEAN, "clean_export": Capability.DOWNLOAD_CLEAN_DATASET,
+                    "relationship_catalog": Capability.VIEW_DASHBOARD,
+                    "relationship_dashboard": Capability.VIEW_DASHBOARD}
     if kind not in capabilities or job["engine_version"] != ENGINE_VERSION:
         raise HTTPException(409, "El trabajo corresponde a otra version del motor. Vuelve a crearlo.")
     user_id, dataset_id, opts = job["user_id"], job["dataset_id"], job["options"]
@@ -89,6 +91,11 @@ def execute_job(job: dict, settings: Settings) -> dict:
     content = download_from_storage(path)
     filename = p._display_filename(os.path.basename(path))
     p.report_job_progress("opening", 0, 1)
+    if kind == "relationship_catalog":
+        return p._relationship_catalog_cached_sync(filename, content, opts["manifest"], dataset_id, user_id)
+    if kind == "relationship_dashboard":
+        return p._relationship_dashboard_cached_sync(filename, content, opts["manifest"], opts["relationship"],
+                                                      opts.get("date_from"), opts.get("date_to"), dataset_id, user_id)
     if kind == "standardize_batch":
         return p._standardize_batch_sync(filename, content, opts["sheets"], dataset_id,
                                          user_id, opts["revision"], opts.get("restore_state"))

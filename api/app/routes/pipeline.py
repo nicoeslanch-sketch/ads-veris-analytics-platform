@@ -6221,6 +6221,52 @@ async def sheet_relationship_catalog(
     )
 
 
+async def _create_relationship_job(file, storage_path, dataset_id, manifest, relationship,
+                                   date_from, date_to, user, settings):
+    await run_in_threadpool(require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if sheet_manifest is None:
+        raise HTTPException(422, "Envia un manifiesto de hojas.")
+    options = {"manifest": sheet_manifest}
+    kind = "relationship_catalog"
+    if relationship is not None:
+        kind = "relationship_dashboard"
+        options.update(relationship=_validate_manual_relationship(_parse_json_field(relationship, "relationship")),
+                       date_from=date_from, date_to=date_to)
+    if use_durable_source(settings, file, storage_path, dataset_id):
+        return await run_in_threadpool(DurableAnalysisRepository(settings).enqueue,
+                                      user.id, dataset_id, storage_path, kind, options)
+    filename, content = await _read_input(file, storage_path, user)
+    key = _analysis_cache_key(kind + "_job", user.id, filename, content, dataset_id, options)
+    def producer():
+        if kind == "relationship_catalog":
+            return _relationship_catalog_cached_sync(filename, content, sheet_manifest, dataset_id, user.id)
+        return _relationship_dashboard_cached_sync(filename, content, sheet_manifest, options["relationship"],
+                                                   date_from, date_to, dataset_id, user.id)
+    return manager_for(settings).submit(user.id, key, producer, retained_input_bytes=len(content))
+
+
+@router.post("/analysis/jobs/relationship-catalog", status_code=status.HTTP_202_ACCEPTED)
+async def create_relationship_catalog_job(
+    file: UploadFile | None = File(None), storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None), manifest: str = Form(...),
+    user: AuthenticatedUser = Depends(get_current_user), settings: Settings = Depends(get_settings),
+) -> dict:
+    return await _create_relationship_job(file, storage_path, dataset_id, manifest, None,
+                                          None, None, user, settings)
+
+
+@router.post("/analysis/jobs/relationship-dashboard", status_code=status.HTTP_202_ACCEPTED)
+async def create_relationship_dashboard_job(
+    file: UploadFile | None = File(None), storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None), manifest: str = Form(...), relationship: str = Form(...),
+    date_from: str | None = Form(None), date_to: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user), settings: Settings = Depends(get_settings),
+) -> dict:
+    return await _create_relationship_job(file, storage_path, dataset_id, manifest, relationship,
+                                          date_from, date_to, user, settings)
+
+
 @router.post("/sheets/relationship-dashboard")
 async def sheet_relationship_dashboard(
     file: UploadFile | None = File(None),

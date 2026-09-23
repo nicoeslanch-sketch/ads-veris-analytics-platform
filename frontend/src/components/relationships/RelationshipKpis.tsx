@@ -1,6 +1,7 @@
 import { HelpCircle } from 'lucide-react'
 import type { RelationshipKpi } from '../../lib/types'
 import { formatKpiValue } from '../../lib/relationshipDashboard'
+import KpiValue from '../ui/KpiValue'
 
 const TONE_ACCENT: Record<NonNullable<RelationshipKpi['tone']>, string> = {
   default: '#00a8a8',
@@ -20,7 +21,7 @@ export default function RelationshipKpis({ kpis, currency }: RelationshipKpisPro
   const available = kpis.filter((kpi) => kpi.available)
   if (!available.length) return null
   return (
-    <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-2.5">
+    <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-2.5">
       {available.slice(0, 7).map((kpi) => {
         const accent = TONE_ACCENT[kpi.tone ?? 'default']
         return (
@@ -29,24 +30,20 @@ export default function RelationshipKpis({ kpis, currency }: RelationshipKpisPro
             className="min-w-0 overflow-hidden rounded-lg border border-navy/10 bg-white p-3.5 shadow-sm"
             style={{ background: `linear-gradient(135deg, ${accent}0d, #ffffff 60%)` }}
           >
-            <div className="flex items-center gap-1.5">
-              <p className="text-[11px] font-semibold uppercase text-navy/50">
+            <div className="flex min-w-0 items-start gap-1.5">
+              <p className="min-w-0 break-words text-[11px] font-semibold uppercase text-navy/50">
                 {kpi.label}
               </p>
               {kpi.help && (
-                <span title={kpi.help} className="text-navy/30">
+                <span title={kpi.help} className="shrink-0 text-navy/30">
                   <HelpCircle className="h-3 w-3" aria-hidden />
                   <span className="sr-only">{kpi.help}</span>
                 </span>
               )}
             </div>
-            <p
-              className="mt-2 break-words text-base font-bold leading-6 text-navy [overflow-wrap:anywhere]"
-            >
-              {kpi.id === 'cardinalidad'
+            <KpiValue maxPx={20} className="mt-2" value={kpi.id === 'cardinalidad'
                 ? formatKpiValue(kpi.value, kpi.format, currency).replace(/_/g, ' ')
-                : formatKpiValue(kpi.value, kpi.format, currency)}
-            </p>
+                : formatKpiValue(kpi.value, kpi.format, currency)} />
           </div>
         )
       })}
