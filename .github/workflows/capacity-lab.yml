@@ -8,12 +8,18 @@ on:
         default: '5'
         required: true
       rows:
-        description: Rows per synthetic CSV (100-10000)
+        description: Transaction rows per synthetic file (100-10000)
         default: '4000'
         required: true
       seconds:
-        description: Sustained observation window (60-300)
+        description: Sustained observation window (60-1800)
         default: '120'
+        required: true
+      format:
+        description: Synthetic CSV or four-sheet XLSX
+        type: choice
+        options: [csv, xlsx]
+        default: xlsx
         required: true
 
 permissions:
@@ -26,13 +32,14 @@ concurrency:
 jobs:
   isolated:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
       LAB: /tmp/ads-capacity-lab-${{ github.run_id }}
       STATUS_FILE: /tmp/capacity-status-${{ github.run_id }}.json
       CLIENTS: ${{ inputs.clients }}
       ROWS: ${{ inputs.rows }}
       DURATION_SECONDS: ${{ inputs.seconds }}
+      FILE_FORMAT: ${{ inputs.format }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -60,7 +67,7 @@ jobs:
         run: >-
           python scripts/benchmark_durable_local.py
           --status-file "$STATUS_FILE" --clients "$CLIENTS" --rows "$ROWS"
-          --seconds "$DURATION_SECONDS" --output artifacts/capacity-lab.json
+          --seconds "$DURATION_SECONDS" --format "$FILE_FORMAT" --output artifacts/capacity-lab.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

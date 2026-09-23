@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -81,7 +82,12 @@ def run(status, checks):
         deleted_user = http.delete(base + '/auth/v1/admin/users/' + uid, headers=headers)
         assert deleted_user.status_code == 200
         assert sql_json('select to_json(count(*)) from public.datasets;', env) == 0
-        os.environ.update(ADS_RESTORE_DB_URL=status['DB_URL'], ADS_RESTORE_STORAGE_URL=base, ADS_RESTORE_SERVICE_KEY=key)
+        # The disposable image owns provider tables with supabase_admin.
+        # No production role is altered or granted additional permissions.
+        parsed_db = urlsplit(status['DB_URL'])
+        local_admin_url = parsed_db._replace(netloc='supabase_admin:' + (parsed_db.password or '')
+                                             + '@' + parsed_db.netloc.rsplit('@', 1)[1]).geturl()
+        os.environ.update(ADS_RESTORE_DB_URL=local_admin_url, ADS_RESTORE_STORAGE_URL=base, ADS_RESTORE_SERVICE_KEY=key)
         started = time.monotonic()
         result = restore(archive)
         checks['restore_seconds'] = round(time.monotonic() - started, 3)

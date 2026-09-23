@@ -29,6 +29,8 @@ def restore(path):
     require_local(db)
     require_local(base)
     env = database_env(db)
+    if not sql_json("select to_json(rolsuper) from pg_roles where rolname=current_user;", env):
+        raise ValueError('The isolated restore requires its local database administrator, not a hosted application role')
     manifest = verify_archive(path)
     versions = sql_json("select coalesce(json_agg(version order by version),'[]') from supabase_migrations.schema_migrations;", env)
     if versions != manifest.get('migration_versions'):
