@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from datetime import datetime
 import json
 from pathlib import Path
 import re
@@ -143,6 +144,22 @@ def audit(source: Path, control: Path):
         "negative_balances": sum((number(r["Saldo_CLP"]) or 0) < 0 for r in receivables),
         "positive_documents": sum((number(r["Saldo_CLP"]) or 0) > 0 for r in receivables),
     }
+    inventory = records(workbook["Inventario_Mensual"])
+    dated_inventory = []
+    for row in inventory:
+        try:
+            date = datetime.fromisoformat(str(row["FechaCorte"])).date()
+        except (ValueError, TypeError):
+            continue
+        dated_inventory.append((date, row))
+    latest = max((date for date, _ in dated_inventory), default=None)
+    snapshot = [row for date, row in dated_inventory if date == latest]
+    result["inventory"] = {
+        "date": latest.isoformat() if latest else None,
+        "rows": len(snapshot), "undated_rows": len(inventory) - len(dated_inventory),
+        "stock": amount(sum(number(r["StockUnidades"]) or 0 for r in snapshot)),
+        "value": amount(sum((number(r["StockUnidades"]) or 0) * (number(r["CostoPromedio_CLP"]) or 0) for r in snapshot)),
+    }
     result["oracle_kpis"] = records(oracle["KPIs_Esperados"])
     result["oracle_periods"] = records(oracle["KPIs_por_Periodo"])
     workbook.close()
@@ -168,6 +185,16 @@ def main():
             "orphan_headers_match": platform["business"]["alcance"]["filas_sin_cabecera_valida"]
                 == sum(row["issues"].get("orphan_header", 0) for row in report["periods"]),
         }
+        by_sheet = {row["sheet"]: row.get("metrics", {}) for row in platform["sheets"]}
+        inventory = by_sheet.get("Inventario_Mensual", {}).get("analisis_inventario") or {}
+        balances = (by_sheet.get("CxC", {}).get("analisis_generico") or {}).get("numericas", [])
+        balance = next((row.get("total") for row in balances if row["columna"] == "Saldo_CLP"), None)
+        report["platform_comparison"].update({
+            "inventory_snapshot_matches": inventory.get("fecha_corte") == report["inventory"]["date"],
+            "inventory_stock_matches": inventory.get("stock_total") == report["inventory"]["stock"],
+            "inventory_value_matches": inventory.get("valor_inventario") == report["inventory"]["value"],
+            "receivables_balance_matches": balance == report["receivables"]["declared_balance"],
+        })
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     print(json.dumps({k: v for k, v in report.items() if k not in {"sheets", "oracle_kpis", "oracle_periods"}}, ensure_ascii=False))

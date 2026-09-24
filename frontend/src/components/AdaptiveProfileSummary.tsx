@@ -140,6 +140,14 @@ const GENERIC_TITLES: Record<string, { titulo: string; nota: string }> = {
     titulo: 'Cobranzas y pagos',
     nota: 'Los montos representan pagos recibidos y su estado, no ventas nuevas ni utilidad.',
   },
+  cuentas_por_cobrar: {
+    titulo: 'Cuentas por cobrar',
+    nota: 'Saldos declarados y documentos pendientes; no representan ventas nuevas ni dinero cobrado.',
+  },
+  cabeceras_ventas: {
+    titulo: 'Cabeceras de ventas',
+    nota: 'Documentos, fechas y estados. Los importes corresponden a sus lineas de detalle vinculadas por ID.',
+  },
   historial_costos: {
     titulo: 'Evolución de costos',
     nota: 'Resume costos unitarios por vigencia y fuente; no suma costos unitarios como gasto del negocio.',
@@ -305,12 +313,13 @@ export default function AdaptiveProfileSummary({
     )
   }
   if (inventory) {
+    const minimumsAvailable = inventory.minimos_disponibles !== false
     const cards: string[][] = [
       ['Registros del último corte', formatNumber(inventory.registros)],
       ['Productos', formatNumber(inventory.productos)],
       ['Stock total', formatNumber(inventory.stock_total)],
-      ['Stock mínimo', formatNumber(inventory.stock_minimo_total)],
-      ['Bajo mínimo', formatNumber(inventory.bajo_minimo)],
+      ['Stock mínimo', minimumsAvailable ? formatNumber(inventory.stock_minimo_total) : 'No disponible'],
+      ['Bajo mínimo', minimumsAvailable ? formatNumber(inventory.bajo_minimo) : 'No disponible'],
       ['Cobertura', `${formatNumber(inventory.cobertura_stock_pct)}%`],
       ...(inventory.fecha_corte
         ? [['Fecha de corte', inventory.fecha_corte]]
@@ -333,7 +342,7 @@ export default function AdaptiveProfileSummary({
     const shortageShare = inventory.registros > 0
       ? inventory.bajo_minimo / inventory.registros * 100
       : 0
-    inventoryInsights.push({
+    if (minimumsAvailable) inventoryInsights.push({
       title: shortageShare > 0 ? 'Hay riesgo de quiebre' : 'El stock cubre los mínimos registrados',
       evidence: shortageShare > 0
         ? `${formatNumber(inventory.bajo_minimo)} registros (${formatNumber(shortageShare)}%) están bajo mínimo.`
@@ -390,7 +399,7 @@ export default function AdaptiveProfileSummary({
                 </ResponsiveContainer>
               </div>
             </Card>
-            <Card>
+            {minimumsAvailable && <Card>
               <h3 className="text-sm font-semibold text-navy">Quiebres por sucursal</h3>
               <p className="mt-1 text-xs text-navy/55">Registros bajo el stock mínimo.</p>
               <div className="mt-4 h-64">
@@ -404,7 +413,7 @@ export default function AdaptiveProfileSummary({
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-            </Card>
+            </Card>}
           </div>
         )}
         {isExplore && (

@@ -97,6 +97,8 @@ def main() -> None:
             "Gastos_Operacionales": ["cuantogaste", "cual es mi gasto neto", "y el iva", "cual es el gasto mas alto", "cual es la categoria principal", "cuanto gaste por categoria", "cual es mi mejor mes", "dame una conclusion"],
             "Metas_Mensuales": ["cuanto es mi meta venta neta", "y la meta margen bruto", "cual es la mediana", "cual es la meta nuevos clientes", "dame un resumen"],
             "Clientes": ["cuantos clientes tengo", "cual es el limite credito promedio", "y el maximo", "que segmento predomina", "dame un resumen"],
+            "CxC": ["cuanto me deben", "cual es el saldo", "son ventas o cuentas por cobrar", "dame un resumen"],
+            "Inventario_Mensual": ["cuanto stock tengo", "cuanto vale el inventario", "que sucursal tiene mas stock", "cuantos estan bajo el minimo", "dame un resumen"],
         }
         audit["conversations"] = []
         by_name = {row["sheet"]: row for row in audit["sheets"]}

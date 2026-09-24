@@ -1310,6 +1310,7 @@ export interface MetricsResult {
     unidades_comprometidas?: number | null
     diferencia_conteo?: number | null
     bajo_minimo: number
+    minimos_disponibles?: boolean
     stocks_negativos?: number
     cobertura_stock_pct: number
     sucursales: Array<{ nombre: string; registros: number }>
@@ -1340,6 +1341,8 @@ export interface MetricsResult {
       | 'compras'
       | 'gastos'
       | 'cobranzas'
+      | 'cuentas_por_cobrar'
+      | 'cabeceras_ventas'
       | 'historial_costos'
       | 'auxiliar'
       | 'ordenes_trabajo'

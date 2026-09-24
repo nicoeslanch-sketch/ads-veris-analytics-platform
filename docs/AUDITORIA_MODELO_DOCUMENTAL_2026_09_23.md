@@ -20,6 +20,9 @@
   El bot distingue metas de resultados y mantiene las preguntas de seguimiento.
 - Las cabeceras sin importes no se presentan como una maestra de clientes;
   el bot explica cuando es necesario vincularlas con las lineas de venta.
+- Las cuentas por cobrar se presentan como saldos, no ingresos, y advierten
+  saldos negativos. El inventario mensual usa el ultimo corte del filtro,
+  sin sumar existencias de diferentes meses ni costos unitarios.
 - El selector de relaciones no pierde una respuesta valida por el ciclo de
   montaje/verificacion de efectos de React StrictMode.
 
@@ -45,8 +48,8 @@ Este cambio no afirma soporte universal para cualquier modelo relacional.
 La nueva union automatica se limita a IDs explicitos de ventas y atributos
 compatibles; no inventa relaciones ni repara cantidades/descuentos alterados.
 
-Todavia requiere ampliacion el modelo de CxC, las compras con detalle separado
-y la valorizacion por cortes de inventario del caso de auditoria. La comparacion
+Todavia requiere ampliacion la conciliacion de CxC, las compras con detalle separado
+y la rotacion de inventario del caso de auditoria. La comparacion
 completa contra todos los KPIs del control no esta terminada.
 
 El ensayo de respaldo sintetico y la prueba de capacidad aislada de la entrega

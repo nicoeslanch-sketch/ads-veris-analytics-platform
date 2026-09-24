@@ -197,6 +197,52 @@ def test_absent_cost_coverage_is_not_presented_as_zero_cost():
     assert "$0" not in answer["answer"]
 
 
+def test_receivables_balance_never_becomes_sales_or_cash_received():
+    metrics = compute_metrics(pd.DataFrame({
+        "IDCxC": ["R1", "R2", "R3"], "IDVenta": ["V1", "V2", "V3"],
+        "FechaEmision": ["2026-01-02"] * 3, "FechaPago": [None] * 3,
+        "MontoOriginal_CLP": [200, 500, 100], "Saldo_CLP": [100, 300, -5],
+        "EstadoCxC": ["Pendiente"] * 3,
+    }))
+    assert metrics["tipo_analisis"] == "generico"
+    assert metrics["analisis_generico"]["subtipo"] == "cuentas_por_cobrar"
+    assert metrics["kpis"]["ingresos_totales"] is None
+    balance = metrics["analisis_generico"]["numericas"][0]
+    assert balance["columna"] == "Saldo_CLP"
+    assert balance["total"] == 395
+    assert balance["formato"] == "moneda"
+    assert any("1 saldo(s) negativos" in warning for warning in metrics["advertencias"])
+    answer = answer_for("cuanto me deben", metrics=metrics)
+    assert "$395" in answer["answer"]
+    assert "no dinero cobrado" in answer["answer"]
+
+
+def test_monthly_inventory_uses_latest_filtered_snapshot_not_sum_of_months():
+    frame = pd.DataFrame({
+        "FechaCorte": ["2026-01-31", "2026-02-28", "2026-02-28"],
+        "IDSucursal": ["S1", "S1", "S2"], "IDProducto": ["P1", "P1", "P1"],
+        "StockUnidades": [100, 3, 4], "CostoPromedio_CLP": [50, 60, 70],
+    })
+    metrics = compute_metrics(frame)
+    assert metrics["tipo_analisis"] == "inventario"
+    inventory = metrics["analisis_inventario"]
+    assert inventory["stock_total"] == 7
+    assert inventory["valor_inventario"] == 460
+    assert inventory["registros_fuente"] == 3
+    assert inventory["registros"] == 2
+    assert inventory["fecha_corte"] == "2026-02-28"
+    assert inventory["minimos_disponibles"] is False
+    assert "Faltan minimos" in answer_for("dame un resumen", metrics=metrics)["answer"]
+    assert answer_for("cuantos estan bajo el minimo", metrics=metrics)["matched_key"] == "metric_inventory_risk_unavailable"
+    assert metrics["kpis"]["ingresos_totales"] is None
+    historical = compute_metrics(frame, date_to="2026-01-31")["analisis_inventario"]
+    assert historical["stock_total"] == 100
+    assert historical["valor_inventario"] == 5000
+    assert historical["fecha_corte"] == "2026-01-31"
+    frame.loc[1, "CostoPromedio_CLP"] = None
+    assert compute_metrics(frame)["analisis_inventario"]["valor_inventario"] is None
+
+
 @pytest.mark.parametrize(("raw", "expected"), [
     ("puedo confiar en estos numeros", "puedo confiar en estos numeros"),
     ("unidadescomprometidas", "unidades comprometidas"),

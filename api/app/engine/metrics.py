@@ -726,6 +726,11 @@ def detect_non_sales_profile(
     ):
         return "gastos"
     if (
+        has_compact("saldo")
+        and has_compact("idcxc", "estadocxc", "cuentaporcobrar", "cuentasporcobrar")
+    ):
+        return "cuentas_por_cobrar"
+    if (
         has_compact("idpago", "idcobranza", "fechapago", "montopago", "montopagado")
         and has_compact("estadopago", "estadocobranza", "documento")
     ):
@@ -1068,14 +1073,17 @@ def compute_metrics(
             and "ubicacion" not in name
             for name in normalized_keys
         )
-        and any("stock minimo" in name for name in normalized_keys)
+        and (
+            any("stock minimo" in header_words(column) for column in df.columns)
+            or any("fecha corte" in header_words(column) for column in df.columns)
+        )
         and bool(roles.get("producto"))
     )
     non_sales_profile = detect_non_sales_profile(df.columns, roles)
     line_sales = line_sales_evidence(df, roles)
     # Un historial de costos tiene muchas observaciones por SKU. Resumirlo
     # como un catálogo estático mezclaría vigencias y falsearía el ranking.
-    if non_sales_profile == "historial_costos":
+    if non_sales_profile == "historial_costos" or inventory_profile:
         product_catalog = False
     transactional_profile = bool(
         (
@@ -2228,7 +2236,10 @@ def compute_metrics(
         minimum_column = _column_containing("stock", "minimo")
         updated_column = _column_containing("ultima", "actualizacion")
         inventory_value_column = _column_containing("valor", "inventario")
-        reference_cost_column = _column_containing("costo", "unitario")
+        reference_cost_column = (
+            _column_containing("costo", "unitario")
+            or _column_containing("costo", "promedio")
+        )
         committed_column = _column_containing("unidades", "comprometidas")
         difference_column = _column_containing("diferencia", "conteo")
         snapshot_column = (
@@ -2236,18 +2247,24 @@ def compute_metrics(
             or _column_containing("fecha", "snapshot")
             or updated_column
         )
-        inventory_scope = df
+        inventory_scope = selection
         latest_snapshot = None
         if snapshot_column:
-            snapshot_dates = map_unique(df[snapshot_column], parse_date)
+            snapshot_dates = map_unique(selection[snapshot_column], parse_date)
             if snapshot_dates.notna().any():
                 latest_snapshot = snapshot_dates.dropna().max()
-                inventory_scope = df.loc[snapshot_dates.eq(latest_snapshot)].copy()
+                inventory_scope = selection.loc[snapshot_dates.eq(latest_snapshot)].copy()
                 inventory_scope.attrs.update(df.attrs)
         stock = _numeric_series(inventory_scope, stock_column)
         minimum = _numeric_series(inventory_scope, minimum_column)
         inventory_value = _numeric_series(inventory_scope, inventory_value_column)
         reference_cost = _numeric_series(inventory_scope, reference_cost_column)
+        derived_value = False
+        if not inventory_value_column and len(stock) and (
+            stock.notna() & stock.ge(0) & reference_cost.notna() & reference_cost.ge(0)
+        ).all():
+            inventory_value = stock * reference_cost
+            derived_value = True
         committed = _numeric_series(inventory_scope, committed_column)
         differences = _numeric_series(inventory_scope, difference_column)
         paired_stock = stock.notna() & minimum.notna()
@@ -2276,7 +2293,7 @@ def compute_metrics(
             por_sucursal.sort(key=lambda item: item["stock"], reverse=True)
         result["analisis_inventario"] = {
             "registros": int(len(inventory_scope)),
-            "registros_fuente": int(len(df)),
+            "registros_fuente": int(len(selection)),
             "productos": int(
                 inventory_scope[roles["producto"]]
                 .loc[~physical_missing_mask(inventory_scope[roles["producto"]])]
@@ -2310,6 +2327,7 @@ def compute_metrics(
                 else None
             ),
             "bajo_minimo": int((paired_stock & (stock < minimum)).sum()),
+            "minimos_disponibles": bool(len(stock) and paired_stock.all() and minimum.ge(0).all()),
             "stocks_negativos": stocks_negativos,
             "cobertura_stock_pct": round(float(stock.notna().mean() * 100), 1)
             if len(inventory_scope)
@@ -2333,6 +2351,12 @@ def compute_metrics(
         warnings = [
             "Esta hoja se interpreta como inventario: el stock se resume como existencia y no como ventas o ingresos."
         ]
+        if latest_snapshot is not None:
+            warnings.append(
+                f"Las existencias corresponden al corte {latest_snapshot:%Y-%m-%d}; no se suman cortes historicos."
+            )
+        if derived_value:
+            warnings.append("El valor de inventario se calcula como stock por costo de referencia en el corte seleccionado.")
         if stocks_negativos:
             warnings.append(
                 f"{stocks_negativos} registro(s) de inventario tienen stock "
@@ -2375,6 +2399,7 @@ def compute_metrics(
             "compras": ("total compra", "monto neto compra", "iva", "cantidad comprada", "costo unitario", "flete", "descuento"),
             "gastos": ("total gasto", "monto neto", "iva", "categoria", "tipo gasto"),
             "cobranzas": ("monto pago",),
+            "cuentas_por_cobrar": ("saldo", "monto original"),
             "metas": ("meta venta", "meta margen", "meta nuevos clientes"),
             "historial_costos": ("costo unitario",),
             "productos": ("precio lista", "stock minimo", "costo unitario"),
@@ -2409,11 +2434,11 @@ def compute_metrics(
                 return "moneda", "promedio"
             if subtype == "valor_uf" and "valor uf" in name:
                 return "moneda", "promedio"
-            if any(token in name for token in ("costo unitario", "costo ultima compra", "precio lista", "comision")):
+            if any(token in name for token in ("costo unitario", "costo promedio", "costo ultima compra", "precio lista", "comision")):
                 return "moneda" if "comision" not in name else "porcentaje", "promedio"
             if "dias" in name:
                 return "numero", "promedio"
-            if any(token in name for token in ("monto", "total", "valor", "limite credito", "flete", "iva", "costo", "precio", "meta venta")):
+            if any(token in name for token in ("monto", "saldo", "total", "valor", "limite credito", "flete", "iva", "costo", "precio", "meta venta")):
                 return "moneda", "total"
             return "numero", "total"
 
@@ -2546,6 +2571,7 @@ def compute_metrics(
             "compras": "compras y abastecimiento",
             "gastos": "gastos operacionales",
             "cobranzas": "cobranzas y pagos",
+            "cuentas_por_cobrar": "cuentas por cobrar, no ventas ni cobros realizados",
             "metas": "metas planificadas",
             "historial_costos": "historial de costos",
             "productos": "maestra de productos",
@@ -2577,6 +2603,11 @@ def compute_metrics(
             warnings.append(
                 f"{percentage_issues} porcentaje(s) están fuera del rango 0–100%; se conservan y se señalan para revisión."
             )
+        if subtype == "cuentas_por_cobrar":
+            balance_column = _column_containing("saldo")
+            negative = int(_numeric_series(df, balance_column).lt(0).sum())
+            if negative:
+                warnings.append(f"{negative} saldo(s) negativos requieren revision; se mantienen en el saldo declarado, sin corregirlos automaticamente.")
     result["advertencias"] = warnings
     if currency.mixta:
         _block_monetary_outputs(result, currency)

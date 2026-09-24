@@ -1409,12 +1409,14 @@ def _answer_inventory(metrics: dict[str, Any], question: str) -> dict[str, Any] 
     if not inventory:
         return None
     currency = str(metrics.get("moneda") or "CLP")
+    minimums_available = inventory.get("minimos_disponibles") is not False
     if _contains(question, "sucursal", "sucursales"):
         rows = inventory.get("por_sucursal") or []
         if rows:
             ranked = sorted(rows, key=lambda row: _number(row.get("stock")) or 0)
             row = ranked[0] if _contains(question, "menos", "menor") else ranked[-1]
-            return _result(f"{row['nombre']} tiene {_es_number(row.get('stock'))} unidades de stock y {_es_number(row.get('bajo_minimo'))} registros bajo minimo en el corte visible.", "metric_inventory_branch", metric_suggestions(metrics))
+            minimum_note = f"y {_es_number(row.get('bajo_minimo'))} registros bajo minimo" if minimums_available else "sin minimos completos para evaluar quiebres"
+            return _result(f"{row['nombre']} tiene {_es_number(row.get('stock'))} unidades de stock {minimum_note} en el corte visible.", "metric_inventory_branch", metric_suggestions(metrics))
     if _contains(question, "comprometidas", "comprometidos", "conteo"):
         field = "diferencia_conteo" if "conteo" in question else "unidades_comprometidas"
         value = _number(inventory.get(field))
@@ -1422,6 +1424,8 @@ def _answer_inventory(metrics: dict[str, Any], question: str) -> dict[str, Any] 
         answer = f"El indicador de {label} es {_es_number(value)} unidades." if value is not None else f"No hay un indicador de {label} disponible."
         return _result(answer, f"metric_inventory_{field}", metric_suggestions(metrics))
     if _contains(question, "bajo minimo", "bajo el minimo", "quiebre", "sin stock", "stock negativo"):
+        if not minimums_available:
+            return _result("Faltan minimos de stock completos para evaluar quiebres. No significa que no existan faltantes.", "metric_inventory_risk_unavailable", metric_suggestions(metrics), "medium")
         answer = (
             f"Hay {_es_number(inventory.get('bajo_minimo'))} registros bajo "
             f"el mínimo y {_es_number(inventory.get('stocks_negativos') or 0)} con stock negativo. "
@@ -1438,11 +1442,16 @@ def _answer_inventory(metrics: dict[str, Any], question: str) -> dict[str, Any] 
     else:
         answer = (
             f"El inventario contiene {_es_number(inventory.get('stock_total'))} unidades en "
-            f"{_es_number(inventory.get('productos'))} productos, con "
-            f"{_es_number(inventory.get('bajo_minimo'))} registros bajo el mínimo. "
+            f"{_es_number(inventory.get('productos'))} productos. "
             "Un producto puede aparecer en varias sucursales."
         )
         key = "metric_inventory"
+        answer += (
+            f" Hay {_es_number(inventory.get('bajo_minimo'))} registros bajo el minimo."
+            if minimums_available else " Faltan minimos completos para evaluar quiebres."
+        )
+    if inventory.get("fecha_corte"):
+        answer += f" Corte: {inventory['fecha_corte']}."
     return _result(answer, key, metric_suggestions(metrics))
 
 
@@ -1668,6 +1677,12 @@ def _answer_generic_profile(metrics: dict[str, Any], question: str, history: lis
             "tambien se necesitan costos validos para la utilidad.",
             "metric_document_headers", metric_suggestions(metrics), "medium",
         )
+
+    if subtype == "cuentas_por_cobrar" and _contains(question, "cuanto me debe", "cuanto me deben", "saldo", "por cobrar"):
+        answer = _generic_numeric_answer(metrics, "saldo total")
+        if answer:
+            answer["answer"] += " Es el saldo declarado, no dinero cobrado; revisa saldos negativos y duplicados antes de conciliarlo."
+            return answer
 
     if _contains(question, "resumen", "conclusion", "panorama", "resumelo"):
         facts = []
