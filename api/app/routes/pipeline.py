@@ -75,6 +75,7 @@ from ..engine.directed import (
     interpret_cleaning_instructions,
 )
 from ..engine.export import safe_export_dataframe
+from ..engine.document_model import MATCH_COLUMN, prepare_document_lines
 from ..engine.loader import (
     SOURCE_ROWS_ATTR,
     UnsupportedFileError,
@@ -3557,6 +3558,10 @@ def _metrics_multi_from_processed(
         return computed
 
     report_job_progress("metrics", 1, 2)
+    analytical_frames, analytical_mappings = frames, mappings
+    if business_view:
+        documents = prepare_document_lines(frames, mappings)
+        analytical_frames, analytical_mappings = documents.frames, documents.mappings
     try:
         if business_view:
             # Mantener las tarjetas genéricas de costo cuando el maestro admite
@@ -3565,15 +3570,15 @@ def _metrics_multi_from_processed(
             # (incluido el historial as-of) y no multiplica ni bloquea ventas.
             try:
                 frame, mapping, provenance = build_analysis_frame(
-                    frames, mappings, analysis_scope
+                    analytical_frames, analytical_mappings, analysis_scope
                 )
                 provenance["join"]["materializada_en_resumen_generico"] = True
             except ValueError as join_error:
                 append_names = analysis_scope["append_sheets"]
-                append_frames = {name: frames[name] for name in append_names}
+                append_frames = {name: analytical_frames[name] for name in append_names}
                 frame, mapping, append_provenance = append_compatible_frames(
                     append_frames,
-                    mappings,
+                    analytical_mappings,
                     allow_single=True,
                 )
                 provenance = {
@@ -3598,6 +3603,10 @@ def _metrics_multi_from_processed(
         else analysis_scope["active_sheet"]
     )
     currency_hint = results[hint_sheet].get("_moneda")
+    if business_view and MATCH_COLUMN in frame.columns:
+        valid_documents = pd.to_numeric(frame[MATCH_COLUMN], errors="coerce").eq(1)
+        provenance["filas_sin_cabecera_valida"] = int((~valid_documents).sum())
+        frame = frame.loc[valid_documents].copy()
     computed = compute_metrics(
         frame, mapping, date_from=date_from, date_to=date_to, currency_hint=currency_hint
     )

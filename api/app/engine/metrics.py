@@ -19,6 +19,7 @@ import pandas as pd
 
 from .mapping import (
     detect_column_roles,
+    header_words,
     resolve_mapping,
     strip_accents_lower,
 )
@@ -734,6 +735,12 @@ def detect_non_sales_profile(
     ):
         return "metas"
     if (
+        has_compact("idventa", "saleid", "salesid")
+        and roles.get("fecha")
+        and not any(roles.get(role) for role in ("monto", "cantidad", "producto"))
+    ):
+        return "cabeceras_ventas"
+    if (
         has_compact("valorinventario")
         or (
             has_compact("stockminimo")
@@ -895,8 +902,8 @@ def _group_sum(
 
 
 def _is_percentage_column(column: str) -> bool:
-    normalized = strip_accents_lower(column).replace("_", " ")
-    return "%" in normalized or normalized.strip() == "pct" or any(
+    normalized = header_words(column)
+    return "%" in str(column) or normalized.strip() == "pct" or any(
         token in normalized for token in ("descuento", "porcentaje", "percent", " pct")
     )
 
@@ -1085,9 +1092,9 @@ def compute_metrics(
         (
             column
             for normalized, column in normalized_columns.items()
-            if normalized == "estado"
-            or normalized.startswith("estado ")
-            or normalized.endswith(" estado")
+            if header_words(column) == "estado"
+            or header_words(column).startswith("estado ")
+            or header_words(column).endswith(" estado")
         ),
         None,
     )
@@ -1875,7 +1882,7 @@ def compute_metrics(
             name = str(column)
             if name in used_columns:
                 continue
-            normalized = strip_accents_lower(name).replace("_", " ")
+            normalized = header_words(name)
             compact = re.sub(r"[^a-z0-9]", "", normalized)
             if compact.startswith(id_prefixes):
                 continue
@@ -2412,7 +2419,7 @@ def compute_metrics(
 
         for column in df.columns:
             name = str(column)
-            normalized = strip_accents_lower(name).replace("_", " ")
+            normalized = header_words(name)
             compact = re.sub(r"[^a-z0-9]", "", normalized)
             if compact.startswith(id_prefixes) or any(t in normalized for t in skip_tokens):
                 continue
@@ -2544,6 +2551,7 @@ def compute_metrics(
             "productos": "maestra de productos",
             "proveedores": "maestra de proveedores",
             "clientes": "maestra de clientes",
+            "cabeceras_ventas": "cabeceras de ventas sin importes de detalle",
             "sucursales": "maestra de sucursales",
             "trabajadores": "equipo de trabajo",
             "auxiliar": "hoja auxiliar de instrucciones",

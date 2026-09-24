@@ -363,7 +363,7 @@ def test_identidad_de_despliegue_declara_fase_16():
     with TestClient(app) as client:
         response = client.get("/version")
     assert response.status_code == 200
-    assert response.json()["engine_version"] == ENGINE_VERSION == "0.32.1"
+    assert response.json()["engine_version"] == ENGINE_VERSION == "0.32.2"
     assert response.json()["database_migration"] == LATEST_MIGRATION == "20260923005019"
 
 

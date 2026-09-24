@@ -40,6 +40,13 @@ def norm_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", strip_accents_lower(str(value)))
 
 
+def header_words(value: str) -> str:
+    """Tokenize spreadsheet headings, including CamelCase and ID acronyms."""
+    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", str(value).replace("%", " pct "))
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    return re.sub(r"[^a-z0-9]+", " ", strip_accents_lower(text)).strip()
+
+
 # Abreviaciones societarias chilenas: mapeo DESPUÉS de norm_key.
 _ENTITY_ABBREVS: tuple[tuple[str, str], ...] = (
     ("limitada", "ltda"),
@@ -111,6 +118,9 @@ def _semantic_role_rank(role: str, column: str) -> int:
                 "netamount",
                 "netsales",
                 "netrevenue",
+                "netolinea",
+                "lineaneto",
+                "linenet",
             )
         ):
             return 200
@@ -146,11 +156,22 @@ def _legacy_semantically_compatible(role: str, normalized_column: str) -> bool:
     categoria del producto.
     """
     compact = norm_key(normalized_column)
+    if role in {"monto", "costo"} and compact.startswith(
+        ("id", "codigo", "codventa", "codcompra", "folio", "numero", "nro",
+         "estado", "status", "fecha", "date", "tipo", "medio", "unidad")
+    ):
+        # Document keys and attributes are not additive measures, even when
+        # their names contain venta, compra, costo or ingreso.
+        return False
     if role == "cliente" and any(
         marker in compact for marker in ("tipocliente", "categoriacliente", "segmentocliente")
     ):
         return False
     if role == "categoria" and "cliente" in compact:
+        return False
+    if role == "categoria" and "linea" in compact and any(
+        marker in compact for marker in ("total", "neto", "monto", "importe", "iva")
+    ):
         return False
     if role == "monto" and any(
         marker in compact
@@ -196,6 +217,17 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
     mapping: dict[str, str] = {}
     taken: set[str] = set()
     matches = detect_columns_extended(columns)
+    compact_columns = {norm_key(col) for col in columns}
+    document_lines = bool(
+        compact_columns.intersection({"idventa", "iddocumento", "saleid", "invoiceid"})
+        and any("producto" in col or "sku" in col for col in compact_columns)
+        and any("cantidad" in col or "qty" in col for col in compact_columns)
+    )
+
+    def compatible(role: str, column: str) -> bool:
+        if role == "categoria" and document_lines and norm_key(column) in {"linea", "line"}:
+            return False
+        return _legacy_semantically_compatible(role, column)
 
     # ── Pasada 1: diccionario (rol_motor con equivalencia segura) ──
     for role in ENGINE_ROLES:
@@ -207,7 +239,7 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
             if (
                 not match
                 or match.rol_motor != role
-                or not _legacy_semantically_compatible(role, str(col))
+                or not compatible(role, str(col))
             ):
                 continue
             rank = (
@@ -231,7 +263,7 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
             if col in taken:
                 continue
             if (
-                _legacy_semantically_compatible(role, normalized[col])
+                compatible(role, normalized[col])
                 and any(
                     _legacy_keyword_matches(normalized[col], keyword)
                     for keyword in keywords

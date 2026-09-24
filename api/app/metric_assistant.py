@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from .language_normalization import normalize_basic, normalize_query
+from .engine.mapping import header_words
 
 
 _CURRENCY_PREFIX = {
@@ -1050,6 +1051,8 @@ def _answer_business_finances(metrics: dict[str, Any], question: str) -> dict[st
         facts.append(f"Ingresos: {format_amount(income, currency)}" if income is not None else "Ingresos no disponibles")
     if cost_question:
         cost = _number(statement.get("costo_venta_conocido"))
+        if coverage == 0:
+            cost = None
         facts.append(f"Costo de venta conocido: {format_amount(cost, currency)}" if cost is not None else "Costo de venta conocido no disponible")
     if expense_question:
         expense = _number(statement.get("gastos_operacionales"))
@@ -1569,11 +1572,16 @@ def _generic_numeric_answer(metrics: dict[str, Any], question: str, context: str
     generic = metrics.get("analisis_generico") or {}
     candidates = [row for row in (generic.get("numericas") or []) if isinstance(row, dict)]
     stop = {"cuanto", "cuantas", "cual", "total", "promedio", "mediana", "maximo", "minimo", "mas", "alto", "bajo", "mis", "mi", "es", "de", "del", "el", "la", "y", "los", "las", "que", "es", "tengo"}
-    question_words = set(question.split()) - stop
+    synonyms = {"ventas": "venta", "clientes": "cliente", "costos": "costo", "neta": "neto"}
+    def words_for(text):
+        return {synonyms.get(word, word) for word in text.split()}
+    question_words = words_for(question) - stop
+    if generic.get("subtipo") == "metas":
+        question_words.discard("meta")
     ranked: list[tuple[int, dict[str, Any]]] = []
     for row in candidates:
-        label = _normalize(row.get("columna") or "")
-        words = set(label.split())
+        label = header_words(row.get("columna") or "")
+        words = words_for(label)
         score = sum(4 if word in {"neto", "neta", "iva", "bruto", "bruta", "margen", "nuevos"} else 1 for word in question_words & words)
         if label and label in question:
             score += 4
@@ -1582,6 +1590,19 @@ def _generic_numeric_answer(metrics: dict[str, Any], question: str, context: str
     if not ranked:
         if context and _contains(question, "maximo", "minimo", "mediana", "promedio", "media", "rango"):
             return _generic_numeric_answer(metrics, f"{context} {question}")
+        if _contains(question, "limite credito", "limite de credito"):
+            return _result(
+                "No hay un limite de credito disponible en los indicadores de esta hoja. "
+                "Necesito esa columna numerica para calcular su promedio, maximo o total; "
+                "el limite de tamano de archivos de la plataforma es otro dato.",
+                "metric_generic_numeric_unavailable", metric_suggestions(metrics), "medium",
+            )
+        if generic.get("subtipo") == "metas" and _contains(question, "meta"):
+            return _result(
+                "No hay una meta de ese tipo publicada en esta hoja. Necesito su columna "
+                "para calcularla; una meta de ventas no reemplaza una meta de clientes o de margen.",
+                "metric_generic_numeric_unavailable", metric_suggestions(metrics), "medium",
+            )
         subtype = generic.get("subtipo")
         if candidates and ((subtype == "gastos" and _contains(question, "gaste", "gastos", "gasto")) or (subtype == "compras" and _contains(question, "compre", "compras"))):
             ranked = [(1, candidates[0])]
@@ -1622,8 +1643,31 @@ def _answer_generic_profile(metrics: dict[str, Any], question: str, history: lis
     subtype = str(generic.get("subtipo") or "datos")
     currency = str(metrics.get("moneda") or "CLP")
     context = _previous_user_message(history)
+    statistic_followup_words = {
+        "y", "el", "la", "cual", "es", "su", "maximo", "minimo", "promedio",
+        "mediana", "media", "rango", "total", "mas", "alto", "bajo",
+    }
+    for item in reversed((history or [])[-12:]):
+        if item.get("role") != "user":
+            continue
+        previous = normalize_query(item.get("content") or "")
+        if set(previous.split()) - statistic_followup_words:
+            context = previous
+            break
     def formatted(value: Any, fmt: str | None) -> str:
         return format_amount(value, currency) if fmt == "moneda" else _percent(value) if fmt == "porcentaje" else _es_number(value)
+
+    if subtype == "cabeceras_ventas" and _contains(
+        question, "resumen", "conclusion", "panorama", "resumelo", "cuantos registros",
+        "cuantos clientes", "ingreso", "venta", "utilidad", "ganancia", "margen",
+    ):
+        return _result(
+            f"Esta hoja contiene {_es_number(generic.get('registros'))} registros de cabeceras de ventas. "
+            "No son clientes unicos ni importes vendidos. Para calcular ventas y utilidad, "
+            "vincula las lineas de detalle por IDVenta en Vision del negocio; "
+            "tambien se necesitan costos validos para la utilidad.",
+            "metric_document_headers", metric_suggestions(metrics), "medium",
+        )
 
     if _contains(question, "resumen", "conclusion", "panorama", "resumelo"):
         facts = []
@@ -1632,7 +1676,8 @@ def _answer_generic_profile(metrics: dict[str, Any], question: str, history: lis
             value = row.get(operation)
             if _number(value) is not None:
                 facts.append(f"{operation} de {row['columna']}: {formatted(value, row.get('formato'))}")
-        return _result(f"La hoja de {subtype} contiene {_es_number(generic.get('registros'))} registros. " + "; ".join(facts) + ". Los valores corresponden a esta hoja y sus filtros; metas, precios y limites de credito no son ingresos realizados.", "metric_generic_overview", metric_suggestions(metrics))
+        detail = "; ".join(facts) + ". " if facts else "No hay medidas numericas publicadas en esta hoja. "
+        return _result(f"La hoja de {subtype} contiene {_es_number(generic.get('registros'))} registros. " + detail + "Los valores corresponden a esta hoja y sus filtros; metas, precios y limites de credito no son ingresos realizados.", "metric_generic_overview", metric_suggestions(metrics))
     if _contains(question, "cuantos clientes", "cuantos proveedores", "cuantas sucursales", "cuantos registros", "cuantos trabajadores"):
         return _result(f"La hoja de {subtype} contiene {_es_number(generic.get('registros'))} registros. Es un conteo de filas, no una garantia de entidades unicas; revisa duplicados e identificadores.", "metric_generic_count", metric_suggestions(metrics))
 

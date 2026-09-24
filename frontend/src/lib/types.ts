@@ -915,6 +915,7 @@ export interface BusinessAnalysis {
     filas_ventas_fisicas: number
     filas_totales_estructurales: number
     filas_anuladas: number
+    filas_sin_cabecera_valida?: number
     filas_indicadores: number
     periodo_declarado?: { desde: string | null; hasta: string | null } | null
     filas_fecha_invalida?: number

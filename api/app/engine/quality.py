@@ -183,7 +183,7 @@ def line_sales_evidence(
     """
 
     roles = roles or {}
-    amount = roles.get("monto") or find_column(
+    amount = roles.get("monto") or find_column(frame.columns, "neto", "linea") or find_column(
         frame.columns, "monto", excluded=("mensual", "cuota", "uf")
     )
     quantity = roles.get("cantidad") or find_column(frame.columns, "cantidad")
@@ -209,6 +209,7 @@ def line_sales_evidence(
         or find_column(frame.columns, "numero", "ot")
         or find_column(frame.columns, "n", "ot")
         or find_column(frame.columns, "id", "orden")
+        or find_column(frame.columns, "id", "venta")
         or find_column(frame.columns, "documento")
     )
     required = (amount, quantity, unit_price, discount, line_dimension)

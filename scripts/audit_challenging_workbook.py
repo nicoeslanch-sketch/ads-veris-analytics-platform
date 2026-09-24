@@ -100,6 +100,21 @@ def main() -> None:
         }
         audit["conversations"] = []
         by_name = {row["sheet"]: row for row in audit["sheets"]}
+        for name, row in by_name.items():
+            if name in conversations:
+                continue
+            columns = {str(column).lower() for column in row["columns"]}
+            if name.startswith("Detalle_") and "idventa" in columns:
+                conversations[name] = [
+                    "hola", "cuantossonmisingresostotales", "y mis costos",
+                    "cuanta utilidad tengo", "y el margen", "cuantos registros tengo",
+                    "cual es mi mejor mes", "que producto vende mas", "cuantosduplicadoshay",
+                    "puedo descargar sin borrar duplicados", "puedo confiar en estos numeros",
+                    "dame una conclusion", "que datos faltan", "estan en pesos o uf",
+                ]
+            elif name.startswith("Ventas_"):
+                conversations[name] = ["cuantos registros tengo", "cuantos clientes tengo",
+                    "mis ingresos totales", "cuanta utilidad tengo", "dame un resumen"]
         for name, questions in conversations.items():
             if name not in by_name:
                 continue
@@ -113,8 +128,14 @@ def main() -> None:
 
     if args.export:
         import openpyxl
+        classifications = {
+            item["nombre"]: item for row in audit["sheets"]
+            for item in row["load_report"].get("clasificacion_hojas", [])
+        }
+        processed = {name for name in results if name != "Parametros"
+                     and classifications.get(name, {}).get("recomendacion") != "conservar_sin_procesar"}
         manifest = {"hojas": [{
-            "nombre": name, "procesar": name in results and name != "Parametros",
+            "nombre": name, "procesar": name in processed,
             "rules": {}, "mapping": {}, "scope": {}, "eliminar_duplicados": False,
         } for name in names]}
         started = time.perf_counter()
@@ -126,7 +147,7 @@ def main() -> None:
         exported = openpyxl.load_workbook(io.BytesIO(payload), read_only=True, data_only=False)
         export_checks = []
         for name, result in results.items():
-            if name == "Parametros":
+            if name not in processed:
                 continue
             sheet = exported[name]
             values = sheet.iter_rows(values_only=True)
@@ -139,7 +160,7 @@ def main() -> None:
                 "headers_match": list(header) == list(expected.columns),
                 "exact_duplicates_exported": len(exported_rows) - len(set(exported_rows)),
             }
-            if args.metrics and name.startswith("Ventas_"):
+            if args.metrics and name.startswith("Ventas_") and "Monto Venta" in header:
                 # Independent arithmetic over typed export cells, not the metrics engine.
                 source_records = [dict(zip(header, row)) for row in exported_rows]
                 eligible = [row for row in source_records

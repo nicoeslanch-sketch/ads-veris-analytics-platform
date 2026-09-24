@@ -6275,6 +6275,10 @@ total documento;monto;dinero;numero;es;100;monto
 total factura;monto;dinero;numero;es;100;monto
 total general;monto;dinero;numero;es;100;monto
 total neto;monto;dinero;numero;es;100;monto
+neto linea;monto;dinero;numero;es;100;monto
+neto linea clp;monto;dinero;numero;es;100;monto
+neto linea uf;monto;dinero;numero;es;100;monto
+line net amount;monto;dinero;numero;en;100;monto
 total pagar;monto;dinero;numero;es;100;monto
 total venta;monto;dinero;numero;es;100;monto
 valor;monto;dinero;numero;es;100;monto
