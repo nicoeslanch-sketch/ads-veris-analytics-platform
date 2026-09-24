@@ -915,6 +915,7 @@ export interface BusinessAnalysis {
     filas_ventas_fisicas: number
     filas_totales_estructurales: number
     filas_anuladas: number
+    filas_sin_cabecera_valida?: number
     filas_indicadores: number
     periodo_declarado?: { desde: string | null; hasta: string | null } | null
     filas_fecha_invalida?: number
@@ -1309,6 +1310,7 @@ export interface MetricsResult {
     unidades_comprometidas?: number | null
     diferencia_conteo?: number | null
     bajo_minimo: number
+    minimos_disponibles?: boolean
     stocks_negativos?: number
     cobertura_stock_pct: number
     sucursales: Array<{ nombre: string; registros: number }>
@@ -1339,6 +1341,8 @@ export interface MetricsResult {
       | 'compras'
       | 'gastos'
       | 'cobranzas'
+      | 'cuentas_por_cobrar'
+      | 'cabeceras_ventas'
       | 'historial_costos'
       | 'auxiliar'
       | 'ordenes_trabajo'

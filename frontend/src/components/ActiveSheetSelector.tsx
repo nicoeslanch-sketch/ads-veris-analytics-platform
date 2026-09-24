@@ -110,7 +110,11 @@ export default function ActiveSheetSelector({
   const autoBusinessAttempt = useRef<string | null>(null)
   const manualModeSelected = useRef(false)
   const relationshipRequest = useRef(0)
-  useEffect(() => () => { relationshipRequest.current += 1 }, [])
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   // Cada vista conserva su selección. Antes una relación cambiaba la hoja
   // global y al volver a "Analizar una hoja" se calculaba otra hoja desde cero.
   const lastSingleSheet = useRef<string | null>(
@@ -304,7 +308,7 @@ export default function ActiveSheetSelector({
           }),
         ),
       )
-      if (request !== relationshipRequest.current) return
+      if (!mounted.current || request !== relationshipRequest.current) return
       const serviceAnalysis = response.metrics?.analisis_negocio
       if (
         serviceWorkbook
@@ -388,11 +392,11 @@ export default function ActiveSheetSelector({
         )
       }
     } catch (err) {
-      if (request !== relationshipRequest.current) return
+      if (!mounted.current || request !== relationshipRequest.current) return
       setCandidates([])
       setRelationMessage(err instanceof ApiError ? err.message : 'No pudimos revisar las conexiones.')
     } finally {
-      if (request === relationshipRequest.current) setDetecting(false)
+      if (mounted.current && request === relationshipRequest.current) setDetecting(false)
     }
   }
 

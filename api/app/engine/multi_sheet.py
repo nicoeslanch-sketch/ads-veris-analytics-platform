@@ -23,6 +23,7 @@ from .standardize import (
     NUMERIC_CANONICAL_ATTR,
     detect_value_type_confidence,
     parse_number,
+    physical_missing_mask,
 )
 
 # Se permite una relacion parcial controlada desde 60%: las filas sin clave o
@@ -755,7 +756,10 @@ def append_compatible_frames(
     if "hoja_origen" in columns:
         raise ValueError("Ya existe una columna hoja_origen.")
     first_types = {
-        column: _column_type(first, column)
+        column: next((
+            _column_type(frame, column) for frame in frames.values()
+            if not physical_missing_mask(frame[column]).all()
+        ), None)
         for column in columns
         if column in common_columns
     }
@@ -766,10 +770,13 @@ def append_compatible_frames(
         frame = frames[name]
         current_columns = set(map(str, frame.columns))
         current = frame.reindex(columns=union_columns)
-        current_types = {
-            column: _column_type(current, column) for column in first_types
-        }
-        if current_types != first_types:
+        incompatible = any(
+            expected is not None
+            and not physical_missing_mask(current[column]).all()
+            and _column_type(current, column) != expected
+            for column, expected in first_types.items()
+        )
+        if incompatible:
             raise ValueError("Las hojas seleccionadas tienen tipos incompatibles.")
         current_mapping = resolve_mapping(
             [str(column) for column in frame.columns], mappings.get(name)

@@ -101,7 +101,7 @@ function certificationBlockers(analysis: BusinessAnalysis): CertificationBlocker
     blockers.push({
       key: 'duplicados',
       label: `${formatNumber(alcance.documentos_repetidos)} línea(s) de negocio repetida(s)`,
-      detail: 'Se comparó la identidad de cada línea (transacción o documento + producto); un documento con varios productos no se considera duplicado. Las filas se conservan hasta que confirmes una limpieza.',
+      detail: 'Se comparó la identidad de cada línea (documento + número de línea cuando existe); un documento con varios productos no se considera duplicado. Las filas se conservan hasta que confirmes una limpieza.',
       cta: { to: '/limpieza?revision=1', label: 'Revisar IDs repetidos' },
     })
   }
@@ -114,6 +114,15 @@ function certificationBlockers(analysis: BusinessAnalysis): CertificationBlocker
     })
   }
   const invalidDates = alcance.filas_fecha_invalida ?? 0
+  const missingHeaders = alcance.filas_sin_cabecera_valida ?? 0
+  if (missingHeaders > 0) {
+    blockers.push({
+      key: 'cabeceras',
+      label: `${formatNumber(missingHeaders)} línea(s) sin cabecera válida`,
+      detail: 'No se suman a los indicadores: falta el ID de venta, no existe su cabecera o contiene datos contradictorios. Las filas originales se conservan en la descarga.',
+      cta: { to: '/limpieza?revision=1', label: 'Revisar referencias' },
+    })
+  }
   const outOfPeriodDates = alcance.filas_fuera_periodo_declarado ?? 0
   if (invalidDates > 0 || outOfPeriodDates > 0) {
     blockers.push({
@@ -373,6 +382,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
   const result = analysis.estado_resultados
   const operation = analysis.operacion
   const usesEstimatedCosts = result.costo_venta_estimado_catalogo > 0
+  const usesRecordedCosts = analysis.calidad.costos.metodo === 'documento'
   const provisionalProfitability =
     result.cobertura_costos_certificable_pct < 99.5 ||
     analysis.estado_certificacion !== 'certified'
@@ -435,20 +445,24 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
       state: certification,
     },
     {
-      label: 'Costo de ventas histórico',
+      label: usesRecordedCosts ? 'Costo de ventas documentado' : 'Costo de ventas histórico',
       value: money(result.costo_venta_conocido),
-      detail: usesEstimatedCosts
+      detail: usesRecordedCosts
+        ? `${percent(result.cobertura_costos_pct)} con costo registrado en la venta`
+        : usesEstimatedCosts
         ? `${percent(result.cobertura_costos_historica_pct)} con vigencia; el catálogo actual se informa aparte`
         : `${percent(result.cobertura_costos_pct)} de cobertura histórica`,
       icon: Receipt,
       color: CHART.gastos,
       comparison: compare(latest?.costo, previous?.costo),
-      state: result.cobertura_costos_historica_pct >= 99.5 ? certification : 'Parcial',
+      state: (usesRecordedCosts ? result.cobertura_costos_pct : result.cobertura_costos_historica_pct) >= 99.5 ? certification : 'Parcial',
     },
     {
-      label: 'Utilidad bruta histórica',
+      label: usesRecordedCosts ? 'Utilidad bruta documentada' : 'Utilidad bruta histórica',
       value: money(result.utilidad_bruta),
-      detail: usesEstimatedCosts
+      detail: usesRecordedCosts
+        ? 'ventas pareadas − costo registrado en las líneas'
+        : usesEstimatedCosts
         ? `${percent(result.cobertura_costos_historica_pct)} con vigencia; el relleno actual se informa aparte`
         : 'ventas pareadas − costo de ventas histórico',
       icon: TrendingUp,
@@ -457,7 +471,7 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
       state: provisionalProfitability ? 'Parcial' : certification,
     },
     {
-      label: provisionalProfitability ? 'Margen bruto · base histórica' : 'Margen bruto',
+      label: provisionalProfitability ? 'Margen bruto · base parcial' : 'Margen bruto',
       value: percent(result.margen_bruto_pct),
       detail: 'solo ventas con costo relacionado',
       icon: Scale,
@@ -552,10 +566,10 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
   const cardPriority = [
     'Ventas netas observadas',
     'Utilidad operacional',
-    'Utilidad bruta histórica',
-    'Margen bruto · base histórica',
+    usesRecordedCosts ? 'Utilidad bruta documentada' : 'Utilidad bruta histórica',
+    provisionalProfitability ? 'Margen bruto · base parcial' : 'Margen bruto',
     'Gastos operativos',
-    'Costo de ventas histórico',
+    usesRecordedCosts ? 'Costo de ventas documentado' : 'Costo de ventas histórico',
     'Cuentas por cobrar',
     'Inventario valorizado',
     'EBITDA',

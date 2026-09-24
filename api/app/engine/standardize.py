@@ -226,7 +226,7 @@ def normalize_headers(df: pd.DataFrame) -> int:
 
 def _sample_values(series: pd.Series) -> list[str]:
     """Muestra aleatoria determinista de valores con dato (§5.4)."""
-    values = [str(v) for v in series if not is_missing(v)]
+    values = [str(v) for v in series if not pd.isna(v) and not is_missing(v)]
     if len(values) <= _TYPE_SAMPLE_SIZE:
         return values
     rng = random.Random(_TYPE_SAMPLE_SEED)

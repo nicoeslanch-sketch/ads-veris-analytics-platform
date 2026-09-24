@@ -131,6 +131,118 @@ def test_statistic_follow_up_changes_operation_not_column():
     assert "$238" in median["answer"]
 
 
+def test_missing_credit_limits_do_not_turn_into_file_upload_advice():
+    metrics = {"moneda": "CLP", "analisis_generico": {
+        "subtipo": "clientes", "registros": 20, "numericas": [], "distribuciones": [],
+    }}
+    history = []
+    for question in ("cual es el limite credito promedio", "y el maximo", "y la mediana"):
+        answer = answer_for(question, metrics=metrics, history=history)
+        assert answer["matched_key"] == "metric_generic_numeric_unavailable"
+        assert "15 MB" not in answer["answer"]
+        history.extend([{"role": "user", "content": question},
+                        {"role": "assistant", "content": answer["answer"]}])
+    summary = answer_for("dame un resumen", metrics=metrics)
+    assert ". ." not in summary["answer"]
+
+
+@pytest.mark.parametrize("column", ["MetaMargenPct", "Meta Margen Bruto %"])
+def test_camelcase_goals_are_percentages_not_additive_sales_or_realized_margin(column):
+    metrics = compute_metrics(pd.DataFrame({
+        "Periodo": ["2026-01", "2026-02"], "IDSucursal": ["S1", "S1"],
+        "MetaVentasNeto_CLP": [1000, 2000], column: [0.3, 0.4],
+    }))
+    margin = next(r for r in metrics["analisis_generico"]["numericas"] if r["columna"] == column)
+    assert margin["formato"] == "porcentaje"
+    assert margin["total"] is None
+    assert margin["promedio"] == 35
+    history = []
+    for question, expected_key, value in (
+        ("cuanto es mi meta venta neta", "metric_generic_numeric", "$3.000"),
+        ("y la meta margen bruto", "metric_generic_numeric", "35%"),
+        ("cual es la mediana", "metric_generic_numeric", "35%"),
+        ("y el maximo", "metric_generic_numeric", "40%"),
+        ("cual es la meta nuevos clientes", "metric_generic_numeric_unavailable", "No hay una meta"),
+    ):
+        answer = answer_for(question, metrics=metrics, history=history)
+        assert answer["matched_key"] == expected_key, answer
+        assert value in answer["answer"], answer
+        history.extend([{"role": "user", "content": question}, {"role": "assistant", "content": answer["answer"]}])
+
+
+def test_sales_headers_are_not_a_customer_master_or_realized_revenue():
+    metrics = compute_metrics(pd.DataFrame({
+        "IDVenta": ["V1", "V2", "V3"],
+        "FechaVenta": ["2026-01-02"] * 3,
+        "IDCliente": ["C1", "C1", "C2"],
+        "EstadoVenta": ["Pagada", "Anulada", "Pagada"],
+    }))
+    assert metrics["analisis_generico"]["subtipo"] == "cabeceras_ventas"
+    assert metrics["kpis"]["ingresos_totales"] is None
+    for question in ("dame un resumen", "cuantos clientes tengo", "mis ingresos totales", "cuanta utilidad tengo"):
+        answer = answer_for(question, metrics=metrics)
+        assert answer["matched_key"] == "metric_document_headers", answer
+        assert "3 registros de cabeceras de ventas" in answer["answer"]
+        assert "IDVenta" in answer["answer"]
+
+
+def test_absent_cost_coverage_is_not_presented_as_zero_cost():
+    answer = answer_for("y mis costos", metrics={
+        "moneda": "CLP", "analisis_negocio": {"estado_resultados": {
+            "ventas_observadas": 100, "costo_venta_conocido": 0, "cobertura_costos_pct": 0,
+        }},
+    })
+    assert answer["matched_key"] == "metric_business_finances"
+    assert "Costo de venta conocido no disponible" in answer["answer"]
+    assert "$0" not in answer["answer"]
+
+
+def test_receivables_balance_never_becomes_sales_or_cash_received():
+    metrics = compute_metrics(pd.DataFrame({
+        "IDCxC": ["R1", "R2", "R3"], "IDVenta": ["V1", "V2", "V3"],
+        "FechaEmision": ["2026-01-02"] * 3, "FechaPago": [None] * 3,
+        "MontoOriginal_CLP": [200, 500, 100], "Saldo_CLP": [100, 300, -5],
+        "EstadoCxC": ["Pendiente"] * 3,
+    }))
+    assert metrics["tipo_analisis"] == "generico"
+    assert metrics["analisis_generico"]["subtipo"] == "cuentas_por_cobrar"
+    assert metrics["kpis"]["ingresos_totales"] is None
+    balance = metrics["analisis_generico"]["numericas"][0]
+    assert balance["columna"] == "Saldo_CLP"
+    assert balance["total"] == 395
+    assert balance["formato"] == "moneda"
+    assert any("1 saldo(s) negativos" in warning for warning in metrics["advertencias"])
+    answer = answer_for("cuanto me deben", metrics=metrics)
+    assert "$395" in answer["answer"]
+    assert "no dinero cobrado" in answer["answer"]
+
+
+def test_monthly_inventory_uses_latest_filtered_snapshot_not_sum_of_months():
+    frame = pd.DataFrame({
+        "FechaCorte": ["2026-01-31", "2026-02-28", "2026-02-28"],
+        "IDSucursal": ["S1", "S1", "S2"], "IDProducto": ["P1", "P1", "P1"],
+        "StockUnidades": [100, 3, 4], "CostoPromedio_CLP": [50, 60, 70],
+    })
+    metrics = compute_metrics(frame)
+    assert metrics["tipo_analisis"] == "inventario"
+    inventory = metrics["analisis_inventario"]
+    assert inventory["stock_total"] == 7
+    assert inventory["valor_inventario"] == 460
+    assert inventory["registros_fuente"] == 3
+    assert inventory["registros"] == 2
+    assert inventory["fecha_corte"] == "2026-02-28"
+    assert inventory["minimos_disponibles"] is False
+    assert "Faltan minimos" in answer_for("dame un resumen", metrics=metrics)["answer"]
+    assert answer_for("cuantos estan bajo el minimo", metrics=metrics)["matched_key"] == "metric_inventory_risk_unavailable"
+    assert metrics["kpis"]["ingresos_totales"] is None
+    historical = compute_metrics(frame, date_to="2026-01-31")["analisis_inventario"]
+    assert historical["stock_total"] == 100
+    assert historical["valor_inventario"] == 5000
+    assert historical["fecha_corte"] == "2026-01-31"
+    frame.loc[1, "CostoPromedio_CLP"] = None
+    assert compute_metrics(frame)["analisis_inventario"]["valor_inventario"] is None
+
+
 @pytest.mark.parametrize(("raw", "expected"), [
     ("puedo confiar en estos numeros", "puedo confiar en estos numeros"),
     ("unidadescomprometidas", "unidades comprometidas"),

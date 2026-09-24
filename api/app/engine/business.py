@@ -25,6 +25,7 @@ from .quality import (
 )
 from .standardize import map_unique, parse_date, physical_missing_mask
 from .service_model import analyze_service_business
+from .document_model import MATCH_COLUMN, document_id, line_number, prepare_document_lines
 
 BUSINESS_FILTER_KEYS = (
     "sucursal",
@@ -248,6 +249,7 @@ def _net_amount_column(columns: Any, *, domain: str | None = None) -> str | None
         ("venta", "neta"),
         ("importe", "neto"),
         ("total", "neto"),
+        ("neto", "linea"),
         ("net", "amount"),
         ("net", "sales"),
     ]
@@ -1810,7 +1812,14 @@ def analyze_business_workbook(
     if collection_profile is not None:
         return collection_profile
 
+    document_model = prepare_document_lines(frames, mappings)
+    frames, mappings = document_model.frames, document_model.mappings
     kinds = classify_business_sheets(frames)
+    if document_model.details:
+        for kind, names in kinds.items():
+            kinds[kind] = [name for name in names
+                           if name not in document_model.headers | document_model.details]
+        kinds.setdefault("ventas", []).extend(sorted(document_model.details))
     sales_names = kinds.get("ventas", [])
     if not sales_names:
         return None
@@ -1878,11 +1887,18 @@ def analyze_business_workbook(
         ),
         excluded=("documento",),
     )
+    detail_line = line_number(sales.columns)
+    if detail_line and document_id(sales.columns):
+        document_key = document_id(sales.columns)
     status_col = find_column(sales.columns, "estado")
     sales_dates = _dates(sales, date_col)
     structural = structural_total_mask(sales, date_col)
     cancelled = _status_mask(sales, status_col, r"\b(?:anulad|cancelad|void)\w*")
     base_indicator_mask = ~structural & ~cancelled
+    unmatched_document = pd.Series(False, index=sales.index)
+    if MATCH_COLUMN in sales.columns:
+        unmatched_document = numeric_series(sales, MATCH_COLUMN).ne(1)
+        base_indicator_mask &= ~unmatched_document
     period_mask = analysis_period_mask(sales_dates)
     if date_from or date_to:
         indicator_mask = base_indicator_mask & period_mask
@@ -1901,7 +1917,7 @@ def analyze_business_workbook(
     if declared_period_to is not None:
         outside_declared_period |= sales_dates.gt(declared_period_to)
     outside_declared_period &= ~structural & ~cancelled & sales_dates.notna()
-    invalid_sales_date = ~structural & ~cancelled & sales_dates.isna()
+    invalid_sales_date = base_indicator_mask & sales_dates.isna()
 
     amount = numeric_series(sales, amount_col)
     quantity = numeric_series(sales, quantity_col)
@@ -1918,6 +1934,11 @@ def analyze_business_workbook(
         if record_key
         else pd.Series(None, index=sales.index, dtype=object)
     )
+    if detail_line and document_key:
+        # One sale may legitimately repeat a product on different line numbers.
+        line_ids = _keys(sales[detail_line])
+        record_keys = (document_keys.fillna("") + "\u241f" + line_ids.fillna(""))
+        record_keys = record_keys.where(document_keys.notna() & line_ids.notna())
     repeated_record = record_keys.notna() & record_keys.duplicated(keep=False)
     product_keys = (
         _keys(sales[product_key])
@@ -1929,7 +1950,9 @@ def analyze_business_workbook(
         if product_key
         else document_keys
     )
-    repeated_line = document_keys.notna() & line_keys.duplicated(keep=False)
+    if detail_line and document_key:
+        line_keys = record_keys
+    repeated_line = document_keys.notna() & line_keys.notna() & line_keys.duplicated(keep=False)
     duplicated_document = repeated_record | repeated_line
     duplicate_identity = record_keys.where(repeated_record, line_keys)
     duplicate_groups = int(duplicate_identity[duplicated_document].nunique())
@@ -2050,13 +2073,27 @@ def analyze_business_workbook(
         unit_cost_col,
         cost_history,
     )
+    recorded_cost_column = find_column(sales.columns, "costo", "unitario")
+    if document_model.details and recorded_cost_column:
+        # A transaction's declared cost takes precedence over today's master.
+        # Invalid declared values remain unknown, never silently filled with zero.
+        recorded_cost = numeric_series(sales, recorded_cost_column)
+        unit_cost = recorded_cost.where(recorded_cost.gt(0))
+        cost_source = pd.Series(None, index=sales.index, dtype=object)
+        cost_source.loc[unit_cost.notna()] = "documento"
+        cost_method = {
+            **cost_method, "metodo": "documento", "filas_historicas": 0,
+            "filas_catalogo_actual": 0,
+            "filas_costo_documentado": int(unit_cost.notna().sum()),
+            "filas_costo_documentado_invalido": int(unit_cost.isna().sum()),
+        }
     all_cost_of_sales = (quantity * unit_cost).where(
         quantity.notna() & unit_cost.notna()
     )
     historical_cost = cost_source.eq("historial_asof")
     estimated_current_cost = cost_source.eq("catalogo_actual_estimado")
     current_catalogue_only = cost_method.get("metodo") == "catalogo_actual"
-    official_cost_source = historical_cost | (
+    official_cost_source = historical_cost | cost_source.eq("documento") | (
         current_catalogue_only & cost_source.eq("catalogo_actual")
     )
     # If a history sheet exists, current catalogue fallbacks remain an explicit
@@ -2988,6 +3025,7 @@ def analyze_business_workbook(
         _relation_quality(campaign_frame_for_relation, find_column(campaign_frame_for_relation.columns, "id", "sucursal") if campaign_frame_for_relation is not None else None, branches_frame, branch_ref_key, "Campañas → Sucursales"),
     ]
     integrity = [item for item in integrity if item is not None]
+    integrity.extend(document_model.relations)
 
     formula_controls = _formula_controls(frames, kinds)
     formula_issues = sum(item["filas_inconsistentes"] for item in formula_controls)
@@ -3394,6 +3432,7 @@ def analyze_business_workbook(
     )
     used_sheets = {
         *sales_names,
+        *(document_model.headers if document_model.details else set()),
         *[
             name
             for name in (
@@ -4213,6 +4252,7 @@ def analyze_business_workbook(
             "filas_ventas_fisicas": int(len(sales)),
             "filas_totales_estructurales": int(structural.sum()),
             "filas_anuladas": int(cancelled.sum()),
+            "filas_sin_cabecera_valida": int(unmatched_document.sum()),
             "filas_indicadores": int(indicator_mask.sum()),
             "periodo_declarado": {
                 "desde": declared_period_from.date().isoformat()
