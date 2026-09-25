@@ -251,6 +251,30 @@ class SecurityLab:
         self.test_mfa()
         self.test_account_limits()
         self.test_operational_health()
+        self.test_initial_import_queue()
+
+    def test_initial_import_queue(self):
+        owner, foreign = self.account(), self.account()
+        dataset, identifier = str(uuid4()), 'dq_' + uuid4().hex
+        path = owner + '/initial.csv'
+        upload = self.http.post(self.base + '/storage/v1/object/datasets/' + path,
+                                headers={**self.headers, 'Content-Type': 'text/csv'}, content=b'Value\n1\n')
+        assert upload.status_code in (200, 201), upload.text
+        self.sql(f"insert into public.datasets(id,user_id,name,storage_path) "
+                 f"values('{dataset}','{owner}','initial.csv','{path}');")
+        payload = {'dataset_id': dataset, 'source_path': path, 'engine_version': 'queue-lab',
+                   'kind': 'standardize', 'options': {'revision': 1, 'sheet': None}}
+        args = {'p_action': 'enqueue', 'p_user_id': owner, 'p_job_id': identifier, 'p_payload': payload}
+        queued = self.rpc('analysis_queue', args)
+        assert queued['status'] == 'queued' and queued['kind'] == 'standardize'
+        assert self.rpc('analysis_queue', {**args, 'p_user_id': foreign})['rejected'] == 404
+        assert self.rpc('analysis_queue', {'p_action': 'get', 'p_user_id': foreign, 'p_job_id': identifier}) is None
+        cancelled = self.rpc('analysis_queue', {'p_action': 'cancel', 'p_user_id': owner, 'p_job_id': identifier})
+        assert cancelled['status'] == 'cancelled'
+        for role in ('anon', 'authenticated'):
+            assert self.sql(f"select has_function_privilege('{role}', "
+                            "'public.analysis_queue(text,uuid,text,jsonb,uuid)','execute')") == 'f'
+        self.checks['initial_import_queue_admits_new_kind_and_isolates_owners'] = True
 
     def test_operational_health(self):
         signature = 'public.operational_health(text,uuid,jsonb)'

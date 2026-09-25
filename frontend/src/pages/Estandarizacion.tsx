@@ -107,9 +107,11 @@ function ClassicStandardization() {
   const [changingSheet, setChangingSheet] = useState(false)
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; sheet: string } | null>(null)
   const [sheetError, setSheetError] = useState<string | null>(null)
-  // Flujo compartido con Conectores: Storage + datasets + /standardize
+  // Flujo compartido con Conectores: Storage + datasets + cola de importacion.
   const {
     importing: processing,
+    importStatus,
+    cancelImport,
     error,
     persistWarning,
     importFile,
@@ -521,7 +523,7 @@ function ClassicStandardization() {
           </div>
           <div>
             <h2 className="text-lg font-semibold text-navy">
-              {processing ? 'Estandarizando tus datos...' : 'Sube tu archivo para estandarizarlo'}
+              {processing ? importStatus : 'Sube tu archivo para estandarizarlo'}
             </h2>
             <p className="mx-auto mt-1 max-w-md text-sm text-navy/60">
               Unificamos nombres, formatos y valores para que tus datos estén listos para la
@@ -555,6 +557,11 @@ function ClassicStandardization() {
                 ? 'Verificando acceso...'
                 : 'Subir archivo'}
           </button>
+          {processing && (
+            <button onClick={cancelImport} className="text-sm font-medium text-navy/70 underline">
+              Cancelar importación
+            </button>
+          )}
           <p className="text-xs text-navy/45">Formatos soportados: Excel (.xlsx), CSV (.csv)</p>
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-4 py-3 text-left text-sm text-coral">

@@ -68,6 +68,8 @@ export default function Conectores() {
   const { file, cleaning } = useDataset()
   const {
     importing,
+    importStatus,
+    cancelImport,
     error: importError,
     persistWarning,
     importFile,
@@ -273,6 +275,12 @@ export default function Conectores() {
             Comprobar automáticamente si esta fuente cambia mientras uso la plataforma
           </label>
 
+          {importing && (
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-navy/70" role="status">
+              <span>{importStatus}</span>
+              <button onClick={cancelImport} className="font-medium underline">Cancelar importación</button>
+            </div>
+          )}
           {shownError && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 px-3 py-2.5 text-sm text-coral">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

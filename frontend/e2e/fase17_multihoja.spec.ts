@@ -199,9 +199,36 @@ function standardizationResponse(filename: string, value: string) {
   }
 }
 
+test('la importacion muestra la cola, completa por sondeo y permite cancelar', async ({ page }) => {
+  let finish = false
+  let cancelled = false
+  const queued = { job_id: 'initial-queue', status: 'queued', phase: 'queued', result: null }
+  await page.route('**/standardize/jobs', (route) => route.fulfill({ status: 202, json: queued }))
+  await page.route('**/analysis/jobs/initial-queue', (route) => route.fulfill({
+    json: finish ? { ...queued, status: 'completed', result: standardizationResponse('queued.csv', 'nuevo') } : queued,
+  }))
+  await page.route('**/analysis/jobs/initial-queue/cancel', (route) => {
+    cancelled = true
+    return route.fulfill({ json: { ...queued, status: 'cancelled' } })
+  })
+  await page.goto('/estandarizacion')
+  const input = page.locator('input[type="file"]')
+  await input.setInputFiles({ name: 'queued.csv', mimeType: 'text/csv', buffer: Buffer.from('Valor\nnuevo\n') })
+  await expect(page.getByRole('heading', { name: /En cola:/ })).toBeVisible()
+  finish = true
+  await expect(page.getByText('Dataset activo: queued.csv')).toBeVisible()
+  finish = false
+  await input.setInputFiles({ name: 'cancelled.csv', mimeType: 'text/csv', buffer: Buffer.from('Valor\nanterior\n') })
+  await expect(page.getByRole('heading', { name: /En cola:/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancelar importación' }).click()
+  await expect.poll(() => cancelled).toBe(true)
+  await expect(page.getByText('Importación cancelada.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Subir archivo', exact: true })).toBeEnabled()
+})
+
 test('el ultimo archivo elegido prevalece aunque una carga anterior responda despues', async ({ page }) => {
   let previousRequestStarted = false
-  await page.route('**/standardize', async (route) => {
+  await page.route('**/standardize/jobs', async (route) => {
     const body = route.request().postData() ?? ''
     const previous = body.includes('archivo_anterior.csv')
     if (previous) {
@@ -210,12 +237,12 @@ test('el ultimo archivo elegido prevalece aunque una carga anterior responda des
     }
     try {
       await route.fulfill({
-        status: 200,
+        status: 202,
         contentType: 'application/json',
-        body: JSON.stringify(standardizationResponse(
+        body: JSON.stringify({ job_id: previous ? 'previous' : 'next', status: 'completed', result: standardizationResponse(
           previous ? 'archivo_anterior.csv' : 'archivo_nuevo.csv',
           previous ? 'anterior' : 'nuevo',
-        )),
+        ) }),
       })
     } catch {
       // La peticion anterior debe ser abortada al elegir el archivo nuevo.

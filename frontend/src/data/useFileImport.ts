@@ -1,11 +1,11 @@
 /** Flujo compartido de importación de archivos (Estandarización y Conectores).
  *
  * Sube a Storage + inserta en datasets (best-effort), actualiza el contexto y
- * ejecuta /standardize. Devuelve true si el archivo quedó estandarizado.
+ * ejecuta /standardize/jobs. Devuelve true si el archivo quedó estandarizado.
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ApiError, apiPost, apiPostJson, buildDatasetForm } from '../lib/api'
+import { ApiError, apiPostJob, apiPostJson, buildDatasetForm, type AnalysisJobResponse } from '../lib/api'
 import {
   insertDataset,
   markStandardized,
@@ -30,6 +30,7 @@ export function useFileImport() {
   const accessRef = useRef({ status: accessStatus, can })
   accessRef.current = { status: accessStatus, can }
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<AnalysisJobResponse<StandardizeResult> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [persistWarning, setPersistWarning] = useState<string | null>(null)
   // Fase 13: cuentas sin acceso — cada intento de subir abre el panel comercial.
@@ -80,6 +81,7 @@ export function useFileImport() {
   ): Promise<boolean> => {
     setError(null)
     setPersistWarning(null)
+    setImportProgress(null)
     if (!/\.(csv|xlsx)$/i.test(selected.name)) {
       setError('Formato no soportado. Sube un Excel moderno (.xlsx) o CSV (.csv); si tienes un .xls antiguo, guárdalo como .xlsx primero.')
       return false
@@ -127,12 +129,16 @@ export function useFileImport() {
         void apiPostJson('/storage/retention', {}).catch(() => undefined)
       }
 
-      const result = await apiPost<StandardizeResult>(
-        '/standardize',
+      const result = await apiPostJob<StandardizeResult>(
+        '/standardize/jobs',
         buildDatasetForm(selected, storagePath, {
           ...(datasetId ? { dataset_id: datasetId } : {}),
         }),
-        { signal: controller.signal },
+        {
+          signal: controller.signal,
+          timeoutMs: 15 * 60_000,
+          onProgress: (job) => { if (isCurrent()) setImportProgress(job) },
+        },
       )
       if (!isCurrent()) return false
       if (!setStandardization(result, { expectedFile: selected })) return false
@@ -144,7 +150,7 @@ export function useFileImport() {
       // History persistence is best-effort and must not extend the processing
       // spinner after the usable result has already arrived.
       void markStandardized(datasetId, result).then((marked) => {
-        if (!marked && supabaseConfigured && datasetId) {
+        if (isCurrent() && !marked && supabaseConfigured && datasetId) {
           setPersistWarning(
             'El archivo se estandarizó correctamente, pero no se pudo guardar todo el detalle en el historial.',
           )
@@ -166,6 +172,15 @@ export function useFileImport() {
 
   return {
     importing,
+    importStatus: importProgress?.status === 'queued'
+      ? 'En cola: esperando un turno de procesamiento...'
+      : importProgress?.phase === 'saving'
+        ? 'Guardando la estandarización...'
+        : importProgress ? 'Estandarizando tus datos...' : 'Preparando el archivo...',
+    cancelImport: () => {
+      importAbortRef.current?.abort()
+      setError('Importación cancelada.')
+    },
     error,
     persistWarning,
     importFile,

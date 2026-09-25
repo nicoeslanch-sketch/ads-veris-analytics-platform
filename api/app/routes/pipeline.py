@@ -5278,9 +5278,24 @@ async def standardize_batch(
     )
 
 
+def _standardize_import_sync(filename, content, sheet_name, dataset_id, user_id, revision, state):
+    report_job_progress("standardizing", 0, 2, sheet_name)
+    result = _standardize_sync(filename, content, sheet_name)
+    if revision is not None:
+        result["revision"] = revision
+    # This boundary also observes cancellation before persisting a snapshot.
+    report_job_progress("saving", 1, 2, sheet_name)
+    if dataset_id and revision is not None:
+        _store_standardization_restore_snapshot(
+            dataset_id, user_id, content, result, sheet_name, revision, state,
+        )
+    return result
+
+
 @router.post("/standardize")
+@router.post("/standardize/jobs", status_code=status.HTTP_202_ACCEPTED)
 async def standardize(
-    background_tasks: BackgroundTasks,
+    request: Request,
     file: UploadFile | None = File(None),
     storage_path: str | None = Form(None),
     dataset_id: str | None = Form(None),
@@ -5290,6 +5305,11 @@ async def standardize(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     _restore_response_cache_invalidate(user.id)
+    await run_in_threadpool(
+        require_capability_for_user, user.id, Capability.STANDARDIZE, settings
+    )
+    sheet_name = _clean_sheet_param(sheet)
+    state = _validate_restore_state(restore_state)
     # La revisión se reserva al entrar al endpoint, antes de cualquier descarga
     # o cálculo que pueda invertir el orden de dos peticiones concurrentes.
     revision = (
@@ -5299,31 +5319,27 @@ async def standardize(
         if dataset_id
         else None
     )
-    # Fase 13: las cuentas nuevas nacen SIN plan — pueden navegar, pero
-    # procesar archivos requiere un plan activo o la prueba gratuita vigente
-    # (las cuentas existentes conservan su plan básico y no notan el cambio).
-    # threadpool: la puerta consulta Supabase por HTTP y no debe bloquear el loop.
-    await run_in_threadpool(
-        require_capability_for_user, user.id, Capability.STANDARDIZE, settings
-    )
-    filename, content = await _read_input(file, storage_path, user)
-    sheet_name = _clean_sheet_param(sheet)
-    state = _validate_restore_state(restore_state)
-    result = await run_in_threadpool(_standardize_sync, filename, content, sheet_name)
-    if revision is not None:
-        result["revision"] = revision
-    if dataset_id and revision is not None:
-        await run_in_threadpool(
-            _store_standardization_restore_snapshot,
-            dataset_id,
-            user.id,
-            content,
-            result,
-            sheet_name,
-            revision,
-            state,
+    if dataset_id and revision is None:
+        raise HTTPException(503, "No se pudo reservar una revisión segura para guardar el archivo.")
+    if request.url.path.endswith("/jobs") and use_durable_source(settings, file, storage_path, dataset_id):
+        return await run_in_threadpool(
+            DurableAnalysisRepository(settings).enqueue, user.id, dataset_id, storage_path,
+            "standardize", {"sheet": sheet_name, "revision": revision, "restore_state": state},
         )
-    return result
+    filename, content = await _read_input(file, storage_path, user)
+    if request.url.path.endswith("/jobs"):
+        return manager_for(settings).submit(
+            user.id,
+            ("standardize", user.id, dataset_id, revision, hashlib.sha256(content).hexdigest(),
+             sheet_name, json.dumps(state, sort_keys=True)),
+            lambda: _standardize_import_sync(
+                filename, content, sheet_name, dataset_id, user.id, revision, state,
+            ),
+            retained_input_bytes=len(content),
+        )
+    return await run_in_threadpool(
+        _standardize_import_sync, filename, content, sheet_name, dataset_id, user.id, revision, state,
+    )
 
 
 @router.post("/clean")

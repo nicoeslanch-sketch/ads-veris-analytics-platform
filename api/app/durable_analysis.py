@@ -15,7 +15,7 @@ PUBLIC_FIELDS = frozenset({
     "job_id", "status", "phase", "attempt", "completed_phases", "total_phases",
     "current_sheet", "cancel_requested", "created_at", "updated_at", "result", "error",
 })
-KINDS = frozenset({"metrics", "standardize_batch", "clean_batch", "clean_export",
+KINDS = frozenset({"metrics", "standardize", "standardize_batch", "clean_batch", "clean_export",
                    "relationship_catalog", "relationship_dashboard"})
 
 
