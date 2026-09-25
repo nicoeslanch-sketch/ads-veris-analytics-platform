@@ -198,7 +198,7 @@ export default function ActiveSheetSelector({
       )) ?? null
     : null
   const analysisProvenance = metrics?.analysis_provenance as
-    | { rows?: unknown; join?: { filas_sin_correspondencia?: unknown } }
+    | { rows?: unknown; join?: { filas_sin_correspondencia?: unknown; materializada_en_resumen_generico?: boolean } }
     | undefined
   const activeRows = typeof analysisProvenance?.rows === 'number'
     ? analysisProvenance.rows
@@ -206,6 +206,8 @@ export default function ActiveSheetSelector({
   const unmatchedRows = typeof analysisProvenance?.join?.filas_sin_correspondencia === 'number'
     ? analysisProvenance.join.filas_sin_correspondencia
     : null
+  const catalogJoinBlocked = !serviceWorkbook
+    && analysisProvenance?.join?.materializada_en_resumen_generico === false
 
   useEffect(() => {
     if (
@@ -329,6 +331,23 @@ export default function ActiveSheetSelector({
       }
       const costSelection = selectAppendJoinCostCandidates(response.candidates, appendSelection)
       setCandidates(costSelection.candidates)
+      if (
+        response.business_without_catalog_join
+        && response.metrics?.analisis_negocio
+        && response.analysis_scope?.mode === 'append_join'
+        && response.analysis_scope.append_sheets.length === appendSelection.length
+        && response.analysis_scope.append_sheets.every((name) => appendSelection.includes(name))
+        && JSON.stringify(response.metrics.analysis_scope) === JSON.stringify(response.analysis_scope)
+      ) {
+        const scope = response.analysis_scope
+        lastBusinessScope.current = scope
+        setAppendSheets(appendSelection)
+        setSheet(scope.active_sheet)
+        setAnalysisScope(scope)
+        setMetrics(response.metrics)
+        setRelationMessage('Se conservan todos los períodos seleccionados. El catálogo repite claves: no se materializa esa unión. Los costos y dimensiones disponibles se calculan solo con correspondencias validadas; revisa las advertencias antes de usar los márgenes.')
+        return
+      }
       const recommended = costSelection.automatic ?? null
       if (recommended && appendSelection.length >= 1) {
         setAppendSheets((current) => (
@@ -368,7 +387,7 @@ export default function ActiveSheetSelector({
         // Una fuente comercial confirmada puede sostener la Visión del
         // negocio por sí sola. Las relaciones enriquecen dimensiones/costos,
         // pero no son requisito para reconocer ventas reales.
-        if (appendSelection.length >= 1) {
+        if (appendSelection.length === 1) {
           const salesSheet = appendSelection[0]
           const nextScope: AnalysisScope = {
             mode: 'single',
@@ -379,7 +398,9 @@ export default function ActiveSheetSelector({
           setSheet(salesSheet)
           lastBusinessScope.current = nextScope
           setAnalysisScope(nextScope)
-        } else if (analysisScope?.mode === 'append_join') {
+        } else {
+          // Never silently replace a multi-period selection with its first
+          // sheet, or retain results from a previously validated selection.
           setAnalysisScope(null)
         }
         const explanation = costSelection.blocked ?? costSelection.candidates[0]
@@ -636,12 +657,12 @@ export default function ActiveSheetSelector({
               </div>
             </div>
           ) : activeAppendJoin ? (
-            <div className="rounded-lg border border-green/25 bg-green/[0.07] p-3">
+            <div className={`rounded-lg border p-3 ${catalogJoinBlocked ? 'border-gold/30 bg-gold/[0.07]' : 'border-green/25 bg-green/[0.07]'}`}>
               <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" />
+                {catalogJoinBlocked ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gold" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" />}
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-navy">
-                    {serviceWorkbook ? 'Red de servicios integrada' : 'Ventas + costos activo'}
+                    {serviceWorkbook ? 'Red de servicios integrada' : catalogJoinBlocked ? 'Ventas documentadas; catálogo pendiente' : 'Ventas + costos activo'}
                   </p>
                   <p className="mt-1 text-sm font-semibold text-navy">
                     {serviceWorkbook ? (
@@ -651,11 +672,11 @@ export default function ActiveSheetSelector({
                         {activeAppendJoin.append_sheets.length === 1
                           ? activeAppendJoin.append_sheets[0]
                           : `${activeAppendJoin.append_sheets.length} hojas de ventas combinadas`}
-                        {' ↔ '}{activeAppendJoin.join.right_sheet}
+                        {!catalogJoinBlocked && <> ↔ {activeAppendJoin.join.right_sheet}</>}
                       </>
                     )}
                   </p>
-                  {!serviceWorkbook && (
+                  {!serviceWorkbook && !catalogJoinBlocked && (
                     <p className="mt-0.5 text-xs text-navy/60">
                       Clave: {activeAppendJoin.join.left_keys.join(' + ')} ↔{' '}
                       {activeAppendJoin.join.right_keys.join(' + ')}
@@ -673,6 +694,8 @@ export default function ActiveSheetSelector({
                   <p className="mt-1 text-[11px] text-navy/55">
                     {serviceWorkbook
                       ? 'Los montos unitarios solo se aplican en su relación válida; nunca se suman tarifas, UF ni costos de catálogo.'
+                      : catalogJoinBlocked
+                      ? 'La unión con el catálogo está bloqueada: no se materializa. Se conservan todos los períodos seleccionados y solo se usan costos y dimensiones con correspondencias validadas.'
                       : 'Los ingresos y el número de filas no cambiarán por agregar los costos.'}
                   </p>
                   {activeRelationCandidate && (
@@ -694,7 +717,7 @@ export default function ActiveSheetSelector({
                       }}
                       className="text-xs font-semibold text-teal hover:underline"
                     >
-                      Desactivar costos
+                      {catalogJoinBlocked ? 'Consolidar sin relaciones' : 'Desactivar costos'}
                     </button>
                     <button
                       type="button"

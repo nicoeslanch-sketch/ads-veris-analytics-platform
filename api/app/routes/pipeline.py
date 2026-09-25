@@ -4071,6 +4071,24 @@ def _relationships_sync(
             ),
             None,
         )
+        document_fallback = False
+        if automatic is None:
+            # A repeated catalog key blocks the flat join, not the document
+            # model. Only the complete, recognized detail set may use this
+            # fallback; the guarded metrics path never expands an unsafe join.
+            documents = prepare_document_lines(all_frames, all_mappings)
+            if documents.details and set(documents.details) == focused_transaction_sheets:
+                automatic = next((
+                    candidate for candidate in candidates
+                    if not candidate.get("safe")
+                    and candidate.get("currency_compatible")
+                    and candidate.get("purpose") == "enriquecer_costos"
+                    and candidate.get("overlap", 0) > 0
+                    and candidate.get("right_duplicate_keys", 0) > 0
+                    and candidate["left_sheet"] in focused_transaction_sheets
+                    and candidate["right_sheet"] not in focused_transaction_sheets
+                ), None)
+                document_fallback = automatic is not None
         if automatic is not None:
             right_sheet = automatic["right_sheet"]
             scope = {
@@ -4097,6 +4115,12 @@ def _relationships_sync(
                     None,
                     None,
                 )
+                if document_fallback:
+                    if not response["metrics"].get("analisis_negocio"):
+                        response.pop("analysis_scope", None)
+                        response.pop("metrics", None)
+                    else:
+                        response["business_without_catalog_join"] = True
             except HTTPException:
                 # Detectar una relacion sigue siendo util aunque una metrica
                 # adicional falle; el endpoint /metrics conservara su error
