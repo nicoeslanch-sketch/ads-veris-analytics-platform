@@ -78,7 +78,8 @@ def execute_job(job: dict, settings: Settings) -> dict:
     from .storage import download_from_storage, normalize_user_storage_path
 
     kind = job["kind"]
-    capabilities = {"metrics": Capability.VIEW_DASHBOARD, "standardize_batch": Capability.STANDARDIZE,
+    capabilities = {"metrics": Capability.VIEW_DASHBOARD, "standardize": Capability.STANDARDIZE,
+                    "standardize_batch": Capability.STANDARDIZE,
                     "clean_batch": Capability.CLEAN, "clean_export": Capability.DOWNLOAD_CLEAN_DATASET,
                     "relationship_catalog": Capability.VIEW_DASHBOARD,
                     "relationship_dashboard": Capability.VIEW_DASHBOARD}
@@ -91,6 +92,9 @@ def execute_job(job: dict, settings: Settings) -> dict:
     content = download_from_storage(path)
     filename = p._display_filename(os.path.basename(path))
     p.report_job_progress("opening", 0, 1)
+    if kind == "standardize":
+        return p._standardize_import_sync(filename, content, opts.get("sheet"), dataset_id,
+                                          user_id, opts["revision"], opts.get("restore_state"))
     if kind == "relationship_catalog":
         return p._relationship_catalog_cached_sync(filename, content, opts["manifest"], dataset_id, user_id)
     if kind == "relationship_dashboard":

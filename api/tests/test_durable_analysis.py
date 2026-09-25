@@ -227,6 +227,7 @@ def durable_client(client, monkeypatch):
 
 @pytest.mark.parametrize('endpoint,fields,kind', [
     ('/analysis/jobs/metrics', {}, 'metrics'),
+    ('/standardize/jobs', {}, 'standardize'),
     ('/standardize/batch/jobs', {'sheets': '["Ventas"]'}, 'standardize_batch'),
     ('/clean/batch/jobs', {'manifest': '{"hojas":[{"nombre":"Ventas","procesar":true}]}'}, 'clean_batch'),
     ('/clean/export/jobs', {'manifest': '{"hojas":[{"nombre":"Ventas","procesar":true}]}'}, 'clean_export'),
@@ -257,7 +258,8 @@ def test_user_retry_reuses_failed_durable_identity(monkeypatch):
     assert call.call_args_list[1].args[0] == 'retry'
 
 
-@pytest.mark.parametrize('kind,engine_name', [('standardize_batch', '_standardize_batch_sync'),
+@pytest.mark.parametrize('kind,engine_name', [('standardize', '_standardize_import_sync'),
+                                             ('standardize_batch', '_standardize_batch_sync'),
                                              ('clean_batch', '_clean_batch_sync')])
 def test_worker_preserves_snapshot_revision_and_cleaning_rules(monkeypatch, kind, engine_name):
     from app import capabilities, storage
@@ -267,12 +269,83 @@ def test_worker_preserves_snapshot_revision_and_cleaning_rules(monkeypatch, kind
     monkeypatch.setattr(pipeline, engine_name, engine)
     row = job()
     manifest = {'hojas': [{'nombre': 'Ventas', 'procesar': True, 'eliminar_duplicados': False}]}
-    row.update(kind=kind, options={'sheets': ['Ventas'], 'manifest': manifest, 'revision': 7,
+    row.update(kind=kind, options={'sheet': 'Ventas', 'sheets': ['Ventas'], 'manifest': manifest, 'revision': 7,
                                   'restore_state': {'selected': 'Ventas'}})
     assert execute_job(row, settings()) == {'revision': 7, 'rows': 1}
     args = engine.call_args.args
-    assert args[2] == (['Ventas'] if kind == 'standardize_batch' else manifest)
+    assert args[2] == ('Ventas' if kind == 'standardize' else ['Ventas'] if kind == 'standardize_batch' else manifest)
     assert args[3:] == (DATASET, OWNER, 7, {'selected': 'Ventas'})
+
+
+def test_initial_import_is_admitted_while_heavy_slot_is_busy(durable_client, monkeypatch):
+    enqueue = Mock(return_value={'job_id': job()['job_id'], 'status': 'queued'})
+    monkeypatch.setattr(durable.DurableAnalysisRepository, 'enqueue', enqueue)
+    with HEAVY_WORK_SLOT:
+        response = durable_client.post('/standardize/jobs', data={'storage_path': PATH, 'dataset_id': DATASET})
+        assert response.status_code == 202, response.text
+        assert response.json()['status'] == 'queued'
+        assert durable_client.post('/standardize').status_code == 429
+    assert enqueue.call_args.args[:4] == (OWNER, DATASET, PATH, 'standardize')
+
+
+def test_initial_import_local_queue_waits_then_matches_legacy_result(client, auth_headers, monkeypatch):
+    from tests.test_analysis_jobs import _manager, _wait
+    manager = _manager()
+    monkeypatch.setattr(pipeline, 'manager_for', lambda _: manager)
+    source = b'Producto,Venta\nA,100\nB,200\n'
+    try:
+        with HEAVY_WORK_SLOT:
+            response = client.post('/standardize/jobs', headers=auth_headers,
+                                   files={'file': ('initial.csv', source, 'text/csv')})
+            assert response.status_code == 202, response.text
+            queued = response.json()
+            assert queued['status'] == 'queued'
+            assert manager.get('user-test-123', queued['job_id'])['status'] == 'queued'
+        completed = _wait(manager, 'user-test-123', queued['job_id'])
+        assert completed['status'] == 'completed'
+        legacy = client.post('/standardize', headers=auth_headers,
+                             files={'file': ('initial.csv', source, 'text/csv')})
+        assert legacy.status_code == 200
+        assert completed['result'] == legacy.json()
+    finally:
+        manager.executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize('denied', ['capability', 'revision', 'ownership'])
+def test_initial_import_fails_closed_before_computing(durable_client, monkeypatch, denied):
+    rpc = Mock(side_effect=AssertionError('Denied import must not reach RPC'))
+    monkeypatch.setattr(durable.DurableAnalysisRepository, 'call', rpc)
+    fields = {'storage_path': PATH, 'dataset_id': DATASET}
+    expected = 403
+    if denied == 'capability':
+        monkeypatch.setattr(pipeline, 'require_capability_for_user', Mock(side_effect=HTTPException(403, 'Denied')))
+    elif denied == 'revision':
+        monkeypatch.setattr(pipeline, 'reserve_restore_snapshot_revision', lambda *_: None)
+        expected = 503
+    else:
+        fields['storage_path'] = '00000000-0000-4000-8000-000000000009/source.csv'
+    response = durable_client.post('/standardize/jobs', data=fields)
+    assert response.status_code == expected, response.text
+    rpc.assert_not_called()
+
+
+def test_initial_standardization_persists_the_same_result_and_honors_cancellation(monkeypatch):
+    from app.analysis_jobs import JobCancelled
+    compute = Mock(return_value={'filas': 2})
+    save = Mock()
+    progress = Mock()
+    monkeypatch.setattr(pipeline, '_standardize_sync', compute)
+    monkeypatch.setattr(pipeline, '_store_standardization_restore_snapshot', save)
+    monkeypatch.setattr(pipeline, 'report_job_progress', progress)
+    state = {'selected': 'Ventas'}
+    result = pipeline._standardize_import_sync('book.xlsx', b'book', 'Ventas', DATASET, OWNER, 7, state)
+    assert result == {'filas': 2, 'revision': 7}
+    save.assert_called_once_with(DATASET, OWNER, b'book', result, 'Ventas', 7, state)
+    save.reset_mock()
+    progress.side_effect = [None, JobCancelled()]
+    with pytest.raises(JobCancelled):
+        pipeline._standardize_import_sync('book.xlsx', b'book', 'Ventas', DATASET, OWNER, 8, state)
+    save.assert_not_called()
 
 
 def test_external_export_never_reports_ready_if_only_in_memory(monkeypatch):
