@@ -144,8 +144,9 @@ def _with_conversation_context(
         recent = _recent_conversation_text(history, limit=1)
         return f"{recent} {question}".strip()
     explicit_topics = (
-        "gastos",
-        "costos",
+        "gasto",
+        "gastado",
+        "costo",
         "ingresos",
         "ganancia",
         "utilidad",
@@ -1483,6 +1484,27 @@ def _answer_product_catalog(metrics: dict[str, Any], question: str) -> dict[str,
     average_cost = _number((products.get("costos") or {}).get("promedio"))
     average_price = _number((products.get("precios_lista") or {}).get("promedio"))
     average_margin = _number((products.get("margen_potencial") or {}).get("promedio"))
+    if _contains(question, "ingresos", "ventas totales", "cuanto vendi", "facturacion"):
+        return _result(
+            "La vista actual es un catalogo de productos, no un registro de ventas. "
+            "Los precios de lista y costos unitarios no son ingresos. Abre una hoja "
+            "de ventas o Vision del negocio para consultar importes vendidos con "
+            "sus cantidades y fechas.",
+            "metric_catalog_income_unavailable", metric_suggestions(metrics), "medium",
+        )
+    if _contains(question, "costo", "gasto", "gastado", "gaste", "precio", "margen") and metrics.get("moneda_mixta"):
+        return _answer_currency(metrics)
+    if _contains(question, "costo", "gasto", "gastado", "gaste"):
+        amount = (
+            f"El costo unitario de referencia promedio es {format_amount(average_cost, currency)}. "
+            if average_cost is not None else "No hay un costo de referencia promedio publicado. "
+        )
+        return _result(
+            amount + "No es lo que has gastado ni el costo total de ventas. Para calcular "
+            "esos importes hacen falta cantidades y transacciones vinculadas por ID, "
+            "con el costo vigente a su fecha. No sumo costos unitarios como gastos.",
+            "metric_catalog_reference_cost", metric_suggestions(metrics),
+        )
     if average_cost is not None:
         answer += f", costo promedio {format_amount(average_cost, currency)}"
     if average_price is not None:
@@ -1811,6 +1833,24 @@ def answer_metrics_question(
     correction = re.search(r"\bsino\s+(?:a |al |la |el )*(.+)$", original_question) or re.search(r"\bme refiero\s+(?:a |al |la |el )*(.+)$", original_question)
     if correction:
         original_question = question = correction.group(1)
+    if metrics.get("tipo_analisis") == "catalogo_productos" and _contains(
+        original_question, "costo", "gasto", "gastado", "gaste", "ingresos",
+        "ventas totales", "cuanto vendi", "facturacion",
+    ):
+        from .assistant_queries import answer_scoped_question
+        catalog_scope = answer_scoped_question(original_question, metrics, history)
+        if catalog_scope is not None:
+            return catalog_scope
+        if re.search(r"\b(?:producto|sku|id|sucursal|categoria|proveedor)\s+\S+", original_question):
+            return _result(
+                "No tengo publicado ese costo para el segmento o identificador que pides. "
+                "El promedio general del catalogo no lo sustituye; revisa el producto "
+                "y su costo unitario en la fuente o selecciona ese alcance en Explorar.",
+                "metric_catalog_scope_unavailable", metric_suggestions(metrics), "medium",
+            )
+        catalog_answer = _answer_product_catalog(metrics, original_question)
+        if catalog_answer is not None:
+            return catalog_answer
     if (
         re.search(r"\b(que|cual)\b.*\bmes\b", question)
         and re.search(r"\b(vendi|vendimos|vendo|vendemos|vendio|vendieron|ventas|ingresos|facture|facturamos|facturacion|recaude|recaudamos|gaste|gastamos|gasto|gastos)\b", question)

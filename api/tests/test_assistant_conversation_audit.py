@@ -87,6 +87,51 @@ def test_product_decision_conversation_uses_ids_and_avoids_unsupported_advice():
         history += [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer['answer']}]
 
 
+@pytest.mark.parametrize('followup', [
+    'y ese costo de referencia es lo que he gastado?',
+    'y mi costo promedio', 'que es ese costo de referencia', 'y cuanto gaste',
+])
+@pytest.mark.parametrize('currency,amount', [('CLP', '$33.703'), ('UF', 'UF 33.703')])
+def test_catalog_cost_followup_does_not_repeat_previous_income_answer(followup, currency, amount):
+    metrics = sales_metrics()
+    metrics.update(tipo_analisis='catalogo_productos', moneda=currency,
+        analisis_productos={'productos': 181, 'costos': {'promedio': 33703},
+                           'precios_lista': {'promedio': 60000}})
+    first_question = 'cuantossonmisingresostotales'
+    first = answer_for(first_question, metrics=metrics)
+    assert first['matched_key'] == 'metric_catalog_income_unavailable'
+    assert 'catalogo' in first['answer']
+    assert '$600' not in first['answer']
+    history = [{'role': 'user', 'content': first_question}, {'role': 'assistant', 'content': first['answer']}]
+    response = answer_for(followup, metrics=metrics, history=history)
+    assert response['matched_key'] == 'metric_catalog_reference_cost'
+    assert amount in response['answer']
+    assert 'No es lo que has gastado' in response['answer']
+    assert 'cantidades y transacciones vinculadas por ID' in response['answer']
+
+
+def test_catalog_cost_unknown_or_mixed_currency_never_fabricates_amount():
+    metrics = sales_metrics()
+    metrics.update(tipo_analisis='catalogo_productos', analisis_productos={'productos': 2, 'costos': {}})
+    response = answer_for('y mi costo de referencia', metrics=metrics)
+    assert 'No hay un costo' in response['answer'] and '$' not in response['answer']
+    metrics['analisis_productos']['costos']['promedio'] = 100
+    metrics['moneda_mixta'] = True
+    response = answer_for('y mi costo promedio', metrics=metrics)
+    assert '$100' not in response['answer']
+    assert response['matched_key'] == 'metric_currency'
+
+
+@pytest.mark.parametrize('question', ['costo promedio en enero', 'costo del producto XYZ', 'costo del SKU ABC'])
+def test_catalog_scope_is_not_replaced_with_global_average(question):
+    metrics = sales_metrics()
+    metrics.update(tipo_analisis='catalogo_productos',
+        analisis_productos={'productos': 2, 'costos': {'promedio': 33703}})
+    response = answer_for(question, metrics=metrics)
+    assert '$33.703' not in response['answer']
+    assert response['confidence'] == 'medium'
+
+
 @pytest.mark.parametrize('question', [
     'cuota de almacenamiento', 'error 507', 'espacio lleno', 'cuantos archivos puedo guardar',
     'cuantosarchivospuedoguardar', 'cuatnosarchivospuedoguardar', 'cuantosarchibospuedoguardar',
