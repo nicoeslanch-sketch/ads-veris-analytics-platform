@@ -22,6 +22,7 @@ def main() -> None:
     parser.add_argument("--sheet")
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--metrics", action="store_true")
+    parser.add_argument("--relationship-flow", action="store_true", help="Exercise the same relationship entry point used by the business view")
     parser.add_argument("--compare", type=Path)
     parser.add_argument("--export", type=Path, help="Generate and read back the actual clean XLSX export")
     args = parser.parse_args()
@@ -83,6 +84,31 @@ def main() -> None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(audit, ensure_ascii=False, default=str), encoding="utf-8")
         print(json.dumps({key: row.get(key) for key in ("sheet", "rows", "clean_rows", "exact_duplicates_raw", "standardize_seconds", "clean_seconds", "error")}, ensure_ascii=False), flush=True)
+
+    if args.relationship_flow:
+        from app.engine.document_model import prepare_document_lines
+        details = sorted(prepare_document_lines(clean_frames, mappings).details)
+        if not details:
+            raise ValueError("No recognized document detail sheets for the relationship-flow audit")
+        classifications = {
+            item["nombre"]: item for row in audit["sheets"]
+            for item in row["load_report"].get("clasificacion_hojas", [])
+        }
+        manifest = {"hojas": [{
+            "nombre": name,
+            "procesar": classifications.get(name, {}).get("recomendacion") != "conservar_sin_procesar",
+            "rules": {}, "mapping": {}, "scope": {}, "eliminar_duplicados": False,
+        } for name in selected]}
+        started = time.perf_counter()
+        response = pipeline._relationships_sync(args.workbook.name, content, manifest, focus={"sheets": details})
+        audit["relationship_flow"] = response
+        audit["relationship_flow_seconds"] = round(time.perf_counter() - started, 3)
+        args.output.write_text(json.dumps(audit, ensure_ascii=False, default=str), encoding="utf-8")
+        published = response.get("metrics", {})
+        print(json.dumps({"relationship_flow_seconds": audit["relationship_flow_seconds"],
+            "scope": response.get("analysis_scope"), "without_catalog_join": response.get("business_without_catalog_join"),
+            "published_revenue": published.get("kpis", {}).get("ingresos_totales"),
+            "business_revenue": published.get("analisis_negocio", {}).get("estado_resultados", {}).get("ventas_observadas")}), flush=True)
 
     if args.metrics:
         started = time.perf_counter()

@@ -25,6 +25,17 @@ describe('explorationActions', () => {
     const actions = explorationActions(measure({ id: 'costo', dimensions: [{ name: 'Producto', groups: [{ name: 'A', value: 100 }] }] }), base())
     expect(actions[0].action).toContain('no demuestra ineficiencia')
   })
+  it('distinguishes catalog unit costs from realized expenses', () => {
+    const metrics = base({ analisis_productos: {
+      productos: 2, cobertura_costo_pct: 100, costos: { promedio: 50 },
+      precios_lista: { promedio: 100 }, ranking_costos: [{ producto: 'A', costo: 70 }],
+    } } as unknown as Partial<MetricsResult>)
+    const selected = buildExplorationModel(metrics).measures[0]
+    const action = explorationActions(selected, metrics)[0]
+    expect(action.title).toBe('Revisar costos de referencia')
+    expect(action.action).toContain('No representa gasto realizado')
+    expect(action.action).not.toContain('recortar')
+  })
   it('does not mistake profit on a matched-cost base for an expense', () => {
     const actions = explorationActions(measure({ id: 'utilidad', label: 'Utilidad sobre base con costo', dimensions: [{ name: 'Canal', groups: [{ name: 'Online', value: 100 }] }] }), base())
     expect(actions[0].title).toBe('Comparar rentabilidad del grupo')

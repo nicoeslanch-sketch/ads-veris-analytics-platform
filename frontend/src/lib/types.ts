@@ -424,6 +424,7 @@ export interface RelationshipResult {
   message: string | null
   analysis_scope?: AnalysisScope
   metrics?: MetricsResult
+  business_without_catalog_join?: boolean
 }
 
 // ── Workspace de relaciones (Parte 4-10) ─────────────────────────────────────

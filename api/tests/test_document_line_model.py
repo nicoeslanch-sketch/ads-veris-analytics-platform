@@ -167,3 +167,37 @@ def test_pipeline_generic_graphs_use_header_dates_and_exclude_unmatched_sales():
     assert sum(row["ingresos"] for row in result["evolucion_mensual"]) == 900
     assert result["analisis_negocio"]["estado_resultados"]["ventas_observadas"] == 900
     assert result["analysis_provenance"]["filas_sin_cabecera_valida"] == 1
+
+
+@pytest.mark.parametrize("currency_mismatch,partial_selection", [(False, False), (True, False), (False, True)])
+def test_relationship_detection_retains_document_periods_without_unsafe_catalog_join(
+    monkeypatch, currency_mismatch, partial_selection,
+):
+    from app.routes import pipeline
+    from app.engine.metrics import detect_currency
+
+    frames = _frames()
+    for name in ("Detalle_T1", "Detalle_T2"):
+        frames[name]["CostoUnitario_CLP"] = 20
+    frames["Productos"] = pd.concat([frames["Productos"], frames["Productos"].assign(CostoUnitario_CLP=999)], ignore_index=True)
+    if currency_mismatch:
+        frames["Productos"].rename(columns={"CostoUnitario_CLP": "CostoUnitario_USD"}, inplace=True)
+    mappings = {name: resolve_mapping(list(frame.columns), None) for name, frame in frames.items()}
+    results = {name: {"resumen": {"calidad_despues": 100}, "_moneda": detect_currency(None, header_hints=tuple(frame.columns))} for name, frame in frames.items()}
+    manifest = {"hojas": [{"nombre": name, "procesar": True, "mapping": mappings[name]} for name in frames]}
+    monkeypatch.setattr(pipeline, "_processed_manifest_frames", lambda *args: (frames, mappings, results))
+    selected = ["Detalle_T1"] if partial_selection else ["Detalle_T1", "Detalle_T2"]
+    result = pipeline._relationships_sync("documents.xlsx", b"synthetic", manifest, focus={"sheets": selected})
+    if currency_mismatch or partial_selection:
+        assert not result.get("business_without_catalog_join")
+        return
+    assert result["business_without_catalog_join"] is True
+    assert result["analysis_scope"]["append_sheets"] == selected
+    assert not any(candidate["safe"] for candidate in result["candidates"])
+    metrics = result["metrics"]
+    assert metrics["analysis_provenance"]["join"]["materializada_en_resumen_generico"] is False
+    assert metrics["kpis"]["ingresos_totales"]["valor"] == 900
+    assert metrics["analisis_negocio"]["estado_resultados"]["ventas_observadas"] == 900
+    assert metrics["analisis_negocio"]["estado_resultados"]["costo_venta_conocido"] == 180
+    assert metrics["analisis_negocio"]["alcance"]["filas_indicadores"] == 3
+    assert len(frames["Productos"]) == 2

@@ -30,6 +30,7 @@ export default function Explorar() {
     analysisScope?.mode ?? 'single',
   )
   const relationshipMode = selectorMode === 'join'
+  const [selectorBusy, setSelectorBusy] = useState(false)
   const [openRelationsNonce, setOpenRelationsNonce] = useState(0)
   const ready = Boolean(file && cleaning) || demo.active
 
@@ -221,8 +222,10 @@ export default function Explorar() {
   return (
     <>
       <PageHeader title="Explorar datos" subtitle="Lectura, evidencia y límites de tus datos." />
-      <ActiveSheetSelector onModeChange={setSelectorMode} openRelationsNonce={openRelationsNonce} />
-      {businessUnavailable ? (
+      <ActiveSheetSelector onModeChange={setSelectorMode} onBusyChange={setSelectorBusy} openRelationsNonce={openRelationsNonce} />
+      {selectorBusy ? (
+        <AnalysisLoadingPanel operation="Buscando conexiones seguras entre las hojas" detail="Validamos claves y cobertura antes de mostrar resultados." />
+      ) : businessUnavailable && !loading ? (
         <EmptyState icon={Search} title="No existen conexiones seguras entre las hojas." description="Sin correspondencias validadas no se construye un resultado conjunto." ctaLabel="Relacionar hojas a mano" onCta={() => setOpenRelationsNonce((nonce) => nonce + 1)} />
       ) : relationshipMode && !demo.active ? (
         <RelationshipWorkspace />
