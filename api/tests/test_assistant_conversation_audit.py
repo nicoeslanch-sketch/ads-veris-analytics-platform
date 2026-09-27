@@ -91,12 +91,12 @@ def test_product_decision_conversation_uses_ids_and_avoids_unsupported_advice():
     'y ese costo de referencia es lo que he gastado?',
     'y mi costo promedio', 'que es ese costo de referencia', 'y cuanto gaste',
 ])
-@pytest.mark.parametrize('currency,amount', [('CLP', '$33.703'), ('UF', 'UF 33.703')])
+@pytest.mark.parametrize('currency,amount', [('CLP', '$125'), ('UF', 'UF 125')])
 def test_catalog_cost_followup_does_not_repeat_previous_income_answer(followup, currency, amount):
     metrics = sales_metrics()
     metrics.update(tipo_analisis='catalogo_productos', moneda=currency,
-        analisis_productos={'productos': 181, 'costos': {'promedio': 33703},
-                           'precios_lista': {'promedio': 60000}})
+        analisis_productos={'productos': 3, 'costos': {'promedio': 125},
+                           'precios_lista': {'promedio': 200}})
     first_question = 'cuantossonmisingresostotales'
     first = answer_for(first_question, metrics=metrics)
     assert first['matched_key'] == 'metric_catalog_income_unavailable'
@@ -126,9 +126,9 @@ def test_catalog_cost_unknown_or_mixed_currency_never_fabricates_amount():
 def test_catalog_scope_is_not_replaced_with_global_average(question):
     metrics = sales_metrics()
     metrics.update(tipo_analisis='catalogo_productos',
-        analisis_productos={'productos': 2, 'costos': {'promedio': 33703}})
+        analisis_productos={'productos': 2, 'costos': {'promedio': 125}})
     response = answer_for(question, metrics=metrics)
-    assert '$33.703' not in response['answer']
+    assert '$125' not in response['answer']
     assert response['confidence'] == 'medium'
 
 
