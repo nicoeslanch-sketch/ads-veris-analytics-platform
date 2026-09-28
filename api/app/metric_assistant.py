@@ -159,6 +159,10 @@ def _with_conversation_context(
         "ticket",
         "unidades",
         "producto",
+        "inventario",
+        "stock",
+        "me deben",
+        "por cobrar",
     )
     if question.startswith("y ") and _contains(question, *explicit_topics):
         return question
@@ -1002,6 +1006,87 @@ def _answer_currency(metrics: dict[str, Any]) -> dict[str, Any]:
             "unidad y no se convierten automaticamente a CLP."
         )
     return _result(answer, "metric_currency", metric_suggestions(metrics))
+
+
+def _answer_operating_balances(metrics: dict[str, Any], question: str) -> dict[str, Any] | None:
+    receivables = _contains(question, "me debe", "nos debe", "cuentas por cobrar", "saldo por cobrar") or bool(re.search(r"\bcxc\b", question))
+    inventory = not metrics.get("analisis_inventario") and _collection_dashboard(metrics) is None and _contains(question, "inventario", "stock") and _contains(
+        question, "cuanto", "valor", "total", "disponible",
+    ) and not _contains(question, "rotacion", "dias", "minimo", "quiebre")
+    if not receivables and not inventory:
+        return None
+    if _contains(question, "rotacion", "dias", "porcentaje", "vencid", "mora", "quien", "mas debe", "menos debe"):
+        return _result(
+            "Esa medida necesita su desglose de saldos, vencimientos o fechas de cobro. "
+            "El total de cuentas por cobrar no lo sustituye; revisa esa medida en Explorar.",
+            "metric_balance_measure_unavailable", metric_suggestions(metrics), "medium",
+        )
+    # Sales series and customer rankings cannot answer balance-specific filters.
+    from .assistant_queries import MONTHS, _dimensions
+    scoped = re.search(
+        r"\b(?:" + "|".join(MONTHS) + r"|20\d{2}|hoy|ayer|mes|meses|semana|trimestre|semestre|solo|excepto|sin)\b",
+        question,
+    ) or re.search(r"\b(?:cliente|producto|sku|id|sucursal|categoria|canal|region)\s+\S+", question)
+    if receivables:
+        scoped = scoped or re.search(
+            r"\b(?:me|nos) deben?\s+(?!(?:mis|los|nuestros) clientes\b|la clientela\b|en total\b|en general\b)\S+",
+            question,
+        ) or re.search(r"\b(?:por cobrar|cxc)\s+(?:de|del|para)\s+\S+", question)
+    named = any(
+        normalize_basic(row.get("nombre")) and re.search(
+            r"\b" + re.escape(normalize_basic(row["nombre"])) + r"\b", question,
+        ) for _, rows in _dimensions(metrics) for row in rows
+    )
+    if scoped or named:
+        return _result(
+            "No tengo publicado ese saldo para el periodo o segmento que pides. "
+            "Filtra la fuente de CxC o inventario en Explorar; no usare ventas ni "
+            "el saldo general como sustituto.",
+            "metric_balance_scope_unavailable", metric_suggestions(metrics), "medium",
+        )
+    business = metrics.get("analisis_negocio") or {}
+    operation = business.get("operacion") or {}
+    if receivables:
+        if metrics.get("moneda_mixta") or metrics.get("datos_monetarios_disponibles") is False:
+            return _answer_currency(metrics)
+        value = _number(operation.get("cuentas_por_cobrar"))
+        if value is not None:
+            return _result(
+                f"El saldo de cuentas por cobrar publicado es {format_amount(value, str(metrics.get('moneda') or 'CLP'))}. "
+                "Es deuda pendiente, no ventas nuevas ni dinero cobrado. Corresponde "
+                "al alcance visible; revisa saldos negativos, duplicados y conciliacion.",
+                "metric_receivables_balance", metric_suggestions(metrics), "medium",
+            )
+        if (metrics.get("analisis_generico") or {}).get("subtipo") == "cuentas_por_cobrar":
+            answer = _generic_numeric_answer(metrics, "saldo total")
+            if answer:
+                answer["answer"] += " Es el saldo declarado, no dinero cobrado; revisa saldos negativos y duplicados antes de conciliarlo."
+                return answer
+        return _result(
+            "No hay un saldo de cuentas por cobrar publicado en esta vista. El cliente "
+            "que mas compra no necesariamente es quien mas debe. Abre la hoja CxC "
+            "en Explorar o valida documentos, pagos y sus IDs; las ventas no permiten "
+            "deducir la deuda pendiente.",
+            "metric_receivables_unavailable", metric_suggestions(metrics), "medium",
+        )
+    stock, value = _number(operation.get("stock_inventario")), _number(operation.get("valor_inventario"))
+    if stock is None and value is None:
+        return _result(
+            "No hay stock ni valor de inventario publicados en esta vista. Abre la "
+            "hoja de inventario en Explorar y revisa el ultimo corte disponible; "
+            "las unidades vendidas no equivalen a existencias. Falta informacion, no significa stock cero.",
+            "metric_business_inventory_unavailable", metric_suggestions(metrics), "medium",
+        )
+    facts = [f"Stock publicado: {_es_number(stock)} unidades"] if stock is not None else []
+    if value is not None and not metrics.get("moneda_mixta") and metrics.get("datos_monetarios_disponibles") is not False:
+        facts.append(f"valor de inventario: {format_amount(value, str(metrics.get('moneda') or 'CLP'))}")
+    elif _contains(question, "valor", "vale") or not facts:
+        return _result("No hay una valorizacion publicable en una moneda compatible. No equivale a cero.",
+                       "metric_business_inventory_value_unavailable", metric_suggestions(metrics), "medium")
+    if operation.get("fecha_corte_inventario"):
+        facts.append(f"corte: {operation['fecha_corte_inventario']}")
+    return _result("; ".join(facts) + ". Es un saldo al corte, no la suma de snapshots mensuales ni caja disponible.",
+                   "metric_business_inventory", metric_suggestions(metrics), "medium")
 
 
 def _answer_business_finances(metrics: dict[str, Any], question: str) -> dict[str, Any] | None:
@@ -1931,6 +2016,9 @@ def answer_metrics_question(
         )
     if _contains(question, "moneda", "en pesos", "en uf", "son uf", "son pesos", "divisa", "esta en uf"):
         return _answer_currency(metrics)
+    balance_answer = _answer_operating_balances(metrics, original_question)
+    if balance_answer is not None:
+        return balance_answer
     collection = _collection_dashboard(metrics)
     if collection is not None:
         if _contains(original_question, "resumelo", "en una frase"):

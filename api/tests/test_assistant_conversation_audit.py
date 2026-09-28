@@ -133,6 +133,75 @@ def test_catalog_scope_is_not_replaced_with_global_average(question):
 
 
 @pytest.mark.parametrize('question', [
+    'y cuanto me deben mis clientes?', 'cuanto me debe la clientela',
+    'cual es mi saldo por cobrar', 'mis cuentas por cobrar', 'mis cxc',
+])
+def test_receivables_are_not_customer_sales_rankings(question):
+    metrics = sales_metrics()
+    history = [{'role': 'user', 'content': 'cuanto vendi'}]
+    response = answer_for(question, metrics=metrics, history=history)
+    assert response['matched_key'] == 'metric_receivables_unavailable'
+    assert 'CxC' in response['answer']
+    assert '$' not in response['answer']
+    metrics['analisis_negocio'] = {'operacion': {'cuentas_por_cobrar': 125}}
+    response = answer_for(question, metrics=metrics, history=history)
+    assert response['matched_key'] == 'metric_receivables_balance'
+    assert '$125' in response['answer']
+    assert 'no ventas nuevas ni dinero cobrado' in response['answer']
+
+
+@pytest.mark.parametrize('question', [
+    'cuanto me debe Cliente B', 'y cuanto me debe el cliente XYZ', 'cuanto me debe Pedro',
+    'saldo por cobrar de Pedro',
+    'cuanto me deben en enero', 'cuentas por cobrar en 2026',
+    'cuanto me deben hoy', 'saldo por cobrar solo en Sur',
+    'cuanto tengo en inventario en febrero', 'valor inventario del producto Azul',
+])
+def test_balances_never_use_sales_subtotals_or_global_balance_for_other_scope(question):
+    metrics = sales_metrics()
+    metrics['analisis_negocio'] = {'operacion': {'cuentas_por_cobrar': 125, 'valor_inventario': 300}}
+    response = answer_for(question, metrics=metrics)
+    assert response['matched_key'] == 'metric_balance_scope_unavailable'
+    assert '$' not in response['answer']
+
+
+def test_receivables_zero_missing_mixed_and_generic_source():
+    metrics = sales_metrics()
+    metrics['analisis_negocio'] = {'operacion': {'cuentas_por_cobrar': 0}}
+    assert '$0' in answer_for('cuanto me deben', metrics=metrics)['answer']
+    metrics['moneda_mixta'] = True
+    assert '$0' not in answer_for('cuanto me deben', metrics=metrics)['answer']
+    metrics['moneda_mixta'] = False
+    metrics['analisis_negocio']['operacion']['cuentas_por_cobrar'] = None
+    assert '$0' not in answer_for('cuanto me deben', metrics=metrics)['answer']
+    metrics['analisis_generico'] = {'subtipo': 'cuentas_por_cobrar', 'numericas': [
+        {'columna': 'SaldoPendiente_CLP', 'total': -25, 'formato': 'moneda'}]}
+    response = answer_for('cuanto me deben mis clientes', metrics=metrics)
+    assert '$-25' in response['answer']
+    assert 'saldo declarado' in response['answer']
+
+
+def test_business_inventory_uses_snapshot_not_sold_units():
+    metrics = sales_metrics()
+    response = answer_for('cuanto tengo en inventario', metrics=metrics)
+    assert response['matched_key'] == 'metric_business_inventory_unavailable'
+    assert 'no significa stock cero' in response['answer']
+    metrics['analisis_negocio'] = {'operacion': {
+        'stock_inventario': 40, 'valor_inventario': 300, 'fecha_corte_inventario': '2026-03-31'}}
+    response = answer_for('y cuanto tengo en inventario', metrics=metrics,
+                         history=[{'role': 'user', 'content': 'cuanto vendi'}])
+    for text in ['40 unidades', '$300', '2026-03-31', 'no la suma']:
+        assert text in response['answer']
+    metrics['moneda_mixta'] = True
+    assert '$300' not in answer_for('cuanto vale el inventario', metrics=metrics)['answer']
+
+
+@pytest.mark.parametrize('question', ['cuentas por cobrar', 'cuenta', 'clientela', 'deben'])
+def test_valid_receivables_words_are_not_changed_by_typo_correction(question):
+    assert normalize_query(question) == question
+
+
+@pytest.mark.parametrize('question', [
     'cuota de almacenamiento', 'error 507', 'espacio lleno', 'cuantos archivos puedo guardar',
     'cuantosarchivospuedoguardar', 'cuatnosarchivospuedoguardar', 'cuantosarchibospuedoguardar',
     'cuantosarchivospuedosubir', 'cuotadealmacenamiento', 'cuota de almacenamieto',
