@@ -29,10 +29,10 @@ _VOCABULARY = frozenset(
     apalancamiento aplicar aporte aportan aporta aporto archivo archivos asignar asistente
     auditoria balance bancario beneficio beneficios bruto bruta caja calcular calculo
     calidad cambio cambios canal canales capital categoria categorias cierre cliente
-    clientes cobrar cobranza cobranzas cobro cobros cobertura compara comparar comparacion comparalos comparalas
+    clientes clientela cuenta cuentas cxc cobrar cobranza cobranzas cobro cobros cobertura compara comparar comparacion comparalos comparalas
     compuesto consolidado consolidar contabilidad contable contado contexto conversion
     convertir convertirlo corriente corto costo costos credito creditos cual cuales cuando cuanto
-    cuantos dato datos debe deuda deudas diferencia dinero documento documentos donde
+    cuantos dato datos debe deben deuda deudas diferencia dinero documento documentos donde
     duplicado duplicados efectivo eficiencia egreso egresos el eliminar en
     endeudamiento entrada entradas equipo equipos error errores es estado estados
     estandarizacion estandarizar estructura evolucion excel excedente excedentes
