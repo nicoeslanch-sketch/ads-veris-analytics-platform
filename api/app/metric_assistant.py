@@ -1085,7 +1085,10 @@ def _answer_operating_balances(metrics: dict[str, Any], question: str) -> dict[s
                        "metric_business_inventory_value_unavailable", metric_suggestions(metrics), "medium")
     if operation.get("fecha_corte_inventario"):
         facts.append(f"corte: {operation['fecha_corte_inventario']}")
-    return _result("; ".join(facts) + ". Es un saldo al corte, no la suma de snapshots mensuales ni caja disponible.",
+    valuation = next((item for group in (business.get("catalogo_indicadores") or {}).get("categorias", [])
+                      for item in group.get("indicadores", []) if item.get("id") == "stock_valorizado"), {})
+    note = " Es un valor parcial: faltan cantidades o costos validos en parte del corte." if valuation.get("estado") == "partial" else ""
+    return _result("; ".join(facts) + ". Es un saldo al corte, no la suma de snapshots mensuales ni caja disponible." + note,
                    "metric_business_inventory", metric_suggestions(metrics), "medium")
 
 

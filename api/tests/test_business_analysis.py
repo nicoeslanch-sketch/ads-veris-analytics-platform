@@ -22,6 +22,47 @@ def _sales_mapping() -> dict[str, dict[str, str]]:
     }
 
 
+@pytest.mark.parametrize('stock_header', ['StockUnidades', 'Stock Unidades', 'Stock_Unidades'])
+def test_inventory_units_use_latest_snapshot_and_its_own_cost(stock_header):
+    frames = {
+        'Ventas_2026': pd.DataFrame({
+            'IDVenta': ['V1'], 'Fecha Venta': ['2026-02-10'],
+            'SKU Producto': ['P1'], 'Cantidad': [1], 'Monto Venta': [100]}),
+        'Productos': pd.DataFrame({'SKU Producto': ['P1', 'P2'], 'Costo Unitario': [900, 900]}),
+        'Inventario_Mensual': pd.DataFrame({
+            'IDStock': [1000, 2000, 3000], 'IDProducto': ['P1', 'P1', 'P2'],
+            'FechaCorte': ['2026-01-31', '2026-02-28', '2026-02-28'],
+            stock_header: [99, 3, 4], 'CostoPromedio_CLP': [50, 10, 20]}),
+    }
+    mappings = {name: resolve_mapping(list(frame.columns), None) for name, frame in frames.items()}
+    analysis = analyze_business_workbook(frames, mappings, {})
+    operation = analysis['operacion']
+    assert operation['stock_inventario'] == 7
+    assert operation['valor_inventario'] == 110
+    assert operation['fecha_corte_inventario'] == '2026-02-28'
+    assert operation['inventario_bajo_minimo'] is None
+    indicators = {item['id']: item for group in analysis['catalogo_indicadores']['categorias']
+                  for item in group['indicadores']}
+    assert indicators['stock_valorizado']['cobertura_datos_pct'] == 100
+    assert indicators['registros_bajo_minimo']['estado'] == 'unavailable'
+
+    frames['Inventario_Mensual'].loc[2, 'CostoPromedio_CLP'] = None
+    partial = analyze_business_workbook(frames, mappings, {})
+    assert partial['operacion']['valor_inventario'] == 30
+    indicator = next(item for group in partial['catalogo_indicadores']['categorias']
+                     for item in group['indicadores'] if item['id'] == 'stock_valorizado')
+    assert indicator['estado'] == 'partial'
+    assert indicator['cobertura_datos_pct'] == 50
+    assert any('parcial' in warning for warning in indicator['advertencias'])
+    from app.support_knowledge import answer_for
+    answer = answer_for('cuanto tengo en inventario', metrics={'moneda': 'CLP', 'analisis_negocio': partial})
+    assert '$30' in answer['answer'] and 'valor parcial' in answer['answer']
+    frames['Inventario_Mensual'] = frames['Inventario_Mensual'].drop(columns=[stock_header])
+    missing = analyze_business_workbook(frames, mappings, {})
+    assert missing['operacion']['stock_inventario'] is None
+    assert missing['operacion']['valor_inventario'] is None
+
+
 def test_retail_business_uses_all_periods_returns_expenses_inventory_and_seller_goals():
     frames = {
         "Ventas_S1": pd.DataFrame({
