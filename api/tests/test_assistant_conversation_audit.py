@@ -297,3 +297,51 @@ def test_income_followup_explains_distinction_instead_of_repeating_total(questio
     response = answer_for(question, metrics=sales_metrics(), history=[{'role': 'user', 'content': 'cuantos ingresos tengo'}])
     assert response['matched_key'] == 'conversation_financial_distinction'
     assert 'No son equivalentes' in response['answer']
+
+
+@pytest.mark.parametrize('previous', ['cuanto tengo en inventario', 'cuanto me deben mis clientes'])
+@pytest.mark.parametrize('question', [
+    'y eso es plata disponible para gastar?',
+    'y eso es dinero disponible?',
+    'y eso es efectivo disponible?',
+    'puedo gastar eso?',
+    'puedo gastarlo?',
+    'yesoesplatadisponibleparagastar',
+])
+def test_noncash_balance_followup_never_becomes_spending_money(previous, question):
+    response = answer_for(question, metrics=sales_metrics(), history=[
+        {'role': 'user', 'content': previous},
+        {'role': 'assistant', 'content': 'Saldo publicado: $300.'},
+    ])
+    assert response['matched_key'] == 'conversation_balance_not_cash'
+    assert 'caja y bancos' in response['answer']
+    assert '$300' not in response['answer']
+
+
+@pytest.mark.parametrize('question', [
+    'el inventario es plata disponible?',
+    'las cuentas por cobrar son dinero para gastar?',
+    'puedo gastar el valor de mi stock?',
+])
+def test_explicit_balance_cash_distinction_does_not_need_history(question):
+    response = answer_for(question)
+    assert response['matched_key'] == 'conversation_balance_not_cash'
+
+
+def test_cash_followup_does_not_intercept_new_stock_or_payment_questions():
+    history = [{'role': 'user', 'content': 'cuanto tengo en inventario'}]
+    for question in ['y cuantos productos tengo?', 'y cuanto vendi en efectivo?', 'como puedo pagar el plan?']:
+        response = answer_for(question, metrics=sales_metrics(), history=history)
+        assert response['matched_key'] != 'conversation_balance_not_cash'
+
+
+def test_income_cash_availability_followup_still_explains_distinction():
+    response = answer_for('y eso es plata disponible?', metrics=sales_metrics(), history=[
+        {'role': 'user', 'content': 'cuantos ingresos tengo'},
+    ])
+    assert response['matched_key'] == 'conversation_financial_distinction'
+
+
+@pytest.mark.parametrize('word', ['plata', 'gastar', 'gastarlo', 'gastado'])
+def test_spending_vocabulary_is_not_rewritten(word):
+    assert normalize_query(word) == word

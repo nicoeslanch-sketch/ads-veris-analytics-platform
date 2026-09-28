@@ -326,6 +326,32 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     await page.getByRole('button', { name: /Descargar libro completo/ }).click()
     const download = await downloadPromise
     expect(download.suggestedFilename()).toMatch(/multihoja_limpio\.xlsx$/)
+    expect(await download.failure()).toBeNull()
+    const cleanPath = await download.path()
+    expect(cleanPath).not.toBeNull()
+    const receivedWorkbook = JSON.parse(execFileSync('python', ['-c', String.raw`
+import json
+import sys
+import openpyxl
+with open(sys.argv[1], 'rb') as source:
+    book = openpyxl.load_workbook(source, read_only=True, data_only=True)
+    result = {'sheets': book.sheetnames, 'sales': {}}
+    for name in ('Enero', 'Febrero'):
+        rows = list(book[name].values)[1:]
+        result['sales'][name] = {'rows': len(rows), 'units': sum(row[2] for row in rows),
+                                 'amount': sum(row[3] for row in rows)}
+    result['products'] = sum(1 for _ in book['Productos'].values) - 1
+    book.close()
+print(json.dumps(result))
+`, cleanPath!], { encoding: 'utf8' }))
+    expect(receivedWorkbook.sheets).toEqual(expect.arrayContaining([
+      'Enero', 'Febrero', 'Productos', 'Observaciones', 'Auditoria', 'Manifest',
+    ]))
+    expect(receivedWorkbook.sales).toEqual({
+      Enero: { rows: 6, units: 10, amount: 14900 },
+      Febrero: { rows: 6, units: 10, amount: 14900 },
+    })
+    expect(receivedWorkbook.products).toBe(5)
 
     await page.setViewportSize({ width: 1600, height: 1000 })
     await page.getByRole('link', { name: /Resumen/ }).first().click()

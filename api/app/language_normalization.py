@@ -37,14 +37,14 @@ _VOCABULARY = frozenset(
     endeudamiento entrada entradas equipo equipos error errores es estado estados
     estandarizacion estandarizar estructura evolucion excel excedente excedentes
     explicar exportar exporto falta faltan fecha fechas financiacion financiamiento financiero
-    financieros finanzas flujo flujos forma formas formula ganancia ganancias gasto gastos generar general grafico graficos
+    financieros finanzas flujo flujos forma formas formula ganancia ganancias gasto gastos gastar gastarlo gastado generar general grafico graficos
     horizontal hoja hojas hoy id importe importacion importar impuesto impuestos
     indicador indicadores industria informacion ingreso ingresos interes intereses inventario
     inversion inversiones largo liquidez limpiar limpieza lo los margen margenes mayor
     mejor mejores menor mes meses mi mis moneda monedas monto montos movimiento
     movimientos negocio neta netas neto nivel nombre notas obligacion obligaciones
     operativo operativos operacional operacionales pago pagos patrimonio periodo periodos peor perdida perdidas
-    pesos plazo por porcentaje porciones presupuesto presupuestos prestamo prestamos primero primeros producto productos
+    pesos plata plazo por porcentaje porciones presupuesto presupuestos prestamo prestamos primero primeros producto productos
     promedio proyectado proyectados proyeccion proyectar proveedor proveedores prueba publica privada
     que quiero ratio ratios razon recaudacion recomendacion recomendaciones registro
     registros relacion rentabilidad reporte reportes resultado resultados resumen riesgo
@@ -215,6 +215,7 @@ _TYPO_ALIASES = {
 # Atajos muy habituales. El segmentador cubre otras combinaciones, mientras estas
 # entradas permiten tolerar incluso una pequena errata dentro de una frase pegada.
 _JOINED_ALIASES = {
+    "yesoesplatadisponibleparagastar": "y eso es plata disponible para gastar",
     "cuantosusuariospuedenusarlaplataforma": "cuantos usuarios pueden usar la plataforma",
     "cuantosusuariossoporta": "cuantos usuarios soporta",
     "analisisfinanciero": "analisis financiero",
