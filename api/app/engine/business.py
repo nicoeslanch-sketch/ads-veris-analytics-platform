@@ -13,7 +13,7 @@ from typing import Any
 
 import pandas as pd
 
-from .mapping import strip_accents_lower
+from .mapping import header_words, strip_accents_lower
 from .multi_sheet import append_compatible_frames
 from .quality import (
     find_column,
@@ -2439,6 +2439,9 @@ def analyze_business_workbook(
     inventory_stock = None
     inventory_below_minimum = None
     inventory_snapshot_date = None
+    inventory_value_coverage = None
+    inventory_value_formula = "Suma de valores declarados del ultimo corte"
+    inventory_value_warnings: list[str] = []
     inventory_cut = None
     if inventory_frame is not None and not dimensional_filter_applied:
         inventory_dates = _dates(
@@ -2463,8 +2466,13 @@ def analyze_business_workbook(
         inventory_values = numeric_series(
             inventory_cut, find_column(inventory_cut.columns, "valor", "inventario")
         )
+        # Identifier tokens must not exclude the letters "id" inside "unidades".
+        stock_columns = [
+            column for column in inventory_cut.columns
+            if not set(header_words(column).split()) & {"id", "cod", "codigo"}
+        ]
         stock_col = _first_column(
-            inventory_cut.columns,
+            stock_columns,
             (
                 ("stock", "unidades"),
                 ("stock", "disponible"),
@@ -2472,7 +2480,7 @@ def analyze_business_workbook(
                 ("stock", "sistema"),
                 ("stock",),
             ),
-            excluded=("minimo", "id", "cod", "codigo"),
+            excluded=("minimo",),
         )
         stock_values = numeric_series(inventory_cut, stock_col)
         minimum_values = numeric_series(
@@ -2500,13 +2508,22 @@ def analyze_business_workbook(
             float(stock_values.dropna().sum()) if stock_values.notna().any() else None
         )
         comparable_stock = stock_values.notna() & minimum_values.notna()
-        inventory_below_minimum = int(
-            (comparable_stock & (stock_values < minimum_values)).sum()
+        inventory_below_minimum = (
+            int((comparable_stock & (stock_values < minimum_values)).sum())
+            if comparable_stock.any() else None
         )
         if inventory_values.notna().any():
             inventory_value = float(inventory_values.dropna().sum())
-        elif stock_values.notna().any() and cost_key and unit_cost_col:
-            if inventory_product_key and not safe_costs.empty:
+            inventory_value_coverage = float(inventory_values.notna().mean() * 100)
+        elif stock_values.notna().any():
+            snapshot_cost_col = _first_column(
+                inventory_cut.columns,
+                (("costo", "promedio"), ("costo", "unitario")),
+                excluded=("total", "venta", "precio"),
+            )
+            inventory_unit_cost = numeric_series(inventory_cut, snapshot_cost_col)
+            inventory_value_formula = "Suma de stock por costo unitario de referencia del ultimo corte"
+            if not snapshot_cost_col and cost_key and unit_cost_col and inventory_product_key and not safe_costs.empty:
                 cost_lookup = dict(
                     zip(
                         safe_costs["_key"],
@@ -2517,11 +2534,14 @@ def analyze_business_workbook(
                 inventory_unit_cost = _keys(
                     inventory_cut[inventory_product_key]
                 ).map(cost_lookup)
-                valued = stock_values.notna() & inventory_unit_cost.notna()
-                if valued.any():
-                    inventory_value = float(
-                        (stock_values[valued] * inventory_unit_cost[valued]).sum()
-                    )
+                inventory_value_formula = "Suma de stock del ultimo corte por costo de referencia del catalogo"
+                inventory_value_warnings.append("El costo proviene del catalogo; valida su vigencia para la fecha del corte.")
+            valued = stock_values.notna() & inventory_unit_cost.notna()
+            if valued.any():
+                inventory_value = float((stock_values[valued] * inventory_unit_cost[valued]).sum())
+                inventory_value_coverage = float(valued.mean() * 100)
+        if inventory_value_coverage is not None and inventory_value_coverage < 100:
+            inventory_value_warnings.append("Valor parcial: hay filas del corte sin cantidad o costo validos; no se completan con cero.")
 
     purchase_frame = frames.get((kinds.get("compras") or [None])[0]) if kinds.get("compras") else None
     purchases_total = None
@@ -3848,11 +3868,12 @@ def analyze_business_workbook(
             currency_unit,
             period_from=inventory_snapshot_date,
             period_to=inventory_snapshot_date,
-            formula="Σ stock disponible × costo unitario ponderado, último corte",
+            formula=inventory_value_formula,
             numerator=inventory_value,
-            warnings=[]
-            if inventory_snapshot_date
-            else ["No se identificó una fecha de corte; se usa el conjunto disponible."],
+            coverage=inventory_value_coverage,
+            status="partial" if inventory_value_coverage is not None and inventory_value_coverage < 100 else None,
+            warnings=inventory_value_warnings + ([] if inventory_snapshot_date
+                else ["No se identificó una fecha de corte; se usa el conjunto disponible."]),
             required=["stock", "costo unitario", "fecha de snapshot"],
             sources=[(kinds.get("inventario") or [None])[0]]
             if kinds.get("inventario")
