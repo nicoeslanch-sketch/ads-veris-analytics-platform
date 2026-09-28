@@ -22,3 +22,14 @@ database migration, payment activation or infrastructure subscription is require
 Synthetic regressions cover header variants, misleading numeric identifiers,
 different catalog and snapshot costs, multiple dates, missing costs and missing
 stock quantities. A private workbook comparison is kept outside the public repo.
+
+## Assistant and download verification follow-up
+
+- Recognize conversational questions about whether inventory or receivables
+  represent money available to spend. Explain the cash/bank inputs needed
+  without presenting stock value or customer debt as spendable cash.
+- Preserve spending vocabulary and support the observed joined-word variant.
+- Reopen the browser-downloaded synthetic workbook in E2E, checking required
+  sheets, row counts, quantities and sales sums rather than only its filename.
+
+This follow-up changes no analytical formula or cache version. Payments remain off.

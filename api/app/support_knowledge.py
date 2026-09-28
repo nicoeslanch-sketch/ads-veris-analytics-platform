@@ -224,10 +224,25 @@ def answer_for(
         r"\b(caja|cobranza|cobros|cobrado|cobrada|recaudacion)\b",
     )
     distinction = bool(re.search(r"\b(son|es|significa|equivale|equivalen|igual|iguales|diferencia)\b", normalized))
+    spending = bool(re.search(r"\b(?:puedo|podria)\s+(?:gastar|gastarlo|pagar)\b", normalized))
     topic_context = normalized
-    if distinction and re.search(r"\b(eso|esos|esa|esas)\b", normalized):
+    if (distinction or spending) and re.search(r"\b(eso|esos|esa|esas|gastarlo)\b", normalized):
         previous = next((str(item.get('content') or '') for item in reversed(history or []) if item.get('role') == 'user'), '')
         topic_context += ' ' + normalize_query(previous)
+    # Availability questions take precedence over the previous stock/balance topic.
+    cash_available = bool(re.search(
+        r"\b(?:plata|dinero|efectivo|caja)\s+(?:disponible|para\s+(?:gastar|pagar))\b",
+        normalized,
+    ))
+    noncash_balance = bool(re.search(r"\b(?:inventario|stock|cuentas por cobrar|por cobrar|cxc|me deben)\b", topic_context))
+    if (distinction and cash_available or spending) and noncash_balance:
+        return {
+            "answer": "No se puede tratar ese saldo como dinero disponible para gastar. El inventario son existencias valoradas que aun deben venderse y cobrarse; las cuentas por cobrar son importes pendientes de pago. Para conocer el efectivo disponible hay que revisar saldos de caja y bancos, cobros y pagos, sus fechas y compromisos pendientes. No puedo deducir ese importe del inventario ni de la deuda de los clientes.",
+            "matched_key": "conversation_balance_not_cash", "confidence": "high",
+            "suggestions": ["Flujo de caja", "Presupuesto de tesoreria", "Mi inventario", "Mis cuentas por cobrar"],
+        }
+    if cash_available:
+        topic_context += ' caja'
     if distinction and sum(bool(re.search(pattern, topic_context)) for pattern in financial_topics) >= 2:
         return {
             "answer": "No son equivalentes. Los ingresos por ventas no son ganancia ni dinero cobrado. La utilidad descuenta los costos y gastos que correspondan a su definicion; la cobranza registra pagos recibidos, que pueden corresponder a ventas de otro periodo. El saldo de caja tambien depende de pagos, financiamiento y saldo inicial. No se puede deducir caja ni utilidad completa solo del total de ingresos: hay que revisar fuentes, fechas y cobertura.",
