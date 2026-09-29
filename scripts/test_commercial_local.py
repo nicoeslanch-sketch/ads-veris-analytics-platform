@@ -149,6 +149,48 @@ class SecurityLab:
                 assert self.sql(f"select has_function_privilege('{role}','public.{function}','execute')") == 'f'
         self.checks['request_budget_and_support_rpc_service_only'] = True
 
+    def test_privacy(self):
+        owner, foreign, admin = self.account(), self.account(), self.account(admin=True)
+        assert not self.rpc('account_privacy_state', {'p_user_id': owner})['accepted']
+        accepted = self.rpc('accept_account_legal', {'p_user_id': owner, 'p_version': '2026-09-28'})
+        assert accepted['accepted']
+        original_time = self.sql(f"select accepted_at from public.legal_acceptances where user_id='{owner}'")
+        self.rpc('accept_account_legal', {'p_user_id': owner, 'p_version': '2026-09-28'})
+        assert self.sql(f"select accepted_at from public.legal_acceptances where user_id='{owner}'") == original_time
+        self.rpc('accept_account_legal', {'p_user_id': foreign, 'p_version': 'old'}, expected=400)
+        requests = self.concurrent(lambda _: self.rpc('create_privacy_request', {
+            'p_user_id': owner, 'p_kind': 'erasure', 'p_message': 'Synthetic erasure request'}), 8)
+        rid = requests[0]['id']
+        assert all(r['id'] == rid and r['status'] == 'pending' for r in requests)
+        assert self.rpc('account_privacy_state', {'p_user_id': foreign})['requests'] == []
+        assert self.sql(f"select count(*) from auth.users where id='{owner}'") == '1'
+        self.rpc('admin_privacy_requests', {'p_admin_id': foreign}, expected=403)
+        self.rpc('resolve_privacy_request', {'p_admin_id': foreign, 'p_request_id': rid,
+            'p_status': 'resolved', 'p_response': 'Unauthorized answer'}, expected=403)
+        self.rpc('resolve_privacy_request', {'p_admin_id': admin, 'p_request_id': rid,
+            'p_status': 'reviewing', 'p_response': 'Synthetic request acknowledged'})
+        assert self.sql(f"select count(*) from public.admin_audit where detail->>'request_id'='{rid}'") == '1'
+        visible = self.sql(f"begin; set local role authenticated; select set_config('request.jwt.claims',"
+            f"'{{\"sub\":\"{foreign}\",\"aal\":\"aal1\"}}',true); "
+            f"select count(*) from public.privacy_requests where id='{rid}'; rollback;")
+        assert '\n0\n' in visible
+        for table in ('privacy_requests', 'legal_acceptances'):
+            assert self.sql(f"select has_table_privilege('authenticated','public.{table}','insert')") == 'f'
+            assert self.sql(f"select has_table_privilege('authenticated','public.{table}','update')") == 'f'
+        for func in ('account_privacy_state(uuid)', 'accept_account_legal(uuid,text)',
+                     'create_privacy_request(uuid,text,text)', 'admin_privacy_requests(uuid)',
+                     'resolve_privacy_request(uuid,uuid,text,text)'):
+            for role in ('anon', 'authenticated'):
+                assert self.sql(f"select has_function_privilege('{role}','public.{func}','execute')") == 'f'
+        uid = str(uuid4())
+        self.sql(f"insert into auth.users(id, raw_user_meta_data) values ('{uid}',"
+                 "'{\"legal_version\":\"2026-09-28\",\"service_data_consent\":true}');")
+        assert self.rpc('account_privacy_state', {'p_user_id': uid})['accepted']
+        self.sql(f"update auth.users set raw_user_meta_data='{{\"legal_version\":\"2026-09-28\","
+                 f"\"service_data_consent\":true}}' where id='{foreign}';")
+        assert not self.rpc('account_privacy_state', {'p_user_id': foreign})['accepted']
+        self.checks['privacy_isolation_concurrent_idempotency_server_evidence_and_admin_audit'] = True
+
     def run(self):
         assert self.sql("select count(*) from auth.users") == "0", "Refusing populated database"
         owner, foreign, admin = self.account(), self.account(), self.account(admin=True)
@@ -250,6 +292,7 @@ class SecurityLab:
         self.checks["backend_cannot_rewrite_audit_history"] = True
         self.test_mfa()
         self.test_account_limits()
+        self.test_privacy()
         self.test_operational_health()
         self.test_initial_import_queue()
 

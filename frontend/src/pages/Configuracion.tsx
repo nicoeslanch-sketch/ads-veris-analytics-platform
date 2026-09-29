@@ -13,6 +13,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import StorageUsage from '../components/StorageUsage'
+import PrivacyCenter from '../components/PrivacyCenter'
 import MfaPanel from '../auth/MfaPanel'
 import { useAuth } from '../auth/AuthContext'
 import { useAccess } from '../lib/access'
@@ -408,6 +409,7 @@ export default function Configuracion() {
           </Card>
         </div>
       </div>
+      <PrivacyCenter />
     </>
   )
 }

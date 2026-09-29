@@ -13,6 +13,8 @@ def commercial_readiness(user_id: str, settings: Settings) -> dict:
         'purchases_enabled': False,
         'database_migration_required': LATEST_MIGRATION,
         'items': [
+            {'id': 'privacy', 'title': 'Privacidad y derechos', 'state': 'prepared',
+             'detail': 'Politicas publicas, aceptacion versionada y solicitudes con auditoria. Falta revision legal, contratos con encargados y completar el procedimiento verificable de borrado total de cuentas.'},
             {'id': 'mfa', 'title': 'Doble factor de esta cuenta',
              'state': 'ready' if mfa_enforced(settings) and context['has_mfa'] else 'pending',
              'detail': 'Verificado contra la cuenta; administracion exige segundo factor en produccion.'},

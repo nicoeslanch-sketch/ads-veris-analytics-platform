@@ -258,3 +258,5 @@ recovery-private/
 *.dump
 *.backup
 ads-recovery.zip
+# Generated from installed, locked production dependencies during dev/build.
+frontend/public/THIRD_PARTY_NOTICES.txt

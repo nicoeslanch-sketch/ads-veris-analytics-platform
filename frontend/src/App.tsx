@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent } from 'react'
+import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { startApiWarmup } from './lib/api'
@@ -9,6 +9,7 @@ import { DatasetProvider } from './data/DatasetContext'
 import { DemoProvider } from './demo/DemoContext'
 import ProtectedRoute from './auth/ProtectedRoute'
 import SecurityGate from './auth/SecurityGate'
+import PrivacyAcceptanceGate from './auth/PrivacyAcceptanceGate'
 import AppShell from './components/layout/AppShell'
 import Login from './pages/Login'
 
@@ -24,6 +25,11 @@ const Planes = lazy(() => import('./pages/Planes'))
 const Configuracion = lazy(() => import('./pages/Configuracion'))
 const AdminCuentas = lazy(() => import('./pages/AdminCuentas'))
 const RestablecerContrasena = lazy(() => import('./pages/RestablecerContrasena'))
+const Legal = lazy(() => import('./pages/Legal'))
+
+function WorkspaceProviders({ children }: { children: ReactNode }) {
+  return <SecurityGate><PrivacyAcceptanceGate><AccessProvider><DatasetProvider><DemoProvider>{children}</DemoProvider></DatasetProvider></AccessProvider></PrivacyAcceptanceGate></SecurityGate>
+}
 
 function lazyPage(Page: LazyExoticComponent<ComponentType>) {
   return (
@@ -45,6 +51,7 @@ function AppRoutes() {
 
   if (
     location.pathname !== PASSWORD_RECOVERY_PATH
+    && !['/privacidad', '/condiciones', '/licencias'].includes(location.pathname)
     && (recoveryMode || hasPasswordRecoveryHint(location))
   ) {
     return (
@@ -62,8 +69,11 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/privacidad" element={lazyPage(Legal)} />
+      <Route path="/condiciones" element={lazyPage(Legal)} />
+      <Route path="/licencias" element={lazyPage(Legal)} />
       <Route path={PASSWORD_RECOVERY_PATH} element={lazyPage(RestablecerContrasena)} />
-      <Route element={<ProtectedRoute />}>
+      <Route element={<WorkspaceProviders><ProtectedRoute /></WorkspaceProviders>}>
         <Route element={<AppShell />}>
           <Route path="/" element={lazyPage(Resumen)} />
           <Route path="/explorar" element={lazyPage(Explorar)} />
@@ -91,17 +101,9 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <SecurityGate>
-      <AccessProvider>
-      <DatasetProvider>
-        <DemoProvider>
         <BrowserRouter>
           <AppRoutes />
         </BrowserRouter>
-        </DemoProvider>
-      </DatasetProvider>
-      </AccessProvider>
-      </SecurityGate>
     </AuthProvider>
   )
 }

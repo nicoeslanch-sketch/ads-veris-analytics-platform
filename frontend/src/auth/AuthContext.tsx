@@ -9,6 +9,7 @@ import {
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { hasPasswordRecoveryHint } from './recovery'
+import { LEGAL_VERSION } from '../lib/privacy'
 
 interface RegisterData {
   email: string
@@ -17,6 +18,7 @@ interface RegisterData {
   company: string
   country: string
   phone: string
+  legalConsent: boolean
 }
 
 interface AuthContextValue {
@@ -94,14 +96,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     company,
     country,
     phone,
+    legalConsent,
   }) => {
+    if (!legalConsent) return { error: 'Debes aceptar las condiciones y el tratamiento de datos.' }
     if (!supabase) return { error: 'Supabase no está configurado.' }
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         // El trigger handle_new_user copia estos campos a public.profiles
-        data: { full_name: fullName, company, country, phone },
+        data: { full_name: fullName, company, country, phone,
+          legal_version: LEGAL_VERSION, service_data_consent: true },
       },
     })
     return { error: error ? translateAuthError(error.message) : null }
