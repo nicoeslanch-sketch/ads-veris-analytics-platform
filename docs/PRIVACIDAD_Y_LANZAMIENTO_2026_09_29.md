@@ -4,6 +4,8 @@ Responsable informado por el titular: ADS Veris SpA. Contacto: servicios@adsveri
 Version de los textos y aceptacion: 2026-09-28. Revision tecnica: 2026-09-29.
 No es certificacion legal, de seguridad ni autorizacion para cobrar.
 
+Migracion aplicada en produccion: 20260929094534_privacy_rights_and_consent.sql (version generada por Supabase al aplicar). Laboratorio PostgreSQL aprobado antes de aplicarla; no se borraron datos existentes.
+
 ## Implementado en este cambio
 
 - Paginas publicas /privacidad, /condiciones y /licencias, accesibles sin login/MFA.
