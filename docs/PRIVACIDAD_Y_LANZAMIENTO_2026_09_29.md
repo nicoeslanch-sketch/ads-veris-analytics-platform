@@ -15,7 +15,7 @@ No es certificacion legal, de seguridad ni autorizacion para cobrar.
 - El boton de eliminacion completa SOLICITA la eliminacion. No ejecuta el borrado total de cuenta. Los archivos individuales se borran desde Historial con la saga existente.
 - El bot explica esta diferencia y no simula haber borrado datos ni haber consultado una solicitud privada.
 - Licencias completas de las dependencias de produccion en la distribucion. Poppins: OFL 1.1, local. Lucide: ISC/partes MIT. Victory omite su licencia raiz en npm; se conserva la del tag exacto y las de D3 incluido.
-- Escaneo Gitleaks del historial y CI adicional. La unica coincidencia inicial fue TEST_SECRET en un fixture de tests; se excluye SOLO su huella historica exacta, no la carpeta tests.
+- Escaneo Gitleaks del historial y CI adicional. Tras incluir todas las ramas remotas, las dos coincidencias fueron TEST_SECRET en fixtures de tests; se excluyen SOLO sus huellas historicas exactas, no la carpeta tests. Sin otras coincidencias en los 259 commits revisados en ese punto; no es una garantia de ausencia absoluta de secretos.
 
 ## Registro interno de tratamientos (no inscripcion oficial)
 
