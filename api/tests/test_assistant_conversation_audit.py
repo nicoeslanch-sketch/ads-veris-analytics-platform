@@ -30,6 +30,14 @@ def test_privacy_guidance_without_invented_actions(question, key):
     assert answer['matched_key'] == key, answer
 
 
+@pytest.mark.parametrize('question', ['quiero borrar mis datos duplicados', 'eliminar mis datos duplicados',
+                                    'borra mis datos duplicados'])
+def test_duplicate_cleanup_is_not_account_erasure(question):
+    answer = answer_for(question, metrics=sales_metrics())
+    assert answer['matched_key'] == 'duplicates', answer
+    assert 'Configuracion > Privacidad' not in answer['answer']
+
+
 @pytest.mark.parametrize('name,metrics,turns', conversation_scenarios(), ids=lambda item: item if isinstance(item, str) else None)
 def test_reproducible_conversations(name, metrics, turns):
     history = []

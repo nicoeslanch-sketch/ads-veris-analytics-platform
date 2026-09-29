@@ -212,9 +212,10 @@ def answer_for(
     if re.search(r"\b(?:eliminar|borrar|borra|cerrar)\s+(?:todos\s+)?(?:mi|mis|la)\s+(?:cuenta|datos)\b", normalized) or re.search(
         r"\b(?:ya lo borraste|ya estan borrados)\b", normalized,
     ):
-        item = next(row for row in ARTICLES if row['key'] == 'privacy_erasure')
+        key = 'duplicates' if re.search(r'\bduplicados\b', normalized) and not re.search(r'\bcuenta\b', normalized) else 'privacy_erasure'
+        item = next(row for row in ARTICLES if row['key'] == key)
         return {"answer": item['response'], "matched_key": item['key'], "confidence": "high",
-                "suggestions": ["Mis datos y privacidad", "Eliminar cuenta y datos"]}
+                "suggestions": ["Calidad y duplicados"] if key == 'duplicates' else ["Mis datos y privacidad", "Eliminar cuenta y datos"]}
     # A question about processing rules is not a request to count duplicates.
     if re.search(r"\b(limpieza|descarga|descargar|duplicados)\b", normalized) and re.search(
         r"\b(afecta|cambia|eliminar|elimina|omite|igual|puedo)\b", normalized,
