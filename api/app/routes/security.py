@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Response
 from fastapi.concurrency import run_in_threadpool
 
 from ..auth import AuthenticatedUser, get_verified_user
-from ..account_security import mfa_enforced, security_context
+from ..account_security import mfa_enforced, require_live_session
 from ..config import Settings, get_settings
 
 router = APIRouter(prefix="/security")
@@ -18,7 +18,8 @@ async def session_security(
 ) -> dict:
     response.headers["Cache-Control"] = "no-store"
     enforced = mfa_enforced(settings)
-    context = await run_in_threadpool(security_context, user.id, settings) if enforced else {
+    context = (user.security_context or await run_in_threadpool(
+        require_live_session, user.id, user.claims, settings)) if enforced else {
         "has_mfa": False, "is_admin": False,
     }
     verified = user.claims.get("aal") == "aal2"

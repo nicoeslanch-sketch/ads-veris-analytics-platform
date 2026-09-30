@@ -27,6 +27,7 @@ class AuthenticatedUser:
     id: str
     email: str | None
     claims: dict
+    security_context: dict | None = None
 
 
 @lru_cache(maxsize=8)
@@ -142,10 +143,14 @@ def get_verified_user(
             detail="Token invalido. Inicia sesion nuevamente.",
         )
 
+    from .account_security import require_live_session
+
+    context = require_live_session(claims["sub"], claims, settings)
     return AuthenticatedUser(
         id=claims.get("sub", ""),
         email=claims.get("email"),
         claims=claims,
+        security_context=context,
     )
 
 
@@ -156,5 +161,5 @@ def get_current_user(
     from .account_security import require_account_mfa
 
     user = get_verified_user(credentials, settings)
-    require_account_mfa(user.id, user.claims, settings)
+    require_account_mfa(user.id, user.claims, settings, user.security_context)
     return user

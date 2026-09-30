@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
-from app import auth
+from app import account_security, auth
 from app.config import Settings
 
 
@@ -49,6 +49,7 @@ def test_key_failure_preserves_authentication_and_hides_diagnostics(monkeypatch,
 @pytest.mark.parametrize("wrong_issuer", [False, True])
 def test_production_es256_validates_project_after_key_recovery(monkeypatch, signed_session, wrong_issuer):
     key, claims, settings, credentials = signed_session
+    monkeypatch.setattr(account_security, 'require_live_session', lambda *a: {'session_active': True})
     monkeypatch.setattr(auth, "_jwks_client", lambda _url: SimpleNamespace(
         get_signing_key_from_jwt=lambda _token: SimpleNamespace(key=key.public_key()),
     ))
