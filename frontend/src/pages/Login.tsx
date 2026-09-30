@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
 import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '../auth/password'
 import { buildPasswordRecoveryRedirect } from '../auth/recovery'
+import LegalConsent from '../components/LegalConsent'
 
 type Mode = 'login' | 'register'
 
@@ -44,6 +45,7 @@ export default function Login() {
   const [company, setCompany] = useState('')
   const [country, setCountry] = useState('Chile')
   const [phone, setPhone] = useState('')
+  const [legalConsent, setLegalConsent] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(() => {
     const routeState = location.state as { notice?: unknown } | null
@@ -92,6 +94,10 @@ export default function Login() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+    if (mode === 'register' && !legalConsent) {
+      setError('Debes leer y aceptar las condiciones y el tratamiento de datos para crear una cuenta.')
+      return
+    }
     setError(null)
     setNotice(null)
     // Fase 13: contraseña reforzada al crear cuenta — mínimo 8 caracteres
@@ -119,6 +125,7 @@ export default function Login() {
           company,
           country,
           phone,
+          legalConsent,
         })
         if (err) {
           setError(err)
@@ -236,10 +243,9 @@ export default function Login() {
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-navy">
-                      Telefono
+                      Telefono (opcional)
                     </label>
                     <input
-                      required
                       type="tel"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
@@ -337,6 +343,8 @@ export default function Login() {
               </div>
             )}
 
+            {mode === 'register' && <LegalConsent checked={legalConsent} onChange={setLegalConsent} />}
+
             {error && (
               <div className="flex items-start gap-2 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -346,7 +354,7 @@ export default function Login() {
 
             <Button
               type="submit"
-              disabled={submitting || !configured}
+              disabled={submitting || !configured || (mode === 'register' && !legalConsent)}
               className="w-full"
             >
               {submitting
@@ -373,6 +381,9 @@ export default function Login() {
               {mode === 'login' ? 'Regístrate' : 'Inicia sesión'}
             </button>
           </p>
+          <nav aria-label="Informacion legal" className="mt-5 flex flex-wrap justify-center gap-4 text-xs text-teal">
+            <a href="/privacidad">Privacidad</a><a href="/condiciones">Condiciones</a><a href="/licencias">Licencias</a>
+          </nav>
         </div>
       </div>
     </div>

@@ -1,0 +1,5 @@
+# Historical synthetic JWT fixture; TEST_SECRET used only by api/tests/conftest.py.
+# Exact finding only: no exclusion for production files, entire tests, or future secrets.
+66e8f4edacf5f698589c2c9c1231ca0e46889dfe:api/tests/conftest.py:generic-api-key:6
+# Same category: TEST_SECRET for JWT rejection tests on a historical remote branch.
+771472abb0d683c52c3b83a0780c63e147595795:api/tests/test_qa_security_hardening.py:generic-api-key:18

@@ -31,6 +31,7 @@ from .routes.retention import router as retention_router
 from .routes.storage_upload import router as storage_upload_router
 from .routes.support import router as support_router
 from .routes.security import router as security_router
+from .routes.privacy import router as privacy_router
 from .consolidation.router import router as consolidation_router
 
 settings = get_settings()
@@ -178,6 +179,7 @@ app.include_router(pipeline_router)
 app.include_router(me_router)
 app.include_router(ai_router)
 app.include_router(security_router)
+app.include_router(privacy_router)
 app.include_router(assistant_router)
 app.include_router(coins_router)
 app.include_router(connectors_router)

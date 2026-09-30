@@ -10,6 +10,34 @@ from app.routes import assistant
 from tests.assistant_scenarios import conversation_scenarios, sales_metrics
 
 
+@pytest.mark.parametrize('question', ['quiero eliminar mi cuenta', 'borrarmicuenta',
+    'quieroeliminarmicuenta', 'borramisdatos', 'borra mis datos', 'quieroelimnarmicuenta'])
+def test_privacy_erasure_is_not_a_financial_account_and_never_claims_execution(question):
+    history = []
+    for text in [question, 'y ya lo borraste?', 'yaloborraste']:
+        reply = answer_for(text, metrics=sales_metrics(), history=history)
+        assert reply['matched_key'] == 'privacy_erasure', reply
+        assert 'Este chat no ejecuta borrados' in reply['answer']
+        assert 'recibida no significa' in reply['answer']
+        history += [{'role': 'user', 'content': text}, {'role': 'assistant', 'content': reply['answer']}]
+
+
+@pytest.mark.parametrize('question,key', [('politicadeprivacidad', 'privacy_rights'),
+    ('revocarconsentimiento', 'privacy_rights'), ('donde puedo guardar tarjeta', 'privacy_card_data'),
+    ('te envio mi cvv', 'privacy_card_data')])
+def test_privacy_guidance_without_invented_actions(question, key):
+    answer = answer_for(question)
+    assert answer['matched_key'] == key, answer
+
+
+@pytest.mark.parametrize('question', ['quiero borrar mis datos duplicados', 'eliminar mis datos duplicados',
+                                    'borra mis datos duplicados'])
+def test_duplicate_cleanup_is_not_account_erasure(question):
+    answer = answer_for(question, metrics=sales_metrics())
+    assert answer['matched_key'] == 'duplicates', answer
+    assert 'Configuracion > Privacidad' not in answer['answer']
+
+
 @pytest.mark.parametrize('name,metrics,turns', conversation_scenarios(), ids=lambda item: item if isinstance(item, str) else None)
 def test_reproducible_conversations(name, metrics, turns):
     history = []

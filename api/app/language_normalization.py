@@ -215,6 +215,12 @@ _TYPO_ALIASES = {
 # Atajos muy habituales. El segmentador cubre otras combinaciones, mientras estas
 # entradas permiten tolerar incluso una pequena errata dentro de una frase pegada.
 _JOINED_ALIASES = {
+    "quieroeliminarmicuenta": "quiero eliminar mi cuenta",
+    "borrarmicuenta": "borrar mi cuenta",
+    "borramisdatos": "borra mis datos",
+    "yaloborraste": "ya lo borraste",
+    "politicadeprivacidad": "politica de privacidad",
+    "revocarconsentimiento": "revocar consentimiento",
     "yesoesplatadisponibleparagastar": "y eso es plata disponible para gastar",
     "cuantosusuariospuedenusarlaplataforma": "cuantos usuarios pueden usar la plataforma",
     "cuantosusuariossoporta": "cuantos usuarios soporta",
