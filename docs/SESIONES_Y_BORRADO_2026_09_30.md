@@ -24,7 +24,8 @@ lo haya activado voluntariamente.
   indisponibilidad y ausencia de cache de autorizacion.
 - Laboratorio PostgreSQL/Auth aislado: inicio de sesion, TOTP, cierre global
   real y reutilizacion del token previo. El token revocado debe perder acceso
-  directo por RLS y la consulta privada debe indicar sesion inactiva.
+  directo por RLS y a una descarga real de Storage; la consulta privada debe
+  indicar sesion inactiva.
 - Controles positivos de sesiones vigentes, aislamiento entre usuarios,
   `not_after`, suspension, eliminacion logica y eliminacion por Auth Admin.
 - Las pruebas destructivas se limitan a cuentas sinteticas en localhost.
@@ -40,6 +41,20 @@ El caso critico de mezcla HS/asimetrica no coincide con nuestra separacion
 de algoritmos, pero eso no justifica conservar una dependencia vulnerable.
 
 Fuente: https://github.com/jpadilla/pyjwt/releases/tag/2.14.0
+
+## Conversacion del asistente
+
+Se probaron preguntas de recuperacion de clave, TOTP, QR, obligatoriedad,
+perdida de factores, cierre de sesion y cierre de cuenta. Antes del cambio,
+17 de los 20 casos iniciales fallaban: el motor enviaba preguntas de acceso a
+respuestas de tarjetas, proyecciones o importacion. La version corregida pasa
+23 casos, incluyendo una conversacion encadenada de diez turnos y protecciones
+para no interpretar claves bancarias como recuperacion de acceso.
+
+El diccionario conserva palabras validas como `recupero`, `cerre` y `escanear`,
+que antes se corregian erroneamente como `recupera`, `cierre` y `estandar`.
+Se toleran consultas pegadas y errores comunes sin ejecutar acciones ni
+solicitar claves. El bot sigue siendo determinista, no un modelo generativo.
 
 ## Limites que siguen abiertos
 

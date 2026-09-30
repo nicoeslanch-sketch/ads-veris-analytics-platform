@@ -121,6 +121,12 @@ class SecurityLab:
         payload = {'p_user_id': uid, 'p_session_id': claims['session_id']}
         assert self.rpc('verified_session_context', payload)['session_active'] is True
         assert self.rpc('verified_session_context', {**payload, 'p_user_id': self.account()})['session_active'] is False
+        object_url = self.base + '/storage/v1/object/datasets/' + uid + '/session-test.csv'
+        object_content = b'id,amount\n1,10\n'
+        r = self.http.post(object_url, headers={**self.headers, 'Content-Type': 'text/csv'}, content=object_content)
+        assert r.status_code in (200, 201), ('synthetic storage upload', r.status_code)
+        r = self.http.get(object_url, headers=aal2)
+        assert r.status_code == 200 and r.content == object_content, ('active storage access', r.status_code)
         for headers in (aal1, aal2, {'apikey': self.anon_key}):
             r = self.http.post(self.base + '/rest/v1/rpc/session_security_context', headers=headers,
                                json={'p_user_id': uid})
@@ -133,7 +139,13 @@ class SecurityLab:
         assert self.rpc('verified_session_context', payload)['session_active'] is False
         assert profile(aal2) == [], 'A revoked AAL2 token must lose direct data access immediately'
         assert profile(aal1) == []
+        r = self.http.get(object_url, headers=aal2)
+        assert r.status_code in (400, 401, 403, 404) and r.content != object_content, ('revoked storage access', r.status_code)
+        r = self.http.request('DELETE', self.base + '/storage/v1/object/datasets', headers=self.headers,
+                             json={'prefixes': [uid + '/session-test.csv']})
+        assert r.status_code in (200, 204), ('synthetic storage cleanup', r.status_code)
         self.checks['real_global_logout_denies_unexpired_aal1_and_aal2_tokens'] = True
+        self.checks['real_storage_download_denied_after_global_logout'] = True
         admin = self.account(admin=True)
         admin_sid = self.synthetic_session(admin)
         result = self.sql(f"begin; set local role authenticated; "
