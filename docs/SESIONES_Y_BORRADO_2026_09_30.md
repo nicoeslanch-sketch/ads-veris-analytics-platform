@@ -1,5 +1,9 @@
 # Sesiones revocadas y eliminacion de cuentas
 
+Migracion aplicada: `20260930095641_revoked_session_guards.sql`. La version
+corresponde a la fecha generada por Supabase al aplicar. No modifica ni elimina
+cuentas o archivos existentes.
+
 ## Correccion
 
 Validar la firma y la caducidad de un JWT no demuestra que su sesion siga activa.
