@@ -1,5 +1,6 @@
 """Authentication stays closed during temporary key-service failures."""
 
+import base64
 import time
 from types import SimpleNamespace
 
@@ -60,3 +61,15 @@ def test_production_es256_validates_project_after_key_recovery(monkeypatch, sign
         assert rejected.value.status_code == 401
     else:
         assert auth.get_verified_user(credentials, settings).id == "synthetic-user"
+
+
+def test_deeply_nested_untrusted_jwt_header_returns_401(monkeypatch):
+    # Under the API token-size limit, but beyond JSON's recursion limit.
+    header = b'{"alg":"ES256","nested":' + b'[' * 1500 + b'0' + b']' * 1500 + b'}'
+    token = base64.urlsafe_b64encode(header).rstrip(b'=').decode() + '.e30.invalid'
+    credentials = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token)
+    monkeypatch.setattr(auth, '_jwks_client', lambda *a: pytest.fail('Invalid header must not fetch keys'))
+    settings = Settings(_env_file=None, app_env='production', supabase_url='https://synthetic.supabase.co')
+    with pytest.raises(HTTPException) as rejected:
+        auth.get_verified_user(credentials, settings)
+    assert rejected.value.status_code == 401

@@ -29,6 +29,18 @@ lo haya activado voluntariamente.
   `not_after`, suspension, eliminacion logica y eliminacion por Auth Admin.
 - Las pruebas destructivas se limitan a cuentas sinteticas en localhost.
 
+## Dependencia de autenticacion
+
+PyJWT se actualiza de 2.13.0 a 2.14.0 por los avisos publicados el 29 de
+septiembre, detectados por Dependabot y por el control obligatorio de CI.
+Incluye correcciones de validacion de claves, cabeceras JSON malformadas y
+obtencion de JWKS. No se omiten ni silencian alertas. Se agrega una regresion
+para que una cabecera profundamente anidada produzca 401, no un error 500.
+El caso critico de mezcla HS/asimetrica no coincide con nuestra separacion
+de algoritmos, pero eso no justifica conservar una dependencia vulnerable.
+
+Fuente: https://github.com/jpadilla/pyjwt/releases/tag/2.14.0
+
 ## Limites que siguen abiertos
 
 Esto no es el ejecutor de eliminacion integral de cuentas. El centro de
