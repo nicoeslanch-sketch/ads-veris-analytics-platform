@@ -150,7 +150,10 @@ class SecurityLab:
         self.checks['all_public_rls_tables_and_storage_have_restrictive_mfa_guard'] = True
 
     def test_session_lifecycle(self):
-        uid = self.account()
+        r = self.http.post(self.base + '/auth/v1/admin/users', headers=self.headers,
+            json={'email': f'{uuid4()}@example.invalid', 'email_confirm': True})
+        assert r.status_code in (200, 201), ('create lifecycle account', r.status_code)
+        uid = r.json()['id']
         sid = self.synthetic_session(uid)
         payload = {'p_user_id': uid, 'p_session_id': sid}
         assert self.rpc('verified_session_context', payload)['session_active'] is True
