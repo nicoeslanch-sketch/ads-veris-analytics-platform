@@ -373,3 +373,42 @@ def test_income_cash_availability_followup_still_explains_distinction():
 @pytest.mark.parametrize('word', ['plata', 'gastar', 'gastarlo', 'gastado'])
 def test_spending_vocabulary_is_not_rewritten(word):
     assert normalize_query(word) == word
+
+
+@pytest.mark.parametrize('word', ['vender', 'vende', 'vendere', 'vendido', 'rentable', 'ganare', 'gane', 'tuve'])
+def test_business_conjugations_keep_their_meaning(word):
+    assert normalize_query(word) == word
+
+
+@pytest.mark.parametrize('followup', ['y cuantos clientes tuve', 'y el ticket promedio', 'y cuanto gane',
+                                    'y cuantos registros', 'y mis unidades'])
+def test_month_followups_do_not_answer_with_whole_file_totals(followup):
+    history = [{'role': 'user', 'content': 'cuanto vendi en enero'}]
+    response = answer_for(followup, metrics=sales_metrics(), history=history)
+    assert response['confidence'] != 'high', response
+    assert '$' not in response['answer'], response
+    assert '4 clientes' not in response['answer'], response
+
+
+def test_named_followup_preserves_entity_spelling():
+    metrics = sales_metrics()
+    metrics['ventas_por_canal'] = [{'nombre': 'Marven Ltda', 'ingresos': 200}]
+    response = answer_for('y el ticket promedio', metrics=metrics,
+                         history=[{'role': 'user', 'content': 'cuanto vendi en Marven Ltda'}])
+    assert response['matched_key'] == 'metric_group_measure_unavailable', response
+    assert '$100' not in response['answer']
+
+
+@pytest.mark.parametrize('values', [[0, 0, 0], [-100, 200, 300]])
+def test_month_share_does_not_use_invalid_denominator(values):
+    metrics = sales_metrics()
+    for row, value in zip(metrics['evolucion_mensual'], values):
+        row['ingresos'] = value
+    response = answer_for('que porcentaje aporta febrero', metrics=metrics)
+    assert response['matched_key'] == 'metric_month_share_unavailable'
+    assert '%' not in response['answer']
+
+
+def test_future_plan_support_does_not_become_sales_forecast():
+    response = answer_for('puedo cambiar mi plan el proximo mes', metrics=sales_metrics())
+    assert response['matched_key'] != 'conversation_forecast_limits'

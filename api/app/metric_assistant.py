@@ -1384,7 +1384,7 @@ def _group_answer(
     value = _number(row.get("ingresos") if "ingresos" in row else row.get("valor"))
     name = str(row.get("nombre") or "Sin nombre")
     currency = str(metrics.get("moneda") or "CLP")
-    article = "La" if label.lower() in {"categoria", "categoría"} else "El"
+    article = "La" if label.lower() in {"categoria", "categoría", "sucursal"} else "El"
     if _contains(question, "segundo", "segunda") and len(ranked) >= 2:
         position = "segunda" if article == "La" else "segundo"
     elif named:
@@ -2033,6 +2033,11 @@ def answer_metrics_question(
     scoped_answer = answer_scoped_question(original_question if correction else message, metrics, history)
     if scoped_answer is not None:
         return scoped_answer
+    if re.search(r"\b(?:producto|productos)\b", question) and re.search(r"\b(?:rentable|rentables|rentabilidad|margen|ganancia)\b", question):
+        return _result(
+            "El ranking de ventas no identifica el producto mas rentable. Necesito ingresos y costos atribuibles por ID de producto, en la misma moneda y periodo, con cobertura suficiente. Revisa la relacion de ventas y costos; un producto que vende mas puede dejar menos margen.",
+            "metric_product_profitability_unavailable", ["Cobertura de costos", "Producto principal"], "medium",
+        )
     if _contains(question, "calidad", "datos sucios", "advertencias", "problemas de datos", "duplicados"):
         if _contains(question, "descargar", "exportar", "borrar", "eliminar") and _contains(question, "sin", "puedo"):
             return _result("Si. Puedes limpiar y descargar conservando los duplicados. Solo se eliminan repeticiones exactas del original cuando lo confirmas; los conflictos de ID y las coincidencias por normalizacion se conservan para revision.", "metric_download_duplicates", metric_suggestions(metrics))
@@ -2136,7 +2141,7 @@ def answer_metrics_question(
         if _normalize(row.get("nombre") or "")
         and re.search(rf"\b{re.escape(_normalize(row.get('nombre') or ''))}\b", question)
     ]
-    if _contains(question, "top producto", "mejor producto", "producto lider", "que producto", "producto principal", "segundo producto") or len(mentioned_products) >= 2:
+    if _contains(question, "top producto", "mejor producto", "producto lider", "que producto", "producto principal", "segundo producto", "producto mas vendido", "productos mas vendidos") or len(mentioned_products) >= 2:
         return _group_answer(metrics, product_rows, "Producto", "metric_top_product", question)
     if _contains(question, "categoria", "rubro lider"):
         return _group_answer(metrics, metrics.get("por_categoria") or [], "Categoría", "metric_top_category", question)
