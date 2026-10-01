@@ -18,7 +18,8 @@ import zipfile
 import httpx
 
 from recovery_backup import (CHUNK, SCHEMAS, EXCLUDED_DATA, LEDGER_FORMAT,
-                             database_env, sql_json, storage_base, verify_archive)
+                             RecoveryError, database_env, sql_json, storage_base,
+                             verify_archive)
 
 
 def require_local(value):
@@ -70,6 +71,15 @@ def _object_subject_digest(row):
     return None
 
 
+def _restore_stage(name, query, env):
+    """Expose only a fixed recovery stage when an isolated purge fails."""
+    try:
+        return sql_json(query, env)
+    except RecoveryError as exc:
+        code = str(exc).removeprefix('DATABASE_QUERY_')
+        raise RecoveryError(f'ERASURE_PURGE_{name}_{code}') from None
+
+
 def restore(path, erasure_ledger_path):
     db = os.environ['ADS_RESTORE_DB_URL']
     base = storage_base(os.environ['ADS_RESTORE_STORAGE_URL'])
@@ -117,21 +127,27 @@ def restore(path, erasure_ledger_path):
                     process.wait()
         env.pop('PGOPTIONS', None)
         encoded = json.dumps(ledger['tombstones']).encode('utf-8').hex()
-        purged = sql_json(
-            "begin; create temp table restore_erased_accounts on commit drop as "
-            "select u.id from auth.users u join jsonb_to_recordset(convert_from(decode('" + encoded
-            + "','hex'),'UTF8')::jsonb) as x(subject_digest text,erased_at timestamptz) "
-            "on encode(extensions.digest(u.id::text,'sha256'),'hex')=x.subject_digest; "
+        ledger_rows = ("jsonb_to_recordset(convert_from(decode('" + encoded
+                       + "','hex'),'UTF8')::jsonb) as x(subject_digest text,erased_at timestamptz)")
+        erased_accounts = ("select u.id from auth.users u join " + ledger_rows
+                           + " on encode(extensions.digest(u.id::text,'sha256'),'hex')=x.subject_digest")
+        _restore_stage('LEDGER',
+            "begin; "
             "insert into app_private.erasure_tombstones(subject_digest,erased_at,receipt_id) "
-            "select x.subject_digest,x.erased_at,gen_random_uuid() from jsonb_to_recordset(convert_from(decode('"
-            + encoded + "','hex'),'UTF8')::jsonb) as x(subject_digest text,erased_at timestamptz) "
+            "select x.subject_digest,x.erased_at,gen_random_uuid() from " + ledger_rows + " "
             "on conflict(subject_digest) do update set erased_at=greatest(app_private.erasure_tombstones.erased_at,excluded.erased_at); "
-            "update public.admin_audit set target_user_id=null where target_user_id in(select id from restore_erased_accounts); "
-            "delete from storage.objects where owner in(select id from restore_erased_accounts) "
-            "or owner_id in(select id::text from restore_erased_accounts) "
-            "or (bucket_id='datasets' and split_part(name,'/',1) in(select id::text from restore_erased_accounts)); "
-            "with removed as (delete from auth.users where id in(select id from restore_erased_accounts) returning id) "
-            "select json_build_object('accounts',count(*)) from removed; commit;", env)
+            "commit; select 'true'::json;", env)
+        _restore_stage('AUDIT',
+            "begin; update public.admin_audit set target_user_id=null where target_user_id in("
+            + erased_accounts + "); commit; select 'true'::json;", env)
+        _restore_stage('STORAGE',
+            "begin; delete from storage.objects where owner in(" + erased_accounts + ") "
+            "or owner_id in(select id::text from (" + erased_accounts + ") erased) "
+            "or (bucket_id='datasets' and split_part(name,'/',1) in(select id::text from ("
+            + erased_accounts + ") erased)); commit; select 'true'::json;", env)
+        purged = _restore_stage('AUTH',
+            "begin; with removed as (delete from auth.users where id in(" + erased_accounts
+            + ") returning id) select json_build_object('accounts',count(*)) from removed; commit;", env)
         key = os.environ['ADS_RESTORE_SERVICE_KEY']
         ownership = sql_json("select coalesce(json_agg(t),'[]') from "
                              "(select id,owner,owner_id from storage.objects) t;", env)
