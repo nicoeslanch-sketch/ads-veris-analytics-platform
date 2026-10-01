@@ -201,6 +201,9 @@ def execute_account_erasure(
 
     try:
         _purge_runtime(user_id, settings)
+        legacy_rows_deleted = commercial_rpc(
+            "purge_legacy_account_snapshot", {"p_user_id": user_id}, settings,
+        )
         _delete_auth_account(user_id, settings)
         completed = _control(admin_id, request_id, "complete", settings)
     except Exception as exc:
@@ -219,4 +222,5 @@ def execute_account_erasure(
         "idempotent": False,
         "receipt": completed.get("id"),
         "storage_objects_deleted": int(completed.get("storage_objects_deleted") or deleted),
+        "legacy_rows_deleted": int(legacy_rows_deleted or 0),
     }
