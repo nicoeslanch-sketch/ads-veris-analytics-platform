@@ -443,6 +443,12 @@ class SecurityLab:
 
         assert self.sql(f"select status || ':' || coalesce(target_user_id::text,'none') "
                         f"from app_private.account_erasure_jobs where request_id='{rid}'") == 'completed:none'
+        digest = hashlib.sha256(owner.encode()).hexdigest()
+        assert self.sql(f"select count(*) from app_private.erasure_tombstones "
+                        f"where subject_digest='{digest}'") == '1'
+        assert self.sql(f"select count(*) from public.admin_audit where target_user_id='{owner}'") == '0'
+        assert int(self.sql(f"select count(*) from public.admin_audit where action like 'account_erasure_%' "
+                            f"and detail->>'request_id'='{rid}' and target_user_id is null")) >= 2
         assert self.sql(f"select count(*) from public.datasets where user_id='{owner}'") == '0'
         assert self.sql(f"select count(*) from public.datasets where id='{foreign_dataset}'") == '1'
         owner_object = self.http.get(self.base + '/storage/v1/object/datasets/' + owner_path, headers=self.headers)
@@ -452,6 +458,7 @@ class SecurityLab:
         receipts = self.rpc('admin_account_erasures', {'p_admin_id': admin})
         assert any(j['request_id'] == rid and j['status'] == 'completed' for j in receipts)
         self.checks['account_erasure_real_auth_storage_db_retry_and_tenant_isolation'] = True
+        self.checks['erasure_tombstone_is_pii_free_and_audit_subject_is_scrubbed'] = True
 
     def test_initial_import_queue(self):
         owner, foreign = self.account(), self.account()

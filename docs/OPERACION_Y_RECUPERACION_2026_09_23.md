@@ -41,6 +41,12 @@ propio: restic cifra y autentica el repositorio. ZIP es solo el contenedor inter
 6. Ejecutar `restic check --read-data` y revisar fecha y resultado de la copia.
    No basta con que el comando haya arrancado. No activar purgas automaticas
    antes de aprobar retencion y verificar una restauracion.
+7. Despues de cada eliminacion integral, y tambien junto a cada respaldo,
+   ejecutar `python scripts/recovery_backup.py ledger` y guardar su salida en
+   un repositorio cifrado independiente con retencion superior a los respaldos.
+   El registro contiene solo huellas SHA-256 irreversibles y fechas, no correos,
+   UUID, nombres de archivo ni texto de solicitudes. Una copia antigua no se
+   puede restaurar sin presentar un registro generado despues de esa copia.
 
 Alcance: esquemas `public`, `app_private`, `auth`, `storage` y objetos Storage.
 Se excluyen datos del historial de migraciones del proveedor; el destino debe
@@ -64,9 +70,12 @@ plataforma y claves de cifrado raiz no se recuperan desde este dump.
    `ADS_RESTORE_SERVICE_KEY` solo para esa instancia literal loopback. El rol
    administrador local es necesario para Auth/Storage; no ampliar privilegios
    del rol de la aplicacion alojada.
-5. Ejecutar `python scripts/recovery_restore_local.py --archive RUTA --confirm-empty-local`.
+5. Recuperar el registro de eliminaciones mas reciente y ejecutar
+   `python scripts/recovery_restore_local.py --archive RUTA --erasure-ledger REGISTRO --confirm-empty-local`.
    El comando rechaza destinos remotos, usuarios/archivos preexistentes y
-   migraciones distintas. Un fallo requiere revisar o recrear el destino aislado.
+   migraciones distintas, registros antiguos o mal formados. Antes de devolver
+   acceso, vuelve a eliminar de base y Storage cualquier titular presente en el
+   registro. Un fallo requiere revisar o recrear el destino aislado.
 6. Comparar totales de tablas, relaciones, identidades y hashes de archivos;
    probar login, aislamiento entre cuentas, descarga y un analisis conocido.
    Registrar tiempo real de restauracion y antiguedad de la copia elegida.

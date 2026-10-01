@@ -29,9 +29,11 @@ def run(status, checks):
     key = status['SERVICE_ROLE_KEY']
     headers = {'apikey': key, 'Authorization': 'Bearer ' + key}
     uid, dataset = str(uuid4()), str(uuid4())
+    erased_uid, erased_dataset = str(uuid4()), str(uuid4())
     email, password = uid + '@example.invalid', str(uuid4()) + 'aA1!'
     contents = b'ID,Fecha,Venta\nA,2026-01-01,669700\nB,2026-01-02,330300\n'
     object_path = uid + '/synthetic.csv'
+    erased_contents = b'ID,Secret\nERASED,do-not-restore\n'
     with httpx.Client(timeout=30, trust_env=False) as http, tempfile.TemporaryDirectory(prefix='ads-recovery-lab-') as folder:
         folder = Path(folder)
         account = http.post(base + '/auth/v1/admin/users', headers=headers,
@@ -49,6 +51,19 @@ def run(status, checks):
         sql_json(f"insert into public.datasets(id,user_id,name,storage_path) values('{dataset}','{uid}',"
                  f"'Synthetic recovery','{object_path}'); select 'true'::json;", env)
         expected = sql_json(f"select row_to_json(d) from public.datasets d where id='{dataset}';", env)
+        erased_account = http.post(base + '/auth/v1/admin/users', headers=headers,
+            json={'id': erased_uid, 'email': erased_uid + '@example.invalid',
+                  'password': str(uuid4()) + 'aA1!', 'email_confirm': True})
+        assert erased_account.status_code in (200, 201)
+        erased_uid = erased_account.json()['id']
+        erased_path = erased_uid + '/erased.csv'
+        erased_upload = http.post(base + '/storage/v1/object/datasets/' + erased_path,
+            headers={**headers, 'Content-Type': 'text/csv'}, content=erased_contents)
+        assert erased_upload.status_code in (200, 201)
+        sql_json(f"update storage.objects set owner='{erased_uid}',owner_id='{erased_uid}' "
+                 f"where bucket_id='datasets' and name='{erased_path}'; "
+                 f"insert into public.datasets(id,user_id,name,storage_path) values('{erased_dataset}',"
+                 f"'{erased_uid}','Must not return','{erased_path}'); select 'true'::json;", env)
         password_file = folder / 'restic-password'
         password_file.write_text(str(uuid4()) + str(uuid4()), encoding='utf-8')
         password_file.chmod(0o600)
@@ -80,11 +95,22 @@ def run(status, checks):
         assert result.returncode == 0
         archive.chmod(0o600)
         command([sys.executable, str(Path(__file__).with_name('recovery_backup.py')), 'verify', '--archive', str(archive)])
-        # Only the synthetic object/account just created in this disposable lab.
-        deleted = http.request('DELETE', base + '/storage/v1/object/datasets', headers=headers, json={'prefixes': [object_path]})
+        # Simulate an erasure completed after this older backup and export the
+        # independent PII-free ledger that operators must retain separately.
+        erased_digest = hashlib.sha256(erased_uid.encode()).hexdigest()
+        sql_json("insert into app_private.erasure_tombstones(subject_digest,erased_at,receipt_id) values("
+                 f"'{erased_digest}',now(),'{uuid4()}'); select 'true'::json;", env)
+        ledger = folder / 'erasure-ledger.json'
+        ledger.write_bytes(command([sys.executable, str(Path(__file__).with_name('recovery_backup.py')), 'ledger']))
+        ledger.chmod(0o600)
+        # Only synthetic objects/accounts created in this disposable lab.
+        deleted = http.request('DELETE', base + '/storage/v1/object/datasets', headers=headers,
+                               json={'prefixes': [object_path, erased_path]})
         assert deleted.status_code == 200
         deleted_user = http.delete(base + '/auth/v1/admin/users/' + uid, headers=headers)
         assert deleted_user.status_code == 200
+        deleted_erased_user = http.delete(base + '/auth/v1/admin/users/' + erased_uid, headers=headers)
+        assert deleted_erased_user.status_code == 200
         assert sql_json('select to_json(count(*)) from public.datasets;', env) == 0
         # The disposable image owns provider tables with supabase_admin.
         # No production role is altered or granted additional permissions.
@@ -93,9 +119,15 @@ def run(status, checks):
                                              + '@' + parsed_db.netloc.rsplit('@', 1)[1]).geturl()
         os.environ.update(ADS_RESTORE_DB_URL=local_admin_url, ADS_RESTORE_STORAGE_URL=base, ADS_RESTORE_SERVICE_KEY=key)
         started = time.monotonic()
-        result = restore(archive)
+        result = restore(archive, ledger)
         checks['restore_seconds'] = round(time.monotonic() - started, 3)
         assert result['objects_verified'] == 1
+        assert result['objects_suppressed'] == 1 and result['accounts_suppressed'] == 1
+        assert sql_json(f"select to_json(count(*)) from auth.users where id='{erased_uid}';", env) == 0
+        assert sql_json(f"select to_json(count(*)) from public.datasets where id='{erased_dataset}';", env) == 0
+        erased_object = http.get(base + '/storage/v1/object/datasets/' + erased_path, headers=headers)
+        assert erased_object.status_code in (400, 404) and erased_object.content != erased_contents
+        checks['post_backup_erasure_not_resurrected'] = True
         assert sql_json(f"select row_to_json(d) from public.datasets d where id='{dataset}';", env) == expected
         restored = http.get(base + '/storage/v1/object/datasets/' + object_path, headers=headers)
         assert restored.status_code == 200 and restored.content == contents
@@ -121,7 +153,7 @@ def run(status, checks):
         assert sql_json("select to_json(not has_function_privilege('authenticated','public.analysis_queue(text,uuid,text,jsonb,uuid)','execute'));", env)
         checks['private_queue_remains_inaccessible'] = True
         try:
-            restore(archive)
+            restore(archive, ledger)
             raise AssertionError('Populated destination accepted')
         except ValueError:
             checks['populated_destination_rejected'] = True
