@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ..auth import AuthenticatedUser, get_current_user
 from ..commercial_rpc import commercial_rpc
 from ..config import Settings, get_settings
+from ..account_erasure import execute_account_erasure
 from .admin import _require_admin_sync
 
 router = APIRouter(prefix="/privacy", tags=["privacy"])
@@ -49,6 +50,11 @@ class PrivacyResolution(BaseModel):
     response: str = Field(min_length=10, max_length=2000)
 
 
+class ErasureConfirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmation: Literal["ELIMINAR CUENTA"]
+
+
 @router.get("/account")
 async def account(response: Response, user: AuthenticatedUser = Depends(get_current_user),
                   settings: Settings = Depends(get_settings)):
@@ -85,3 +91,20 @@ async def resolve(request_id: UUID, body: PrivacyResolution, user: Authenticated
     return await run_in_threadpool(commercial_rpc, "resolve_privacy_request",
                                   {"p_admin_id": user.id, "p_request_id": str(request_id),
                                    "p_status": body.status, "p_response": body.response.strip()}, settings)
+
+
+@router.post("/admin/requests/{request_id}/erase")
+async def erase_account(
+    request_id: UUID,
+    body: ErasureConfirmation,
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Execute a confirmed erasure request; safe to retry after partial failure."""
+    await run_in_threadpool(_require_admin_sync, user.id, settings)
+    return await run_in_threadpool(
+        execute_account_erasure,
+        user.id,
+        str(request_id),
+        settings,
+    )

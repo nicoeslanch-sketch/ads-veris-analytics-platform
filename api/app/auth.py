@@ -11,6 +11,8 @@ El cliente JWKS (PyJWKClient) se cachea por URL y renueva claves cada 5 minutos.
 
 from dataclasses import dataclass
 from functools import lru_cache
+import base64
+import binascii
 
 import jwt
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
@@ -20,6 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from .config import Settings, get_settings
 
 _bearer = HTTPBearer(auto_error=False)
+_MAX_JWT_JSON_DEPTH = 32
 
 
 @dataclass(frozen=True)
@@ -37,10 +40,45 @@ def _jwks_client(jwks_url: str) -> jwt.PyJWKClient:
     return jwt.PyJWKClient(jwks_url, cache_keys=False, lifespan=300, timeout=5)
 
 
+def _reject_excessive_jwt_json_depth(token: str) -> None:
+    """Bound compact-JWT JSON nesting before PyJWT or any JWKS network call."""
+    segments = token.split('.')
+    if len(segments) != 3:
+        raise jwt.InvalidTokenError("Token malformado.")
+    for encoded in segments[:2]:
+        try:
+            raw = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4))
+        except (binascii.Error, ValueError) as exc:
+            raise jwt.InvalidTokenError("Token malformado.") from exc
+        depth = 0
+        in_string = False
+        escaped = False
+        for byte in raw:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif byte == 0x5C:  # backslash
+                    escaped = True
+                elif byte == 0x22:  # quote
+                    in_string = False
+                continue
+            if byte == 0x22:
+                in_string = True
+            elif byte in (0x5B, 0x7B):  # [ or {
+                depth += 1
+                if depth > _MAX_JWT_JSON_DEPTH:
+                    raise jwt.InvalidTokenError("Token demasiado anidado.")
+            elif byte in (0x5D, 0x7D):  # ] or }
+                depth -= 1
+                if depth < 0:
+                    raise jwt.InvalidTokenError("Token malformado.")
+
+
 def _decode(token: str, settings: Settings) -> dict:
     """Decodifica y valida el JWT según el algoritmo declarado en el header."""
     if len(token) > 16_384:
         raise jwt.InvalidTokenError("Token invalido.")
+    _reject_excessive_jwt_json_depth(token)
     required = ["exp", "sub", "aud"]
     issuer = None
     if settings.app_env.strip().lower() == "production":

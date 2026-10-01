@@ -64,17 +64,29 @@ que antes se corregian erroneamente como `recupera`, `cierre` y `estandar`.
 Se toleran consultas pegadas y errores comunes sin ejecutar acciones ni
 solicitar claves. El bot sigue siendo determinista, no un modelo generativo.
 
-## Limites que siguen abiertos
+## Eliminacion integral
 
-Esto no es el ejecutor de eliminacion integral de cuentas. El centro de
-privacidad registra solicitudes y respuestas, pero todavia no borra toda la
-cuenta automaticamente. No se ha eliminado ningun cliente real.
+Desde la migracion `20261001010500`, el panel administrador incorpora un
+ejecutor integral para solicitudes de eliminacion verificadas. El proceso:
+
+1. bloquea la cuenta y cancela trabajos pendientes;
+2. enumera y elimina originales y artefactos internos bajo el prefijo privado;
+3. exige una segunda enumeracion vacia de Storage;
+4. purga caches locales y Redis indexadas por titular;
+5. elimina el usuario de Auth para activar las cascadas de base de datos; y
+6. conserva un comprobante tecnico sin email, nombres de archivo ni contenido.
+
+La operacion es idempotente y un fallo intermedio queda registrado para
+reintento. No borra cuentas administradoras ni permite que un administrador
+se elimine a si mismo desde ese flujo. Las copias de recuperacion cifradas no
+se editan retrospectivamente: deben vencer segun la retencion documentada y,
+si se restaura una copia anterior, la lista de supresion debe reaplicarse antes
+de reabrir el servicio.
 
 Una peticion ya autorizada y en curso no se cancela retroactivamente. Una URL
 firmada de Storage ya emitida puede funcionar hasta su vencimiento (actualmente
-cinco minutos), salvo que se elimine antes el objeto. El ejecutor de borrado
-debera detener trabajos, eliminar originales y derivados, comprobar remanentes,
-purgar caches y documentar las excepciones de conservacion y los respaldos.
+cinco minutos), salvo que se elimine antes el objeto. No se ha eliminado ningun
+cliente real durante la validacion.
 
 El proveedor confirma que eliminar `auth.users` no invalida por si solo los JWT
 emitidos: https://supabase.com/docs/guides/auth/managing-user-data

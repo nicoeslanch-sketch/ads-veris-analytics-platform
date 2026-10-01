@@ -242,6 +242,36 @@ def _restore_response_cache_invalidate(user_id: str) -> None:
                 _RESTORE_RESPONSE_CACHE.pop(cache_key, None)
 
 
+def purge_user_runtime_caches(user_id: str) -> None:
+    """Forget account-derived bytes/results held by this API process."""
+    prefix = f"{user_id}/"
+    with _STORAGE_CONTENT_CACHE_LOCK:
+        for path in [path for path in _STORAGE_CONTENT_CACHE if path.startswith(prefix)]:
+            _STORAGE_CONTENT_CACHE.pop(path, None)
+    _restore_response_cache_invalidate(user_id)
+    with _ANALYSIS_CACHE_LOCK:
+        for key in [key for key in _ANALYSIS_CACHE if len(key) > 1 and key[1] == user_id]:
+            _ANALYSIS_CACHE.pop(key, None)
+        for key in [key for key in _ANALYSIS_INFLIGHT if len(key) > 1 and key[1] == user_id]:
+            event = _ANALYSIS_INFLIGHT.pop(key)
+            event.set()
+    # Frame and cleaning cache keys predate account scoping and only contain
+    # content digests. Clear them conservatively so no deleted workbook stays
+    # resident. Account erasure is rare; correctness is worth the cold cache.
+    with _FRAME_CACHE_LOCK:
+        _FRAME_CACHE.clear()
+    with _CACHE_LOCK:
+        _CLEAN_CACHE.clear()
+        _CLEAN_INFLIGHT.clear()
+    with _METRICS_CLEAN_CACHE_LOCK:
+        _METRICS_CLEAN_CACHE.clear()
+    with _AUDIT_CACHE_LOCK:
+        _AUDIT_CACHE.clear()
+    with _EXPORT_CACHE_LOCK:
+        _EXPORT_CACHE.clear()
+        _EXPORT_INFLIGHT.clear()
+
+
 def _restore_response_cache_key(
     user_id: str,
     record: dict,

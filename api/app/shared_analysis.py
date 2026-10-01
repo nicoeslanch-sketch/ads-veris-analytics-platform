@@ -76,6 +76,17 @@ class SharedAnalysisCoordinator:
     def _job_key(self, user_id: str, job_id: str) -> str:
         return f"ads:analysis:job:{user_id}:{job_id}"
 
+    def _user_key(self, user_id: str) -> str:
+        return f"ads:analysis:user:{user_id}"
+
+    def _remember_user_key(self, user_id: str, cache_key: str) -> None:
+        if self.client is None:
+            return
+        pipe = self.client.pipeline()
+        pipe.sadd(self._user_key(user_id), cache_key)
+        pipe.expire(self._user_key(user_id), self.cache_ttl_seconds)
+        pipe.execute()
+
     def get(self, key: tuple[Any, ...]) -> dict[str, Any] | None:
         if self.client is None:
             return None
@@ -95,6 +106,8 @@ class SharedAnalysisCoordinator:
                 json.dumps(value, separators=(",", ":"), default=str),
                 ex=self.cache_ttl_seconds,
             )
+            if len(key) > 1 and isinstance(key[1], str) and key[1]:
+                self._remember_user_key(key[1], self._cache_key(key))
         except (RedisError, TypeError, ValueError) as exc:
             logger.warning("shared_analysis_store_failed error=%s", exc.__class__.__name__)
 
@@ -146,8 +159,25 @@ class SharedAnalysisCoordinator:
                 json.dumps(value, separators=(",", ":"), default=str),
                 ex=self.cache_ttl_seconds,
             )
+            self._remember_user_key(user_id, self._job_key(user_id, job_id))
         except (RedisError, TypeError, ValueError) as exc:
             logger.warning("shared_analysis_job_store_failed error=%s", exc.__class__.__name__)
+
+    def purge_user(self, user_id: str) -> None:
+        """Delete the user's indexed Redis results/jobs without a global KEYS scan."""
+        if self.client is None:
+            return
+        try:
+            index = self._user_key(user_id)
+            keys = list(self.client.smembers(index) or [])
+            if keys:
+                self.client.delete(*keys)
+            self.client.delete(index)
+        except RedisError as exc:
+            # Redis entries have a bounded TTL; failure must not pretend the
+            # entire erasure succeeded, so surface it to the orchestrator.
+            logger.warning("shared_analysis_user_purge_failed error=%s", exc.__class__.__name__)
+            raise
 
 
 @lru_cache(maxsize=4)
