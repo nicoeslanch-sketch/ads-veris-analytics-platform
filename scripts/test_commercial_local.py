@@ -385,7 +385,12 @@ class SecurityLab:
         from app import account_erasure
         from app.config import Settings
 
-        admin, owner, foreign = self.account(admin=True), self.account(), self.account()
+        admin, foreign = self.account(admin=True), self.account()
+        created = self.http.post(self.base + '/auth/v1/admin/users', headers=self.headers,
+            json={'email': f'{uuid4()}@example.invalid', 'password': f'Lab-{uuid4()}!',
+                  'email_confirm': True})
+        assert created.status_code in (200, 201), ('create erasure account', created.status_code)
+        owner = created.json()['id']
         sid = self.synthetic_session(owner)
         request = self.rpc('create_privacy_request', {'p_user_id': owner, 'p_kind': 'erasure',
             'p_message': 'Synthetic end-to-end erasure'})
