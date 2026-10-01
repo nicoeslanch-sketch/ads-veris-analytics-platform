@@ -140,18 +140,28 @@ def restore(path, erasure_ledger_path):
         _restore_stage('AUDIT',
             "begin; update public.admin_audit set target_user_id=null where target_user_id in("
             + erased_accounts + "); commit; select 'true'::json;", env)
-        _restore_stage('STORAGE',
-            "begin; delete from storage.objects where owner in(" + erased_accounts + ") "
-            "or owner_id in(select id::text from (" + erased_accounts + ") erased) "
-            "or (bucket_id='datasets' and split_part(name,'/',1) in(select id::text from ("
-            + erased_accounts + ") erased)); commit; select 'true'::json;", env)
+        key = os.environ['ADS_RESTORE_SERVICE_KEY']
+        headers = {'apikey': key, 'Authorization': 'Bearer ' + key, 'x-upsert': 'true'}
+        suppressed_objects = [row for row in manifest['objects']
+                              if _object_subject_digest(row) in tombstone_digests]
+        # Provider-owned storage tables reject direct SQL deletion. The local
+        # Storage service is the supported authority for removing its metadata.
+        by_bucket = {}
+        for row in suppressed_objects:
+            by_bucket.setdefault(row['bucket_id'], []).append(row['name'])
+        with httpx.Client(timeout=120, trust_env=False, follow_redirects=False) as client:
+            for bucket, names in by_bucket.items():
+                for offset in range(0, len(names), 100):
+                    response = client.request(
+                        'DELETE', base + '/storage/v1/object/' + quote(bucket, safe=''),
+                        headers=headers, json={'prefixes': names[offset:offset + 100]})
+                    if response.status_code != 200:
+                        raise RecoveryError('ERASURE_PURGE_STORAGE_API')
         purged = _restore_stage('AUTH',
             "begin; with removed as (delete from auth.users where id in(" + erased_accounts
             + ") returning id) select json_build_object('accounts',count(*)) from removed; commit;", env)
-        key = os.environ['ADS_RESTORE_SERVICE_KEY']
         ownership = sql_json("select coalesce(json_agg(t),'[]') from "
                              "(select id,owner,owner_id from storage.objects) t;", env)
-        headers = {'apikey': key, 'Authorization': 'Bearer ' + key, 'x-upsert': 'true'}
         with httpx.Client(timeout=120, trust_env=False, follow_redirects=False) as client:
             restored_count = 0
             suppressed_count = 0
