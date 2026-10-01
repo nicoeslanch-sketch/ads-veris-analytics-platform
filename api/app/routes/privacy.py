@@ -93,6 +93,14 @@ async def resolve(request_id: UUID, body: PrivacyResolution, user: Authenticated
                                    "p_status": body.status, "p_response": body.response.strip()}, settings)
 
 
+@router.get("/admin/erasures")
+async def admin_erasures(response: Response, user: AuthenticatedUser = Depends(get_current_user),
+                         settings: Settings = Depends(get_settings)):
+    response.headers["Cache-Control"] = "no-store"
+    await run_in_threadpool(_require_admin_sync, user.id, settings)
+    return await run_in_threadpool(commercial_rpc, "admin_account_erasures", {"p_admin_id": user.id}, settings)
+
+
 @router.post("/admin/requests/{request_id}/erase")
 async def erase_account(
     request_id: UUID,

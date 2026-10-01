@@ -79,9 +79,19 @@ def test_non_admin_cannot_list_or_answer(client, monkeypatch):
     monkeypatch.setattr(privacy, '_require_admin_sync', denied)
     api, calls = client
     assert api.get('/privacy/admin/requests').status_code == 403
+    assert api.get('/privacy/admin/erasures').status_code == 403
     assert api.post('/privacy/admin/requests/00000000-0000-0000-0000-000000000001',
                     json={'status': 'resolved', 'response': 'Documented response'}).status_code == 403
     assert not calls
+
+
+def test_erasure_receipts_admin_only_and_not_cached(client, monkeypatch):
+    monkeypatch.setattr(privacy, '_require_admin_sync', lambda *_args: None)
+    api, calls = client
+    result = api.get('/privacy/admin/erasures')
+    assert result.status_code == 200
+    assert result.headers['cache-control'] == 'no-store'
+    assert calls == [('admin_account_erasures', {'p_admin_id': 'owner'})]
 
 
 def test_erasure_requires_exact_confirmation_and_admin(client, monkeypatch):

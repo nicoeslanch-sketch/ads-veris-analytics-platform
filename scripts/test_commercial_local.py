@@ -10,11 +10,15 @@ import os
 from pathlib import Path
 import subprocess
 import struct
+import sys
 import time
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import httpx
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'api'))
 
 
 def loopback(url):
@@ -371,6 +375,78 @@ class SecurityLab:
         self.test_privacy()
         self.test_operational_health()
         self.test_initial_import_queue()
+        self.test_account_erasure_recovery()
+
+    def test_account_erasure_recovery(self):
+        # Exercise the real orchestrator against disposable Auth, Storage and DB.
+        # The only mocked step is process-local cache eviction; its ordering and
+        # failures are covered by unit tests and it carries no remote state here.
+        from fastapi import HTTPException
+        from app import account_erasure
+        from app.config import Settings
+
+        admin, owner, foreign = self.account(admin=True), self.account(), self.account()
+        sid = self.synthetic_session(owner)
+        request = self.rpc('create_privacy_request', {'p_user_id': owner, 'p_kind': 'erasure',
+            'p_message': 'Synthetic end-to-end erasure'})
+        rid = request['id']
+        owner_path, foreign_path = owner + '/owner.csv', foreign + '/foreign.csv'
+        for path, content in ((owner_path, b'owner,data\n1,secret\n'), (foreign_path, b'foreign,data\n1,safe\n')):
+            uploaded = self.http.post(self.base + '/storage/v1/object/datasets/' + path,
+                headers={**self.headers, 'Content-Type': 'text/csv'}, content=content)
+            assert uploaded.status_code in (200, 201), ('synthetic erasure upload', uploaded.status_code)
+        owner_dataset, foreign_dataset = str(uuid4()), str(uuid4())
+        self.sql(f"insert into public.datasets(id,user_id,name,storage_path) values "
+            f"('{owner_dataset}','{owner}','owner.csv','{owner_path}'),"
+            f"('{foreign_dataset}','{foreign}','foreign.csv','{foreign_path}');")
+        assert self.rpc('verified_session_context', {'p_user_id': owner, 'p_session_id': sid})['session_active']
+
+        settings = Settings(_env_file=None, supabase_url=self.base,
+            supabase_service_role_key=self.headers['apikey'], supabase_storage_bucket='datasets')
+        # Admission itself invalidates active sessions and closes new writes.
+        account_erasure._control(admin, rid, 'prepare', settings)
+        assert not self.rpc('verified_session_context', {'p_user_id': owner, 'p_session_id': sid})['session_active']
+        denied = self.http.post(self.base + '/rest/v1/rpc/reserve_storage_capacity', headers=self.headers,
+            json={'p_user_id': owner, 'p_path': owner + '/late.csv', 'p_bytes': 10, 'p_kind': 'source'})
+        assert denied.status_code in (400, 401, 403), ('late write must fail closed', denied.status_code)
+
+        original_control = account_erasure._control
+        original_purge = account_erasure._purge_runtime
+        faulted = False
+        def fail_after_auth(admin_id, request_id, action, current_settings, payload=None):
+            nonlocal faulted
+            if action == 'complete' and not faulted:
+                faulted = True
+                raise RuntimeError('Synthetic post-Auth outage')
+            return original_control(admin_id, request_id, action, current_settings, payload)
+        account_erasure._control = fail_after_auth
+        account_erasure._purge_runtime = lambda *_args: None
+        try:
+            try:
+                account_erasure.execute_account_erasure(admin, rid, settings)
+                raise AssertionError('Injected post-Auth outage was not raised')
+            except HTTPException as exc:
+                assert exc.status_code == 502
+            assert self.sql(f"select count(*) from auth.users where id='{owner}'") == '0'
+            assert self.sql(f"select status from app_private.account_erasure_jobs where request_id='{rid}'") == 'failed'
+            account_erasure._control = original_control
+            completed = account_erasure.execute_account_erasure(admin, rid, settings)
+            assert completed['status'] == 'completed'
+        finally:
+            account_erasure._control = original_control
+            account_erasure._purge_runtime = original_purge
+
+        assert self.sql(f"select status || ':' || coalesce(target_user_id::text,'none') "
+                        f"from app_private.account_erasure_jobs where request_id='{rid}'") == 'completed:none'
+        assert self.sql(f"select count(*) from public.datasets where user_id='{owner}'") == '0'
+        assert self.sql(f"select count(*) from public.datasets where id='{foreign_dataset}'") == '1'
+        owner_object = self.http.get(self.base + '/storage/v1/object/datasets/' + owner_path, headers=self.headers)
+        foreign_object = self.http.get(self.base + '/storage/v1/object/datasets/' + foreign_path, headers=self.headers)
+        assert owner_object.status_code == 404
+        assert foreign_object.status_code == 200 and foreign_object.content == b'foreign,data\n1,safe\n'
+        receipts = self.rpc('admin_account_erasures', {'p_admin_id': admin})
+        assert any(j['request_id'] == rid and j['status'] == 'completed' for j in receipts)
+        self.checks['account_erasure_real_auth_storage_db_retry_and_tenant_isolation'] = True
 
     def test_initial_import_queue(self):
         owner, foreign = self.account(), self.account()
