@@ -66,6 +66,12 @@ class SecurityLab:
         return self.rpc("reserve_ai_quota", {"p_user_id": uid, "p_reservation_id": str(uuid4()),
                         "p_kind": kind, "p_limits": {"basico": limit, "analista": limit, "gold": limit}})
 
+    def synthetic_session(self, uid):
+        sid = str(uuid4())
+        self.sql(f"insert into auth.sessions(id,user_id,created_at,updated_at) "
+                 f"values('{sid}','{uid}',now(),now());")
+        return sid
+
     def test_mfa(self):
         # All credentials are synthetic, short-lived and never included in the report.
         email, password = f'{uuid4()}@example.invalid', f'Lab-{uuid4()}!'
@@ -109,14 +115,41 @@ class SecurityLab:
         self.checks['real_totp_enrollment_wrong_code_aal1_denial_aal2_ownership'] = True
         context = self.rpc('session_security_context', {'p_user_id': uid})
         assert context == {'is_admin': False, 'has_mfa': True}
+        # A valid signature is insufficient after logout, even for an AAL2 token.
+        token_payload = aal2['Authorization'].split(' ')[1].split('.')[1]
+        claims = json.loads(base64.urlsafe_b64decode(token_payload + '=' * (-len(token_payload) % 4)))
+        payload = {'p_user_id': uid, 'p_session_id': claims['session_id']}
+        assert self.rpc('verified_session_context', payload)['session_active'] is True
+        assert self.rpc('verified_session_context', {**payload, 'p_user_id': self.account()})['session_active'] is False
+        object_url = self.base + '/storage/v1/object/datasets/' + uid + '/session-test.csv'
+        object_content = b'id,amount\n1,10\n'
+        r = self.http.post(object_url, headers={**self.headers, 'Content-Type': 'text/csv'}, content=object_content)
+        assert r.status_code in (200, 201), ('synthetic storage upload', r.status_code)
+        r = self.http.get(object_url, headers=aal2)
+        assert r.status_code == 200 and r.content == object_content, ('active storage access', r.status_code)
         for headers in (aal1, aal2, {'apikey': self.anon_key}):
             r = self.http.post(self.base + '/rest/v1/rpc/session_security_context', headers=headers,
                                json={'p_user_id': uid})
             assert r.status_code in (401, 403), ('private MFA lookup', r.status_code)
+            r = self.http.post(self.base + '/rest/v1/rpc/verified_session_context', headers=headers, json=payload)
+            assert r.status_code in (401, 403), ('private session lookup', r.status_code)
         self.checks['mfa_context_rpc_not_public'] = True
+        r = self.http.post(self.base + '/auth/v1/logout?scope=global', headers=aal2)
+        assert r.status_code in (200, 204), ('synthetic logout', r.status_code)
+        assert self.rpc('verified_session_context', payload)['session_active'] is False
+        assert profile(aal2) == [], 'A revoked AAL2 token must lose direct data access immediately'
+        assert profile(aal1) == []
+        r = self.http.get(object_url, headers=aal2)
+        assert r.status_code in (400, 401, 403, 404) and r.content != object_content, ('revoked storage access', r.status_code)
+        r = self.http.request('DELETE', self.base + '/storage/v1/object/datasets', headers=self.headers,
+                             json={'prefixes': [uid + '/session-test.csv']})
+        assert r.status_code in (200, 204), ('synthetic storage cleanup', r.status_code)
+        self.checks['real_global_logout_denies_unexpired_aal1_and_aal2_tokens'] = True
+        self.checks['real_storage_download_denied_after_global_logout'] = True
         admin = self.account(admin=True)
+        admin_sid = self.synthetic_session(admin)
         result = self.sql(f"begin; set local role authenticated; "
-                         f"select set_config('request.jwt.claims','{{\"sub\":\"{admin}\",\"aal\":\"aal1\"}}',true); "
+                         f"select set_config('request.jwt.claims','{{\"sub\":\"{admin}\",\"session_id\":\"{admin_sid}\",\"aal\":\"aal1\"}}',true); "
                          f"select count(*) from public.profiles where id='{admin}'; rollback;")
         assert '\n0\n' in result
         self.checks['admin_without_factor_has_no_direct_data_access'] = True
@@ -127,6 +160,41 @@ class SecurityLab:
         assert self.sql("select count(*) from pg_policies where schemaname='storage' and tablename='objects' "
                         "and policyname='account_mfa_guard' and permissive='RESTRICTIVE'") == '1'
         self.checks['all_public_rls_tables_and_storage_have_restrictive_mfa_guard'] = True
+
+    def test_session_lifecycle(self):
+        r = self.http.post(self.base + '/auth/v1/admin/users', headers=self.headers,
+            json={'email': f'{uuid4()}@example.invalid', 'email_confirm': True})
+        assert r.status_code in (200, 201), ('create lifecycle account', r.status_code)
+        uid = r.json()['id']
+        sid = self.synthetic_session(uid)
+        payload = {'p_user_id': uid, 'p_session_id': sid}
+        assert self.rpc('verified_session_context', payload)['session_active'] is True
+        def visible(session_id):
+            result = self.sql(f"begin; set local role authenticated; select set_config('request.jwt.claims',"
+                f"'{{\"sub\":\"{uid}\",\"session_id\":\"{session_id}\",\"aal\":\"aal2\"}}',true); "
+                f"select count(*) from public.profiles where id='{uid}'; rollback;")
+            return '\n1\n' in result
+        assert visible(sid)
+        assert not visible('invalid')
+        assert not visible('')
+        self.sql(f"update auth.sessions set not_after=now()-interval '1 second' where id='{sid}'")
+        assert not self.rpc('verified_session_context', payload)['session_active']
+        assert not visible(sid)
+        self.sql(f"update auth.sessions set not_after=null where id='{sid}'; "
+                 f"update auth.users set banned_until=now()+interval '1 day' where id='{uid}'")
+        assert not self.rpc('verified_session_context', payload)['session_active']
+        assert not visible(sid)
+        self.sql(f"update auth.users set banned_until=null where id='{uid}'")
+        assert visible(sid)
+        self.sql(f"update auth.users set deleted_at=now() where id='{uid}'")
+        assert not self.rpc('verified_session_context', payload)['session_active']
+        assert not visible(sid)
+        self.sql(f"update auth.users set deleted_at=null where id='{uid}'")
+        r = self.http.delete(self.base + '/auth/v1/admin/users/' + uid, headers=self.headers)
+        assert r.status_code == 200, ('synthetic account deletion', r.status_code)
+        assert not self.rpc('verified_session_context', payload)['session_active']
+        assert not visible(sid)
+        self.checks['expired_banned_deleted_and_malformed_sessions_fail_closed'] = True
 
     def test_account_limits(self):
         bucket = hashlib.sha256(str(uuid4()).encode()).hexdigest()
@@ -170,10 +238,16 @@ class SecurityLab:
         self.rpc('resolve_privacy_request', {'p_admin_id': admin, 'p_request_id': rid,
             'p_status': 'reviewing', 'p_response': 'Synthetic request acknowledged'})
         assert self.sql(f"select count(*) from public.admin_audit where detail->>'request_id'='{rid}'") == '1'
+        foreign_sid = self.synthetic_session(foreign)
+        owner_sid = self.synthetic_session(owner)
         visible = self.sql(f"begin; set local role authenticated; select set_config('request.jwt.claims',"
-            f"'{{\"sub\":\"{foreign}\",\"aal\":\"aal1\"}}',true); "
+            f"'{{\"sub\":\"{foreign}\",\"session_id\":\"{foreign_sid}\",\"aal\":\"aal1\"}}',true); "
             f"select count(*) from public.privacy_requests where id='{rid}'; rollback;")
         assert '\n0\n' in visible
+        visible = self.sql(f"begin; set local role authenticated; select set_config('request.jwt.claims',"
+            f"'{{\"sub\":\"{owner}\",\"session_id\":\"{owner_sid}\",\"aal\":\"aal1\"}}',true); "
+            f"select count(*) from public.privacy_requests where id='{rid}'; rollback;")
+        assert '\n1\n' in visible
         for table in ('privacy_requests', 'legal_acceptances'):
             assert self.sql(f"select has_table_privilege('authenticated','public.{table}','insert')") == 'f'
             assert self.sql(f"select has_table_privilege('authenticated','public.{table}','update')") == 'f'
@@ -206,8 +280,9 @@ class SecurityLab:
         self.sql(f"delete from public.datasets where id='{own_dataset}';")
         assert self.sql(f"select dataset_id is null and user_id='{owner}' from public.google_sheet_sources where id='{source}'") == "t"
         self.checks["deleting_dataset_detaches_source_without_deleting_owner"] = True
+        owner_sid = self.synthetic_session(owner)
         visible = self.sql(f"begin; set local role authenticated; "
-                           f"select set_config('request.jwt.claims','{{\"sub\":\"{owner}\",\"role\":\"authenticated\"}}',true); "
+                           f"select set_config('request.jwt.claims','{{\"sub\":\"{owner}\",\"session_id\":\"{owner_sid}\",\"role\":\"authenticated\"}}',true); "
                            f"select count(*) from public.datasets where id='{foreign_dataset}'; rollback;")
         assert "\n0\n" in visible
         self.checks["dataset_rls_isolates_accounts"] = True
@@ -291,6 +366,7 @@ class SecurityLab:
             assert self.sql(f"select has_table_privilege('service_role','public.admin_audit','{privilege}')") == "f"
         self.checks["backend_cannot_rewrite_audit_history"] = True
         self.test_mfa()
+        self.test_session_lifecycle()
         self.test_account_limits()
         self.test_privacy()
         self.test_operational_health()

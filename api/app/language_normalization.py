@@ -25,6 +25,9 @@ def normalize_basic(text: object) -> str:
 _VOCABULARY = frozenset(
     """
     a acerca activo activos actual actuales administracion administrativo agencia
+    autenticador autentificador autenticacion authenticator totp mfa contrasena password
+    recuperar recupero recuperacion restablecer olvide perdi perdido escanear codigo codigos
+    sesion sesiones cerrar cerre token clave claves obligatorio obligatoria opcional
     agencias ahorro al alerta alertas ampliar analiza analisis analizar anterior anteriores ano anos
     apalancamiento aplicar aporte aportan aporta aporto archivo archivos asignar asistente
     auditoria balance bancario beneficio beneficios bruto bruta caja calcular calculo
@@ -215,6 +218,10 @@ _TYPO_ALIASES = {
 # Atajos muy habituales. El segmentador cubre otras combinaciones, mientras estas
 # entradas permiten tolerar incluso una pequena errata dentro de una frase pegada.
 _JOINED_ALIASES = {
+    "olvidecontrasena": "olvide contrasena",
+    "recuperarcontrasena": "recuperar contrasena",
+    "perdielautenticador": "perdi el autenticador",
+    "cerrarsesion": "cerrar sesion",
     "quieroeliminarmicuenta": "quiero eliminar mi cuenta",
     "borrarmicuenta": "borrar mi cuenta",
     "borramisdatos": "borra mis datos",

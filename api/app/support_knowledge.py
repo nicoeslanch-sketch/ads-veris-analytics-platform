@@ -128,6 +128,10 @@ ARTICLES: list[dict[str, Any]] = [
 
 
 ARTICLES.extend([
+    article("password_recovery", "cuenta", "Recuperar contrasena", ["olvide mi contrasena", "recuperar contrasena", "recupero mi clave", "olvide mi password", "correo de recuperacion"], "En la pantalla de acceso escribe tu correo y pulsa Olvidaste tu contrasena. Abre el enlace recibido para establecer una nueva. Revisa spam y que el correo este bien escrito; si no llega o el enlace vencio, solicita uno nuevo y usa el mas reciente. Si persiste, escribe a servicios@adsveris.com. Este chat no envia enlaces ni cambia claves. No compartas tu contrasena, el enlace ni codigos. Recuperar la contrasena no elimina un segundo factor que hayas activado.", "¿No llega el correo o el enlace ya no funciona?", 97),
+    article("mfa_optional", "cuenta", "Autenticador y acceso", ["autenticador", "authenticator", "dos pasos", "doble factor", "segundo factor", "escanear qr", "mfa", "totp"], "Para los clientes el autenticador es opcional: pueden entrar con correo y contrasena. Para un administrador es obligatorio; si un cliente lo activa voluntariamente, tambien se le pedira el codigo. El QR se escanea en una aplicacion compatible con TOTP, como Google Authenticator o Microsoft Authenticator. No compartas ese QR ni sus codigos. Puedes revisar tus factores en Configuracion, Seguridad.", "¿Quieres configurarlo o perdiste acceso a uno ya activado?", 97),
+    article("mfa_recovery", "cuenta", "Recuperar acceso al autenticador", ["perdi mi autenticador", "no tengo el codigo de dos pasos", "sin segundo factor", "quitar autenticador"], "Si tienes otro autenticador ya vinculado, usalo para verificar tu acceso. Si perdiste todos, contacta a soporte en servicios@adsveris.com: debe verificar tu identidad antes de recuperar el acceso. No envies contrasenas, QR ni codigos. Este chat no puede quitar factores ni saltarse la verificacion; cambiar la contrasena por correo tampoco desactiva el autenticador.", "¿Conservas acceso a otro autenticador vinculado?", 98),
+    article("session_logout", "cuenta", "Cerrar sesion no elimina datos", ["cerrar sesion", "cerre sesion", "cerrar todas las sesiones", "token revocado"], "Cerrar sesion termina ese acceso; no elimina tus archivos ni equivale a cerrar la cuenta. La API y los permisos de datos verifican que la sesion siga vigente, incluso con segundo factor. Una descarga con enlace temporal ya emitido puede seguir disponible hasta que venza, y cerrar sesion no borra copias ya descargadas. Para solicitar el cierre de cuenta usa Configuracion > Privacidad y datos. Este chat no cierra sesiones por ti.", "¿Quieres salir de la sesion o solicitar la eliminacion de la cuenta?", 97),
     article("privacy_rights", "seguridad", "Mis datos y privacidad", ["politica de privacidad", "mis derechos", "revocar consentimiento", "copia de mis datos", "quien es responsable", "venden mis datos"], "El responsable es ADS Veris SpA y el contacto es servicios@adsveris.com. La politica publica esta en /privacidad. En Configuracion > Privacidad y datos puedes solicitar acceso, copia, correccion, eliminacion u oposicion sin mejorar de plan. Tambien puedes escribir por correo si no tienes acceso a tu cuenta. No compartas contrasenas, tarjetas ni documentos de identidad por este chat. No vendemos tus archivos como parte del servicio.", "¿Necesitas corregir datos, obtener una copia o solicitar eliminacion?", 95),
     article("privacy_erasure", "seguridad", "Eliminar cuenta y datos", ["eliminar mi cuenta", "borrar mi cuenta", "eliminar mis datos", "borra mis datos", "borrar todos mis datos", "cerrar mi cuenta", "ya lo borraste", "ya estan borrados"], "Para un archivo concreto, usa Historial y confirma su eliminacion. Para toda la cuenta, abre Configuracion > Privacidad y datos y elige Eliminar mi cuenta y mis datos. Se registra una solicitud con comprobante: recibida no significa que ya se haya borrado. Este chat no ejecuta borrados ni puede confirmar el estado de tu solicitud. Revisa su respuesta en Configuracion o escribe a servicios@adsveris.com; se debe detallar lo eliminado y cualquier conservacion legal necesaria.", "¿Quieres borrar un archivo o cerrar toda la cuenta?", 99),
     article("privacy_card_data", "seguridad", "Tarjetas y claves", ["guardar tarjeta", "numero de tarjeta", "mi cvv", "clave bancaria", "mi contrasena"], "No envies numeros de tarjeta, CVV, claves bancarias ni contrasenas a este chat ni en los archivos. Los cobros con tarjeta estan desactivados. Una futura pasarela debera gestionar la tarjeta sin que ADS Veris almacene sus datos sensibles. Si compartiste una clave real, cambiala directamente con el proveedor correspondiente.", "¿Tu consulta es sobre acceso a la cuenta o sobre un plan?", 95),
@@ -208,6 +212,30 @@ def answer_for(
                 "suggestions": suggestions[:4]}
     message = re.sub(r"^(?:hola|muchas gracias|gracias|por favor)[, ]+(?:y\s+)?(?=\S)", "", message, flags=re.I)
     normalized = normalize_query(message)
+    # Account questions precede metric matching, without inheriting stale topics.
+    previous_user = next((normalize_query(str(item.get('content') or ''))
+                          for item in reversed(history or []) if item.get('role') == 'user'), '')
+    mfa_pattern = r'\b(?:autenticador|autentificador|authenticator|autenticacion|totp|mfa|dos pasos|doble factor|segundo factor|escanear (?:el )?qr)\b'
+    mfa_topic = bool(re.search(mfa_pattern, normalized))
+    mfa_followup = bool(re.search(mfa_pattern, previous_user)) and bool(re.search(
+        r'\b(?:obligatori[oa]|mis clientes|quitar|quitarl[oa]|puedes quitar|no tengo el codigo)\b', normalized))
+    password_topic = bool(re.search(r'\b(?:contrasena|password|clave)\b', normalized)) and bool(re.search(
+        r'\b(?:olvide|recuperar|recupero|restablecer|cambiar|perdi)\b', normalized))
+    recovery_email = bool(re.search(r'\bcorreo\b', normalized)) and (
+        'recuperacion' in normalized or (bool(re.search(r'\b(?:contrasena|password|clave)\b', previous_user))
+        and bool(re.search(r'\b(?:no|llega|vencio|enlace)\b', normalized))))
+    account_key = None
+    if re.search(r'\b(?:cerrar|cerre)\s+(?:todas las |la |mi )?sesiones?\b', normalized):
+        account_key = 'session_logout'
+    elif mfa_topic or mfa_followup:
+        lost = re.search(r'\b(?:perdi|perdido|quitar|quitarl[oa]|sin|no tengo|no puedo|no funciona)\b', normalized)
+        account_key = 'mfa_recovery' if lost else 'mfa_optional'
+    elif (password_topic or recovery_email) and not re.search(r'\b(?:bancaria|bancario|cvv|tarjeta)\b', normalized):
+        account_key = 'password_recovery'
+    if account_key:
+        item = next(row for row in ARTICLES if row['key'] == account_key)
+        return {"answer": item['response'], "matched_key": account_key, "confidence": "high",
+                "suggestions": ["Recuperar contrasena", "Autenticador y acceso", "Mis datos y privacidad"]}
     # Privacy actions must not be mistaken for financial account metrics.
     if re.search(r"\b(?:eliminar|borrar|borra|cerrar)\s+(?:todos\s+)?(?:mi|mis|la)\s+(?:cuenta|datos)\b", normalized) or re.search(
         r"\b(?:ya lo borraste|ya estan borrados)\b", normalized,
