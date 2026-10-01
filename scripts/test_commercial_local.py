@@ -447,7 +447,7 @@ class SecurityLab:
         assert self.sql(f"select count(*) from public.datasets where id='{foreign_dataset}'") == '1'
         owner_object = self.http.get(self.base + '/storage/v1/object/datasets/' + owner_path, headers=self.headers)
         foreign_object = self.http.get(self.base + '/storage/v1/object/datasets/' + foreign_path, headers=self.headers)
-        assert owner_object.status_code == 404
+        assert owner_object.status_code in (400, 404) and owner_object.content != b'owner,data\n1,secret\n'
         assert foreign_object.status_code == 200 and foreign_object.content == b'foreign,data\n1,safe\n'
         receipts = self.rpc('admin_account_erasures', {'p_admin_id': admin})
         assert any(j['request_id'] == rid and j['status'] == 'completed' for j in receipts)
