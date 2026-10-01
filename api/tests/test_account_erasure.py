@@ -26,15 +26,19 @@ def test_erasure_orders_block_storage_cache_auth_and_receipt(monkeypatch):
     monkeypatch.setattr(account_erasure, '_ban_account', lambda user, _settings: events.append(('ban', user)))
     monkeypatch.setattr(account_erasure, '_purge_runtime', lambda user, _settings: events.append(('purge', user)))
     monkeypatch.setattr(account_erasure, '_delete_auth_account', lambda user, _settings: events.append(('auth', user)))
+    monkeypatch.setattr(account_erasure, 'commercial_rpc',
+                        lambda name, payload, _settings: events.append((name, payload)) or 4)
 
     result = account_erasure.execute_account_erasure(
         'admin', 'request', _settings(),
         storage_delete=lambda user, _settings: events.append(('storage', user)) or 3,
     )
-    assert result == {'status': 'completed', 'idempotent': False, 'receipt': 'job', 'storage_objects_deleted': 3}
+    assert result == {'status': 'completed', 'idempotent': False, 'receipt': 'job',
+                      'storage_objects_deleted': 3, 'legacy_rows_deleted': 4}
     assert events == [
         'prepare', ('ban', 'target'), ('storage', 'target'), 'storage_deleted',
-        ('purge', 'target'), ('auth', 'target'), 'complete',
+        ('purge', 'target'), ('purge_legacy_account_snapshot', {'p_user_id': 'target'}),
+        ('auth', 'target'), 'complete',
     ]
 
 

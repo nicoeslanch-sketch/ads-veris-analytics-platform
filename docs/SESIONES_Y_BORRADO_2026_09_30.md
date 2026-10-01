@@ -73,8 +73,10 @@ ejecutor integral para solicitudes de eliminacion verificadas. El proceso:
 2. enumera y elimina originales y artefactos internos bajo el prefijo privado;
 3. exige una segunda enumeracion vacia de Storage;
 4. purga caches locales y Redis indexadas por titular;
-5. elimina el usuario de Auth para activar las cascadas de base de datos; y
-6. conserva un comprobante tecnico sin email, nombres de archivo ni contenido.
+5. purga tambien sus filas de la copia heredada `backup_pre_0022_20260731_2305`,
+   cuando existe;
+6. elimina el usuario de Auth para activar las cascadas de base de datos; y
+7. conserva un comprobante tecnico sin email, nombres de archivo ni contenido.
 
 La operacion es idempotente y un fallo intermedio queda registrado para
 reintento. No borra cuentas administradoras ni permite que un administrador
