@@ -36,15 +36,19 @@ lo haya activado voluntariamente.
 
 ## Dependencia de autenticacion
 
-PyJWT se actualiza de 2.13.0 a 2.14.0 por los avisos publicados el 29 de
+PyJWT se actualiza de 2.13.0 a 2.15.0 por los avisos publicados el 29 y 30 de
 septiembre, detectados por Dependabot y por el control obligatorio de CI.
 Incluye correcciones de validacion de claves, cabeceras JSON malformadas y
 obtencion de JWKS. No se omiten ni silencian alertas. Se agrega una regresion
-para que una cabecera profundamente anidada produzca 401, no un error 500.
+para que una cabecera o carga util profundamente anidada produzca 401, no un
+error 500. La carga util se prueba con el cliente JWKS real y debe fallar antes
+de intentar descargar claves.
 El caso critico de mezcla HS/asimetrica no coincide con nuestra separacion
 de algoritmos, pero eso no justifica conservar una dependencia vulnerable.
 
-Fuente: https://github.com/jpadilla/pyjwt/releases/tag/2.14.0
+Fuentes:
+- https://github.com/jpadilla/pyjwt/releases/tag/2.14.0
+- https://github.com/jpadilla/pyjwt/releases/tag/2.15.0
 
 ## Conversacion del asistente
 

@@ -73,3 +73,18 @@ def test_deeply_nested_untrusted_jwt_header_returns_401(monkeypatch):
     with pytest.raises(HTTPException) as rejected:
         auth.get_verified_user(credentials, settings)
     assert rejected.value.status_code == 401
+
+
+def test_deeply_nested_untrusted_jwt_payload_returns_401_before_jwks_fetch(monkeypatch):
+    header = base64.urlsafe_b64encode(b'{"alg":"ES256","kid":"synthetic"}').rstrip(b'=').decode()
+    payload_bytes = b'[' * 1500 + b'0' + b']' * 1500
+    payload = base64.urlsafe_b64encode(payload_bytes).rstrip(b'=').decode()
+    credentials = HTTPAuthorizationCredentials(
+        scheme='Bearer', credentials=f'{header}.{payload}.invalid',
+    )
+    client = jwt.PyJWKClient('https://invalid.example/jwks')
+    monkeypatch.setattr(auth, '_jwks_client', lambda *a: client)
+    settings = Settings(_env_file=None, app_env='production', supabase_url='https://synthetic.supabase.co')
+    with pytest.raises(HTTPException) as rejected:
+        auth.get_verified_user(credentials, settings)
+    assert rejected.value.status_code == 401
