@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
 
 from .commercial_rpc import commercial_rpc
 from .config import Settings
+from .processing_capacity import HEAVY_WORK_SLOT
 
 logger = logging.getLogger(__name__)
 _TIMEOUT = 30
@@ -70,7 +72,11 @@ def _storage_entries(prefix: str, settings: Settings) -> list[dict]:
         page = response.json()
         if not isinstance(page, list):
             raise ValueError("Invalid Storage listing")
-        result.extend(entry for entry in page if isinstance(entry, dict))
+        if any(not isinstance(entry, dict) for entry in page):
+            raise ValueError("Invalid Storage listing entry")
+        result.extend(page)
+        if len(result) > _MAX_OBJECTS:
+            raise ValueError("Account Storage listing limit exceeded")
         if len(page) < _DELETE_BATCH:
             return result
         offset += len(page)
@@ -78,6 +84,7 @@ def _storage_entries(prefix: str, settings: Settings) -> list[dict]:
 
 def list_user_storage_objects(user_id: str, settings: Settings) -> list[str]:
     """List exactly one user's folder, including internal analysis artifacts."""
+    user_id = str(UUID(user_id))
     pending = [user_id]
     objects: list[str] = []
     visited: set[str] = set()
@@ -88,7 +95,7 @@ def list_user_storage_objects(user_id: str, settings: Settings) -> list[str]:
         visited.add(prefix)
         for entry in _storage_entries(prefix, settings):
             name = str(entry.get("name") or "")
-            if not name or "/" in name or name in {".", ".."}:
+            if not name or "/" in name or "\\" in name or name in {".", ".."}:
                 raise ValueError("Unsafe Storage listing entry")
             full_path = f"{prefix}/{name}"
             if not full_path.startswith(f"{user_id}/"):
@@ -97,7 +104,7 @@ def list_user_storage_objects(user_id: str, settings: Settings) -> list[str]:
                 pending.append(full_path)
             else:
                 objects.append(full_path)
-            if len(objects) + len(pending) > _MAX_OBJECTS:
+            if len(objects) + len(pending) + len(visited) > _MAX_OBJECTS:
                 raise ValueError("Account Storage object limit exceeded")
     return objects
 
@@ -145,9 +152,12 @@ def _ban_account(user_id: str, settings: Settings) -> None:
 
 def _delete_auth_account(user_id: str, settings: Settings) -> None:
     response = _auth_request("DELETE", user_id, settings)
-    if response.status_code == 404:
-        return
-    response.raise_for_status()
+    if response.status_code != 404:
+        response.raise_for_status()
+    verification = _auth_request("GET", user_id, settings)
+    if verification.status_code != 404:
+        verification.raise_for_status()
+        raise RuntimeError("Auth still contains the account")
 
 
 def _purge_runtime(user_id: str, settings: Settings) -> None:
@@ -168,38 +178,30 @@ def execute_account_erasure(
     request_id: str,
     settings: Settings,
     *,
-    storage_delete: Callable[[str, Settings], int] = delete_user_storage_objects,
+    storage_delete: Callable[[str, Settings], int] | None = None,
 ) -> dict:
     if not settings.supabase_url or not settings.supabase_service_role_key:
         raise HTTPException(503, "La eliminación integral no está configurada.")
     job = _control(admin_id, request_id, "prepare", settings)
     if job.get("status") == "completed":
         return {"status": "completed", "idempotent": True, "receipt": job.get("id")}
-    user_id = str(job.get("target_user_id") or "")
-    if not user_id:
-        raise HTTPException(503, "El trabajo no conserva un destinatario válido.")
-
+    stage = "deleting_account"
+    acquired = False
     try:
+        user_id = str(UUID(job.get("target_user_id") or ""))
         _ban_account(user_id, settings)
-    except (httpx.HTTPError, ValueError) as exc:
-        _control(admin_id, request_id, "fail", settings, {
-            "stage": "deleting_account", "error": exc.__class__.__name__,
-        })
-        raise HTTPException(502, "No se pudo bloquear la cuenta antes de eliminarla.") from exc
-
-    try:
-        deleted = storage_delete(user_id, settings)
-        job = _control(admin_id, request_id, "storage_deleted", settings, {"count": deleted})
-    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-        _control(admin_id, request_id, "fail", settings, {
-            "stage": "deleting_storage", "error": exc.__class__.__name__,
-        })
-        raise HTTPException(
-            502,
-            "La cuenta quedó bloqueada, pero Storage no confirmó el borrado completo. Puedes reintentar.",
-        ) from exc
-
-    try:
+        readiness = _control(admin_id, request_id, "ready", settings)
+        if readiness.get("ready") is not True:
+            raise HTTPException(409, "La cuenta esta bloqueada y tiene trabajos o escrituras pendientes. Revisa su estado y reintenta cuando terminen.")
+        # A synchronous/local producer must finish before cached bytes are
+        # purged. Durable producers are drained across instances by PostgreSQL.
+        acquired = HEAVY_WORK_SLOT.acquire(blocking=False)
+        if not acquired:
+            raise HTTPException(409, "Hay un calculo en curso. La cuenta sigue bloqueada; reintenta la eliminacion cuando termine.")
+        stage = "deleting_storage"
+        deleted = (storage_delete or delete_user_storage_objects)(user_id, settings)
+        _control(admin_id, request_id, "storage_deleted", settings, {"count": deleted})
+        stage = "deleting_account"
         _purge_runtime(user_id, settings)
         legacy_rows_deleted = commercial_rpc(
             "purge_legacy_account_snapshot", {"p_user_id": user_id}, settings,
@@ -207,15 +209,21 @@ def execute_account_erasure(
         _delete_auth_account(user_id, settings)
         completed = _control(admin_id, request_id, "complete", settings)
     except Exception as exc:
+        try:
+            _control(admin_id, request_id, "fail", settings, {
+                "stage": stage, "error": exc.__class__.__name__,
+            })
+        except Exception:
+            logger.warning("account_erasure_failure_receipt_unavailable")
         if isinstance(exc, HTTPException):
             raise
-        _control(admin_id, request_id, "fail", settings, {
-            "stage": "deleting_account", "error": exc.__class__.__name__,
-        })
         raise HTTPException(
             502,
-            "Los archivos fueron eliminados, pero falta confirmar el cierre de Auth. Puedes reintentar.",
+            "No se pudo verificar la eliminacion completa. El trabajo conserva su avance y puede reintentarse desde Privacidad.",
         ) from exc
+    finally:
+        if acquired:
+            HEAVY_WORK_SLOT.release()
     logger.info("account_erasure_completed receipt=%s objects=%d", completed.get("id"), deleted)
     return {
         "status": "completed",
