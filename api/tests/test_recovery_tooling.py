@@ -57,3 +57,30 @@ def test_streaming_digest_preserves_data():
     result = backup.copy_hashed([b'a', b'b'], out)
     assert out.getvalue() == b'ab'
     assert result == {'bytes': 2, 'sha256': hashlib.sha256(b'ab').hexdigest()}
+
+
+def test_erasure_ledger_requires_an_independent_repository(monkeypatch):
+    monkeypatch.setenv('RESTIC_REPOSITORY', 's3:https://backup.invalid/company')
+    monkeypatch.setenv('ADS_ERASURE_LEDGER_REPOSITORY', 's3:https://backup.invalid/company/')
+    monkeypatch.setenv('ADS_ERASURE_LEDGER_PASSWORD_FILE', '/secret/ledger')
+    with pytest.raises(backup.RecoveryError, match='NOT_INDEPENDENT'):
+        backup.erasure_ledger_restic_env()
+
+
+def test_erasure_ledger_requires_an_independent_key(monkeypatch):
+    monkeypatch.setenv('RESTIC_REPOSITORY', 's3:https://backup.invalid/data')
+    monkeypatch.setenv('ADS_ERASURE_LEDGER_REPOSITORY', 's3:https://archive.invalid/ledger')
+    monkeypatch.setenv('RESTIC_PASSWORD_FILE', '/secret/shared')
+    monkeypatch.setenv('ADS_ERASURE_LEDGER_PASSWORD_FILE', '/secret/shared')
+    with pytest.raises(backup.RecoveryError, match='KEY_NOT_INDEPENDENT'):
+        backup.erasure_ledger_restic_env()
+
+
+def test_erasure_ledger_uses_separate_restic_credentials(monkeypatch):
+    monkeypatch.setenv('RESTIC_REPOSITORY', 's3:https://backup.invalid/data')
+    monkeypatch.setenv('RESTIC_PASSWORD_FILE', '/secret/data')
+    monkeypatch.setenv('ADS_ERASURE_LEDGER_REPOSITORY', 's3:https://archive.invalid/ledger')
+    monkeypatch.setenv('ADS_ERASURE_LEDGER_PASSWORD_FILE', '/secret/ledger')
+    env = backup.erasure_ledger_restic_env()
+    assert env['RESTIC_REPOSITORY'] == 's3:https://archive.invalid/ledger'
+    assert env['RESTIC_PASSWORD_FILE'] == '/secret/ledger'

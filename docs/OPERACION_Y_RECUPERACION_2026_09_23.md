@@ -31,19 +31,27 @@ propio: restic cifra y autentica el repositorio. ZIP es solo el contenedor inter
    `ADS_BACKUP_DB_URL`, `ADS_BACKUP_STORAGE_URL`, `ADS_BACKUP_SERVICE_KEY`,
    `RESTIC_REPOSITORY` y `RESTIC_PASSWORD_FILE`. Proteger el archivo de clave con
    permisos exclusivos y custodiar una copia de recuperacion por separado.
+   Para impedir que una copia antigua reviva cuentas borradas, configurar tambien
+   `ADS_ERASURE_LEDGER_REPOSITORY` y `ADS_ERASURE_LEDGER_PASSWORD_FILE`. El primer
+   repositorio debe ser distinto del repositorio de datos y usar otra clave.
 3. Validar TLS PostgreSQL con `verify-full` y su certificado CA. No degradar a
    `require` ni desactivar la validacion para solucionar un error de conexion.
 4. Inicializar el repositorio una sola vez con `restic init`. Ejecutar
    `python scripts/recovery_backup.py check` antes de la primera copia.
 5. En una ventana sin escrituras/subidas/borrados, ejecutar
-   `python scripts/recovery_backup.py backup`. El inventario Storage se compara
-   antes y despues. Un cambio aborta la copia, no publica un snapshot incompleto.
+   `python scripts/recovery_backup.py backup-all`. En un solo paso publica primero
+   el respaldo cifrado y despues una version del libro de borrados generada mas
+   tarde en su repositorio independiente. Si falta el segundo destino, el comando
+   falla de forma explicita. `backup` queda disponible solo para diagnostico y no
+   basta como procedimiento comercial. El inventario Storage se compara antes y
+   despues; un cambio aborta la copia y no publica un snapshot incompleto.
 6. Ejecutar `restic check --read-data` y revisar fecha y resultado de la copia.
    No basta con que el comando haya arrancado. No activar purgas automaticas
    antes de aprobar retencion y verificar una restauracion.
-7. Despues de cada eliminacion integral, y tambien junto a cada respaldo,
-   ejecutar `python scripts/recovery_backup.py ledger` y guardar su salida en
-   un repositorio cifrado independiente con retencion superior a los respaldos.
+7. `backup-all` conserva automaticamente el libro junto a cada respaldo. Despues
+   de una eliminacion integral que ocurra entre respaldos, ejecutar tambien
+   `python scripts/recovery_backup.py ledger` mediante un conducto cifrado o volver
+   a ejecutar `backup-all`; no guardar su salida abierta en una carpeta sincronizada.
    El registro contiene solo huellas SHA-256 irreversibles y fechas, no correos,
    UUID, nombres de archivo ni texto de solicitudes. Una copia antigua no se
    puede restaurar sin presentar un registro generado despues de esa copia.
