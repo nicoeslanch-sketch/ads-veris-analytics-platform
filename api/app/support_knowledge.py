@@ -212,6 +212,27 @@ def answer_for(
                 "suggestions": suggestions[:4]}
     message = re.sub(r"^(?:hola|muchas gracias|gracias|por favor)[, ]+(?:y\s+)?(?=\S)", "", message, flags=re.I)
     normalized = normalize_query(message)
+    if re.search(r"\b(?:cerrar|cierro|cierre)\b", normalized) and re.search(r"\b(?:empresa|negocio)\b", normalized):
+        return {
+            "answer": "Para evaluar la continuidad del negocio hace falta revisar caja disponible, obligaciones y vencimientos, margen con costos completos, demanda y tendencia de varios periodos. Un mes bajo o un ranking de ventas no bastan para decidir un cierre. Podemos empezar por identificar que fuentes faltan y comparar escenarios de costos e ingresos.",
+            "matched_key": "conversation_business_continuity", "confidence": "medium",
+            "suggestions": ["Que datos faltan", "Flujo de caja", "Cobertura de costos"],
+        }
+    if re.search(r"\b(?:vendere|venderemos|ganare|ganaremos)\b", normalized) or (
+        re.search(r"\b(?:proximo mes|proximo ano)\b", normalized)
+        and re.search(r"\b(?:ventas|ingresos|utilidad|ganancia|ganancias)\b", normalized)
+    ):
+        return {
+            "answer": "No puedo conocer las ventas o ganancias futuras. Una proyeccion requiere un periodo objetivo y supuestos sobre tendencia, estacionalidad, precios, stock y costos. Las cifras historicas del archivo sirven como base, pero no garantizan lo que ocurrira.",
+            "matched_key": "conversation_forecast_limits", "confidence": "medium",
+            "suggestions": ["Tendencia de mis ingresos", "Que datos faltan"],
+        }
+    if re.search(r"\bsi\b", normalized) and re.search(r"\b(?:suben|subieran|bajan|bajaran|aumentan|aumentaran|disminuyen|disminuyeran)\b", normalized):
+        return {
+            "answer": "Esa pregunta plantea un escenario hipotetico. Para calcularlo hay que fijar el importe base, su moneda y periodo, y la variacion supuesta. El resultado seria una simulacion; no reemplaza las ventas observadas ni demuestra un cambio de utilidad, porque tambien pueden cambiar los costos.",
+            "matched_key": "conversation_scenario_assumptions", "confidence": "medium",
+            "suggestions": ["Mis ingresos totales", "Cobertura de costos"],
+        }
     # Account questions precede metric matching, without inheriting stale topics.
     previous_user = next((normalize_query(str(item.get('content') or ''))
                           for item in reversed(history or []) if item.get('role') == 'user'), '')

@@ -27,6 +27,10 @@ _VOCABULARY = frozenset(
     a acerca activo activos actual actuales administracion administrativo agencia
     autenticador autentificador autenticacion authenticator totp mfa contrasena password
     recuperar recupero recuperacion restablecer olvide perdi perdido escanear codigo codigos
+    vender vende venden vendo vendemos vendi vendimos vendia vendian vendio vendieron
+    vendere venderemos venderan vendido vendidos vendida vendidas rentable rentables tuve tuvieron
+    ganar gano ganamos gane ganaron ganare ganaremos
+    suben subieran bajan bajaran aumentan aumentaran disminuyen disminuyeran tendria tendriamos
     sesion sesiones cerrar cerre token clave claves obligatorio obligatoria opcional
     agencias ahorro al alerta alertas ampliar analiza analisis analizar anterior anteriores ano anos
     apalancamiento aplicar aporte aportan aporta aporto archivo archivos asignar asistente
