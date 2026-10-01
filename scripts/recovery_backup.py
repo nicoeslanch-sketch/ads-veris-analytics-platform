@@ -29,6 +29,7 @@ MAX_OBJECTS = 100_000
 MAX_TOTAL_BYTES = 50 * 1024**3
 INVENTORY_SQL = """select coalesce(json_agg(t order by bucket_id,name),'[]') from
  (select id,bucket_id,name,updated_at,metadata,owner_id from storage.objects) t;"""
+LEDGER_FORMAT = 'ads-erasure-ledger-v1'
 
 
 class RecoveryError(RuntimeError):
@@ -77,6 +78,15 @@ def storage_base(value):
 
 def object_member(bucket, name):
     return 'objects/' + hashlib.sha256(json.dumps([bucket, name], ensure_ascii=True).encode()).hexdigest()
+
+
+def erasure_ledger(env):
+    """Return a PII-free ledger that must be retained independently of backups."""
+    rows = sql_json("select coalesce(json_agg(json_build_object('subject_digest',subject_digest,"
+                    "'erased_at',erased_at) order by erased_at,subject_digest),'[]') "
+                    "from app_private.erasure_tombstones;", env)
+    generated_at = sql_json("select to_json(clock_timestamp());", env)
+    return {'format': LEDGER_FORMAT, 'generated_at': generated_at, 'tombstones': rows}
 
 
 def copy_hashed(chunks, target):
@@ -185,11 +195,14 @@ def readiness():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['check', 'backup', 'stream', 'verify'])
+    parser.add_argument('action', choices=['check', 'backup', 'stream', 'verify', 'ledger'])
     parser.add_argument('--archive', type=Path)
     args = parser.parse_args()
     if args.action == 'check':
         print(json.dumps(readiness()))
+    elif args.action == 'ledger':
+        env = database_env(os.environ['ADS_BACKUP_DB_URL'])
+        print(json.dumps(erasure_ledger(env), separators=(',', ':')))
     elif args.action == 'stream':
         stream_backup(sys.stdout.buffer)
     elif args.action == 'verify':
