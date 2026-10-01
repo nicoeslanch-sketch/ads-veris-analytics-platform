@@ -132,3 +132,22 @@ def test_job_completion_keeps_total_progress_and_does_not_evict_active_jobs():
         assert complete["completed_phases"] == complete["total_phases"] == 4
     manager.executor.shutdown(wait=True)
     assert not manager.producers
+
+
+def test_purged_user_is_fenced_from_late_worker_results():
+    manager = _manager()
+    release = threading.Event()
+
+    def producer():
+        release.wait(timeout=2)
+        return {"private": 42}
+
+    job = manager.submit("erased-user", ("metrics", "erase"), producer)
+    manager.purge_user("erased-user")
+    release.set()
+    time.sleep(0.05)
+    assert manager.get("erased-user", job["job_id"]) is None
+    with manager.lock:
+        assert not [key for key in manager.jobs if key[0] == "erased-user"]
+        assert not [key for key in manager.producers if key[0] == "erased-user"]
+    manager.executor.shutdown(wait=True)

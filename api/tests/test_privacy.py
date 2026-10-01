@@ -84,6 +84,21 @@ def test_non_admin_cannot_list_or_answer(client, monkeypatch):
     assert not calls
 
 
+def test_erasure_requires_exact_confirmation_and_admin(client, monkeypatch):
+    monkeypatch.setattr(privacy, '_require_admin_sync', lambda *_args: None)
+    executed = []
+    monkeypatch.setattr(privacy, 'execute_account_erasure',
+                        lambda admin, request, settings: executed.append((admin, request)) or {'status': 'completed'})
+    api, _calls = client
+    request_id = '00000000-0000-0000-0000-000000000001'
+    assert api.post(f'/privacy/admin/requests/{request_id}/erase',
+                    json={'confirmation': 'eliminar cuenta'}).status_code == 422
+    result = api.post(f'/privacy/admin/requests/{request_id}/erase',
+                      json={'confirmation': 'ELIMINAR CUENTA'})
+    assert result.status_code == 200
+    assert executed == [('owner', request_id)]
+
+
 def test_anonymous_cannot_submit():
     app = FastAPI()
     app.include_router(privacy.router)

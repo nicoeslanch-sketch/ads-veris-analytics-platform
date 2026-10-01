@@ -58,6 +58,7 @@ class AnalysisJobManager:
         self.jobs: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
         self.producers: dict[tuple[str, str], Callable[[], dict[str, Any]]] = {}
         self.lock = threading.Lock()
+        self.purged_users: set[str] = set()
         # Render usa una instancia de memoria acotada. Dos cálculos pandas/XLSX
         # simultáneos pueden dejar sin respuesta incluso al health check. Los
         # trabajos siguen siendo asíncronos, pero el proceso ejecuta uno pesado
@@ -77,6 +78,10 @@ class AnalysisJobManager:
     def _remember(self, user_id: str, job: dict[str, Any]) -> dict[str, Any]:
         identity = (user_id, str(job["job_id"]))
         with self.lock:
+            if user_id in self.purged_users:
+                self.jobs.pop(identity, None)
+                self._release_input_locked(identity)
+                return copy.deepcopy(job)
             self._prune_input_locked()
             current = self.jobs.get(identity)
             if current:
@@ -110,6 +115,9 @@ class AnalysisJobManager:
         return copy.deepcopy(job)
 
     def get(self, user_id: str, job_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            if user_id in self.purged_users:
+                return None
         shared = self.coordinator.get_job(user_id, job_id)
         if shared is not None:
             return self._remember(user_id, shared)
@@ -259,6 +267,15 @@ class AnalysisJobManager:
             self._remember(user_id, job)
         return job
 
+    def purge_user(self, user_id: str) -> None:
+        """Fence running producers and release all retained account input."""
+        with self.lock:
+            self.purged_users.add(user_id)
+            for identity in [key for key in self.jobs if key[0] == user_id]:
+                job = self.jobs.pop(identity)
+                job["cancel_requested"] = True
+                self._release_input_locked(identity)
+
     def retry(self, user_id: str, job_id: str) -> dict[str, Any] | None:
         job = self.get(user_id, job_id)
         identity = (user_id, job_id)
@@ -306,3 +323,10 @@ def manager_for(settings: Settings) -> AnalysisJobManager:
         if key not in _MANAGERS:
             _MANAGERS[key] = AnalysisJobManager(settings)
         return _MANAGERS[key]
+
+
+def purge_user_jobs(user_id: str) -> None:
+    with _MANAGERS_LOCK:
+        managers = list(_MANAGERS.values())
+    for manager in managers:
+        manager.purge_user(user_id)

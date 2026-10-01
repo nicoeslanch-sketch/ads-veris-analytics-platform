@@ -66,6 +66,14 @@ def invalidate_storage_cache(storage_path: str) -> None:
             _DOWNLOAD_CACHE.pop(key, None)
 
 
+def invalidate_storage_user_cache(user_id: str) -> None:
+    """Remove every cached object under an account folder."""
+    prefix = f"{user_id}/"
+    with _CACHE_LOCK:
+        for key in [key for key in _DOWNLOAD_CACHE if key[2].startswith(prefix)]:
+            _DOWNLOAD_CACHE.pop(key, None)
+
+
 def normalize_user_storage_path(storage_path: str, user_id: str) -> str:
     """Valida que una ruta pertenezca exactamente a la carpeta del usuario."""
     raw = str(storage_path or "").strip()
