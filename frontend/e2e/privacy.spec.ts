@@ -45,23 +45,53 @@ test('signup requires affirmative consent and phone is optional', async ({ page 
   await expect(page.locator('input[type="tel"]')).not.toHaveAttribute('required')
 })
 
-test('legacy account must affirm consent but can request erasure without it', async ({ page }) => {
-  await page.route('**/src/auth/AuthContext.tsx', route => route.fulfill({ contentType: 'application/javascript', body:
-    `export function useAuth(){return {session:{user:{id:'synthetic'}},logout:async()=>{}}}` }))
-  await page.route('**/src/lib/api.ts', route => route.fulfill({ contentType: 'application/javascript', body: `
-    export class ApiError extends Error {}
-    export async function apiGet(){return {accepted:false,version:'2026-09-28',requests:[]}}
-    export async function apiPostJson(path){return path.includes('acceptance')
-      ? {accepted:true,version:'2026-09-28',requests:[]} : {id:'receipt'}}
-  ` }))
-  await page.goto('/e2e/fixtures/privacy.html?gate')
-  await expect(page.getByText('Espacio de trabajo de prueba')).toHaveCount(0)
-  await page.getByRole('combobox').selectOption('erasure')
-  await page.getByRole('checkbox', { name: /Solicito eliminar/ }).check()
-  await page.getByRole('button', { name: 'Solicitar eliminacion de cuenta y datos' }).click()
-  await expect(page.getByRole('status')).toContainText('Solicitud recibida')
-  await expect(page.getByRole('checkbox', { name: /Acepto las/ })).not.toBeChecked()
-  await page.getByRole('checkbox', { name: /Acepto las/ }).check()
-  await page.getByRole('button', { name: 'Registrar mi aceptacion' }).click()
-  await expect(page.getByText('Espacio de trabajo de prueba')).toBeVisible()
+for (const isAdmin of [false, true]) {
+  test(`returning ${isAdmin ? 'administrator' : 'customer'} enters and reloads without a privacy gate`, async ({ page }) => {
+    await page.route('**/src/auth/AuthContext.tsx', route => route.fulfill({
+      contentType: 'application/javascript', body: `
+        const user = {id:'synthetic-returning-user',email:'returning@example.test',user_metadata:{}};
+        export function AuthProvider({children}){return children;}
+        export function useAuth(){return {session:{user,access_token:'synthetic'},user,
+          loading:false,configured:true,recoveryMode:false,logout:async()=>{}};}
+        export function translateAuthError(){return 'Error de prueba';}
+      `,
+    }))
+    await page.route('**/src/lib/access.tsx', route => route.fulfill({
+      contentType: 'application/javascript', body: `
+        export function AccessProvider({children}){return children;}
+        export function useAccess(){return {status:'resolved',can:()=>true,refresh:()=>{},
+          access:{paid_plan:'basico',plan_display:'Básico',is_admin:${isAdmin},enforcement:true,
+            capabilities:[],trial:{active:false,used:true,days_remaining:0}}};}
+      `,
+    }))
+    await page.route('**/security/session', route => route.fulfill({json:{
+      enforced:true,has_mfa:false,admin_required:false,verified:true,needs_verification:false,
+    }}))
+    let privacyReads = 0
+    await page.route('**/privacy/account', route => {
+      privacyReads++
+      return route.fulfill({status:503,json:{detail:'Privacidad temporalmente no disponible'}})
+    })
+    await page.goto('/')
+    const resumen = page.getByRole('link', {name:'Resumen',exact:true})
+    await expect(resumen).toBeVisible()
+    await expect(page.getByRole('heading', {name:'Tu privacidad en ADS Veris'})).toHaveCount(0)
+    await page.getByRole('link', {name:'Explorar datos',exact:true}).click()
+    await expect(page).toHaveURL(/\/explorar$/)
+    await expect(resumen).toBeVisible()
+    await page.reload()
+    await expect(resumen).toBeVisible()
+    await resumen.click()
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('button', {name:'Enviar solicitud',exact:true})).toHaveCount(0)
+    await expect(page.getByRole('link', {name:'Administrar cuentas',exact:true})).toHaveCount(isAdmin ? 1 : 0)
+    expect(privacyReads).toBe(0)
+  })
+}
+
+test('login does not request consent or a privacy request', async ({ page }) => {
+  await page.goto('/login')
+  await expect(page.getByRole('heading', {name:'Inicia sesión'})).toBeVisible()
+  await expect(page.getByRole('checkbox', {name:/Acepto las/})).toHaveCount(0)
+  await expect(page.getByRole('button', {name:'Enviar solicitud',exact:true})).toHaveCount(0)
 })
