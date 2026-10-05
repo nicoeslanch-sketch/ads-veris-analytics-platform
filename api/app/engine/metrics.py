@@ -2078,6 +2078,10 @@ def compute_metrics(
         result["tipo_analisis"] = "catalogo_productos"
         result["analisis_productos"] = {
             "productos": int(df[product_column].loc[~physical_missing_mask(df[product_column])].nunique()),
+            "columna_producto": product_column,
+            "registros": int(len(df)),
+            "estado_unidad": "registros",
+            "sin_estado": int((~statuses.isin({"si", "sí", "activo", "activa", "vigente", "no", "inactivo", "inactiva", "descontinuado"})).sum()) if status_column else int(len(df)),
             "referencia_tipo": reference_type,
             "costos": stats(cost_values),
             "precios_lista": stats(price_values),
@@ -2149,6 +2153,11 @@ def compute_metrics(
             warnings.append(
                 f"{int(atypical_cost.sum())} costo(s) unitario(s) requieren revisión por ser no positivos o atípicos según IQR; no se corrigen ni excluyen de los totales."
             )
+        warnings.append(
+            f"Productos cuenta valores distintos de {product_column}. Estados, categorias, "
+            "marcas y promedios se calculan por registro: si conservas duplicados, "
+            "siguen incluidos. Los totales unitarios suponen una unidad por fila, no por SKU."
+        )
         result["advertencias"] = warnings
     elif campaign_profile:
         investment_column = _column_containing("inversion")

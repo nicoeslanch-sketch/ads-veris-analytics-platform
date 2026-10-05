@@ -1567,6 +1567,28 @@ def _answer_product_catalog(metrics: dict[str, Any], question: str) -> dict[str,
     products = metrics.get("analisis_productos") or {}
     if not products:
         return None
+    if re.search(r"\b(?:inactiv[oa]s?|activ[oa]s?|descontinuad[oa]s?|estado)\b", question):
+        wants_inactive = bool(re.search(r"\b(?:inactiv[oa]s?|descontinuad[oa]s?)\b", question))
+        wants_active = bool(re.search(r"\bactiv[oa]s?\b", question))
+        fields = [('inactivos', 'inactivos')] if wants_inactive and not wants_active else [('activos', 'activos')] if wants_active and not wants_inactive else [('activos', 'activos'), ('inactivos', 'inactivos')]
+        facts = []
+        for key, label in fields:
+            value = _number(products.get(key))
+            noun = f"registro {label.removesuffix('s')}" if value == 1 else f"registros {label}"
+            facts.append(f"{_es_number(value)} {noun}" if value is not None else f"No hay un conteo publicado de registros {label}")
+        answer = '; '.join(facts) + '.'
+        total = _number(products.get('registros'))
+        if _contains(question, 'porcentaje', 'proporcion', 'participacion'):
+            if len(fields) == 1 and total is not None and total > 0 and _number(products.get(fields[0][0])) is not None and 0 <= float(products[fields[0][0]]) <= total:
+                value = float(products[fields[0][0]])
+                answer += f" Representan {_percent(value / total * 100)} de los {_es_number(total)} registros del catalogo ({_es_number(value)} / {_es_number(total)} x 100)."
+            else:
+                answer += ' No tengo una base completa para calcular ese porcentaje.'
+        unknown = _number(products.get('sin_estado'))
+        if unknown is not None and unknown > 0:
+            answer += f" Hay {_es_number(unknown)} registros sin estado reconocido."
+        answer += ' Son conteos por fila, con los duplicados conservados; no necesariamente productos distintos. Inactivo es un estado del catalogo, no prueba que lleve meses sin vender.'
+        return _result(answer, 'metric_catalog_status', metric_suggestions(metrics))
     currency = str(metrics.get("moneda") or "CLP")
     answer = f"El catálogo contiene {_es_number(products.get('productos'))} productos"
     average_cost = _number((products.get("costos") or {}).get("promedio"))
@@ -1921,6 +1943,18 @@ def answer_metrics_question(
     correction = re.search(r"\bsino\s+(?:a |al |la |el )*(.+)$", original_question) or re.search(r"\bme refiero\s+(?:a |al |la |el )*(.+)$", original_question)
     if correction:
         original_question = question = correction.group(1)
+    catalog_status = re.search(r"\b(?:inactiv[oa]s?|activ[oa]s?|descontinuad[oa]s?|estado)\b", original_question)
+    previous_status = _previous_user_message(history)
+    status_followup = re.search(r"\b(?:porcentaje|proporcion|participacion)\b", original_question) and re.search(r"\b(?:inactiv[oa]s?|activ[oa]s?|descontinuad[oa]s?)\b", previous_status)
+    other_status = _contains(original_question, 'filtro', 'limpieza', 'estandarizacion', 'cuenta', 'suscripcion', 'plan', 'servidor', 'trabajo', 'corriente', 'balance', 'liquidez', 'activos fijos', 'activos totales')
+    if metrics.get('tipo_analisis') == 'catalogo_productos' and (catalog_status or status_followup) and not other_status:
+        from .assistant_queries import _scope_parts, resolve_followup_scope
+        status_question = original_question if catalog_status else f'{previous_status} {original_question}'
+        scoped = _normalize(resolve_followup_scope(status_question, metrics, history))
+        period, segment = _scope_parts(scoped, metrics)
+        if period or segment or re.search(r"\b(?:hoy|ayer|mes|semana|trimestre|sku|id|sucursal|categoria|marca)\b|\ben\s+(?!(?:(?:el|la)\s+)?(?:catalogo|archivo|general)\b)", scoped):
+            return _result('No tengo publicado el estado del catalogo para ese periodo, producto o segmento. El conteo general no lo sustituye; revisa ese alcance en la fuente.', 'metric_catalog_status_scope', metric_suggestions(metrics), 'medium')
+        return _answer_product_catalog(metrics, status_question)
     if metrics.get("tipo_analisis") == "catalogo_productos" and _contains(
         original_question, "costo", "gasto", "gastado", "gaste", "ingresos",
         "ventas totales", "cuanto vendi", "facturacion",

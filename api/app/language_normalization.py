@@ -24,7 +24,7 @@ def normalize_basic(text: object) -> str:
 # se almacenan sin tildes porque normalize_basic se ejecuta antes de consultarlas.
 _VOCABULARY = frozenset(
     """
-    a acerca activo activos actual actuales administracion administrativo agencia
+    a acerca activo activos activa activas inactivo inactivos inactiva inactivas descontinuado descontinuados actual actuales administracion administrativo agencia
     autenticador autentificador autenticacion authenticator totp mfa contrasena password
     recuperar recupero recuperacion restablecer olvide perdi perdido escanear codigo codigos
     vender vende venden vendo vendemos vendi vendimos vendia vendian vendio vendieron
