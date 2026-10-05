@@ -16,6 +16,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import socket
 import statistics
 import subprocess
@@ -105,6 +106,40 @@ def child_process(args):
         raise RuntimeError('Missing isolated-lab marker')
     block_external_connections()
     sys.path.insert(0, str(ROOT / 'api'))
+    from app import restore_cache
+    post_rpc = restore_cache._post_rpc
+    fault_lock = threading.Lock()
+    injected = set()
+
+    def inject_once(phase):
+        if os.environ.get('CAPACITY_LAB_PERSISTENCE_FAULTS') != '1':
+            return False
+        with fault_lock:
+            if phase in injected:
+                return False
+            injected.add(phase)
+        print(f'CAPACITY_RESTORE_FAULT phase={phase}', flush=True)
+        return True
+
+    def diagnose_restore_rpc(function, payload, settings):
+        import httpx
+        is_store = function.startswith('store_restore_snapshot_guarded')
+        if is_store and inject_once('before_write'):
+            return httpx.Response(503)
+        response = post_rpc(function, payload, settings)
+        if response.status_code != 200:
+            try:
+                code = response.json().get('code', '')
+            except (ValueError, AttributeError):
+                code = ''
+            safe_code = code if isinstance(code, str) and re.fullmatch(r'(?:[A-Z0-9]{5}|PGRST\d{3})', code) else 'UNKNOWN'
+            # Codes only: database messages can contain values, URLs or secrets.
+            print(f'CAPACITY_RESTORE_RPC status={response.status_code} code={safe_code}', flush=True)
+        if is_store and response.status_code == 200 and response.json() is True and inject_once('after_write'):
+            return httpx.Response(503)
+        return response
+
+    restore_cache._post_rpc = diagnose_restore_rpc
     if args.serve:
         import uvicorn
         uvicorn.run('app.main:app', host='127.0.0.1', port=args.serve, log_level='warning')
@@ -152,6 +187,7 @@ class Lab:
                        'safety': {'production_requests': 0, 'customer_files_read': 0}}
         self.tmp = tempfile.TemporaryDirectory(prefix='ads-capacity-')
         self.env = {**os.environ, 'CAPACITY_LAB_ISOLATED': '1', 'APP_ENV': 'development',
+                    'CAPACITY_LAB_PERSISTENCE_FAULTS': '1',
                     'GIT_SHA': os.environ.get('GITHUB_SHA', 'local'),
                     'SUPABASE_URL': self.base, 'SUPABASE_SERVICE_ROLE_KEY': self.status['SERVICE_ROLE_KEY'],
                     'SUPABASE_JWT_SECRET': self.status['JWT_SECRET'], 'SUPABASE_STORAGE_BUCKET': 'datasets',
@@ -417,6 +453,16 @@ class Lab:
                     if result['status'] in TERMINAL:
                         assert result['status'] == 'completed', f'{kind} failed'
                         payload = result['result']
+                        if payload['errores'] or payload['persistencia_errores']:
+                            self.report['preparation_failure'] = {
+                                'stage': kind,
+                                'processing_errors': len(payload['errores']),
+                                'persistence_errors': len(payload['persistencia_errores']),
+                                'stale_revision_rejections': sum(
+                                    str(value).startswith('No se pudo confirmar esta hoja')
+                                    for value in payload['persistencia_errores'].values()
+                                ),
+                            }
                         assert not payload['errores'] and not payload['persistencia_errores'], f'{kind} has partial failures'
                         assert len(payload['resultados']) == 4
                         timings[kind].append(time.monotonic() - started)
@@ -426,6 +472,13 @@ class Lab:
                     time.sleep(.5)
         self.report['preparation_seconds'] = {kind: quantiles(values) for kind, values in timings.items()}
         self.report['checks']['four_sheet_standardization_cleaning_and_persistence'] = True
+        faults = {
+            phase for _, _, log in self.processes
+            for phase in re.findall(r'^CAPACITY_RESTORE_FAULT phase=(before_write|after_write)$',
+                                    log.read_text(encoding='utf-8', errors='replace'), re.MULTILINE)
+        }
+        assert faults == {'before_write', 'after_write'}, 'Persistence fault injection did not run'
+        self.report['checks']['snapshot_transient_failure_and_lost_reply_recovered'] = True
 
     def run(self):
         sampler = threading.Thread(target=self.sample_resources, daemon=True)
@@ -453,6 +506,14 @@ class Lab:
                         process.kill()
                         process.wait(timeout=10)
             self.report['peak_process_rss_mib'] = {k: round(v, 2) for k, v in self.peak.items()}
+            self.report['restore_rpc_failures'] = [
+                {'status': int(status), 'code': code}
+                for _, _, log in self.processes
+                for status, code in re.findall(
+                    r'^CAPACITY_RESTORE_RPC status=(\d{3}) code=([A-Z0-9]{5,12})$',
+                    log.read_text(encoding='utf-8', errors='replace'), re.MULTILINE,
+                )
+            ]
             self.report['http_ms'] = {route: quantiles([s['ms'] for s in self.samples if s['route'] == route])
                                        for route in ('admission', 'poll')}
             self.report['http_status_counts'] = {str(status): sum(s['status'] == status for s in self.samples)

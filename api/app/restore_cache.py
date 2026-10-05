@@ -68,13 +68,15 @@ def _get(
     table: str,
     params: dict[str, str],
     settings: Settings,
+    *,
+    timeout: float = 20,
 ) -> httpx.Response:
     try:
         return httpx.get(
             _rest_url(settings, table),
             params=params,
             headers=_headers(settings),
-            timeout=20,
+            timeout=timeout,
         )
     except httpx.HTTPError as exc:
         raise HTTPException(
@@ -542,8 +544,10 @@ def store_restore_snapshot(
     active_sheet = state.get("active_sheet", snapshot.get("sheet"))
     excluded_sheets = state.get("excluded_sheets")
     if not isinstance(excluded_sheets, list):
+        selected = state.get("selected_sheets")
+        selected = selected if isinstance(selected, list) else [snapshot.get("sheet")]
         excluded_sheets = [
-            name for name in available_sheets if name != snapshot.get("sheet")
+            name for name in available_sheets if name not in selected
         ]
     payload = {
         "p_dataset_id": safe_dataset_id,
@@ -586,30 +590,75 @@ def store_restore_snapshot(
             "selection_mode",
         )
     )
+    rpc_payload = payload_v2 if uses_v2 else payload
+    function = "store_restore_snapshot_guarded_v2" if uses_v2 else "store_restore_snapshot_guarded"
+    transient_statuses = {408, 429, 500, 502, 503, 504}
+    for attempt in range(2):
+        transient = False
+        try:
+            response = _post_rpc(function, rpc_payload, settings)
+            if response.status_code == 200:
+                try:
+                    stored = response.json()
+                except ValueError:
+                    stored = None
+                if stored is True:
+                    return True
+                if stored is False:
+                    # A lost response may have committed the first attempt.
+                    return attempt > 0 and _snapshot_commit_confirmed(rpc_payload, settings)
+                detail = "Supabase devolvió una respuesta inválida al guardar el snapshot."
+                transient = True
+            else:
+                detail = f"Supabase respondió {response.status_code} al guardar el snapshot."
+                transient = response.status_code in transient_statuses
+        except HTTPException as exc:
+            detail = "No se pudo confirmar la conexión con Supabase al guardar el snapshot."
+            transient = exc.status_code in transient_statuses
+        logger.warning("Restore snapshot persistence unavailable (transient=%s)", transient)
+        if transient and _snapshot_commit_confirmed(rpc_payload, settings):
+            return True
+        if not transient or attempt == 1:
+            if raise_on_unavailable:
+                raise RestoreSnapshotUnavailable(detail)
+            return False
+    return False
+
+
+def _snapshot_commit_confirmed(payload: dict[str, Any], settings: Settings) -> bool:
+    """Resolve an uncertain write by reading this owner's exact current payload."""
+    identity = {
+        "dataset_id": f"eq.{payload['p_dataset_id']}",
+        "user_id": f"eq.{payload['p_user_id']}",
+        "revision": f"eq.{payload['p_revision']}",
+        "source_sha256": f"eq.{payload['p_source_sha256']}",
+        "engine_version": f"eq.{payload['p_engine_version']}",
+        "limit": "1",
+    }
     try:
-        response = _post_rpc(
-            "store_restore_snapshot_guarded_v2" if uses_v2 else "store_restore_snapshot_guarded",
-            payload_v2 if uses_v2 else payload,
-            settings,
+        sheet_response = _get("dataset_sheet_snapshots", {
+            **identity, "sheet_key": f"eq.{payload['p_sheet_key']}", "select": "snapshot",
+        }, settings, timeout=5)
+        if sheet_response.status_code != 200:
+            return False
+        rows = sheet_response.json()
+        expected = json.loads(json.dumps(payload["p_snapshot"], allow_nan=False))
+        if not isinstance(rows, list) or len(rows) != 1 or rows[0].get("snapshot") != expected:
+            return False
+        fields = [
+            "active_sheet", "available_sheets", "excluded_sheets", "combine_sheets",
+        ]
+        if "p_selected_sheets" in payload:
+            fields += ["selected_sheets", "sheet_errors", "analysis_scope"]
+        state_response = _get("dataset_restore_states", {
+            **identity, "select": ",".join(fields),
+        }, settings, timeout=5)
+        if state_response.status_code != 200:
+            return False
+        states = state_response.json()
+        return (
+            isinstance(states, list) and len(states) == 1
+            and all(states[0].get(field) == payload[f"p_{field}"] for field in fields)
         )
-    except HTTPException as exc:
-        logger.warning("Could not persist restore snapshot: %s", exc.detail)
-        if raise_on_unavailable:
-            raise RestoreSnapshotUnavailable(str(exc.detail)) from exc
+    except (HTTPException, ValueError, TypeError, AttributeError):
         return False
-    if response.status_code != 200:
-        logger.warning("Supabase rejected restore snapshot with status %s", response.status_code)
-        if raise_on_unavailable:
-            raise RestoreSnapshotUnavailable(
-                f"Supabase respondió {response.status_code} al guardar el snapshot."
-            )
-        return False
-    try:
-        stored = response.json()
-    except ValueError:
-        if raise_on_unavailable:
-            raise RestoreSnapshotUnavailable(
-                "Supabase devolvió una respuesta inválida al guardar el snapshot."
-            )
-        return False
-    return stored is True

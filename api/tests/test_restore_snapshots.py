@@ -500,6 +500,7 @@ def test_store_snapshot_distingue_indisponibilidad_de_revision_obsoleta(monkeypa
         raise HTTPException(status_code=502, detail="Supabase no disponible")
 
     monkeypatch.setattr(restore_cache, "_post_rpc", unavailable)
+    monkeypatch.setattr(restore_cache, "_get", lambda *_args, **_kwargs: httpx.Response(200, json=[]))
     with pytest.raises(RestoreSnapshotUnavailable):
         store_restore_snapshot(
             "00000000-0000-0000-0000-000000000001",
@@ -521,6 +522,89 @@ def test_store_snapshot_distingue_indisponibilidad_de_revision_obsoleta(monkeypa
         settings,
         raise_on_unavailable=True,
     ) is False
+
+
+@pytest.mark.parametrize('failure', [502, 503, 504, 429, 'timeout', 'invalid_response'])
+def test_snapshot_transient_failure_retries_identical_guarded_write(monkeypatch, failure):
+    from app import restore_cache
+    calls = []
+
+    def post(function, payload, settings):
+        calls.append((function, payload))
+        if len(calls) > 1:
+            return httpx.Response(200, json=True)
+        if failure == 'timeout':
+            raise HTTPException(502, 'internal detail must not be logged')
+        if failure == 'invalid_response':
+            return httpx.Response(200, text='not json')
+        return httpx.Response(failure)
+
+    monkeypatch.setattr(restore_cache, '_post_rpc', post)
+    monkeypatch.setattr(restore_cache, '_get', lambda *_a, **_kw: httpx.Response(200, json=[]))
+    settings = Settings(supabase_url='https://example.supabase.co', supabase_service_role_key='test')
+    assert store_restore_snapshot('00000000-0000-0000-0000-000000000001', 'owner', _snapshot(), settings)
+    assert len(calls) == 2 and calls[0] == calls[1]
+
+
+@pytest.mark.parametrize('failure', [400, 401, 403, 404, 409, 422])
+def test_snapshot_permanent_rejection_does_not_retry_or_fall_back(monkeypatch, failure):
+    from app import restore_cache
+    calls = []
+    monkeypatch.setattr(restore_cache, '_post_rpc', lambda *a: calls.append(a) or httpx.Response(failure))
+    monkeypatch.setattr(restore_cache, '_get', lambda *_a, **_kw: pytest.fail('No confirmation read for permanent errors'))
+    settings = Settings(supabase_url='https://example.supabase.co', supabase_service_role_key='test')
+    with pytest.raises(RestoreSnapshotUnavailable):
+        store_restore_snapshot('00000000-0000-0000-0000-000000000001', 'owner', _snapshot(), settings,
+                               raise_on_unavailable=True)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('mismatch', [None, 'contents', 'selection', 'newer_revision', 'owner', 'unavailable'])
+def test_lost_snapshot_response_requires_exact_owner_payload_and_current_state(monkeypatch, mismatch):
+    from app import restore_cache
+    calls = []
+    reads = []
+    snapshot = _snapshot(sheet='Ventas')
+    dataset = '00000000-0000-0000-0000-000000000001'
+
+    def post(function, payload, settings):
+        calls.append(payload)
+        raise HTTPException(502, 'lost reply')
+
+    def get(table, params, settings, **kwargs):
+        reads.append(table)
+        assert params['dataset_id'] == f'eq.{dataset}'
+        assert params['user_id'] == 'eq.owner'
+        assert params['revision'] == f"eq.{snapshot['revision']}"
+        assert params['source_sha256'] == f'eq.{SOURCE_SHA}'
+        assert params['engine_version'] == f"eq.{snapshot['engine_version']}"
+        assert params['limit'] == '1' and kwargs['timeout'] == 5
+        if mismatch == 'unavailable':
+            raise HTTPException(502, 'read unavailable')
+        if mismatch == 'owner':
+            return httpx.Response(200, json=[])
+        if table == 'dataset_sheet_snapshots':
+            assert params['sheet_key'] == 'eq.Ventas'
+            stored = {**snapshot, 'mapping': {'monto': 'otro'}} if mismatch == 'contents' else snapshot
+            return httpx.Response(200, json=[{'snapshot': stored}])
+        assert table == 'dataset_restore_states'
+        if mismatch == 'newer_revision':
+            return httpx.Response(200, json=[])
+        state = {key: calls[-1][f'p_{key}'] for key in params['select'].split(',')}
+        if mismatch == 'selection':
+            state['selected_sheets'] = []
+        return httpx.Response(200, json=[state])
+
+    monkeypatch.setattr(restore_cache, '_post_rpc', post)
+    monkeypatch.setattr(restore_cache, '_get', get)
+    settings = Settings(supabase_url='https://example.supabase.co', supabase_service_role_key='test')
+    stored = store_restore_snapshot(dataset, 'owner', snapshot, settings, restore_state={
+        'available_sheets': ['Ventas', 'Productos'], 'selected_sheets': ['Ventas', 'Productos'],
+    })
+    assert stored is (mismatch is None)
+    assert len(calls) == (1 if mismatch is None else 2)
+    assert calls[0]['p_excluded_sheets'] == []
+    assert reads
 
 
 @pytest.mark.parametrize("selection_mode", ["all", "custom"])
