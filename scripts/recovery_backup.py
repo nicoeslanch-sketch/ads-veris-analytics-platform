@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -196,6 +197,34 @@ def readiness():
                                            'ADS_ERASURE_LEDGER_PASSWORD_FILE')}}
 
 
+def restic_env(repository, password_file):
+    if not repository or not password_file:
+        raise RecoveryError('MISSING_BACKUP_CONFIGURATION')
+    env = dict(os.environ)
+    # Do not let inherited alternatives override the two explicit destinations.
+    for name in ('RESTIC_REPOSITORY_FILE', 'RESTIC_PASSWORD', 'RESTIC_PASSWORD_COMMAND', 'RESTIC_KEY_HINT'):
+        env.pop(name, None)
+    return {**env, 'RESTIC_REPOSITORY': repository, 'RESTIC_PASSWORD_FILE': password_file}
+
+
+def data_restic_env():
+    return restic_env(os.environ.get('RESTIC_REPOSITORY', ''), os.environ.get('RESTIC_PASSWORD_FILE', ''))
+
+
+def password_file_value(path):
+    try:
+        with Path(path).open('rb') as stream:
+            value = stream.read(4097)
+    except OSError:
+        raise RecoveryError('BACKUP_KEY_FILE_UNREADABLE') from None
+    if len(value) > 4096:
+        raise RecoveryError('BACKUP_KEY_FILE_INVALID')
+    value = value.strip()
+    if not value or b'\n' in value or b'\r' in value or b'\x00' in value:
+        raise RecoveryError('BACKUP_KEY_FILE_INVALID')
+    return value
+
+
 def erasure_ledger_restic_env():
     repository = os.environ.get('ADS_ERASURE_LEDGER_REPOSITORY', '')
     password_file = os.environ.get('ADS_ERASURE_LEDGER_PASSWORD_FILE', '')
@@ -203,35 +232,63 @@ def erasure_ledger_restic_env():
         raise RecoveryError('MISSING_ERASURE_LEDGER_CONFIGURATION')
     if repository.rstrip('/') == os.environ.get('RESTIC_REPOSITORY', '').rstrip('/'):
         raise RecoveryError('ERASURE_LEDGER_REPOSITORY_NOT_INDEPENDENT')
-    if password_file == os.environ.get('RESTIC_PASSWORD_FILE', ''):
+    data_password_file = os.environ.get('RESTIC_PASSWORD_FILE', '')
+    if password_file == data_password_file:
         raise RecoveryError('ERASURE_LEDGER_KEY_NOT_INDEPENDENT')
-    return {**os.environ, 'RESTIC_REPOSITORY': repository,
-            'RESTIC_PASSWORD_FILE': password_file}
+    if hmac.compare_digest(password_file_value(password_file), password_file_value(data_password_file)):
+        raise RecoveryError('ERASURE_LEDGER_KEY_NOT_INDEPENDENT')
+    return restic_env(repository, password_file)
 
 
-def encrypted_data_backup():
-    # A failed producer must never publish a seemingly successful snapshot.
-    result = subprocess.run(['restic', 'backup', '--quiet', '--tag', 'ads-recovery-v1',
-                             '--stdin-filename', 'ads-recovery.zip', '--stdin-from-command', '--',
-                             sys.executable, str(Path(__file__).resolve()), 'stream'], timeout=7200)
+def run_restic(command, env, timeout, error_code):
+    try:
+        result = subprocess.run(['restic', *command], env=env, capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        raise RecoveryError(error_code) from None
     if result.returncode:
-        raise RecoveryError('ENCRYPTED_BACKUP_FAILED')
+        raise RecoveryError(error_code)
+    return result.stdout
 
 
-def encrypted_erasure_ledger_backup():
+def restic_repository_id(env):
+    output = run_restic(['cat', 'config', '--quiet'], env, 90, 'RESTIC_REPOSITORY_CHECK_FAILED')
+    try:
+        repository_id = json.loads(output)['id']
+        if not isinstance(repository_id, str) or not re.fullmatch(r'[0-9a-f]{64}', repository_id):
+            raise ValueError
+    except (ValueError, KeyError, TypeError):
+        raise RecoveryError('RESTIC_REPOSITORY_CONFIG_INVALID') from None
+    return repository_id
+
+
+def independent_restic_environments():
+    data_env, ledger_env = data_restic_env(), erasure_ledger_restic_env()
+    # Aliases and repositories with multiple keys can pass string comparisons.
+    if restic_repository_id(data_env) == restic_repository_id(ledger_env):
+        raise RecoveryError('ERASURE_LEDGER_REPOSITORY_NOT_INDEPENDENT')
+    return data_env, ledger_env
+
+
+def encrypted_data_backup(env=None):
+    # A failed producer must never publish a seemingly successful snapshot.
+    run_restic(['backup', '--quiet', '--tag', 'ads-recovery-v1',
+                             '--stdin-filename', 'ads-recovery.zip', '--stdin-from-command', '--',
+                             sys.executable, str(Path(__file__).resolve()), 'stream'],
+               env or data_restic_env(), 7200, 'ENCRYPTED_BACKUP_FAILED')
+
+
+def encrypted_erasure_ledger_backup(env):
     # This runs after the ordinary snapshot so the ledger is never older than it.
-    result = subprocess.run(
-        ['restic', 'backup', '--quiet', '--tag', LEDGER_FORMAT,
+    run_restic(
+        ['backup', '--quiet', '--tag', LEDGER_FORMAT,
          '--stdin-filename', 'erasure-ledger.json', '--stdin-from-command', '--',
          sys.executable, str(Path(__file__).resolve()), 'ledger'],
-        env=erasure_ledger_restic_env(), timeout=300)
-    if result.returncode:
-        raise RecoveryError('ENCRYPTED_ERASURE_LEDGER_BACKUP_FAILED')
+        env, 300, 'ENCRYPTED_ERASURE_LEDGER_BACKUP_FAILED')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['check', 'backup', 'backup-all', 'stream', 'verify', 'ledger'])
+    parser.add_argument('action', choices=['check', 'backup', 'backup-all', 'backup-ledger', 'stream', 'verify', 'ledger'])
     parser.add_argument('--archive', type=Path)
     args = parser.parse_args()
     if args.action == 'check':
@@ -246,18 +303,26 @@ def main():
             raise ValueError('An archive path is required')
         manifest = verify_archive(args.archive)
         print(json.dumps({'verified': True, 'objects': len(manifest['objects']), 'members': len(manifest['members'])}))
+    elif args.action == 'backup-ledger':
+        if not os.environ.get('ADS_BACKUP_DB_URL') or not all(shutil.which(tool) for tool in ('psql', 'restic')):
+            raise RecoveryError('MISSING_BACKUP_CONFIGURATION')
+        _, ledger_env = independent_restic_environments()
+        encrypted_erasure_ledger_backup(ledger_env)
+        print(json.dumps({'backup_completed': False, 'erasure_ledger_completed': True,
+                          'restore_verified': False}))
     elif args.action in ('backup', 'backup-all'):
         state = readiness()
         if not all(state['tools'].values()) or not all(state['configured'].values()):
             raise RecoveryError('MISSING_BACKUP_CONFIGURATION')
+        data_env, ledger_env = data_restic_env(), None
         if args.action == 'backup-all':
             if not all(state['erasure_ledger_configured'].values()):
                 raise RecoveryError('MISSING_ERASURE_LEDGER_CONFIGURATION')
-            erasure_ledger_restic_env()
-        encrypted_data_backup()
+            data_env, ledger_env = independent_restic_environments()
+        encrypted_data_backup(data_env)
         ledger_completed = False
         if args.action == 'backup-all':
-            encrypted_erasure_ledger_backup()
+            encrypted_erasure_ledger_backup(ledger_env)
             ledger_completed = True
         print(json.dumps({'backup_completed': True, 'erasure_ledger_completed': ledger_completed,
                           'restore_verified': False}))

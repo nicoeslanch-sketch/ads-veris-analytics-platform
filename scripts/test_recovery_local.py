@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from recovery_backup import check_database_client, database_env, sql_json
+from recovery_backup import check_database_client, database_env, restic_env, sql_json
 from recovery_restore_local import require_local, restore
 
 
@@ -67,20 +67,33 @@ def run(status, checks):
         password_file = folder / 'restic-password'
         password_file.write_text(str(uuid4()) + str(uuid4()), encoding='utf-8')
         password_file.chmod(0o600)
-        backup_env = {**os.environ, 'ADS_BACKUP_DB_URL': status['DB_URL'],
+        ledger_password_file = folder / 'ledger-password'
+        ledger_password_file.write_text(str(uuid4()) + str(uuid4()), encoding='utf-8')
+        ledger_password_file.chmod(0o600)
+        backup_env = {**restic_env(str(folder / 'encrypted'), str(password_file)), 'ADS_BACKUP_DB_URL': status['DB_URL'],
                       'ADS_BACKUP_STORAGE_URL': base, 'ADS_BACKUP_SERVICE_KEY': key,
-                      'RESTIC_REPOSITORY': str(folder / 'encrypted'), 'RESTIC_PASSWORD_FILE': str(password_file)}
+                      'ADS_ERASURE_LEDGER_REPOSITORY': str(folder / 'encrypted-ledger'),
+                      'ADS_ERASURE_LEDGER_PASSWORD_FILE': str(ledger_password_file)}
+        ledger_env = {**backup_env, 'RESTIC_REPOSITORY': str(folder / 'encrypted-ledger'),
+                      'RESTIC_PASSWORD_FILE': str(ledger_password_file)}
         def command(args, **kwargs):
-            result = subprocess.run(args, env=backup_env, capture_output=True, timeout=300, **kwargs)
+            result = subprocess.run(args, env=kwargs.pop('env', backup_env), capture_output=True, timeout=300, **kwargs)
             codes = re.findall(rb'RECOVERY_ERROR:([A-Z_]+)', result.stderr)
             assert result.returncode == 0, ('recovery command failed', args[0], result.returncode, codes)
             return result.stdout
         command(['restic', 'init', '--quiet'])
+        command(['restic', 'init', '--quiet'], env=ledger_env)
+        data_config = json.loads(command(['restic', 'cat', 'config', '--quiet']))
+        ledger_config = json.loads(command(['restic', 'cat', 'config', '--quiet'], env=ledger_env))
+        assert data_config['id'] != ledger_config['id']
         started = time.monotonic()
-        command([sys.executable, str(Path(__file__).with_name('recovery_backup.py')), 'backup'])
+        completed = json.loads(command([sys.executable, str(Path(__file__).with_name('recovery_backup.py')), 'backup-all']))
+        assert completed['backup_completed'] and completed['erasure_ledger_completed']
         checks['encrypted_backup_seconds'] = round(time.monotonic() - started, 3)
         command(['restic', 'check', '--read-data', '--quiet'])
+        command(['restic', 'check', '--read-data', '--quiet'], env=ledger_env)
         checks['encrypted_repository_integrity'] = True
+        checks['independent_encrypted_ledger_integrity'] = True
         original_snapshots = json.loads(command(['restic', 'snapshots', '--json']))
         failed = subprocess.run(['restic', 'backup', '--quiet', '--stdin-from-command', '--',
                                  sys.executable, '-c', 'print("partial"); raise SystemExit(1)'],
@@ -101,8 +114,14 @@ def run(status, checks):
         sql_json("insert into app_private.erasure_tombstones(subject_digest,erased_at,receipt_id) values("
                  f"'{erased_digest}',now(),'{uuid4()}'); select 'true'::json;", env)
         ledger = folder / 'erasure-ledger.json'
-        ledger.write_bytes(command([sys.executable, str(Path(__file__).with_name('recovery_backup.py')), 'ledger']))
+        ledger_completed = json.loads(command([sys.executable, str(Path(__file__).with_name('recovery_backup.py')), 'backup-ledger']))
+        assert ledger_completed['erasure_ledger_completed'] and not ledger_completed['backup_completed']
+        ledger.write_bytes(command(['restic', 'dump', 'latest', '/erasure-ledger.json'], env=ledger_env))
         ledger.chmod(0o600)
+        assert any(row['subject_digest'] == erased_digest for row in json.loads(ledger.read_bytes())['tombstones'])
+        assert json.loads(command(['restic', 'snapshots', '--json'])) == original_snapshots
+        command(['restic', 'check', '--read-data', '--quiet'], env=ledger_env)
+        checks['new_erasure_ledger_without_data_reexport'] = True
         # Only synthetic objects/accounts created in this disposable lab.
         deleted = http.request('DELETE', base + '/storage/v1/object/datasets', headers=headers,
                                json={'prefixes': [object_path, erased_path]})

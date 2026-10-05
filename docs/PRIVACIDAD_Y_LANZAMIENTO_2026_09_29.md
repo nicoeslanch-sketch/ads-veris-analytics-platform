@@ -42,7 +42,16 @@ Fuentes revisadas:
 - [Ley 21.719, BCN](https://www.bcn.cl/leychile/navegar?idNorma=1209272).
 - [Propuesta de ampliacion de plazo, Ministerio de Economia, 01-09-2026](https://www.economia.gob.cl/2026/09/01/gobierno-propone-ampliar-plazo-para-implementar-nueva-ley-de-proteccion-de-datos-y-institucionalidad.htm). Una propuesta no equivale a ley vigente: volver a verificar antes del lanzamiento.
 
-Falta confirmar todos los paises donde se ofrecera el servicio, el domicilio/RUT comercial y la revision profesional de textos, plazos, bases juridicas y transferencias internacionales. No publicarlos a partir de suposiciones.
+Actualizacion 2026-10-04: el titular confirmo el RUT comercial 78.456.217-4 y el
+domicilio Antonio Bellet 193, oficina 1210, Providencia. Publicados en privacidad
+y condiciones. Se verifico el digito de control, no la titularidad registral.
+La version de consentimiento se mantiene: se completan datos de identificacion,
+sin nuevas finalidades ni aceptaciones retroactivas. La fecha de esta
+actualizacion se muestra por separado.
+
+Falta confirmar todos los paises donde se ofrecera el servicio y la revision
+profesional de textos, plazos, bases juridicas y transferencias internacionales.
+No darlos por resueltos a partir de suposiciones.
 
 ## Criterios que siguen bloqueando la declaracion de lanzamiento completo
 

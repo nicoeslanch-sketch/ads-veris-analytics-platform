@@ -36,13 +36,19 @@ propio: restic cifra y autentica el repositorio. ZIP es solo el contenedor inter
    repositorio debe ser distinto del repositorio de datos y usar otra clave.
 3. Validar TLS PostgreSQL con `verify-full` y su certificado CA. No degradar a
    `require` ni desactivar la validacion para solucionar un error de conexion.
-4. Inicializar el repositorio una sola vez con `restic init`. Ejecutar
+4. Inicializar ambos repositorios una sola vez con `restic init`, seleccionando
+   para cada uno su destino y archivo de clave. Ejecutar
    `python scripts/recovery_backup.py check` antes de la primera copia.
 5. En una ventana sin escrituras/subidas/borrados, ejecutar
    `python scripts/recovery_backup.py backup-all`. En un solo paso publica primero
    el respaldo cifrado y despues una version del libro de borrados generada mas
    tarde en su repositorio independiente. Si falta el segundo destino, el comando
-   falla de forma explicita. `backup` queda disponible solo para diagnostico y no
+   falla de forma explicita. Antes de copiar, se comprueban claves de contenido
+   distinto y los identificadores reales de ambos repositorios: un alias de ruta
+   o dos archivos con la misma clave no cuentan como separacion. Los archivos
+   de clave deben contener una sola linea no vacia (hasta 4096 bytes). Se ignoran
+   alternativas heredadas de entorno que puedan sustituir esos destinos/claves.
+   `backup` queda disponible solo para diagnostico y no
    basta como procedimiento comercial. El inventario Storage se compara antes y
    despues; un cambio aborta la copia y no publica un snapshot incompleto.
 6. Ejecutar `restic check --read-data` y revisar fecha y resultado de la copia.
@@ -50,11 +56,29 @@ propio: restic cifra y autentica el repositorio. ZIP es solo el contenedor inter
    antes de aprobar retencion y verificar una restauracion.
 7. `backup-all` conserva automaticamente el libro junto a cada respaldo. Despues
    de una eliminacion integral que ocurra entre respaldos, ejecutar tambien
-   `python scripts/recovery_backup.py ledger` mediante un conducto cifrado o volver
-   a ejecutar `backup-all`; no guardar su salida abierta en una carpeta sincronizada.
-   El registro contiene solo huellas SHA-256 irreversibles y fechas, no correos,
+   `python scripts/recovery_backup.py backup-ledger`. Cifra directamente el registro
+   actualizado sin reexportar los archivos ni requerir credenciales de Storage.
+   Requiere acceso de lectura a la configuracion de ambos repositorios para
+   comprobar su separacion. `ledger` queda como salida sin cifrar para diagnostico:
+   no guardar esa salida en una carpeta sincronizada.
+   El registro contiene huellas SHA-256 de UUID y fechas, no correos,
    UUID, nombres de archivo ni texto de solicitudes. Una copia antigua no se
    puede restaurar sin presentar un registro generado despues de esa copia.
+
+Los errores de restic se traducen a codigos fijos: la herramienta no imprime
+URLs, rutas de objetos ni diagnosticos del proveedor. `check` solo indica
+presencia de herramientas y variables; no certifica conectividad ni independencia.
+La comprobacion de IDs y claves tampoco garantiza independencia de proveedores,
+cuentas de almacenamiento o dominios de fallo: eso exige revisar la configuracion
+operativa. Si el respaldo de datos termina pero falla el del libro, el comando
+completo falla; se debe resolver y repetir `backup-ledger` antes de considerar
+la copia utilizable. No se borra automaticamente el snapshot de datos ya creado.
+
+El laboratorio automatizado usa `backup-all`, valida ambos repositorios cifrados,
+agrega una eliminacion posterior y usa `backup-ledger` sin crear otro snapshot
+de datos. Despues recupera el registro cifrado y ensaya la restauracion de la
+copia anterior: la cuenta vigente debe volver y la eliminada debe permanecer
+suprimida. No usa archivos de clientes.
 
 Alcance: esquemas `public`, `app_private`, `auth`, `storage` y objetos Storage.
 Se excluyen datos del historial de migraciones del proveedor; el destino debe
@@ -122,6 +146,7 @@ Esto no sustituye una guardia ni un monitor con disponibilidad garantizada.
 
 Fuentes oficiales consultadas:
 - https://www.postgresql.org/docs/current/app-pgdump.html
+- https://restic.readthedocs.io/en/stable/100_references.html
 - https://supabase.com/docs/guides/platform/backups
 - https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore
 - https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows

@@ -1,9 +1,11 @@
 import { Link, useLocation } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
-import { LEGAL_VERSION, PRIVACY_CONTROLLER, PRIVACY_EMAIL } from '../lib/privacy'
+import { LEGAL_VERSION, LEGAL_IDENTITY_UPDATED_AT, PRIVACY_CONTROLLER, PRIVACY_CONTROLLER_RUT, PRIVACY_CONTROLLER_ADDRESS, PRIVACY_EMAIL } from '../lib/privacy'
+
+const providerIdentity = `${PRIVACY_CONTROLLER}, RUT ${PRIVACY_CONTROLLER_RUT}, con domicilio comercial en ${PRIVACY_CONTROLLER_ADDRESS}. Contacto: ${PRIVACY_EMAIL}.`
 
 const privacy = [
-  ['Responsable y contacto', `${PRIVACY_CONTROLLER} es responsable de los datos de registro, cuenta, soporte y operacion de ADS Veris. Puedes escribir a ${PRIVACY_EMAIL} para ejercer tus derechos o consultar sobre privacidad. Esta politica describe la operacion actual del servicio.`],
+  ['Responsable y contacto', `${providerIdentity} Es responsable de los datos de registro, cuenta, soporte y operacion de ADS Veris. Puedes escribir al correo indicado para ejercer tus derechos o consultar sobre privacidad. Esta politica describe la operacion actual del servicio.`],
   ['Datos y finalidades', 'Usamos nombre, correo, empresa y pais para crear y administrar la cuenta; el telefono es opcional. La contrasena se gestiona con Supabase Auth y no se muestra al administrador. Cuando solicitas una prueba o un plan, podemos requerir un RUT de facturacion para validar la elegibilidad y evitar abuso. Tratamos archivos, configuraciones, resultados y preguntas para limpiar, estandarizar y analizar los datos que subes. Conservamos registros tecnicos y solicitudes para seguridad, diagnostico, soporte y ejercicio de derechos. No envies contrasenas, tarjetas, CVV ni datos de salud u otros datos especialmente sensibles.'],
   ['Datos de tus clientes y trabajadores', 'Debes tener autorizacion o una base legal aplicable para subir datos de terceros. En ese caso tu empresa determina la finalidad del analisis y ADS Veris procesa la informacion para prestar el servicio solicitado. Limita las columnas personales a las necesarias. La aceptacion de una cuenta no sustituye la autorizacion de las personas incluidas en un archivo. No uses la plataforma como unico repositorio de informacion importante.'],
   ['Consentimiento y comunicaciones', 'El formulario solicita una accion afirmativa, sin casillas premarcadas, para los datos de cuenta necesarios para el servicio. Guardamos la version aceptada y la fecha del servidor. No usamos esa aceptacion para publicidad. Puedes revocar el consentimiento por el apartado de privacidad o por correo; la revocacion no tiene efecto retroactivo y puede impedir mantener prestaciones que necesiten esos datos. Las comunicaciones de acceso, recuperacion de cuenta y soporte no son una suscripcion publicitaria.'],
@@ -14,6 +16,7 @@ const privacy = [
   ['Cambios y alcance', 'La politica se identifica por version. No presumimos aceptaciones de usuarios antiguos ni cambiamos silenciosamente la fecha de una aceptacion. Los cambios relevantes de finalidad requieren informacion y, cuando corresponda, nueva autorizacion. Esta politica no reemplaza los contratos de tratamiento con empresas ni la revision de obligaciones segun los paises donde se ofrezca el servicio.'],
 ]
 const terms = [
+  ['Proveedor y contacto', providerIdentity],
   ['Servicio', 'ADS Veris SpA ofrece herramientas de limpieza, estandarizacion, exploracion y analisis. Los resultados dependen de la calidad y estructura de los archivos. Las relaciones por ID, monedas, duplicados y formulas requieren revision cuando el sistema informa ambiguedades. El servicio no certifica estados financieros ni reemplaza asesoria contable, tributaria, legal o financiera profesional.'],
   ['Cuenta y archivos', 'La cuenta inicial corresponde a un usuario responsable de una empresa. No compartas credenciales. Debes estar autorizado para usar los archivos y las fuentes conectadas; conservas tus derechos sobre ellos. No subas contenido ilicito, secretos de acceso ni datos que no sean necesarios. No se permite intentar acceder a otras cuentas, evadir limites o interrumpir el servicio.'],
   ['Planes y ADS Coins', 'Los limites de almacenamiento, archivos y funciones se muestran en la cuenta. ADS Coins son creditos de servicio, no dinero, inversion ni saldo bancario: no se pueden retirar ni se les atribuye una equivalencia fija en pesos. Los cobros y compras estan desactivados. Una futura compra requerira informar antes de confirmar su precio total, impuestos, prestaciones, vigencia, renovacion, cancelacion y devoluciones. No se realiza una renovacion pagada sin autorizacion.'],
@@ -30,6 +33,7 @@ export default function Legal() {
       <Link to="/" className="inline-flex items-center gap-2 text-sm text-teal"><ArrowLeft className="h-4 w-4" /> ADS Veris</Link>
       <h1 className="mt-6 text-2xl font-bold">{isLicenses ? 'Licencias y atribuciones' : isPrivacy ? 'Politica de privacidad' : 'Condiciones de uso'}</h1>
       <p className="mt-2 text-sm text-navy/60">{PRIVACY_CONTROLLER} · Version {LEGAL_VERSION}</p>
+      {!isLicenses && <p className="mt-1 text-xs text-navy/60">Datos de identificacion del proveedor actualizados el {LEGAL_IDENTITY_UPDATED_AT}.</p>}
       <nav aria-label="Documentos legales" className="my-6 flex flex-wrap gap-4 border-y border-navy/15 py-3 text-sm text-teal">
         <Link to="/privacidad">Privacidad</Link><Link to="/condiciones">Condiciones</Link><Link to="/licencias">Licencias</Link>
       </nav>
