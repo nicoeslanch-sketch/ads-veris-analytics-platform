@@ -36,6 +36,45 @@ def conversation_scenarios():
     uf = deepcopy(sales)
     uf["moneda"] = "UF"
     return [
+        ("retained_month_scope", sales, [
+            ("cuanto vendi en enero", ["2026-01", "$100"]),
+            ("y cuantos clientes tuve", ["no", "cruce"]),
+            ("y el ticket promedio", ["no", "medida"]),
+            ("y cuanto gane", ["no", "medida"]),
+            ("mis ingresos del total general", ["$600"]),
+        ]),
+        ("retained_expense_measure", sales, [
+            ("cuanto gaste en enero", ["no", "medida"]),
+            ("y en febrero", ["no", "medida"]),
+            ("y en marzo", ["no", "medida"]),
+            ("cuanto vendi en marzo", ["$300"]),
+        ]),
+        ("retained_segment_scope", sales, [
+            ("cuanto vendi en la sucursal Sur", ["La sucursal consultada", "$200"]),
+            ("y cual es el producto mas vendido", ["no", "cruce"]),
+            ("y el ticket promedio", ["no", "medida"]),
+            ("y el margen", ["no", "medida"]),
+            ("cual es el producto mas vendido en general", ["Producto Azul", "$400"]),
+        ]),
+        ("monthly_shares", sales, [
+            ("que porcentaje aporta febrero", ["33,3%", "$200 / $600", "denominador"]),
+            ("y marzo", ["50%", "$300 / $600"]),
+            ("y enero", ["16,7%", "$100 / $600"]),
+        ]),
+        ("reset_scope", sales, [
+            ("cuanto vendi en enero", ["2026-01", "$100"]),
+            ("ahora el total general", ["$600"]),
+            ("y cuantos clientes tengo", ["4 clientes"]),
+            ("cuanto vendi en febrero", ["$200"]),
+            ("como descargo el archivo", ["descarg"]),
+            ("y cuantos clientes tengo", ["4 clientes"]),
+        ]),
+        ("decisions_not_account_actions", sales, [
+            ("deberia cerrar mi empresa", ["continuidad", "caja", "no bastan"]),
+            ("cual es el producto mas rentable", ["costos", "ranking", "no"]),
+            ("cuanto vendere el proximo mes", ["No puedo conocer", "supuestos"]),
+            ("si mis ingresos suben un 20% cuanto tendria", ["hipotetico", "simulacion"]),
+        ]),
         ("monthly_followups", sales, [
             ("cuanto vendi en enero", ["2026-01", "$100"]),
             ("y en febrero?", ["2026-02", "$200"]),

@@ -8,6 +8,92 @@ MONTHS = {name: index for index, name in enumerate(
     "enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre".split(), 1)}
 MONTHS["setiembre"] = 9
 _MONTH = re.compile(r"\b(" + "|".join(MONTHS) + r")\s*(?:(?:de|del)\s+)?((?:19|20)\d{2})?\b")
+_PERIOD = re.compile(r"\b(?:" + "|".join(MONTHS) + r")(?:\s+(?:de\s+)?(?:19|20)\d{2})?\b|\b(?:19|20)\d{2}(?:[ /-](?:0[1-9]|1[0-2]))?\b")
+_GLOBAL = re.compile(r"\b(?:total general|todo el archivo|todos los periodos|todas las sucursales|en general)\b")
+_MEASURES = (
+    (r"\b(?:ticket|promedio por venta)\b", "ticket promedio"),
+    (r"\b(?:clientes|clientela)\b", "clientes"),
+    (r"\b(?:unidades|cantidad vendida)\b", "unidades"),
+    (r"\b(?:transacciones|registros|cuantas ventas)\b", "transacciones"),
+    (r"\b(?:margen|rentabilidad|rentable)\b", "margen"),
+    (r"\b(?:ganancia|utilidad|gane)\b", "ganancia"),
+    (r"\b(?:costos?|gastos?|gaste|egresos)\b", "gastos"),
+    (r"\biva\b", "iva"),
+    (r"\b(?:ingresos|ventas|vendi|facturacion)\b", "ingresos"),
+)
+
+
+def _measure(question):
+    return next((name for pattern, name in _MEASURES if re.search(pattern, question)), "")
+
+
+def _normalize_scoped(message, metrics):
+    literal = normalize_basic(message)
+    replacements = {}
+    names = {normalize_basic(row.get("nombre") or "")
+             for _, rows in _dimensions(metrics) for row in rows}
+    for name in sorted(names - {""}, key=len, reverse=True):
+        token = f"zzentity{len(replacements)}zz"
+        literal, count = re.subn(r"\b" + re.escape(name) + r"\b", token, literal)
+        if count:
+            replacements[token] = name
+    normalized = normalize_query(literal)
+    for token, name in replacements.items():
+        normalized = normalized.replace(token, name)
+    return normalized
+
+
+def _scope_parts(question, metrics):
+    periods = [match.group() for match in _PERIOD.finditer(question)]
+    if periods:
+        joiner = " hasta " if re.search(r"\b(?:entre|desde|hasta)\b", question) else " y "
+        period = "en " + joiner.join(periods)
+    else:
+        period = ""
+    segments = []
+    for label, rows in _dimensions(metrics):
+        for row in rows:
+            name = normalize_basic(row.get("nombre") or "")
+            if name and re.search(r"\b" + re.escape(name) + r"\b", question):
+                segments.append("en " + normalize_basic(label) + " " + name)
+    # Retain unknown filters too: a failed lookup must not turn into a global KPI.
+    if not segments:
+        unknown = re.search(r"\b(?:en|de) (?:la |el )?(?:sucursal|canal|categoria|producto|cliente)\s+.+", question)
+        if unknown:
+            segments.append(unknown.group())
+    exclusion = re.search(r"\b(?:sin|excepto|excluyendo|solo)\s+.+", question)
+    if exclusion:
+        segments.append(exclusion.group())
+    return period, " ".join(dict.fromkeys(segments))
+
+
+def resolve_followup_scope(message, metrics, history):
+    """Carry only explicit scopes through a bounded chain of user follow-ups."""
+    previous = ""
+    messages = [str(row.get("content") or "") for row in (history or [])[-12:]
+                if row.get("role") == "user"] + [message]
+    for current in messages:
+        literal = normalize_basic(current)
+        question = _normalize_scoped(current, metrics)
+        if _GLOBAL.search(question):
+            if not _measure(question) and _measure(previous):
+                question += " " + _measure(previous)
+            previous = question
+            continue
+        if question.startswith("y ") and previous:
+            old_period, old_segment = _scope_parts(previous, metrics)
+            period, segment = _scope_parts(question, metrics)
+            if not period and old_period:
+                question += " " + old_period
+            if not segment and old_segment:
+                question += " " + old_segment
+            if (period or segment) and not _measure(question) and _measure(previous):
+                question += " " + _measure(previous)
+            if (period or segment) and re.search(r"\b(?:porcentaje|participacion|proporcion)\b", previous) and not _measure(literal):
+                question += " porcentaje"
+        previous = question
+    # Known names are matched literally by the caller, never autocorrected.
+    return previous if _normalize_scoped(message, metrics) != previous else message
 
 
 def _monthly_series(metrics, question):
@@ -34,7 +120,8 @@ def _dimensions(metrics):
 def answer_scoped_question(message, metrics, history):
     from .metric_assistant import _number, _result, _es_number, _percent, _group_answer, format_amount, metric_suggestions
 
-    literal = normalize_basic(message)
+    resolved = resolve_followup_scope(message, metrics, history)
+    literal = normalize_basic(resolved)
     intent_text = literal
     for _, rows in _dimensions(metrics):
         for row in rows:
@@ -56,7 +143,7 @@ def answer_scoped_question(message, metrics, history):
     temporal = bool(month_mentions or iso_mentions or (years and re.search(r"\b(vendi|ventas|ingresos|gaste|gastos|compara|total|en)\b", question)))
     if re.search(r"\b(como|por que|porque)\b.*\b(filtro|filtrar|selecciono|seleccionar|importar|descargar)\b", question):
         return None
-    relative_period = re.search(r"\b(hoy|ayer|trimestre|semestre|semana|mes pasado|mes anterior|ultimos \d+ dias)\b", question)
+    relative_period = re.search(r"\b(hoy|ayer|trimestre|semestre|semana|mes pasado|mes anterior|ultimo mes|ultimos \d+ dias)\b", question)
     if relative_period and re.search(r"\b(vendi|ventas|ingresos|gastos|gaste|total)\b", question):
         return result("Ese periodo necesita un filtro explicito. Indica los meses o ajusta las fechas en Explorar: no sustituyo un dia, una semana o un trimestre por el total del archivo.", "metric_period_filter_needed", "medium")
     if re.search(r"\b(sin|excepto|excluyendo|excluir|solo)\b", question) and re.search(r"\b(vendi|ventas|ingresos|gastos|gaste|unidades|compara)\b", question):
@@ -82,12 +169,20 @@ def answer_scoped_question(message, metrics, history):
         return result("No tengo publicado el cruce entre ese segmento y ese periodo. Sus totales separados no permiten deducir la interseccion. Aplica ambos filtros en Explorar y vuelve a preguntar con ese alcance.", "metric_cross_scope_unavailable", "medium")
     if len(named_dimensions) > 1 and sum(bool(entry[2]) for entry in named_dimensions) > 1 and not chosen:
         return result("El nombre aparece en varias dimensiones. Indica si te refieres a " + ", ".join(entry[0] for entry in named_dimensions) + ".", "metric_dimension_ambiguous", "medium")
+    if _GLOBAL.search(question) and not temporal and not named_dimensions:
+        measure = _measure(question)
+        if measure:
+            from .metric_assistant import answer_metrics_question
+            return answer_metrics_question(measure, metrics)
     if temporal:
         label, value_key, source, value_format, operation = _monthly_series(metrics, question)
         if metrics.get("moneda_mixta") and value_format == "moneda":
             return result("No comparo ni sumo importes de monedas mezcladas. Filtra una moneda o aporta el tipo de cambio y su fecha antes de calcular.", "metric_mixed_scope_unavailable", "medium")
-        requested_measures = set(question.split()) & {"neto", "neta", "iva", "bruto", "bruta", "utilidad", "ganancia", "margen", "costo", "costos", "unidades", "clientes"}
+        requested_measures = set(question.split()) & {"neto", "neta", "iva", "bruto", "bruta", "utilidad", "ganancia", "margen", "costo", "costos", "unidades", "clientes", "ticket", "transacciones"}
         label_words = set(normalize_basic(label).split())
+        semantic_measure = _measure(question)
+        if semantic_measure in {"ganancia", "margen", "ticket promedio", "transacciones", "unidades", "clientes"}:
+            requested_measures.update(semantic_measure.split())
         if re.search(r"\b(gaste|gastos|egresos)\b", question) and not label_words & {"gastos", "gasto", "egresos", "egreso"}:
             requested_measures.add("gastos")
         if re.search(r"\b(vendi|ventas|ingresos)\b", question) and label_words & {"gastos", "gasto", "egresos", "egreso"}:
@@ -118,6 +213,12 @@ def answer_scoped_question(message, metrics, history):
         fmt = (lambda value: format_amount(value, str(metrics.get("moneda") or "CLP"))) if value_format == "moneda" else _percent if value_format == "porcentaje" else _es_number
         partial = any(rows[period].get("parcial") for period in requests)
         note = " Hay cobertura parcial; la comparacion no representa periodos completos equivalentes." if partial else ""
+        if len(requests) == 1 and re.search(r"\b(?:porcentaje|participacion|proporcion)\b", question):
+            denominator = sum(float(row[value_key]) for row in rows.values())
+            if operation != "total" or denominator <= 0 or any(float(row[value_key]) < 0 for row in rows.values()):
+                return result("No hay una base aditiva positiva para calcular esa participacion. Los promedios o importes con signos mezclados no representan partes de un total de ventas positivas.", "metric_month_share_unavailable", "medium")
+            return result(f"{requests[0]} aporta {_percent(values[0] / denominator * 100)}: {fmt(values[0])} / {fmt(denominator)}. El denominador suma los {len(rows)} meses publicados ({', '.join(sorted(rows))}); no incluye meses ausentes." + note,
+                          "metric_month_share", "medium" if partial else "high")
         if len(requests) == 2 and re.search(r"\b(compara|comparar|versus|vs|diferencia|crecio|crecieron|cambio|subio|bajo)\b", question):
             first, last = values
             change = last - first
@@ -140,7 +241,7 @@ def answer_scoped_question(message, metrics, history):
     if chosen:
         label, rows, named, explicit = chosen
         money_question = re.search(r"\b(vendi|ventas|ingresos|ingreso|aporta|aportan|compara|versus|vs)\b", question)
-        if named and re.search(r"\b(unidades|margen|utilidad|ganancia|neto|neta|iva|costos|gastos)\b", question):
+        if named and re.search(r"\b(unidades|margen|utilidad|ganancia|neto|neta|iva|costos|gastos|clientes|ticket|transacciones)\b", question):
             return result("El desglose disponible de ese segmento es de ingresos, no de la medida que pides. No sustituire unidades, costos o margen por un importe de ventas. Selecciona la medida y el filtro en Explorar.", "metric_group_measure_unavailable", "medium")
         if named and (money_question or literal.startswith("y ")):
             if metrics.get("moneda_mixta"):
