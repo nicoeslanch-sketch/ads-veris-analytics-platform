@@ -16,6 +16,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import socket
 import statistics
 import subprocess
@@ -105,6 +106,22 @@ def child_process(args):
         raise RuntimeError('Missing isolated-lab marker')
     block_external_connections()
     sys.path.insert(0, str(ROOT / 'api'))
+    from app import restore_cache
+    post_rpc = restore_cache._post_rpc
+
+    def diagnose_restore_rpc(function, payload, settings):
+        response = post_rpc(function, payload, settings)
+        if response.status_code != 200:
+            try:
+                code = response.json().get('code', '')
+            except (ValueError, AttributeError):
+                code = ''
+            safe_code = code if isinstance(code, str) and re.fullmatch(r'[A-Z0-9]{5,12}', code) else 'UNKNOWN'
+            # Codes only: database messages can contain values, URLs or secrets.
+            print(f'CAPACITY_RESTORE_RPC status={response.status_code} code={safe_code}', flush=True)
+        return response
+
+    restore_cache._post_rpc = diagnose_restore_rpc
     if args.serve:
         import uvicorn
         uvicorn.run('app.main:app', host='127.0.0.1', port=args.serve, log_level='warning')
@@ -417,6 +434,16 @@ class Lab:
                     if result['status'] in TERMINAL:
                         assert result['status'] == 'completed', f'{kind} failed'
                         payload = result['result']
+                        if payload['errores'] or payload['persistencia_errores']:
+                            self.report['preparation_failure'] = {
+                                'stage': kind,
+                                'processing_errors': len(payload['errores']),
+                                'persistence_errors': len(payload['persistencia_errores']),
+                                'stale_revision_rejections': sum(
+                                    str(value).startswith('No se pudo confirmar esta hoja')
+                                    for value in payload['persistencia_errores'].values()
+                                ),
+                            }
                         assert not payload['errores'] and not payload['persistencia_errores'], f'{kind} has partial failures'
                         assert len(payload['resultados']) == 4
                         timings[kind].append(time.monotonic() - started)
@@ -453,6 +480,14 @@ class Lab:
                         process.kill()
                         process.wait(timeout=10)
             self.report['peak_process_rss_mib'] = {k: round(v, 2) for k, v in self.peak.items()}
+            self.report['restore_rpc_failures'] = [
+                {'status': int(status), 'code': code}
+                for _, _, log in self.processes
+                for status, code in re.findall(
+                    r'^CAPACITY_RESTORE_RPC status=(\d{3}) code=([A-Z0-9]{5,12})$',
+                    log.read_text(encoding='utf-8', errors='replace'), re.MULTILINE,
+                )
+            ]
             self.report['http_ms'] = {route: quantiles([s['ms'] for s in self.samples if s['route'] == route])
                                        for route in ('admission', 'poll')}
             self.report['http_status_counts'] = {str(status): sum(s['status'] == status for s in self.samples)
