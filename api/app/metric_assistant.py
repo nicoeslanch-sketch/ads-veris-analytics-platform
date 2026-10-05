@@ -1943,6 +1943,22 @@ def answer_metrics_question(
     correction = re.search(r"\bsino\s+(?:a |al |la |el )*(.+)$", original_question) or re.search(r"\bme refiero\s+(?:a |al |la |el )*(.+)$", original_question)
     if correction:
         original_question = question = correction.group(1)
+    catalog_purchase_decision = (
+        re.search(r"\b(?:debo|deberia|conviene|recomiendas|dejar|dejo|seguir|sigo|reinvertir)\b", original_question)
+        and re.search(r"\b(?:comprar|comprando|reponer|invertir|reinvertir|promocionar|retirar)\b", original_question)
+        and not _contains(original_question, 'plan', 'suscripcion', 'coins', 'creditos', 'cuenta')
+    )
+    if metrics.get('tipo_analisis') == 'catalogo_productos' and catalog_purchase_decision:
+        return _result(
+            'El estado inactivo por si solo no justifica dejar de comprar. Revisa ventas por ID '
+            'y meses completos observados, stock disponible y margen con costos atribuibles. '
+            'Si hay stock y varios meses sin ventas, evalua reducir la reposicion o probar '
+            'cambios de precio y marketing; comprueba estacionalidad antes de reinvertir '
+            'en otro producto.',
+            'metric_catalog_purchase_decision',
+            ['Producto principal', 'Cobertura de costos', 'Calidad de los datos'],
+            'medium',
+        )
     catalog_status = re.search(r"\b(?:inactiv[oa]s?|activ[oa]s?|descontinuad[oa]s?|estado)\b", original_question)
     previous_status = _previous_user_message(history)
     status_followup = re.search(r"\b(?:porcentaje|proporcion|participacion)\b", original_question) and re.search(r"\b(?:inactiv[oa]s?|activ[oa]s?|descontinuad[oa]s?)\b", previous_status)
