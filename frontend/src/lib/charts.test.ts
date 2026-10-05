@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { setActiveCurrency } from './format'
 import {
   chartColorForKey,
   distributionChartKind,
@@ -6,7 +7,25 @@ import {
   robustHeatIntensity,
   prepareCategoricalChart,
   shouldSplitFinancialScale,
+  formatCLPCompact,
 } from './charts'
+
+afterEach(() => setActiveCurrency('CLP'))
+
+describe('moneda de ejes', () => {
+  it.each([
+    ['CLP', 669700, '$669,7K'], ['UF', 1.25, 'UF 1,25'],
+    ['UF', 1200, 'UF 1,2K'], ['USD', -1500000, 'US$-1,5M'],
+    ['EUR', 500, '\u20ac500'], ['CLP', 0, '$0'],
+  ])('respeta %s para %s', (currency, value, expected) => {
+    setActiveCurrency(String(currency))
+    expect(formatCLPCompact(Number(value))).toBe(expected)
+  })
+  it('no imprime valores no finitos como dinero', () => {
+    expect(formatCLPCompact(Number.NaN)).toBe('\u2014')
+    expect(formatCLPCompact(Infinity)).toBe('\u2014')
+  })
+})
 
 describe('visualizaciones honestas y estables', () => {
   it('conserva ajustes negativos sin concentraciones mayores al 100 ni Pareto falso', () => {

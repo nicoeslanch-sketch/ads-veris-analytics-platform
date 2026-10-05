@@ -1,4 +1,5 @@
 import Card from './ui/Card'
+import KpiValue from './ui/KpiValue'
 import DecisionInsightGrid, { type DecisionInsight } from './DecisionInsightGrid'
 import { formatCLP, formatNumber } from '../lib/format'
 import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, truncateLabel } from '../lib/charts'
@@ -53,13 +54,13 @@ export default function ProductCatalogSummary({
     [`${differenceLabel} promedio`, pct(analysis.margen_potencial.promedio)],
     ...(hasCosts ? [['Cobertura de costos', `${formatNumber(analysis.cobertura_costo_pct)}%`]] : []),
     ...(analysis.activos != null || analysis.inactivos != null
-      ? [['Estado', `${formatNumber(analysis.activos ?? 0)} activos - ${formatNumber(analysis.inactivos ?? 0)} inactivos`]]
+      ? [['Estado (registros)', `${formatNumber(analysis.activos ?? 0)} ${analysis.activos === 1 ? 'activo' : 'activos'} - ${formatNumber(analysis.inactivos ?? 0)} ${analysis.inactivos === 1 ? 'inactivo' : 'inactivos'}`]]
       : []),
     ...(totals
       ? [
-          ['Costo catálogo (1 unidad/SKU)', money(totals.costo)],
-          [`${referenceLabel} catálogo (1 unidad/SKU)`, money(totals.precio_lista)],
-          [`${differenceLabel} (1 unidad/SKU)`, money(totals.utilidad_potencial)],
+          ['Costo catálogo (1 unidad/fila)', money(totals.costo)],
+          [`${referenceLabel} catálogo (1 unidad/fila)`, money(totals.precio_lista)],
+          [`${differenceLabel} (1 unidad/fila)`, money(totals.utilidad_potencial)],
         ]
       : []),
   ]
@@ -97,9 +98,9 @@ export default function ProductCatalogSummary({
   if (knownState > 0 && (analysis.inactivos ?? 0) > 0) {
     const share = Number(analysis.inactivos) / knownState * 100
     insights.push({
-      title: 'Productos inactivos en la maestra',
-      evidence: `${formatNumber(analysis.inactivos ?? 0)} productos (${formatNumber(share)}%) figuran inactivos.`,
-      action: 'Evita considerarlos en surtido disponible y revisa si mantienen stock o movimientos.',
+      title: 'Registros inactivos en la maestra',
+      evidence: `${formatNumber(analysis.inactivos ?? 0)} ${analysis.inactivos === 1 ? 'registro inactivo' : 'registros inactivos'} (${formatNumber(Number(share.toFixed(1)))}% de los estados reconocidos).`,
+      action: 'Revisa duplicados, stock y movimientos por ID. El estado no demuestra ausencia de ventas.',
       tone: share >= 20 ? 'gold' : 'teal',
     })
   }
@@ -130,13 +131,16 @@ export default function ProductCatalogSummary({
               <span className="h-2.5 w-2.5 rounded-full" style={{ background: CATEGORICAL[index % CATEGORICAL.length] }} />
               <p className="text-xs text-navy/50">{label}</p>
             </div>
-            <p className="mt-1 text-lg font-bold text-navy">{value}</p>
+            <KpiValue value={value} maxPx={18} className="mt-1 [&_p]:text-left" />
           </Card>
         ))}
       </div>
       <p className="rounded-xl border border-teal/20 bg-teal/5 px-4 py-3 text-xs leading-relaxed text-navy/65">
-        Los totales de catálogo suponen una unidad de cada producto. No representan inventario
-        ni gasto real; para valorizar existencias se necesita relacionar la cantidad en stock.
+        {analysis.registros != null && `${formatNumber(analysis.registros)} registros. `}
+        Productos cuenta valores distintos{analysis.columna_producto ? ` de ${analysis.columna_producto}` : ''}.
+        {' '}Estados, categorías, marcas y promedios cuentan filas, incluidos los duplicados conservados.
+        {' '}Los totales suponen una unidad por fila; no representan inventario ni gasto real.
+        {(analysis.sin_estado ?? 0) > 0 && ` ${formatNumber(analysis.sin_estado!)} registros sin estado reconocido.`}
       </p>
       {(analysis.costos_a_revisar?.registros ?? 0) > 0 && (
         <p className="rounded-xl border border-gold/35 bg-gold/[0.08] px-4 py-3 text-xs leading-relaxed text-navy/70">
@@ -151,7 +155,7 @@ export default function ProductCatalogSummary({
         <Card>
           <h2 className="text-sm font-semibold text-navy">Costo unitario vs. {referenceLabel.toLowerCase()}</h2>
           <p className="mt-1 text-xs text-navy/55">
-            Los 10 productos con mayor costo unitario{(analysis.costos_a_revisar?.registros ?? 0) > 0 ? ' dentro del rango típico' : ''}.
+            Los 10 registros con mayor costo unitario{(analysis.costos_a_revisar?.registros ?? 0) > 0 ? ' dentro del rango típico' : ''}.
           </p>
           <div className="mt-4 h-80">
             <ResponsiveContainer width="100%" height="100%">
@@ -174,8 +178,8 @@ export default function ProductCatalogSummary({
                 />
                 <Tooltip formatter={(value) => formatCLP(Number(value))} />
                 <Legend />
-                <Bar dataKey="costo" name="Costo unitario" fill={CHART.gastos} radius={[0, 3, 3, 0]} />
-                <Bar dataKey="precio_lista" name={referenceLabel} fill={CHART.ingresos} radius={[0, 3, 3, 0]} />
+                <Bar dataKey="costo" name="Costo unitario" fill={CHART.gastos} radius={[0, 3, 3, 0]} isAnimationActive={false} />
+                <Bar dataKey="precio_lista" name={referenceLabel} fill={CHART.ingresos} radius={[0, 3, 3, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -214,10 +218,11 @@ function CatalogComposition({
   return (
     <Card>
       <h2 className="text-sm font-semibold text-navy">{title}</h2>
+      <p className="mt-1 text-xs text-navy/55">Registros por {title === 'Marcas' ? 'marca' : 'categoría'}.</p>
       <div className="mt-3 h-48">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={rows.slice(0, 8)} dataKey="productos" nameKey="nombre" innerRadius={42} outerRadius={67} paddingAngle={2}>
+            <Pie data={rows.slice(0, 8)} dataKey="productos" nameKey="nombre" innerRadius={42} outerRadius={67} paddingAngle={2} isAnimationActive={false}>
               {rows.slice(0, 8).map((item, index) => (
                 <Cell key={item.nombre} fill={CATEGORICAL[index % CATEGORICAL.length]} />
               ))}

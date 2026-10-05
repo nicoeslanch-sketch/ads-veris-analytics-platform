@@ -35,7 +35,21 @@ def conversation_scenarios():
     partial["evolucion_mensual"][2]["parcial"] = True
     uf = deepcopy(sales)
     uf["moneda"] = "UF"
+    catalog = {'tipo_analisis': 'catalogo_productos', 'moneda': 'CLP', 'kpis': {},
+               'analisis_productos': {'productos': 4, 'registros': 5, 'activos': 2,
+                                     'inactivos': 1, 'sin_estado': 2,
+                                     'costos': {'promedio': 220}, 'precios_lista': {'promedio': 440}}}
     return [
+        ('catalog_status_followups', catalog, [
+            ('cuantosproductos tengo', ['4 productos']),
+            ('y cuantos estan inactvos', ['1 registro inactivo', 'por fila']),
+            ('que porcentaje representa eso', ['20%', '5 registros']),
+            ('y los activos', ['2 registros activos']),
+            ('que porcentaje representan', ['40%', '5 registros']),
+            ('y los activos en enero', ['No tengo publicado']),
+            ('y los inactivos', ['No tengo publicado']),
+            ('estado del catalogo en general', ['2 registros activos', '1 registro inactivo']),
+        ]),
         ("retained_month_scope", sales, [
             ("cuanto vendi en enero", ["2026-01", "$100"]),
             ("y cuantos clientes tuve", ["no", "cruce"]),

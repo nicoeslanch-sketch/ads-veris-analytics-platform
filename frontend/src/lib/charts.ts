@@ -4,6 +4,8 @@
  * Orden categórico FIJO: nunca se recicla ni se reordena por ranking.
  */
 
+import { formatCurrencyCompact } from './format'
+
 export const CHART = {
   ingresos: '#00a3a3', // rampa teal
   gastos: '#a8811c',   // rampa gold (paso oscuro)
@@ -329,12 +331,9 @@ export function formatMonthShort(isoMonth: string): string {
   return `${name} ${String(year).slice(2)}`
 }
 
-/** Monto compacto para ejes: $37,0M / $850K. */
+/** Monto compacto para ejes en la misma moneda que las tarjetas y tooltips. */
 export function formatCLPCompact(value: number): string {
-  const abs = Math.abs(value)
-  if (abs >= 1_000_000) return `$${(value / 1_000_000).toLocaleString('es-CL', { maximumFractionDigits: 1 })}M`
-  if (abs >= 1_000) return `$${Math.round(value / 1_000)}K`
-  return `$${Math.round(value)}`
+  return formatCurrencyCompact(value)
 }
 
 /** Recorta una etiqueta larga de eje con "…" — sin esto, el <text> SVG de

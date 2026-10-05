@@ -44,6 +44,15 @@ export function formatCLP(value: number): string {
   return `${CURRENCY_PREFIX[activeCurrency]}${formatted}`
 }
 
+export function formatCurrencyCompact(value: number): string {
+  if (!Number.isFinite(value)) return '\u2014'
+  const magnitude = Math.abs(value)
+  const divisor = magnitude >= 1_000_000 ? 1_000_000 : magnitude >= 1_000 ? 1_000 : 1
+  const suffix = divisor === 1_000_000 ? 'M' : divisor === 1_000 ? 'K' : ''
+  const digits = divisor > 1 ? 1 : activeCurrency === 'UF' ? 2 : 0
+  return `${CURRENCY_PREFIX[activeCurrency]}${(value / divisor).toLocaleString('es-CL', {maximumFractionDigits: digits})}${suffix}`
+}
+
 export function formatDateTime(date: Date): string {
   return date.toLocaleString('es-CL', {
     day: '2-digit',
