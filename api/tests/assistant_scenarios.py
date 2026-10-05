@@ -49,6 +49,10 @@ def conversation_scenarios():
             ('y los activos en enero', ['No tengo publicado']),
             ('y los inactivos', ['No tengo publicado']),
             ('estado del catalogo en general', ['2 registros activos', '1 registro inactivo']),
+            ('entonces debo dejar de comprar esos productos', ['no justifica', 'ventas por ID', 'stock disponible']),
+            ('inactivos de Hogar', ['No tengo publicado']),
+            ('que porcentaje representa eso', ['No tengo publicado']),
+            ('esta activo el producto Uno', ['No tengo publicado']),
         ]),
         ("retained_month_scope", sales, [
             ("cuanto vendi en enero", ["2026-01", "$100"]),

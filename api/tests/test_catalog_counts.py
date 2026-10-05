@@ -121,3 +121,26 @@ def test_catalog_invalid_denominator_does_not_make_percentage():
     reply = answer_for('porcentaje de productos activos', metrics=metrics)
     assert 'No tengo una base completa' in reply['answer']
     assert '200%' not in reply['answer']
+
+
+@pytest.mark.parametrize('question', [
+    'entonces debo dejar de comprar esos productos',
+    'debo dejar de comprar productos inactivos',
+    'me conviene seguir comprando esos productos',
+    'deberia reinvertir en otros productos',
+])
+def test_catalog_purchase_decision_uses_evidence_requirements_not_generic_counts(question):
+    reply = answer_for(question, metrics=catalog_metrics(), history=[
+        {'role': 'user', 'content': 'cuantos productos inactivos tengo'},
+        {'role': 'assistant', 'content': '1 registro inactivo'},
+    ])
+    assert reply['matched_key'] == 'metric_catalog_purchase_decision'
+    assert 'no justifica dejar de comprar' in reply['answer']
+    assert 'ventas por ID' in reply['answer'] and 'stock disponible' in reply['answer']
+    assert 'estacionalidad' in reply['answer']
+    assert 'El catalogo contiene' not in reply['answer']
+
+
+def test_subscription_purchase_question_is_not_a_product_recommendation():
+    reply = answer_for('deberia comprar el plan analista', metrics=catalog_metrics())
+    assert reply['matched_key'] != 'metric_catalog_purchase_decision'
