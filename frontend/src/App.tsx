@@ -9,7 +9,6 @@ import { DatasetProvider } from './data/DatasetContext'
 import { DemoProvider } from './demo/DemoContext'
 import ProtectedRoute from './auth/ProtectedRoute'
 import SecurityGate from './auth/SecurityGate'
-import PrivacyAcceptanceGate from './auth/PrivacyAcceptanceGate'
 import AppShell from './components/layout/AppShell'
 import Login from './pages/Login'
 
@@ -28,7 +27,9 @@ const RestablecerContrasena = lazy(() => import('./pages/RestablecerContrasena')
 const Legal = lazy(() => import('./pages/Legal'))
 
 function WorkspaceProviders({ children }: { children: ReactNode }) {
-  return <SecurityGate><PrivacyAcceptanceGate><AccessProvider><DatasetProvider><DemoProvider>{children}</DemoProvider></DatasetProvider></AccessProvider></PrivacyAcceptanceGate></SecurityGate>
+  // Consent is collected at signup. Returning accounts enter their workspace
+  // after authentication and the existing session security verification.
+  return <SecurityGate><AccessProvider><DatasetProvider><DemoProvider>{children}</DemoProvider></DatasetProvider></AccessProvider></SecurityGate>
 }
 
 function lazyPage(Page: LazyExoticComponent<ComponentType>) {

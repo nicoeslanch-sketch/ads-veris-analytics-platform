@@ -4,7 +4,7 @@ import { ApiError, apiGet, apiPostJson } from '../lib/api'
 import { LEGAL_VERSION, PRIVACY_EMAIL, PRIVACY_KINDS, PRIVACY_STATUSES, type PrivacyState } from '../lib/privacy'
 import LegalConsent from './LegalConsent'
 
-export default function PrivacyCenter({ onAccepted }: { onAccepted?: () => void }) {
+export default function PrivacyCenter() {
   const [data, setData] = useState<PrivacyState | null>(null)
   const [kind, setKind] = useState<keyof typeof PRIVACY_KINDS>('access')
   const [message, setMessage] = useState('')
@@ -15,17 +15,16 @@ export default function PrivacyCenter({ onAccepted }: { onAccepted?: () => void 
   const [receipt, setReceipt] = useState('')
   async function load() { setData(await apiGet<PrivacyState>('/privacy/account')) }
   useEffect(() => { let current = true
-    apiGet<PrivacyState>('/privacy/account').then(result => { if (current) { setData(result); if (result.accepted === true && result.version === LEGAL_VERSION) onAccepted?.() } })
+    apiGet<PrivacyState>('/privacy/account').then(result => { if (current) setData(result) })
       .catch(() => { if (current) setError('No pudimos cargar tus solicitudes. Puedes escribir al correo de privacidad.') })
     return () => { current = false }
-  }, [onAccepted])
+  }, [])
   async function accept() {
     if (!consent || busy) return
     setBusy(true); setError('')
     try {
       const result = await apiPostJson<PrivacyState>('/privacy/acceptance', { version: LEGAL_VERSION, service_data_consent: true })
       setData(result)
-      if (result.accepted === true && result.version === LEGAL_VERSION) onAccepted?.()
     }
     catch (e) { setError(e instanceof ApiError ? e.message : 'No se pudo registrar la aceptacion.') }
     finally { setBusy(false) }
@@ -50,6 +49,8 @@ export default function PrivacyCenter({ onAccepted }: { onAccepted?: () => void 
       <button onClick={() => void accept()} disabled={!consent || busy} className="text-sm font-semibold text-teal disabled:opacity-50">Registrar mi aceptacion</button>
     </div>}
     {data?.accepted && <p className="mb-4 text-xs text-navy/60">Aceptacion registrada: {data.version}.</p>}
+    <h3 className="mb-2 text-sm font-semibold">Solicitudes sobre tus datos</h3>
+    <p className="mb-3 text-sm leading-relaxed text-navy/70">El equipo de ADS Veris recibe estas solicitudes en su panel de administración y te responde aquí. No necesitas enviar una solicitud para ingresar o utilizar la plataforma.</p>
     <p className="mb-3 text-sm text-navy/70">Borra archivos concretos desde <a className="text-teal underline" href="/historial">Historial</a>. Para la cuenta completa, registra una solicitud. La eliminacion completa requiere revision y una confirmacion posterior; no es inmediata.</p>
     <form onSubmit={e => { e.preventDefault(); void send() }} className="max-w-2xl space-y-3">
       <label className="block text-sm">Tipo de solicitud<select value={kind} onChange={e => { setKind(e.target.value as typeof kind); setConfirmed(false) }} className="mt-1 block w-full rounded-lg border border-navy/20 bg-white p-2">
