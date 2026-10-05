@@ -1952,7 +1952,13 @@ def answer_metrics_question(
         status_question = original_question if catalog_status else f'{previous_status} {original_question}'
         scoped = _normalize(resolve_followup_scope(status_question, metrics, history))
         period, segment = _scope_parts(scoped, metrics)
-        if period or segment or re.search(r"\b(?:hoy|ayer|mes|semana|trimestre|sku|id|sucursal|categoria|marca)\b|\ben\s+(?!(?:(?:el|la)\s+)?(?:catalogo|archivo|general)\b)", scoped):
+        specific_catalog_scope = re.search(
+            r"\bproducto\b|\b(?:de|del|para)\s+"
+            r"(?!(?:(?:mi|mis|el|los|la|las|todos|todas)\s+)*"
+            r"(?:catalogo|archivo|productos|estado|activos|inactivos|total)\b)",
+            scoped,
+        )
+        if period or segment or specific_catalog_scope or re.search(r"\b(?:hoy|ayer|mes|semana|trimestre|sku|id|sucursal|categoria|marca)\b|\ben\s+(?!(?:(?:el|la)\s+)?(?:catalogo|archivo|general)\b)", scoped):
             return _result('No tengo publicado el estado del catalogo para ese periodo, producto o segmento. El conteo general no lo sustituye; revisa ese alcance en la fuente.', 'metric_catalog_status_scope', metric_suggestions(metrics), 'medium')
         return _answer_product_catalog(metrics, status_question)
     if metrics.get("tipo_analisis") == "catalogo_productos" and _contains(

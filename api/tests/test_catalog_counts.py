@@ -38,6 +38,9 @@ def test_catalog_preserves_duplicates_and_publishes_count_grain():
     ('cuantos productos inactvos tengo', '1 registro inactivo'),
     ('y los activos', '2 registros activos'),
     ('estado del catalogo', '2 registros activos; 1 registro inactivo'),
+    ('inactivos del catalogo', '1 registro inactivo'),
+    ('porcentaje de mis productos inactivos', '1 registro inactivo'),
+    ('estado de todos mis productos', '2 registros activos; 1 registro inactivo'),
 ])
 def test_bot_answers_catalog_state_not_generic_summary(question, expected):
     reply = answer_for(question, metrics=catalog_metrics(), history=[{'role': 'user', 'content': 'cuantos productos tengo'}])
@@ -67,6 +70,8 @@ def test_catalog_state_conversation_denominator_is_all_rows_not_unique_products(
 @pytest.mark.parametrize('question', [
     'cuantos productos inactivos en enero', 'activos en 2025', 'inactivos hoy',
     'activos en sucursal Sur', 'inactivos de categoria Hogar', 'inactivos en Sur',
+    'esta activo el producto Uno', 'producto Uno esta activo',
+    'inactivos de Hogar', 'inactivos del Hogar', 'activos para Oficina',
 ])
 def test_catalog_state_does_not_substitute_global_count_for_unknown_scope(question):
     reply = answer_for(question, metrics=catalog_metrics())
@@ -100,6 +105,13 @@ def test_other_status_questions_do_not_return_product_state(question):
 def test_catalog_state_followup_retains_unknown_scope():
     reply = answer_for('y los activos', metrics=catalog_metrics(), history=[
         {'role': 'user', 'content': 'inactivos en enero'}])
+    assert reply['matched_key'] == 'metric_catalog_status_scope'
+
+
+@pytest.mark.parametrize('previous', ['inactivos de Hogar', 'esta activo el producto Uno'])
+def test_catalog_specific_status_followup_does_not_fall_back_to_global(previous):
+    reply = answer_for('que porcentaje representa eso', metrics=catalog_metrics(), history=[
+        {'role': 'user', 'content': previous}])
     assert reply['matched_key'] == 'metric_catalog_status_scope'
 
 
