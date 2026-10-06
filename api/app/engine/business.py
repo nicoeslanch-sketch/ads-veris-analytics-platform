@@ -26,6 +26,7 @@ from .quality import (
 from .standardize import map_unique, parse_date, physical_missing_mask
 from .service_model import analyze_service_business
 from .document_model import MATCH_COLUMN, document_id, line_number, prepare_document_lines
+from .receivables import analyze_receivables, is_receivable_sheet, receivable_document_key
 
 BUSINESS_FILTER_KEYS = (
     "sucursal",
@@ -123,6 +124,8 @@ def _sheet_kind(name: str, frame: pd.DataFrame) -> str:
     sheet = normalized_header(name)
     sheet_tokens = set(sheet.split())
     headers = " | ".join(normalized_header(column) for column in frame.columns)
+    if is_receivable_sheet(name, frame):
+        return "cuentas_por_cobrar"
     # A line-level commercial formula is stronger evidence than the sheet
     # name. This allows Detalle_OT to be sales when MONTO reconciles with
     # quantity, selling price and discount, while tariffs/contracts/UF remain
@@ -3525,6 +3528,22 @@ def analyze_business_workbook(
     )
     mixed_unfiltered_currency = len(currency_options) > 1 and not selected_currency
     currency_unit = currency_label
+    receivable_sales_key = document_key or document_id(sales.columns)
+    receivables = analyze_receivables(
+        {name: frames[name] for name in kinds.get("cuentas_por_cobrar", [])},
+        set(sales.loc[base_indicator_mask, receivable_sales_key].map(receivable_document_key).dropna())
+        if receivable_sales_key else None,
+        currency="mixta" if mixed_unfiltered_currency else currency_label,
+        date_from=date_from,
+        date_to=date_to,
+        dimensional_filter=dimensional_filter_applied,
+        currency_hints={name: results.get(name, {}).get("_moneda")
+                        for name in kinds.get("cuentas_por_cobrar", [])},
+    )
+    if receivables is not None:
+        accounts_receivable = receivables["saldo_validado"]
+        overdue_receivable = receivables["saldo_vencido"]
+        used_sheets.update(receivables["fuentes"])
     ticket_currency_unit = (
         f"{currency_label}/documento"
         if document_key
@@ -4199,6 +4218,24 @@ def analyze_business_workbook(
             visualizations=["kpi", "linea_porcentual"],
         ),
     ]
+    if receivables is not None:
+        for indicator in indicator_catalog_rows:
+            if indicator["id"] not in {"cuentas_por_cobrar", "cobranza_vencida", "porcentaje_cartera_vencida"}:
+                continue
+            indicator["fuentes"] = receivables["fuentes"] + sales_names
+            indicator["periodo_actual"] = {"desde": None, "hasta": receivables["fecha_corte"]}
+            indicator["advertencias"] = receivables["advertencias"]
+            indicator["cobertura_datos_pct"] = receivables["cobertura_datos_pct"]
+            indicator["estado"] = receivables["estado"] if indicator["valor"] is not None else "unavailable"
+            if receivables["estado"] == "blocked":
+                indicator["estado"] = "blocked"
+            if indicator["id"] == "cuentas_por_cobrar":
+                indicator["formula"] = "Suma de saldos no negativos de cuentas unicas vinculadas a ventas validas; no suma cortes distintos"
+                indicator["requiere"] = ["ID cuenta o documento", "ID venta", "saldo", "fecha de corte para historicos"]
+            if indicator["id"] == "cobranza_vencida":
+                indicator["formula"] = "Suma de saldos abiertos vencidos al corte declarado o con estado vencido explicito"
+            if indicator["id"] in {"cobranza_vencida", "porcentaje_cartera_vencida"} and receivables["estado_vencimiento"] != "available":
+                indicator["estado"] = receivables["estado_vencimiento"]
     if mixed_unfiltered_currency:
         for indicator in indicator_catalog_rows:
             if indicator["unidad"] in {currency_unit, ticket_currency_unit}:
@@ -4350,6 +4387,7 @@ def analyze_business_workbook(
             "documentos_sobrepagados": overpaid_documents,
             "pagos_duplicados_excluidos": collection_duplicates_excluded,
             "cobranzas_huerfanas": orphan_collection_rows,
+            "cartera_cxc": receivables,
             "cuentas_por_cobrar": round(accounts_receivable, 2)
             if accounts_receivable is not None
             else None,
@@ -4400,6 +4438,7 @@ def analyze_business_workbook(
         "metas": goals,
         "sensibilidad": sensitivity,
         "calidad": {
+            "cartera_cxc": receivables,
             "costos": cost_quality,
             "costos_detalle": {
                 "hoja": current_cost_name,

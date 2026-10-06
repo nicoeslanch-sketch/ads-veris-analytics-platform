@@ -962,6 +962,17 @@ export interface BusinessAnalysis {
   }
   operacion: {
     cobrado_aplicado: number | null
+    cartera_cxc?: {
+      saldo_declarado: number | null
+      saldo_validado: number | null
+      fecha_corte: string | null
+      base: 'ultimo_corte' | 'saldo_declarado_sin_corte'
+      estado: 'available' | 'partial' | 'blocked' | 'unavailable'
+      documentos_pendientes: number | null
+      advertencias: string[]
+      filas_excluidas?: number
+      ejemplos_problemas?: Array<{ hoja: string; fila: number; motivo: string }>
+    } | null
     cobranza_sobre_documentos_pct: number | null
     documentos_sobrepagados: number
     pagos_duplicados_excluidos: number
