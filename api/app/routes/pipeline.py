@@ -1083,7 +1083,8 @@ _EXPORT_CACHE_MAX_ENTRIES = 1
 _METRICS_ARTIFACT_MAX_CELLS = 600_000
 _METRICS_CLEAN_CACHE_LOCK = threading.Lock()
 _METRICS_CLEAN_CACHE: "OrderedDict[str, dict]" = OrderedDict()
-_METRICS_CLEAN_CACHE_MAX_ENTRIES = 1
+_METRICS_CLEAN_CACHE_MAX_ENTRIES = 32
+_METRICS_CLEAN_CACHE_CELL_BUDGET = _METRICS_ARTIFACT_MAX_CELLS
 
 
 def _metrics_clean_artifact_identity(
@@ -1144,10 +1145,25 @@ def _metrics_clean_cache_get(identity: str) -> dict | None:
 
 
 def _metrics_clean_cache_store(identity: str, result: dict) -> None:
+    frame = result.get("_df_limpio")
+    if not isinstance(frame, pd.DataFrame):
+        return
+    if len(frame) * max(len(frame.columns), 1) > _METRICS_CLEAN_CACHE_CELL_BUDGET:
+        return
     with _METRICS_CLEAN_CACHE_LOCK:
         _METRICS_CLEAN_CACHE[identity] = result
         _METRICS_CLEAN_CACHE.move_to_end(identity)
-        while len(_METRICS_CLEAN_CACHE) > _METRICS_CLEAN_CACHE_MAX_ENTRIES:
+        # Share the same cell budget across sheets instead of keeping only one.
+        total_cells = sum(
+            len(entry["_df_limpio"]) * max(len(entry["_df_limpio"].columns), 1)
+            for entry in _METRICS_CLEAN_CACHE.values()
+        )
+        while (
+            len(_METRICS_CLEAN_CACHE) > _METRICS_CLEAN_CACHE_MAX_ENTRIES
+            or total_cells > _METRICS_CLEAN_CACHE_CELL_BUDGET
+        ):
+            oldest = next(iter(_METRICS_CLEAN_CACHE.values()))["_df_limpio"]
+            total_cells -= len(oldest) * max(len(oldest.columns), 1)
             _METRICS_CLEAN_CACHE.popitem(last=False)
 
 

@@ -9,6 +9,7 @@ proteger la memoria del servidor: se revisa Content-Length y, como respaldo,
 se corta la descarga en streaming si el archivo lo supera.
 """
 
+import json
 import threading
 import time
 from collections import OrderedDict
@@ -22,6 +23,7 @@ from .storage_capacity import safe_storage_write
 
 MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
 MAX_EXPORT_CACHE_BYTES = 64 * 1024 * 1024
+_MAX_STORAGE_ERROR_BYTES = 8 * 1024
 _CACHE_TTL_SECONDS = 5 * 60
 _CACHE_MAX_BYTES = 45 * 1024 * 1024
 _CACHE_LOCK = threading.Lock()
@@ -169,8 +171,29 @@ def download_from_storage(storage_path: str) -> bytes:
         )
 
 
+def _legacy_missing_object(response: httpx.Response) -> bool:
+    """Some Storage versions wrap a missing object in HTTP 400."""
+    if response.status_code != 400:
+        return False
+    body = bytearray()
+    for chunk in response.iter_bytes():
+        if len(body) + len(chunk) > _MAX_STORAGE_ERROR_BYTES:
+            return False
+        body.extend(chunk)
+    try:
+        error = json.loads(body)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return False
+    if not isinstance(error, dict):
+        return False
+    return error.get("code") == "NoSuchKey" or (
+        str(error.get("statusCode")) == "404"
+        and error.get("error") == "not_found"
+    )
+
+
 def download_export_cache(storage_path: str) -> bytes | None:
-    """Lee un artefacto interno de exportación; 404 significa caché ausente."""
+    """Read an internal artifact; a verified missing object is a cache miss."""
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
         return None
@@ -181,7 +204,7 @@ def download_export_cache(storage_path: str) -> bytes | None:
     }
     try:
         with httpx.stream("GET", url, headers=headers, timeout=90) as response:
-            if response.status_code == 404:
+            if response.status_code == 404 or _legacy_missing_object(response):
                 return None
             if response.status_code != 200:
                 raise HTTPException(
