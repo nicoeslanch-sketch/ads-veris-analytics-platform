@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Link2, Loader2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Link2, Loader2, RotateCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useDataset } from '../data/DatasetContext'
@@ -17,12 +17,17 @@ import AnalysisModeSwitcher from './summary/AnalysisModeSwitcher'
 
 type Mode = AnalysisScope['mode']
 
+export type RelationshipValidation =
+  | { status: 'idle' | 'checking' | 'ready' }
+  | { status: 'error'; message: string }
+
 interface ActiveSheetSelectorProps {
   /** Notifica a la página el modo actual para decidir si mostrar el workspace
    * de relaciones (mode === 'join') en lugar del dashboard genérico. */
   onModeChange?: (mode: Mode) => void
   /** Informa cuando se están validando relaciones para no mostrar un vacío falso. */
   onBusyChange?: (busy: boolean) => void
+  onValidationChange?: (validation: RelationshipValidation) => void
   /** Al incrementar, abre "Relación manual" desde fuera (lo usa el aviso de
    * relación bloqueada, cuya única salida real es cambiar la relación). */
   openRelationsNonce?: number
@@ -31,6 +36,7 @@ interface ActiveSheetSelectorProps {
 export default function ActiveSheetSelector({
   onModeChange,
   onBusyChange,
+  onValidationChange,
   openRelationsNonce,
 }: ActiveSheetSelectorProps = {}) {
   const location = useLocation()
@@ -107,6 +113,7 @@ export default function ActiveSheetSelector({
   const [candidates, setCandidates] = useState<RelationshipCandidate[]>([])
   const [relationMessage, setRelationMessage] = useState<string | null>(null)
   const [detecting, setDetecting] = useState(false)
+  const [validation, setValidation] = useState<RelationshipValidation>({ status: 'idle' })
   const autoBusinessAttempt = useRef<string | null>(null)
   const manualModeSelected = useRef(false)
   const relationshipRequest = useRef(0)
@@ -150,6 +157,10 @@ export default function ActiveSheetSelector({
   useEffect(() => {
     onBusyChange?.(detecting)
   }, [detecting, onBusyChange])
+
+  useEffect(() => {
+    onValidationChange?.(validation)
+  }, [validation, onValidationChange])
 
   // Apertura de "Relación manual" pedida por la página. Se ignora el valor
   // inicial: solo un incremento posterior representa una acción del usuario.
@@ -247,6 +258,7 @@ export default function ActiveSheetSelector({
     manualModeSelected.current = true
     relationshipRequest.current += 1
     setDetecting(false)
+    setValidation({ status: 'idle' })
     setMode('single')
     lastSingleSheet.current = name
     setSheet(name)
@@ -287,8 +299,12 @@ export default function ActiveSheetSelector({
   ) {
     if (!file || !sheetManifest || detecting) return
     const request = ++relationshipRequest.current
+    // The previous scope remains intact until validation succeeds. Keep this
+    // mode selected even if mount effects replay before a fast rejection.
+    manualModeSelected.current = true
     setMode('append_join')
     setDetecting(true)
+    setValidation({ status: 'checking' })
     setRelationMessage(null)
     try {
       const requested = requestedAppendSheets ?? appendSheets
@@ -311,6 +327,7 @@ export default function ActiveSheetSelector({
         ),
       )
       if (!mounted.current || request !== relationshipRequest.current) return
+      setValidation({ status: 'ready' })
       const serviceAnalysis = response.metrics?.analisis_negocio
       if (
         serviceWorkbook
@@ -414,8 +431,8 @@ export default function ActiveSheetSelector({
       }
     } catch (err) {
       if (!mounted.current || request !== relationshipRequest.current) return
-      setCandidates([])
-      setRelationMessage(err instanceof ApiError ? err.message : 'No pudimos revisar las conexiones.')
+      const message = err instanceof ApiError ? err.message : 'No pudimos revisar las conexiones.'
+      setValidation({ status: 'error', message })
     } finally {
       if (mounted.current && request === relationshipRequest.current) setDetecting(false)
     }
@@ -426,6 +443,7 @@ export default function ActiveSheetSelector({
     if (next === 'append' && compatibleSheets.length < 2) return
     manualModeSelected.current = true
     setMode(next)
+    if (next !== 'append_join') setValidation({ status: 'idle' })
     if (next === 'single') {
       const remembered = lastSingleSheet.current
       chooseSingle(remembered && cleanedSheets.includes(remembered) ? remembered : cleanedSheets[0])
@@ -441,6 +459,7 @@ export default function ActiveSheetSelector({
         && rememberedSheets.length > 0
         && rememberedSheets.every((name) => cleanedSheets.includes(name))
       ) {
+        setValidation({ status: 'ready' })
         setSheet(remembered.active_sheet)
         setAnalysisScope(remembered)
       } else {
@@ -627,6 +646,24 @@ export default function ActiveSheetSelector({
             <p className="flex items-center gap-2 text-xs text-navy/60">
               <Loader2 className="h-4 w-4 animate-spin text-teal" /> Buscando conexiones seguras...
             </p>
+          ) : validation.status === 'error' ? (
+            <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-gold/25 bg-gold/[0.06] p-3">
+              <div className="flex min-w-0 flex-[1_1_16rem] items-start gap-2 text-xs text-navy/70">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-gold" />
+                <div className="min-w-0 break-words">
+                  <strong className="block text-navy">No pudimos validar las conexiones.</strong>
+                  <p className="mt-1">{validation.message}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void findRelationships('append_join')}
+                className="inline-flex items-center gap-2 rounded-lg bg-teal px-3 py-2 text-xs font-semibold text-white hover:bg-teal/90"
+              >
+                <RotateCw className="h-4 w-4 shrink-0" />
+                Reintentar conexiones
+              </button>
+            </div>
           ) : standaloneBusinessSheet ? (
             <div className="rounded-lg border border-green/25 bg-green/[0.07] p-3">
               <div className="flex items-start gap-2.5">

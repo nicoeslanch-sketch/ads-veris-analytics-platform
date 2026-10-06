@@ -31,7 +31,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import KpiValue from '../components/ui/KpiValue'
 import EmptyState from '../components/ui/EmptyState'
-import ActiveSheetSelector from '../components/ActiveSheetSelector'
+import ActiveSheetSelector, { type RelationshipValidation } from '../components/ActiveSheetSelector'
 import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
 import RelationBlockedPanel from '../components/RelationBlockedPanel'
 import ProductCatalogSummary from '../components/ProductCatalogSummary'
@@ -254,6 +254,7 @@ export default function Resumen() {
     analysisScope?.mode ?? 'single',
   )
   const [selectorBusy, setSelectorBusy] = useState(false)
+  const [selectorValidation, setSelectorValidation] = useState<RelationshipValidation>({ status: 'idle' })
   const relationshipMode = selectorMode === 'join'
   const standaloneBusinessAvailable = (
     analysisScope?.mode === 'single'
@@ -262,9 +263,11 @@ export default function Resumen() {
   )
   const businessUnavailable = (
     selectorMode === 'append_join'
+    && selectorValidation.status === 'ready'
     && analysisScope?.mode !== 'append_join'
     && !standaloneBusinessAvailable
   )
+  const connectionFailed = selectorMode === 'append_join' && selectorValidation.status === 'error'
   // Una relación guardada que ya no sirve para este libro bloquea el análisis;
   // reintentar reproduce el error, así que se ofrece la salida real.
   const [openRelationsNonce, setOpenRelationsNonce] = useState(0)
@@ -298,6 +301,7 @@ export default function Resumen() {
     // En modo "Relación manual" el workspace calcula su propio dashboard con
     // /sheets/relationship-dashboard; el dashboard genérico no aplica.
     if (relationshipMode) return
+    if (selectorBusy || connectionFailed) return
     if (!file || !cleaning) return
     // uploadedAt distingue dos cargas distintas aunque el archivo se llame igual
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
@@ -438,7 +442,7 @@ export default function Resumen() {
       // queda "ya pedida" con la petición abortada, la página no carga jamás.
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
-  }, [demo.active, relationshipMode, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable])
+  }, [demo.active, relationshipMode, selectorBusy, connectionFailed, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick, setContextMetrics, setMonthsAvailable])
 
   if (!ready && !demo.active) {
     return (
@@ -640,6 +644,7 @@ export default function Resumen() {
       <ActiveSheetSelector
         onModeChange={setSelectorMode}
         onBusyChange={setSelectorBusy}
+        onValidationChange={setSelectorValidation}
         openRelationsNonce={openRelationsNonce}
       />
 
@@ -688,6 +693,12 @@ export default function Resumen() {
         <AnalysisLoadingPanel
           operation="Buscando conexiones seguras entre las hojas"
           detail="Validamos claves y cobertura antes de mostrar resultados. Los cálculos ya terminados se conservarán."
+        />
+      ) : connectionFailed ? (
+        <EmptyState
+          icon={AlertTriangle}
+          title="El análisis conjunto sigue pendiente"
+          description="La revisión de conexiones no terminó. Conservamos tus datos; vuelve a intentarlo antes de sacar conclusiones sobre las relaciones entre hojas."
         />
       ) : loading && !metrics ? (
         <AnalysisLoadingPanel

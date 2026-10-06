@@ -167,6 +167,20 @@ describe('caché de análisis', () => {
     await first
     expect(getCachedRelationships('dataset|manifest')).not.toBeNull()
   })
+
+  it('no guarda un fallo como una detección vacía y permite reintentar la misma selección', async () => {
+    clearAnalysisCaches()
+    const response: RelationshipResult = { candidates: [], safe_count: 0, message: 'Sin correspondencias' }
+    const producer = vi.fn()
+      .mockRejectedValueOnce(new Error('conexión interrumpida'))
+      .mockResolvedValueOnce(response)
+
+    await expect(requestRelationships('dataset|manifest', producer)).rejects.toThrow('conexión interrumpida')
+    expect(getCachedRelationships('dataset|manifest')).toBeNull()
+    await expect(requestRelationships('dataset|manifest', producer)).resolves.toEqual(response)
+    await expect(requestRelationships('dataset|manifest', producer)).resolves.toEqual(response)
+    expect(producer).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('caché persistente de la pestaña', () => {

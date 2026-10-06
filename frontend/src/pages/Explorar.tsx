@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CalendarDays, Search } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
 import EmptyState from '../components/ui/EmptyState'
-import ActiveSheetSelector from '../components/ActiveSheetSelector'
+import ActiveSheetSelector, { type RelationshipValidation } from '../components/ActiveSheetSelector'
 import RelationshipWorkspace from '../components/relationships/RelationshipWorkspace'
 import BusinessFilterBar from '../components/BusinessFilterBar'
 import AnalysisLoadingPanel from '../components/AnalysisLoadingPanel'
@@ -31,6 +31,7 @@ export default function Explorar() {
   )
   const relationshipMode = selectorMode === 'join'
   const [selectorBusy, setSelectorBusy] = useState(false)
+  const [selectorValidation, setSelectorValidation] = useState<RelationshipValidation>({ status: 'idle' })
   const [openRelationsNonce, setOpenRelationsNonce] = useState(0)
   const ready = Boolean(file && cleaning) || demo.active
 
@@ -45,9 +46,11 @@ export default function Explorar() {
   )
   const businessUnavailable = (
     selectorMode === 'append_join'
+    && selectorValidation.status === 'ready'
     && analysisScope?.mode !== 'append_join'
     && !standaloneBusinessAvailable
   )
+  const connectionFailed = selectorMode === 'append_join' && selectorValidation.status === 'error'
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Fase 11 §9.3: "Reintentar" tras un timeout o corte de red
@@ -74,6 +77,7 @@ export default function Explorar() {
   useEffect(() => {
     if (demo.active) return // la demo no consulta /metrics: snapshot congelado
     if (relationshipMode) return
+    if (selectorBusy || connectionFailed) return
     if (!file || !cleaning) return
     const datasetKey = datasetId ?? storagePath ?? String(uploadedAt?.getTime() ?? 0)
     // Mapeo manual y reintento en la clave: cambiar el mapeo refresca el análisis
@@ -201,7 +205,7 @@ export default function Explorar() {
       if (lastFetchKey.current === key) lastFetchKey.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo.active, relationshipMode, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick])
+  }, [demo.active, relationshipMode, selectorBusy, connectionFailed, file, datasetId, storagePath, cleaning, contextMetrics, uploadedAt, rango, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, retryTick])
 
 
   const guardarAnalisis = (title: string, findings: string[]) => saveAnalysis(
@@ -222,9 +226,11 @@ export default function Explorar() {
   return (
     <>
       <PageHeader title="Explorar datos" subtitle="Lectura, evidencia y límites de tus datos." />
-      <ActiveSheetSelector onModeChange={setSelectorMode} onBusyChange={setSelectorBusy} openRelationsNonce={openRelationsNonce} />
+      <ActiveSheetSelector onModeChange={setSelectorMode} onBusyChange={setSelectorBusy} onValidationChange={setSelectorValidation} openRelationsNonce={openRelationsNonce} />
       {selectorBusy ? (
         <AnalysisLoadingPanel operation="Buscando conexiones seguras entre las hojas" detail="Validamos claves y cobertura antes de mostrar resultados." />
+      ) : connectionFailed ? (
+        <EmptyState icon={AlertTriangle} title="El análisis conjunto sigue pendiente" description="La revisión de conexiones no terminó. Conservamos tus datos; vuelve a intentarlo antes de sacar conclusiones sobre las relaciones entre hojas." />
       ) : businessUnavailable && !loading ? (
         <EmptyState icon={Search} title="No existen conexiones seguras entre las hojas." description="Sin correspondencias validadas no se construye un resultado conjunto." ctaLabel="Relacionar hojas a mano" onCta={() => setOpenRelationsNonce((nonce) => nonce + 1)} />
       ) : relationshipMode && !demo.active ? (
