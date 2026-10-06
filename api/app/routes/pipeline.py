@@ -1095,12 +1095,14 @@ def _metrics_clean_artifact_identity(
     eliminar_duplicados: bool,
     cache_dataset_id: str,
     cache_revision: int | None,
+    cache_user_id: str | None = None,
 ) -> str:
     canonical = json.dumps(
         {
             "engine": ENGINE_VERSION,
             "service_model": SERVICE_MODEL_VERSION,
             "dataset_id": cache_dataset_id,
+            "user_id": cache_user_id,
             "revision": int(cache_revision or 0),
             "source_sha256": hashlib.sha256(content).hexdigest(),
             "rules": {**DEFAULT_RULES, **(rules or {})},
@@ -1199,6 +1201,7 @@ def _load_metrics_clean_artifact(
         eliminar_duplicados,
         cache_dataset_id,
         cache_revision,
+        cache_user_id,
     )
     memory = _metrics_clean_cache_get(identity)
     if memory is not None:
@@ -1276,6 +1279,7 @@ def _store_metrics_clean_artifact(
         eliminar_duplicados,
         cache_dataset_id,
         cache_revision,
+        cache_user_id,
     )
     settings = get_settings()
     if not settings.supabase_service_role_key:
@@ -3777,6 +3781,7 @@ def _relationships_sync(
     manual: dict | None = None,
     cache_dataset_id: str | None = None,
     focus: dict | None = None,
+    cache_user_id: str | None = None,
 ) -> dict:
     selected_sheets: set[str] | None = None
     focused_transaction_sheets: set[str] = set()
@@ -3834,7 +3839,7 @@ def _relationships_sync(
                         selected_sheets.add(name)
     processed_selection = None if focused_transaction_sheets else selected_sheets
     all_frames, all_mappings, all_results = _processed_manifest_frames(
-        filename, content, manifest, cache_dataset_id, processed_selection
+        filename, content, manifest, cache_dataset_id, processed_selection, cache_user_id
     )
     if focused_transaction_sheets:
         relation_names = selected_sheets or focused_transaction_sheets
@@ -4187,6 +4192,7 @@ def _relationships_cached_sync(
             manual,
             cache_dataset_id,
             focus,
+            user_id,
         ),
     )
 
@@ -6124,9 +6130,10 @@ def _relationship_catalog_sync(
     content: bytes,
     manifest: dict,
     cache_dataset_id: str | None = None,
+    cache_user_id: str | None = None,
 ) -> dict:
     frames, mappings, results = _processed_manifest_frames(
-        filename, content, manifest, cache_dataset_id, None
+        filename, content, manifest, cache_dataset_id, None, cache_user_id
     )
     return detect_relationship_catalog(frames, mappings, results)
 
@@ -6148,7 +6155,7 @@ def _relationship_catalog_cached_sync(
     )
     return _analysis_cache_compute(
         key,
-        lambda: _relationship_catalog_sync(filename, content, manifest, cache_dataset_id),
+        lambda: _relationship_catalog_sync(filename, content, manifest, cache_dataset_id, user_id),
     )
 
 
@@ -6160,6 +6167,7 @@ def _relationship_dashboard_sync(
     date_from: str | None,
     date_to: str | None,
     cache_dataset_id: str | None = None,
+    cache_user_id: str | None = None,
 ) -> dict:
     left = str(relationship.get("left_sheet", ""))
     right = str(relationship.get("right_sheet", ""))
@@ -6173,7 +6181,7 @@ def _relationship_dashboard_sync(
     ):
         raise HTTPException(status_code=422, detail="La relación referencia hojas inválidas.")
     frames, mappings, results = _processed_manifest_frames(
-        filename, content, manifest, cache_dataset_id, requested_names
+        filename, content, manifest, cache_dataset_id, requested_names, cache_user_id
     )
     return build_relationship_dashboard(
         frames, mappings, results, relationship, date_from=date_from, date_to=date_to
@@ -6204,7 +6212,7 @@ def _relationship_dashboard_cached_sync(
     return _analysis_cache_compute(
         key,
         lambda: _relationship_dashboard_sync(
-            filename, content, manifest, relationship, date_from, date_to, cache_dataset_id
+            filename, content, manifest, relationship, date_from, date_to, cache_dataset_id, user_id
         ),
     )
 

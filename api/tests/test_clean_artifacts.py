@@ -162,3 +162,100 @@ def test_metrics_discards_artifact_when_cleaning_revision_changes(monkeypatch):
     )
 
     assert calls == 1
+
+
+def test_clean_artifact_identity_includes_user_even_with_identical_dataset_and_input():
+    from app.routes import pipeline
+
+    args = (b"same-content", {}, {}, {}, "Ventas", False, "same-dataset", 7)
+    assert pipeline._metrics_clean_artifact_identity(*args, "user-a") != (
+        pipeline._metrics_clean_artifact_identity(*args, "user-b")
+    )
+
+
+def test_warm_clean_artifact_memory_does_not_cross_user_boundary(monkeypatch):
+    from app.routes import pipeline
+
+    content = b"Fecha,Monto\n2026-01-02,100\n"
+    objects = {}
+    settings = SimpleNamespace(supabase_service_role_key="server-secret", ai_refine_enabled=False)
+    monkeypatch.setattr(pipeline, "get_settings", lambda: settings)
+    monkeypatch.setattr(pipeline, "upload_export_cache", lambda path, payload: objects.__setitem__(path, payload))
+    monkeypatch.setattr(pipeline, "download_export_cache", lambda path: objects.get(path))
+    with pipeline._METRICS_CLEAN_CACHE_LOCK:
+        pipeline._METRICS_CLEAN_CACHE.clear()
+    result = pipeline._analyze_cached("ventas.csv", content, None, True)
+    args = ("ventas.csv", content, None, None, None, None, False, "shared-dataset", 7)
+    pipeline._store_metrics_clean_artifact(*args, "user-a", result)
+    assert pipeline._load_metrics_clean_artifact(*args, "user-a") is not None
+    assert pipeline._load_metrics_clean_artifact(*args, "user-b") is None
+    # A wrongly placed signed object still has an identity for the original user.
+    first_path = pipeline._metrics_clean_artifact_path("user-a", "shared-dataset", None)
+    other_path = pipeline._metrics_clean_artifact_path("user-b", "shared-dataset", None)
+    objects[other_path] = objects[first_path]
+    assert pipeline._load_metrics_clean_artifact(*args, "user-b") is None
+
+
+@pytest.mark.parametrize("kind", ["business", "catalog", "dashboard"])
+def test_relationship_views_reuse_persisted_clean_tables_after_cold_start(monkeypatch, kind):
+    from app.routes import pipeline
+    from tests.test_batch_pipeline import _book
+
+    content = _book()
+    manifest = {"hojas": [{
+        "nombre": name, "procesar": True, "rules": {}, "mapping": {},
+        "scope": {}, "eliminar_duplicados": False, "revision": 7,
+    } for name in ("Enero", "Febrero")]}
+    objects = {}
+    settings = SimpleNamespace(
+        supabase_service_role_key="server-secret", ai_refine_enabled=False,
+        analysis_redis_url="", analysis_cache_ttl_seconds=1800,
+        analysis_lock_ttl_seconds=600,
+    )
+    monkeypatch.setattr(pipeline, "get_settings", lambda: settings)
+    monkeypatch.setattr(pipeline, "upload_export_cache", lambda path, payload: objects.__setitem__(path, payload))
+    monkeypatch.setattr(pipeline, "download_export_cache", lambda path: objects.get(path))
+    with pipeline._METRICS_CLEAN_CACHE_LOCK:
+        pipeline._METRICS_CLEAN_CACHE.clear()
+    expected, _, _ = pipeline._processed_manifest_frames(
+        "libro.xlsx", content, manifest, "relationship-dataset", None, "user-a",
+    )
+    assert len(objects) == 2
+    for lock, cache in ((pipeline._CACHE_LOCK, pipeline._CLEAN_CACHE),
+                        (pipeline._FRAME_CACHE_LOCK, pipeline._FRAME_CACHE),
+                        (pipeline._METRICS_CLEAN_CACHE_LOCK, pipeline._METRICS_CLEAN_CACHE),
+                        (pipeline._ANALYSIS_CACHE_LOCK, pipeline._ANALYSIS_CACHE)):
+        with lock:
+            cache.clear()
+    monkeypatch.setattr(pipeline, "_load_batch_frames_cached", lambda *args: pytest.fail("source XLSX reopened"))
+    monkeypatch.setattr(pipeline, "_analyze_cached", lambda *args, **kwargs: pytest.fail("cleaning repeated"))
+    captured = {}
+
+    def capture_frames(frames, *args, **kwargs):
+        captured.update(frames)
+        return [] if kind == "business" else {"candidates": []}
+
+    if kind == "business":
+        monkeypatch.setattr(pipeline, "detect_relationships", capture_frames)
+        monkeypatch.setattr(pipeline, "analyze_business_workbook", lambda *args: None)
+        result = pipeline._relationships_cached_sync(
+            "libro.xlsx", content, manifest, None, "relationship-dataset", None, "user-a",
+        )
+        assert result["candidates"] == []
+    elif kind == "catalog":
+        monkeypatch.setattr(pipeline, "detect_relationship_catalog", capture_frames)
+        result = pipeline._relationship_catalog_cached_sync(
+            "libro.xlsx", content, manifest, "relationship-dataset", "user-a",
+        )
+        assert result == {"candidates": []}
+    else:
+        monkeypatch.setattr(pipeline, "build_relationship_dashboard", capture_frames)
+        result = pipeline._relationship_dashboard_cached_sync(
+            "libro.xlsx", content, manifest,
+            {"left_sheet": "Enero", "right_sheet": "Febrero"},
+            None, None, "relationship-dataset", "user-a",
+        )
+        assert result == {"candidates": []}
+    assert set(captured) == set(expected)
+    for name, frame in captured.items():
+        pd.testing.assert_frame_equal(frame, expected[name])
