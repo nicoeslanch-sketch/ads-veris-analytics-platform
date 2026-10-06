@@ -347,6 +347,37 @@ def test_receivable_followup_clarifies_ambiguous_measure_and_does_not_hijack_new
     assert response['matched_key'] != 'metric_receivables_overdue'
 
 
+@pytest.mark.parametrize('balance_question', ['y cuanto me deben', 'cuanto me deben',
+                                            'y cuanto nos deben', 'cuanto me deben en total'])
+def test_receivable_followup_does_not_turn_next_message_into_a_debtor_name(balance_question):
+    metrics = receivable_metrics()
+    history = [
+        {'role': 'user', 'content': 'cuantas cuentasporcobrar tengo'},
+        {'role': 'assistant', 'content': 'Hay 2 cuentas o cuotas.'},
+        {'role': 'user', 'content': balance_question},
+        {'role': 'assistant', 'content': 'El saldo publicado es $300.'},
+    ]
+    response = answer_for('y las vencidas', metrics=metrics, history=history)
+    assert response['matched_key'] == 'metric_receivables_measure_ambiguous', response
+    history.extend([
+        {'role': 'user', 'content': 'y las vencidas'},
+        {'role': 'assistant', 'content': response['answer']},
+    ])
+    response = answer_for('y cuanto esta vencido', metrics=metrics, history=history)
+    assert response['matched_key'] == 'metric_receivables_overdue', response
+    assert '$75' in response['answer']
+
+
+def test_receivable_message_boundaries_do_not_merge_client_scope_tokens():
+    metrics = receivable_metrics()
+    response = answer_for('y cuanto esta vencido', metrics=metrics, history=[
+        {'role': 'user', 'content': 'cuanto me debe Pedro'},
+        {'role': 'user', 'content': 'y cuanto me deben'},
+    ])
+    assert response['matched_key'] == 'metric_balance_scope_unavailable', response
+    assert '$300' not in response['answer'] and '$75' not in response['answer']
+
+
 def test_receivable_blocked_status_overrides_stale_balance_or_count():
     metrics = receivable_metrics()
     metrics['analisis_negocio']['operacion']['cartera_cxc'].update(estado='blocked', advertencias=['Monedas incompatibles.'])

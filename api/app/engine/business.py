@@ -2548,7 +2548,11 @@ def analyze_business_workbook(
 
     purchase_frame = frames.get((kinds.get("compras") or [None])[0]) if kinds.get("compras") else None
     purchases_total = None
+    purchase_coverage = None
+    purchase_warnings = []
     purchase_freight = None
+    freight_coverage = None
+    freight_warnings = []
     if purchase_frame is not None and not dimensional_filter_applied:
         purchase_mask = ~_status_mask(
             purchase_frame,
@@ -2558,35 +2562,73 @@ def analyze_business_workbook(
         purchase_mask &= analysis_period_mask(
             _dates(purchase_frame, _event_date_column(purchase_frame.columns, "compra")),
         )
-        purchases = numeric_series(
-            purchase_frame, _net_amount_column(purchase_frame.columns, domain="compra")
-        )
-        purchases_total = float(purchases[purchase_mask].dropna().sum())
+        purchase_amount_col = _net_amount_column(purchase_frame.columns, domain="compra")
+        purchases = numeric_series(purchase_frame, purchase_amount_col).replace(
+            [float("inf"), float("-inf")], float("nan")
+        )[purchase_mask]
+        valid_purchases = purchases.dropna()
+        if not valid_purchases.empty:
+            purchases_total = float(valid_purchases.sum())
+            purchase_coverage = float(purchases.notna().mean() * 100)
+            if purchase_coverage < 100:
+                purchase_warnings.append(
+                    "Total parcial: hay compras del alcance sin importe valido; no se completan con cero."
+                )
+        elif not purchase_amount_col:
+            purchase_warnings.append(
+                "La hoja de compras no contiene un importe neto reconocible; no equivale a compras de cero."
+            )
+        else:
+            purchase_warnings.append(
+                "No hay importes de compra validos en el alcance; no se publica un cero supuesto."
+            )
         freight_col = find_column(purchase_frame.columns, "flete")
         if freight_col:
+            purchase_document_col = _first_column(
+                purchase_frame.columns,
+                (("id", "documento", "compra"), ("id", "compra")),
+            )
             freight_frame = pd.DataFrame(
                 {
-                    "flete": numeric_series(purchase_frame, freight_col).where(purchase_mask),
+                    "flete": numeric_series(purchase_frame, freight_col).replace(
+                        [float("inf"), float("-inf")], float("nan")
+                    ),
                     "documento": (
-                        _keys(
-                            purchase_frame[
-                                _first_column(
-                                    purchase_frame.columns,
-                                    (("id", "documento", "compra"), ("id", "compra")),
-                                )
-                            ]
-                        )
-                        if _first_column(
-                            purchase_frame.columns,
-                            (("id", "documento", "compra"), ("id", "compra")),
-                        )
+                        purchase_frame[purchase_document_col].astype("string")
+                        .str.strip().str.casefold().replace("", pd.NA)
+                        if purchase_document_col
                         else pd.Series(None, index=purchase_frame.index)
                     ),
                 }
-            ).dropna(subset=["flete"])
-            if freight_frame["documento"].notna().any():
-                freight_frame = freight_frame.drop_duplicates("documento")
-            purchase_freight = float(freight_frame["flete"].sum())
+            ).loc[purchase_mask]
+            # Freight is a document-level value repeated on purchase lines.
+            # Conflicting repetitions cannot be resolved by keeping the first.
+            known_freights = freight_frame.dropna(subset=["documento"])
+            freight_groups = known_freights.groupby("documento")["flete"]
+            conflicting_freights = freight_groups.nunique().gt(1)
+            if conflicting_freights.any():
+                freight_warnings.append(
+                    "Hay fletes distintos para un mismo documento; resuelve el conflicto antes de sumar."
+                )
+            else:
+                document_freights = freight_groups.first()
+                valid_freights = document_freights.dropna()
+                expected_documents = len(document_freights) + int(
+                    freight_frame["documento"].isna().sum()
+                )
+                if not valid_freights.empty:
+                    purchase_freight = float(valid_freights.sum())
+                    freight_coverage = float(len(valid_freights) / expected_documents * 100)
+                    if freight_coverage < 100:
+                        freight_warnings.append(
+                            "Flete parcial: hay documentos sin flete valido o filas sin ID; no se completan con cero."
+                        )
+                else:
+                    freight_warnings.append(
+                        "No hay fletes validos asociados a un ID de compra en el alcance; no se supone que sean cero."
+                    )
+        else:
+            freight_warnings.append("La hoja de compras no contiene una columna de flete.")
 
     collections_frame = frames.get((kinds.get("cobranzas") or [None])[0]) if kinds.get("cobranzas") else None
     collected_total = None
@@ -3989,6 +4031,9 @@ def analyze_business_workbook(
             period_to=period_end,
             formula="Σ monto neto de compras no anuladas",
             numerator=purchases_total,
+            coverage=purchase_coverage,
+            status="partial" if purchases_total is not None and purchase_coverage < 100 else None,
+            warnings=purchase_warnings,
             required=["fecha compra", "monto neto", "estado"],
             sources=[(kinds.get("compras") or [None])[0]]
             if kinds.get("compras")
@@ -4006,6 +4051,9 @@ def analyze_business_workbook(
             period_to=period_end,
             formula="Σ flete por documento de compra sin duplicarlo por línea",
             numerator=purchase_freight,
+            coverage=freight_coverage,
+            status="partial" if purchase_freight is not None and freight_coverage < 100 else None,
+            warnings=freight_warnings,
             required=["ID documento compra", "flete"],
             sources=[(kinds.get("compras") or [None])[0]]
             if kinds.get("compras")

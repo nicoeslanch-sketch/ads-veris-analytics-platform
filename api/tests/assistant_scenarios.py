@@ -48,6 +48,18 @@ def conversation_scenarios():
     partial_receivables['analisis_negocio']['operacion']['cartera_cxc'].update(
         estado='partial', estado_vencimiento='partial', fecha_corte=None)
     return [
+        ('receivable_live_message_boundaries', receivables, [
+            ('cuantas cuentasporcobrar tengo', ['2 cuentas o cuotas']),
+            ('y cuanto me deben', ['$300', 'no ventas nuevas']),
+            ('y las vencidas', ['saldo vencido o el numero', 'medidas distintas']),
+            ('y cuanto esta vencido', ['$75', '2026-03-31']),
+            ('y que porcentaje del saldo esta vencido', ['25%', '$75 / $300']),
+            ('cuanto me debe Pedro', ['No tengo publicado ese saldo']),
+            ('y cuanto me deben', ['No tengo publicado ese saldo']),
+            ('y las vencidas', ['No tengo publicado ese saldo']),
+            ('cuanto me deben en general', ['$300']),
+            ('y las vencidas', ['saldo vencido o el numero']),
+        ]),
         ('receivable_measures_and_followups', receivables, [
             ('cuantascuentasporcobrartengo', ['2 cuentas o cuotas', 'No son clientes unicos']),
             ('y las vencidas', ['saldo vencido o el numero', 'medidas distintas']),
