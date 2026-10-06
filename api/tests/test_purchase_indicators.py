@@ -167,3 +167,17 @@ def test_small_missing_share_still_marks_purchase_total_partial():
     _, indicators = _analyze(purchases)
     assert indicators["compras_netas"]["valor"] == 500
     assert indicators["compras_netas"]["estado"] == "partial"
+
+
+@pytest.mark.parametrize("amounts,expected", [([None, None], "no significa cero"),
+                                           ([120, None], "parcial"), ([0, 0], "$0")])
+def test_assistant_consumes_real_purchase_indicator_contract(amounts, expected):
+    from app.support_knowledge import answer_for
+
+    analysis, _ = _analyze(pd.DataFrame({
+        "IDCompra": ["C1", "C2"], "Fecha Compra": ["2026-02-10"] * 2,
+        "Monto Neto": amounts,
+    }))
+    reply = answer_for("cuanto compre", metrics={"moneda": "CLP", "analisis_negocio": analysis})
+    assert expected in reply["answer"].lower()
+    assert reply["matched_key"] in {"metric_purchases", "metric_purchases_unavailable"}

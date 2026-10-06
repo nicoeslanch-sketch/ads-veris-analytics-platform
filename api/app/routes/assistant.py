@@ -76,6 +76,7 @@ class BotRequest(BaseModel):
             "analisis_negocio.cobranza.kpis", "analisis_negocio.cobranza.periodo",
             "analisis_negocio.cobranza.comparacion", "analisis_productos.costos",
             "analisis_productos.precios_lista", "analisis_productos.margen_potencial", "indicadores_financieros.items",
+            "analisis_negocio.catalogo_indicadores",
         )
         list_paths = (
             "clientes.top", "por_dia_semana", "analisis_negocio.ratios", "matriz_mes_dimension.valores",
@@ -84,6 +85,7 @@ class BotRequest(BaseModel):
             "analisis_negocio.cobranza.equipos", "analisis_negocio.cobranza.agencias",
             "analisis_negocio.cobranza.formas_pago", "analisis_negocio.cobranza.periodos_cotizados",
             "analisis_negocio.cobranza.evolucion",
+            "analisis_negocio.catalogo_indicadores.categorias",
         )
         for path in (*object_paths, *list_paths):
             node = value
@@ -103,6 +105,18 @@ class BotRequest(BaseModel):
                 for key in keys:
                     if row.get(key) is not None and (not isinstance(row[key], list) or not all(isinstance(item, dict) for item in row[key])):
                         raise ValueError(f"{key} debe ser una lista de indicadores.")
+        catalog = (value.get('analisis_negocio') or {}).get('catalogo_indicadores') or {}
+        for category in catalog.get('categorias') or []:
+            indicators = category.get('indicadores')
+            if indicators is None:
+                continue
+            if not isinstance(indicators, list) or not all(isinstance(item, dict) for item in indicators):
+                raise ValueError('indicadores debe ser una lista de objetos.')
+            for item in indicators:
+                for key in ('advertencias', 'fuentes'):
+                    entries = item.get(key)
+                    if entries is not None and (not isinstance(entries, list) or not all(isinstance(entry, str) for entry in entries)):
+                        raise ValueError(f'{key} debe ser una lista de textos.')
         return value
 
 

@@ -4396,6 +4396,7 @@ def _restore_response(
         "mapping": snapshot.get("mapping"),
         "eliminar_duplicados": bool(snapshot.get("eliminar_duplicados", False)),
         "source": source,
+        "analysis_version": f"{ENGINE_VERSION}:{SERVICE_MODEL_VERSION}",
     }
     if sheet_sessions is not None:
         response["sheet_sessions"] = sheet_sessions

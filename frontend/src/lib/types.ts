@@ -1453,4 +1453,5 @@ export interface RestoreLatestResult {
   refresh_required?: boolean
   refresh_sheets?: string[]
   metrics_stale?: boolean
+  analysis_version?: string
 }

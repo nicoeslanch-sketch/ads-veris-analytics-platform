@@ -289,6 +289,8 @@ def test_restore_stale_devuelve_limpieza_sin_metricas_y_sin_descargar(monkeypatc
     assert body["cleaning"] is not None
     assert body["metrics"] is not None
     assert body["metrics_stale"] is True
+    assert body["analysis_version"] == f"{pl.ENGINE_VERSION}:{pl.SERVICE_MODEL_VERSION}"
+    assert not body["analysis_version"].startswith("0.21.0:")
 
 
 def test_refresh_recalcula_el_snapshot_guardado_con_una_revision_nueva(monkeypatch):

@@ -77,7 +77,7 @@ _VOCABULARY = frozenset(
     razonabilidad solvencia patrimonio rendimiento rendimientos retorno retornos
     oportunidad presente futuro futuros simple compuesta compuestas capitalizacion patrimonial proyecto
     tasa descuento inflacion estructura composicion tendencia sector sectores
-    compromiso compromisos nomina remuneracion remuneraciones compra compras ventas
+    compromiso compromisos nomina remuneracion remuneraciones compra compras compre compramos comprado comprando comprar flete fletes ventas
     politica politicas credito contado proveedores impuestos dividendo dividendos
     operativa operativas actividad actividades cotizado cotizados extraordinario extraordinarios
     mensual mensuales trimestral trimestrales anual anuales dias diario diarios

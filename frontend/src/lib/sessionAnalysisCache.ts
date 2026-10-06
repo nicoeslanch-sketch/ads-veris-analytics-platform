@@ -1,12 +1,19 @@
 const CACHE_PREFIX = 'ads-veris:analysis:v1:'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+let analysisVersion: string | null = null
 
 export type SessionAnalysisKind = 'metrics' | 'relationships' | 'catalog' | 'dashboard'
 
 interface StoredAnalysis<T> {
   identity: string
+  analysisVersion: string | null
   storedAt: number
   value: T
+}
+
+/** Use the running server's version, not the restored snapshot's old version. */
+export function setSessionAnalysisVersion(version?: string | null) {
+  analysisVersion = version?.trim() || null
 }
 
 function storage(): Storage | null {
@@ -59,7 +66,7 @@ function removeOldest(target: Storage, kind: SessionAnalysisKind, keep: number) 
  * Conserva resultados ya calculados durante la sesión de la pestaña. A
  * diferencia de localStorage, no comparte datos empresariales entre pestañas
  * ni sobrevive al cierre del navegador. Sí sobrevive una recarga o un nuevo
- * despliegue del frontend, que era cuando se perdía el trabajo terminado.
+ * despliegue del frontend, siempre que el motor siga siendo compatible.
  */
 export function readSessionAnalysis<T>(
   kind: SessionAnalysisKind,
@@ -72,6 +79,7 @@ export function readSessionAnalysis<T>(
     const parsed = JSON.parse(target.getItem(key) ?? '') as StoredAnalysis<T>
     if (
       parsed.identity !== identity
+      || parsed.analysisVersion !== analysisVersion
       || !Number.isFinite(parsed.storedAt)
       || Date.now() - parsed.storedAt > CACHE_TTL_MS
     ) {
@@ -94,7 +102,7 @@ export function writeSessionAnalysis<T>(
   const target = storage()
   if (!target) return
   const key = storageKey(kind, identity)
-  const serialized = JSON.stringify({ identity, storedAt: Date.now(), value })
+  const serialized = JSON.stringify({ identity, analysisVersion, storedAt: Date.now(), value })
   try {
     target.setItem(key, serialized)
     removeOldest(target, kind, maxEntries)
