@@ -1019,21 +1019,21 @@ def _answer_operating_balances(
                 and not _contains(text, "vendi", "ingresos", "gastos", "ticket", "producto", "inventario", "stock", "plan", "coins"))
 
     # Carry the receivable topic and scope, not the previous requested measure.
-    balance_context = ""
+    balance_context: list[str] = []
     for item in (history or [])[-12:]:
         if item.get("role") != "user":
             continue
         previous = normalize_query(item.get("content") or "")
         if balance_context and balance_followup(previous) and not _contains(previous, "en general", "total general"):
-            balance_context += " " + previous
+            balance_context.append(previous)
         else:
-            balance_context = previous if receivable_topic(previous) else ""
-    scope_question = question
+            balance_context = [previous] if receivable_topic(previous) else []
+    scope_questions = [question]
     receivables = receivable_topic(question)
     if balance_context and balance_followup(question):
         receivables = True
         if not _contains(question, "en general", "total general"):
-            scope_question = balance_context + " " + question
+            scope_questions = [*balance_context, question]
     inventory = not metrics.get("analisis_inventario") and _collection_dashboard(metrics) is None and _contains(question, "inventario", "stock") and _contains(
         question, "cuanto", "valor", "total", "disponible",
     ) and not _contains(question, "rotacion", "dias", "minimo", "quiebre")
@@ -1049,19 +1049,23 @@ def _answer_operating_balances(
         )
     # Sales series and customer rankings cannot answer balance-specific filters.
     from .assistant_queries import MONTHS, _dimensions
-    scoped = re.search(
+    # Preserve turn boundaries: "me deben" + "y las vencidas" must not
+    # invent a debtor named "y" across two separate messages.
+    scoped = any(re.search(
         r"\b(?:" + "|".join(MONTHS) + r"|20\d{2}|hoy|ayer|mes|meses|semana|trimestre|semestre|solo|excepto|sin)\b",
-        scope_question,
-    ) or re.search(r"\b(?:cliente|producto|sku|id|sucursal|categoria|canal|region)\s+\S+", scope_question)
+        text,
+    ) or re.search(r"\b(?:cliente|producto|sku|id|sucursal|categoria|canal|region)\s+\S+", text)
+                 for text in scope_questions)
     if receivables:
-        scoped = scoped or re.search(
+        scoped = scoped or any(re.search(
             r"\b(?:me|nos) deben?\s+(?!(?:mis|los|nuestros) clientes\b|la clientela\b|en total\b|en general\b|mas\b|menos\b)\S+",
-            scope_question,
-        ) or re.search(r"\b(?:por cobrar|cxc)\s+(?:de|del|para)\s+\S+", scope_question)
+            text,
+        ) or re.search(r"\b(?:por cobrar|cxc)\s+(?:de|del|para)\s+\S+", text)
+                               for text in scope_questions)
     named = any(
         normalize_basic(row.get("nombre")) and re.search(
-            r"\b" + re.escape(normalize_basic(row["nombre"])) + r"\b", scope_question,
-        ) for _, rows in _dimensions(metrics) for row in rows
+            r"\b" + re.escape(normalize_basic(row["nombre"])) + r"\b", text,
+        ) for _, rows in _dimensions(metrics) for row in rows for text in scope_questions
     )
     if scoped or named:
         return _result(
