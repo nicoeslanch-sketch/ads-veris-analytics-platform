@@ -232,6 +232,131 @@ def test_receivables_bot_explains_snapshot_and_partial_validation():
     assert '$125' not in response['answer']
 
 
+def receivable_metrics():
+    metrics = sales_metrics()
+    metrics['analisis_negocio'] = {'operacion': {
+        'cuentas_por_cobrar': 300, 'cartera_cxc': {
+            'fecha_corte': '2026-03-31', 'estado': 'available',
+            'estado_vencimiento': 'available', 'saldo_validado': 300,
+            'saldo_vencido': 75, 'documentos_pendientes': 2, 'advertencias': [],
+        },
+    }}
+    return metrics
+
+
+@pytest.mark.parametrize('question', ['cuantas cuentas por cobrar tengo', 'cuantos cxc tengo',
+                                    'cantidad de cuentas por cobrar', 'cuantascuentasporcobrartengo'])
+def test_receivable_count_is_not_money_or_unique_customers(question):
+    response = answer_for(question, metrics=receivable_metrics())
+    assert response['matched_key'] == 'metric_receivables_count', response
+    assert '2 cuentas o cuotas' in response['answer']
+    assert 'No son clientes unicos ni facturas unicas' in response['answer']
+    assert '$' not in response['answer']
+
+
+@pytest.mark.parametrize('count', [None, -1, 1.5, True])
+def test_receivable_count_missing_or_invalid_is_not_zero(count):
+    metrics = receivable_metrics()
+    metrics['analisis_negocio']['operacion']['cartera_cxc']['documentos_pendientes'] = count
+    response = answer_for('cuantas cuentas por cobrar tengo', metrics=metrics)
+    assert response['matched_key'] == 'metric_balance_measure_unavailable'
+    assert '0 cuentas' not in response['answer']
+    assert '$300' not in response['answer']
+
+
+def test_receivable_zero_count_is_published_and_money_question_remains_money():
+    metrics = receivable_metrics()
+    metrics['analisis_negocio']['operacion']['cartera_cxc']['documentos_pendientes'] = 0
+    assert '0 cuentas o cuotas' in answer_for('cuantas cuentas por cobrar tengo', metrics=metrics)['answer']
+    response = answer_for('cuantos pesos me deben', metrics=metrics)
+    assert response['matched_key'] == 'metric_receivables_balance'
+    assert '$300' in response['answer']
+
+
+@pytest.mark.parametrize('question', ['cuantos clientes me deben', 'cuantas facturas en mis cxc',
+                                    'cuantas cuentas por cobrar estan vencidas', 'quien me debe mas',
+                                    'que porcentaje de clientes esta en mora en mis cxc'])
+def test_receivable_unpublished_count_or_ranking_never_uses_account_count(question):
+    response = answer_for(question, metrics=receivable_metrics())
+    assert response['matched_key'] == 'metric_balance_measure_unavailable', response
+    assert '2 cuentas' not in response['answer']
+    assert '$' not in response['answer']
+    assert '25%' not in response['answer']
+
+
+def test_receivable_overdue_amount_and_share_use_explicit_published_basis():
+    metrics = receivable_metrics()
+    response = answer_for('cuanto esta vencido en mis cuentas por cobrar', metrics=metrics)
+    assert response['matched_key'] == 'metric_receivables_overdue'
+    assert '$75' in response['answer']
+    assert '2026-03-31' in response['answer']
+    response = answer_for('que porcentaje del saldo cxc esta vencido', metrics=metrics)
+    assert response['matched_key'] == 'metric_receivables_overdue_share'
+    assert '25%' in response['answer']
+    assert '$75 / $300' in response['answer']
+    assert 'montos, no de clientes' in response['answer']
+    metrics['moneda'] = 'UF'
+    assert 'UF 75 / UF 300' in answer_for('que porcentaje del saldo cxc esta vencido', metrics=metrics)['answer']
+
+
+def test_partial_overdue_can_be_explained_but_not_divided_as_complete():
+    metrics = receivable_metrics()
+    ledger = metrics['analisis_negocio']['operacion']['cartera_cxc']
+    ledger.update(estado='partial', estado_vencimiento='partial', fecha_corte=None)
+    response = answer_for('cuanto esta vencido en mis cxc', metrics=metrics)
+    assert '$75' in response['answer']
+    assert 'vencimiento es parcial' in response['answer']
+    assert 'no declara fecha de corte' in response['answer']
+    response = answer_for('que porcentaje del saldo cxc esta vencido', metrics=metrics)
+    assert response['matched_key'] == 'metric_balance_measure_unavailable'
+    assert '25%' not in response['answer']
+    assert 'No equivale a 0%' in response['answer']
+
+
+@pytest.mark.parametrize('balance,overdue', [(0, 0), (-1, 0), (300, None), (300, -1), (300, 301)])
+def test_overdue_share_never_uses_missing_zero_negative_or_inconsistent_basis(balance, overdue):
+    metrics = receivable_metrics()
+    ledger = metrics['analisis_negocio']['operacion']['cartera_cxc']
+    ledger.update(saldo_validado=balance, saldo_vencido=overdue)
+    response = answer_for('que porcentaje del saldo cxc esta vencido', metrics=metrics)
+    assert response['matched_key'] == 'metric_balance_measure_unavailable'
+    assert '$300' not in response['answer']
+
+
+@pytest.mark.parametrize('previous', ['cuanto me deben en enero', 'cuanto me debe Pedro',
+                                    'cuanto me deben hoy', 'saldo por cobrar solo en Sur'])
+def test_receivable_followups_keep_unavailable_scope(previous):
+    metrics = receivable_metrics()
+    response = answer_for('y cuanto esta vencido', metrics=metrics, history=[{'role': 'user', 'content': previous}])
+    assert response['matched_key'] == 'metric_balance_scope_unavailable', response
+    assert '$75' not in response['answer']
+    assert '$300' not in response['answer']
+
+
+def test_receivable_followup_clarifies_ambiguous_measure_and_does_not_hijack_new_topic():
+    metrics = receivable_metrics()
+    history = [{'role': 'user', 'content': 'cuantas cuentas por cobrar tengo'}]
+    response = answer_for('y las vencidas', metrics=metrics, history=history)
+    assert response['matched_key'] == 'metric_receivables_measure_ambiguous'
+    assert '$75' not in response['answer']
+    response = answer_for('y cuanto esta vencido', metrics=metrics, history=history)
+    assert response['matched_key'] == 'metric_receivables_overdue'
+    assert '$75' in response['answer']
+    response = answer_for('y cuanto vendi en enero', metrics=metrics, history=history)
+    assert '$100' in response['answer']
+    assert response['matched_key'] != 'metric_receivables_overdue'
+
+
+def test_receivable_blocked_status_overrides_stale_balance_or_count():
+    metrics = receivable_metrics()
+    metrics['analisis_negocio']['operacion']['cartera_cxc'].update(estado='blocked', advertencias=['Monedas incompatibles.'])
+    for question in ['cuanto me deben', 'cuantas cuentas por cobrar tengo', 'cuanto esta vencido en mis cxc']:
+        response = answer_for(question, metrics=metrics)
+        assert response['matched_key'] == 'metric_receivables_unavailable'
+        assert '$' not in response['answer']
+        assert '2 cuentas' not in response['answer']
+
+
 def test_business_inventory_uses_snapshot_not_sold_units():
     metrics = sales_metrics()
     response = answer_for('cuanto tengo en inventario', metrics=metrics)
@@ -247,7 +372,8 @@ def test_business_inventory_uses_snapshot_not_sold_units():
     assert '$300' not in answer_for('cuanto vale el inventario', metrics=metrics)['answer']
 
 
-@pytest.mark.parametrize('question', ['cuentas por cobrar', 'cuenta', 'clientela', 'deben'])
+@pytest.mark.parametrize('question', ['cuentas por cobrar', 'cuenta', 'clientela', 'deben', 'cantidad',
+                                    'cantidades', 'vencida', 'vencidas', 'mora', 'proporcion', 'rotacion'])
 def test_valid_receivables_words_are_not_changed_by_typo_correction(question):
     assert normalize_query(question) == question
 

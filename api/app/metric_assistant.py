@@ -1008,14 +1008,40 @@ def _answer_currency(metrics: dict[str, Any]) -> dict[str, Any]:
     return _result(answer, "metric_currency", metric_suggestions(metrics))
 
 
-def _answer_operating_balances(metrics: dict[str, Any], question: str) -> dict[str, Any] | None:
-    receivables = _contains(question, "me debe", "nos debe", "cuentas por cobrar", "saldo por cobrar") or bool(re.search(r"\bcxc\b", question))
+def _answer_operating_balances(
+    metrics: dict[str, Any], question: str, history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    def receivable_topic(text: str) -> bool:
+        return _contains(text, "me debe", "nos debe", "cuentas por cobrar", "saldo por cobrar", "cuotas por cobrar") or bool(re.search(r"\bcxc\b", text))
+
+    def balance_followup(text: str) -> bool:
+        return (text.startswith("y ") and _contains(text, "vencid", "mora", "saldo", "cuant", "porcentaje", "proporcion", "cuentas")
+                and not _contains(text, "vendi", "ingresos", "gastos", "ticket", "producto", "inventario", "stock", "plan", "coins"))
+
+    # Carry the receivable topic and scope, not the previous requested measure.
+    balance_context = ""
+    for item in (history or [])[-12:]:
+        if item.get("role") != "user":
+            continue
+        previous = normalize_query(item.get("content") or "")
+        if balance_context and balance_followup(previous) and not _contains(previous, "en general", "total general"):
+            balance_context += " " + previous
+        else:
+            balance_context = previous if receivable_topic(previous) else ""
+    scope_question = question
+    receivables = receivable_topic(question)
+    if balance_context and balance_followup(question):
+        receivables = True
+        if not _contains(question, "en general", "total general"):
+            scope_question = balance_context + " " + question
     inventory = not metrics.get("analisis_inventario") and _collection_dashboard(metrics) is None and _contains(question, "inventario", "stock") and _contains(
         question, "cuanto", "valor", "total", "disponible",
     ) and not _contains(question, "rotacion", "dias", "minimo", "quiebre")
     if not receivables and not inventory:
         return None
-    if _contains(question, "rotacion", "dias", "porcentaje", "vencid", "mora", "quien", "mas debe", "menos debe"):
+    overdue_requested = bool(re.search(r"\b(?:vencid\w*|mora|moros\w*|atrasad\w*)\b", question))
+    unsupported_measure = overdue_requested or _contains(question, "rotacion", "dias", "porcentaje", "proporcion", "participacion", "quien", "mas debe", "menos debe")
+    if inventory and unsupported_measure:
         return _result(
             "Esa medida necesita su desglose de saldos, vencimientos o fechas de cobro. "
             "El total de cuentas por cobrar no lo sustituye; revisa esa medida en Explorar.",
@@ -1025,16 +1051,16 @@ def _answer_operating_balances(metrics: dict[str, Any], question: str) -> dict[s
     from .assistant_queries import MONTHS, _dimensions
     scoped = re.search(
         r"\b(?:" + "|".join(MONTHS) + r"|20\d{2}|hoy|ayer|mes|meses|semana|trimestre|semestre|solo|excepto|sin)\b",
-        question,
-    ) or re.search(r"\b(?:cliente|producto|sku|id|sucursal|categoria|canal|region)\s+\S+", question)
+        scope_question,
+    ) or re.search(r"\b(?:cliente|producto|sku|id|sucursal|categoria|canal|region)\s+\S+", scope_question)
     if receivables:
         scoped = scoped or re.search(
-            r"\b(?:me|nos) deben?\s+(?!(?:mis|los|nuestros) clientes\b|la clientela\b|en total\b|en general\b)\S+",
-            question,
-        ) or re.search(r"\b(?:por cobrar|cxc)\s+(?:de|del|para)\s+\S+", question)
+            r"\b(?:me|nos) deben?\s+(?!(?:mis|los|nuestros) clientes\b|la clientela\b|en total\b|en general\b|mas\b|menos\b)\S+",
+            scope_question,
+        ) or re.search(r"\b(?:por cobrar|cxc)\s+(?:de|del|para)\s+\S+", scope_question)
     named = any(
         normalize_basic(row.get("nombre")) and re.search(
-            r"\b" + re.escape(normalize_basic(row["nombre"])) + r"\b", question,
+            r"\b" + re.escape(normalize_basic(row["nombre"])) + r"\b", scope_question,
         ) for _, rows in _dimensions(metrics) for row in rows
     )
     if scoped or named:
@@ -1051,14 +1077,73 @@ def _answer_operating_balances(metrics: dict[str, Any], question: str) -> dict[s
             return _answer_currency(metrics)
         value = _number(operation.get("cuentas_por_cobrar"))
         ledger = operation.get("cartera_cxc") or {}
+        if ledger.get("estado") in {"blocked", "unavailable"}:
+            return _result(
+                "No puedo publicar ese saldo en esta vista. " + " ".join(ledger.get("advertencias", [])[:2]),
+                "metric_receivables_unavailable", metric_suggestions(metrics), "medium",
+            )
+        cutoff = ledger.get("fecha_corte")
+        ledger_note = (
+            f" Corte declarado: {cutoff}." if cutoff
+            else " El archivo no declara fecha de corte; no es un saldo historico."
+        ) if ledger else ""
+        if ledger.get("estado") == "partial":
+            ledger_note += " La validacion es parcial; revisa los controles de cartera antes de conciliar."
+        count_requested = bool(re.search(r"\b(?:cuantas|cuantos|numero|conteo)\b(?!\s+(?:pesos|dolares|euros|uf)\b)", question)
+                               or re.search(r"\bcantidad\s+(?:de\s+)?(?:cuentas|cxc)\b", question))
+        if overdue_requested and re.fullmatch(r"y\s+(?:(?:las|los|la|el)\s+)?(?:vencid\w*|moros\w*|atrasad\w*)", question):
+            return _result(
+                "¿Quieres el saldo vencido o el numero de cuentas vencidas? Son medidas distintas. "
+                "Solo puedo responder las medidas publicadas en esta vista.",
+                "metric_receivables_measure_ambiguous", metric_suggestions(metrics), "medium",
+            )
+        if ledger.get("estado") in {"available", "partial"}:
+            count = _number(ledger.get("documentos_pendientes"))
+            if (count_requested and not overdue_requested
+                    and not _contains(question, "cliente", "factura", "porcentaje", "rotacion", "dias")
+                    and count is not None and count >= 0 and count.is_integer()):
+                return _result(
+                    f"Hay {_es_number(count)} cuentas o cuotas con saldo positivo en la cartera validada. "
+                    "No son clientes unicos ni facturas unicas: una venta puede tener varias cuotas."
+                    + ledger_note,
+                    "metric_receivables_count", metric_suggestions(metrics), "medium",
+                )
+            overdue = _number(ledger.get("saldo_vencido"))
+            balance = _number(ledger.get("saldo_validado"))
+            overdue_available = (ledger.get("estado_vencimiento") in {"available", "partial"}
+                                 and overdue is not None and balance is not None
+                                 and 0 <= overdue <= balance)
+            if overdue_requested and not count_requested and not _contains(question, "dias", "rotacion", "quien", "cliente", "factura"):
+                if _contains(question, "porcentaje", "proporcion", "participacion"):
+                    if overdue_available and ledger.get("estado_vencimiento") == "available" and balance > 0:
+                        return _result(
+                            f"El saldo vencido representa {_percent(overdue / balance * 100)} del saldo validado: "
+                            f"{format_amount(overdue, str(metrics.get('moneda') or 'CLP'))} / "
+                            f"{format_amount(balance, str(metrics.get('moneda') or 'CLP'))}. "
+                            "Es una proporcion de montos, no de clientes ni de numero de cuentas." + ledger_note,
+                            "metric_receivables_overdue_share", metric_suggestions(metrics), "medium",
+                        )
+                    return _result(
+                        "No hay una proporcion de cartera vencida publicable: faltan vencimientos completos "
+                        "o un saldo validado positivo para el denominador. No equivale a 0%.",
+                        "metric_balance_measure_unavailable", metric_suggestions(metrics), "medium",
+                    )
+                if overdue_available:
+                    partial_note = (" El vencimiento es parcial: hay cuentas cuya antiguedad no se puede validar."
+                                    if ledger.get("estado_vencimiento") == "partial" else "")
+                    return _result(
+                        f"El saldo vencido identificado es {format_amount(overdue, str(metrics.get('moneda') or 'CLP'))}. "
+                        "Es deuda pendiente, no dinero cobrado." + partial_note + ledger_note,
+                        "metric_receivables_overdue", metric_suggestions(metrics), "medium",
+                    )
+        if unsupported_measure or count_requested:
+            return _result(
+                "No tengo publicada esa medida de cartera en esta vista. Contar cuentas no permite "
+                "contar clientes o facturas unicas; el saldo total tampoco sustituye vencimientos, "
+                "dias de cobro ni un ranking de deudores. Revisa las fuentes e IDs en Explorar.",
+                "metric_balance_measure_unavailable", metric_suggestions(metrics), "medium",
+            )
         if value is not None:
-            cutoff = ledger.get("fecha_corte")
-            ledger_note = (
-                f" Corte declarado: {cutoff}." if cutoff
-                else " El archivo no declara fecha de corte; no es un saldo historico."
-            ) if ledger else ""
-            if ledger.get("estado") == "partial":
-                ledger_note += " La validacion es parcial; revisa los controles de cartera antes de conciliar."
             return _result(
                 f"El saldo de cuentas por cobrar publicado es {format_amount(value, str(metrics.get('moneda') or 'CLP'))}. "
                 "Es deuda pendiente, no ventas nuevas ni dinero cobrado. Corresponde "
@@ -1070,11 +1155,6 @@ def _answer_operating_balances(metrics: dict[str, Any], question: str) -> dict[s
             if answer:
                 answer["answer"] += " Es el saldo declarado, no dinero cobrado; revisa saldos negativos y duplicados antes de conciliarlo."
                 return answer
-        if ledger.get("estado") in {"blocked", "unavailable"}:
-            return _result(
-                "No puedo publicar ese saldo en esta vista. " + " ".join(ledger.get("advertencias", [])[:2]),
-                "metric_receivables_unavailable", metric_suggestions(metrics), "medium",
-            )
         return _result(
             "No hay un saldo de cuentas por cobrar publicado en esta vista. El cliente "
             "que mas compra no necesariamente es quien mas debe. Abre la hoja CxC "
@@ -2088,7 +2168,7 @@ def answer_metrics_question(
         )
     if _contains(question, "moneda", "en pesos", "en uf", "son uf", "son pesos", "divisa", "esta en uf"):
         return _answer_currency(metrics)
-    balance_answer = _answer_operating_balances(metrics, original_question)
+    balance_answer = _answer_operating_balances(metrics, original_question, history)
     if balance_answer is not None:
         return balance_answer
     collection = _collection_dashboard(metrics)

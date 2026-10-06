@@ -39,7 +39,40 @@ def conversation_scenarios():
                'analisis_productos': {'productos': 4, 'registros': 5, 'activos': 2,
                                      'inactivos': 1, 'sin_estado': 2,
                                      'costos': {'promedio': 220}, 'precios_lista': {'promedio': 440}}}
+    receivables = deepcopy(sales)
+    receivables['analisis_negocio'] = {'operacion': {'cuentas_por_cobrar': 300, 'cartera_cxc': {
+        'estado': 'available', 'estado_vencimiento': 'available', 'saldo_validado': 300,
+        'saldo_vencido': 75, 'documentos_pendientes': 2, 'fecha_corte': '2026-03-31',
+    }}}
+    partial_receivables = deepcopy(receivables)
+    partial_receivables['analisis_negocio']['operacion']['cartera_cxc'].update(
+        estado='partial', estado_vencimiento='partial', fecha_corte=None)
     return [
+        ('receivable_measures_and_followups', receivables, [
+            ('cuantascuentasporcobrartengo', ['2 cuentas o cuotas', 'No son clientes unicos']),
+            ('y las vencidas', ['saldo vencido o el numero', 'medidas distintas']),
+            ('y cuanto esta vencido', ['$75', '2026-03-31']),
+            ('y que proporcion del saldo esta en mora', ['25%', '$75 / $300', 'montos']),
+            ('y cuantas cuentas estan vencidas', ['No tengo publicada esa medida']),
+            ('cuantos clientes me deben', ['No tengo publicada esa medida']),
+            ('cuanto me debe Pedro', ['No tengo publicado ese saldo']),
+            ('y cuanto esta vencido', ['No tengo publicado ese saldo']),
+            ('y cuantas cuentas por cobrar tengo en general', ['2 cuentas o cuotas']),
+            ('y cuanto esta vencido', ['$75']),
+            ('cuanto me deben hoy', ['No tengo publicado ese saldo']),
+            ('y cuanto esta vencido', ['No tengo publicado ese saldo']),
+            ('cuantos pesos me deben en general', ['$300', 'no ventas nuevas']),
+            ('que porcentaje del saldo cxc esta vencido', ['25%', '$75 / $300']),
+            ('rotacion de mis cxc', ['No tengo publicada esa medida']),
+            ('cuanto vendi en enero', ['$100', '2026-01']),
+        ]),
+        ('partial_receivables_are_not_complete_aging', partial_receivables, [
+            ('cantidad de cuentas por cobrar', ['2 cuentas o cuotas', 'validacion es parcial']),
+            ('y cuanto esta vencido', ['$75', 'vencimiento es parcial', 'no declara fecha de corte']),
+            ('y que porcentaje del saldo esta vencido', ['No equivale a 0%', 'vencimientos completos']),
+            ('cuanto me deben en general', ['$300', 'no es un saldo historico']),
+            ('y cuantas cuentas por cobrar', ['2 cuentas o cuotas']),
+        ]),
         ('catalog_status_followups', catalog, [
             ('cuantosproductos tengo', ['4 productos']),
             ('y cuantos estan inactvos', ['1 registro inactivo', 'por fila']),

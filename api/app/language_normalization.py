@@ -35,7 +35,7 @@ _VOCABULARY = frozenset(
     agencias ahorro al alerta alertas ampliar analiza analisis analizar anterior anteriores ano anos
     apalancamiento aplicar aporte aportan aporta aporto archivo archivos asignar asistente
     auditoria balance bancario beneficio beneficios bruto bruta caja calcular calculo
-    calidad cambio cambios canal canales capital categoria categorias cierre cliente
+    calidad cantidad cantidades cambio cambios canal canales capital categoria categorias cierre cliente
     clientes clientela cuenta cuentas cxc cobrar cobranza cobranzas cobro cobros cobertura compara comparar comparacion comparalos comparalas
     compuesto consolidado consolidar contabilidad contable contado contexto conversion
     convertir convertirlo corriente corto costo costos credito creditos cual cuales cuando cuanto
@@ -54,7 +54,7 @@ _VOCABULARY = frozenset(
     pesos plata plazo por porcentaje porciones presupuesto presupuestos prestamo prestamos primero primeros producto productos
     promedio proyectado proyectados proyeccion proyectar proveedor proveedores prueba publica privada
     que quiero ratio ratios razon recaudacion recomendacion recomendaciones registro
-    registros relacion rentabilidad reporte reportes resultado resultados resumen riesgo
+    registros relacion rotacion rotaciones rentabilidad reporte reportes resultado resultados resumen riesgo
     riesgos roa roe saldo saldos semana semanas servicio servicios sin situacion
     sobre solvencia stock sucursal sucursales tasa tasas temporal tendencia tiene tengo
     tesoreria tiempo tipo total totales transaccion transacciones uf ultima ultimo
@@ -94,7 +94,7 @@ _VOCABULARY = frozenset(
     maxima minima minimo minimo monto netos concluir conclusion conclusiones resumelo
     meta metas nuevos nuevas segmento segmentos predomina predominan predominante
     mayor menor altos bajas bajo baja altos alto conteo comprometidas comprometidos
-    reposicion reponer disponible disponibilidad vencido vencidos moroso morosos
+    reposicion reponer disponible disponibilidad vencido vencidos vencida vencidas mora moroso morosos morosa morosas proporcion proporciones
     morosidad cartera cobrar conciliacion conciliar bancaria bancarias banco bancos
     anulada anulado anuladas anulados pendiente pendientes aplicado aplicada
     recibido recibida recepcion recepciones despachos despacho entregas entrega
