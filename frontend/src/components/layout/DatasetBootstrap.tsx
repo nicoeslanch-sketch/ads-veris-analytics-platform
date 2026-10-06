@@ -117,6 +117,7 @@ export default function DatasetBootstrap() {
           selectionMode: restoredSelection.selectionMode,
           expectedRevision: restoreRevision,
           metricsStale: Boolean(restored.metrics_stale),
+          analysisVersion: restored.analysis_version,
         },
       )
     }

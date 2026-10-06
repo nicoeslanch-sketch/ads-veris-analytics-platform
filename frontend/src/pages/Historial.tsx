@@ -261,6 +261,7 @@ export default function Historial() {
           selectionMode: restoredSelection.selectionMode,
           expectedRevision: datasetRevision,
           metricsStale: Boolean(restored.metrics_stale),
+          analysisVersion: restored.analysis_version,
         },
       )
       if (!applied) return

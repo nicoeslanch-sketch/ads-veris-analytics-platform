@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { clearAnalysisCaches, clearAnalysisRuntimeCaches } from '../lib/analysisCache'
+import { setSessionAnalysisVersion } from '../lib/sessionAnalysisCache'
 import { stableSerialize } from '../lib/stableSerialize'
 import { analysisScopesEqual, normalizedRestoredSelection, scopeForActiveSheet } from '../lib/multiSheet'
 import {
@@ -71,6 +72,7 @@ export interface RestoreDatasetOptions {
   /** El snapshot puede mostrarse, pero sus métricas pertenecen a una versión
    * anterior del motor y deben actualizarse una sola vez en segundo plano. */
   metricsStale?: boolean
+  analysisVersion?: string
 }
 
 /** Construye el periodo de un mes "YYYY-MM" (primer al último día). */
@@ -431,6 +433,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
     ) return false
     clearAnalysisRuntimeCaches()
     clearRelationshipDashboardRuntimeCaches()
+    setSessionAnalysisVersion(options?.analysisVersion)
     const inferredActiveSheet =
       restoredCleaning?.carga?.hoja_usada ??
       restoredStandardization.carga?.hoja_usada ??

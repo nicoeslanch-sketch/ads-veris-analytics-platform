@@ -25,6 +25,21 @@ def sales_metrics():
     }
 
 
+def purchase_metrics():
+    metrics = sales_metrics()
+    metrics['analisis_negocio'] = {
+        'operacion': {'compras_efectivas': 999999},
+        'catalogo_indicadores': {'categorias': [{'indicadores': [
+            {'id': 'compras_netas', 'valor': 120, 'estado': 'partial',
+             'cobertura_datos_pct': 50, 'fuentes': ['Compras'],
+             'advertencias': ['Faltan importes en parte de las compras.']},
+            {'id': 'fletes_compra', 'valor': 10, 'estado': 'available',
+             'cobertura_datos_pct': 100, 'fuentes': ['Compras'], 'advertencias': []},
+        ]}]},
+    }
+    return metrics
+
+
 def conversation_scenarios():
     sales = sales_metrics()
     years = deepcopy(sales)
@@ -48,6 +63,20 @@ def conversation_scenarios():
     partial_receivables['analisis_negocio']['operacion']['cartera_cxc'].update(
         estado='partial', estado_vencimiento='partial', fecha_corte=None)
     return [
+        ('purchase_evidence_and_topic_changes', purchase_metrics(), [
+            ('cuantocompre', ['$120', 'parcial', '50%']),
+            ('y los fletes', ['$10', 'una vez por documento']),
+            ('y eso es dinero pagado', ['conciliar los pagos']),
+            ('cuanto compre al proveedor Acme', ['No tengo publicado', 'segmento']),
+            ('y los fletes', ['No tengo publicado', 'segmento']),
+            ('ahora las compras en general', ['$120', 'parcial']),
+            ('y en enero', ['No tengo publicado', 'periodo']),
+            ('y en febrero', ['No tengo publicado', 'periodo']),
+            ('mis compras en general', ['$120', 'parcial']),
+            ('y el promedio', ['Esa medida de compras no esta publicada']),
+            ('cuanto vendi', ['$600']),
+            ('y en enero', ['$100', '2026-01']),
+        ]),
         ('receivable_live_message_boundaries', receivables, [
             ('cuantas cuentasporcobrar tengo', ['2 cuentas o cuotas']),
             ('y cuanto me deben', ['$300', 'no ventas nuevas']),

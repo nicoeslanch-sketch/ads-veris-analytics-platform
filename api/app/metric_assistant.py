@@ -2172,6 +2172,10 @@ def answer_metrics_question(
         )
     if _contains(question, "moneda", "en pesos", "en uf", "son uf", "son pesos", "divisa", "esta en uf"):
         return _answer_currency(metrics)
+    from .purchase_assistant import answer_purchases
+    purchase_answer = answer_purchases(original_question, metrics, history)
+    if purchase_answer is not None:
+        return purchase_answer
     balance_answer = _answer_operating_balances(metrics, original_question, history)
     if balance_answer is not None:
         return balance_answer

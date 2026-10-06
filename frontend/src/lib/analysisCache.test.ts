@@ -12,6 +12,7 @@ import {
   requestRelationships,
 } from './analysisCache'
 import type { MetricsResult, RelationshipResult } from './types'
+import { readSessionAnalysis, setSessionAnalysisVersion, writeSessionAnalysis } from './sessionAnalysisCache'
 
 function metricsFixture(): MetricsResult {
   return {
@@ -196,12 +197,14 @@ describe('caché persistente de la pestaña', () => {
 
   beforeEach(() => {
     values.clear()
+    setSessionAnalysisVersion('engine-current:model-current')
     vi.stubGlobal('sessionStorage', session)
     clearAnalysisCaches()
   })
 
   afterEach(() => {
     clearAnalysisCaches()
+    setSessionAnalysisVersion(null)
     vi.unstubAllGlobals()
   })
 
@@ -219,5 +222,36 @@ describe('caché persistente de la pestaña', () => {
     clearAnalysisRuntimeCaches()
 
     expect(getCachedMetrics('dataset-anterior|ventas')).toBeNull()
+  })
+
+  it('descarta métricas y relaciones de un motor anterior al restaurar el libro', () => {
+    cacheMetrics('dataset|ventas', metricsFixture())
+    cacheRelationships('dataset|manifest', { candidates: [], safe_count: 0, message: 'old' })
+    clearAnalysisRuntimeCaches()
+    setSessionAnalysisVersion('engine-new:model-current')
+    expect(getCachedMetrics('dataset|ventas')).toBeNull()
+    expect(getCachedRelationships('dataset|manifest')).toBeNull()
+  })
+
+  it('también invalida el catálogo y el dashboard manual cuando cambia el modelo', () => {
+    writeSessionAnalysis('catalog', 'dataset|catalog', { old: true }, 8)
+    writeSessionAnalysis('dashboard', 'dataset|connection', { old: true }, 8)
+    setSessionAnalysisVersion('engine-current:model-new')
+    expect(readSessionAnalysis('catalog', 'dataset|catalog')).toBeNull()
+    expect(readSessionAnalysis('dashboard', 'dataset|connection')).toBeNull()
+  })
+
+  it('rechaza entradas antiguas sin versión y conserva las del mismo motor', () => {
+    cacheMetrics('dataset|legacy', metricsFixture())
+    const key = [...values.keys()][0]
+    const legacy = JSON.parse(values.get(key)!)
+    delete legacy.analysisVersion
+    values.set(key, JSON.stringify(legacy))
+    clearAnalysisRuntimeCaches()
+    expect(getCachedMetrics('dataset|legacy')).toBeNull()
+    cacheMetrics('dataset|current', metricsFixture())
+    clearAnalysisRuntimeCaches()
+    setSessionAnalysisVersion('engine-current:model-current')
+    expect(getCachedMetrics('dataset|current')).toEqual(metricsFixture())
   })
 })
