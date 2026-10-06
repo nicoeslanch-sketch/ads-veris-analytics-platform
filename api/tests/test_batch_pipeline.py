@@ -473,6 +473,31 @@ def test_analysis_response_cache_is_user_and_revision_isolated(monkeypatch):
     assert calls == 3
 
 
+@pytest.mark.parametrize("kind", ["business", "catalog", "dashboard"])
+def test_relationship_cached_entrypoints_forward_authenticated_user(monkeypatch, kind):
+    from app.routes import pipeline
+
+    captured = []
+
+    def capture(*args):
+        captured.append(args[-1])
+        return {}
+
+    with pipeline._ANALYSIS_CACHE_LOCK:
+        pipeline._ANALYSIS_CACHE.clear()
+    manifest = {"hojas": []}
+    if kind == "business":
+        monkeypatch.setattr(pipeline, "_relationships_sync", capture)
+        pipeline._relationships_cached_sync("same.xlsx", b"data", manifest, None, "dataset", None, "user-a")
+    elif kind == "catalog":
+        monkeypatch.setattr(pipeline, "_relationship_catalog_sync", capture)
+        pipeline._relationship_catalog_cached_sync("same.xlsx", b"data", manifest, "dataset", "user-a")
+    else:
+        monkeypatch.setattr(pipeline, "_relationship_dashboard_sync", capture)
+        pipeline._relationship_dashboard_cached_sync("same.xlsx", b"data", manifest, {}, None, None, "dataset", "user-a")
+    assert captured == ["user-a"]
+
+
 def test_analysis_inflight_wait_fits_inside_frontend_timeout():
     """El servidor no debe cortar al segundo consumidor antes que la UI.
 
