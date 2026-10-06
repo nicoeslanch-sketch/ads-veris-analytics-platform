@@ -38,9 +38,14 @@ _VOCABULARY = frozenset(
     calidad cantidad cantidades cambio cambios canal canales capital categoria categorias cierre cliente
     clientes clientela cuenta cuentas cxc cobrar cobranza cobranzas cobro cobros cobertura compara comparar comparacion comparalos comparalas
     compuesto consolidado consolidar contabilidad contable contado contexto conversion
-    convertir convertirlo corriente corto costo costos credito creditos cual cuales cuando cuanto
+    convertir convierte convertirlo corriente corto costo costos credito creditos cual cuales cuando cuanto
     cuantos dato datos debe deben deuda deudas diferencia dinero documento documentos donde
     duplicado duplicados efectivo eficiencia egreso egresos el eliminar en
+    afecta afectan afectar cambia cambian cambiar altera alteran alterar infla inflan inflar
+    distorsiona distorsionan impacto repetida repetidas conviene debo recomiendas compruebo
+    comprueban reviso verifico distingo identifico basta quito quitar borro elimino
+    quitarlos borrarlos eliminarlos borra borralos elimina eliminalos quita quitalos
+    hazlo hiciste borraste quedaron quedaria seria venderia conservo dejo
     endeudamiento entrada entradas equipo equipos error errores es estado estados
     estandarizacion estandarizar estructura evolucion excel excedente excedentes
     explicar exportar exporto falta faltan fecha fechas financiacion financiamiento financiero
