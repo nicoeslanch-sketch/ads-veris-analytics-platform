@@ -28,6 +28,10 @@
 - Se mantienen el archivo, las reglas, la limpieza y la decision sobre
   duplicados. Invalidar resultados analiticos no borra documentos ni obliga a
   subirlos otra vez.
+- La auditoria de CI bloqueo la publicacion por GHSA-68fv-2mgg-jv7q en
+  `source-map-js` 1.2.1. Se actualizo unicamente esa dependencia de desarrollo
+  a 1.2.2, version corregida, sin excepciones ni desactivar controles.
+  Referencia: https://github.com/advisories/GHSA-68fv-2mgg-jv7q
 
 ## Comprobaciones
 
@@ -45,6 +49,8 @@
   endurecimiento de estructura; despues, 300 pruebas focalizadas aprobadas.
   Frontend: 227 pruebas, compilacion de produccion y cinco pruebas Playwright
   de cabecera/detalle, reintentos y presentacion desktop/mobile aprobadas.
+- Tras actualizar la dependencia, se repitieron las 227 pruebas frontend y la
+  auditoria de dependencias, sin vulnerabilidades altas o criticas aplicables.
 
 ## Limites
 
