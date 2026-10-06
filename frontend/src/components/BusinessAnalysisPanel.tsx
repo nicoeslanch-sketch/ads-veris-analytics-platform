@@ -164,10 +164,24 @@ function certificationBlockers(analysis: BusinessAnalysis): CertificationBlocker
       detail: 'Algunas filas apuntan a un producto o cliente que no existe en su tabla; quedan fuera del enriquecimiento.',
     })
   }
+  const ledger = analysis.operacion.cartera_cxc
+  if (ledger && ledger.estado !== 'available') {
+    blockers.push({
+      key: 'cartera',
+      label: ledger.filas_excluidas ? `${formatNumber(ledger.filas_excluidas)} cuenta(s) fuera de la cartera validada` : 'Cartera con validación pendiente',
+      detail: ledger.advertencias.slice(0, 2).join(' '),
+      cta: { to: '/limpieza?revision=1', label: 'Revisar cartera' },
+    })
+  }
   return blockers
 }
 
 function blockerLocations(analysis: BusinessAnalysis, key: string): string[] {
+  if (key === 'cartera') {
+    return (analysis.operacion.cartera_cxc?.ejemplos_problemas ?? []).map((item) => (
+      `${item.hoja}, fila ${item.fila}: ${item.motivo}`
+    ))
+  }
   if (key === 'duplicados' || key === 'conflictos') {
     return (analysis.calidad.documentos ?? [])
       .filter((item) => key !== 'conflictos' || item.tipo === 'conflicto')
@@ -509,7 +523,11 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
     {
       label: 'Cuentas por cobrar',
       value: money(operation.cuentas_por_cobrar),
-      detail: operation.cuentas_vencidas == null
+      detail: operation.cartera_cxc
+        ? operation.cartera_cxc.estado === 'blocked'
+          ? operation.cartera_cxc.advertencias[0] ?? 'sin cartera validable para esta vista'
+          : `${operation.cartera_cxc.documentos_pendientes == null ? 'sin cuentas validables' : `${operation.cartera_cxc.documentos_pendientes} cuentas pendientes`} · ${operation.cartera_cxc.fecha_corte ? `corte ${operation.cartera_cxc.fecha_corte}` : 'sin fecha de corte'}`
+        : operation.cuentas_vencidas == null
         ? 'sin cartera relacionable'
         : `${money(operation.cuentas_vencidas)} vencido · DSO ${operation.dso_dias == null ? '—' : `${formatNumber(operation.dso_dias)} días`}`,
       icon: Receipt,
@@ -517,7 +535,9 @@ function ExecutiveSummary({ analysis }: { analysis: BusinessAnalysis }) {
       comparison: operation.mora_promedio_dias == null
         ? 'Sin antigüedad de mora comparable'
         : `${formatNumber(operation.mora_promedio_dias)} días de mora promedio`,
-      state: operation.cuentas_por_cobrar == null ? 'Dato faltante' : certification,
+      state: operation.cartera_cxc
+        ? operation.cartera_cxc.estado === 'available' ? 'Validado al corte' : operation.cartera_cxc.estado === 'blocked' || operation.cartera_cxc.estado === 'unavailable' ? 'No disponible' : 'Validacion parcial'
+        : operation.cuentas_por_cobrar == null ? 'Dato faltante' : certification,
     },
     {
       label: 'Inventario valorizado',

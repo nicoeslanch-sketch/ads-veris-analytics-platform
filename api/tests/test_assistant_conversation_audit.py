@@ -209,6 +209,29 @@ def test_receivables_zero_missing_mixed_and_generic_source():
     assert 'saldo declarado' in response['answer']
 
 
+def test_receivables_bot_explains_snapshot_and_partial_validation():
+    metrics = sales_metrics()
+    metrics['analisis_negocio'] = {'operacion': {
+        'cuentas_por_cobrar': 125, 'cartera_cxc': {
+            'fecha_corte': None, 'estado': 'partial', 'advertencias': [],
+        },
+    }}
+    response = answer_for('cuanto me deben', metrics=metrics)
+    assert '$125' in response['answer']
+    assert 'no declara fecha de corte' in response['answer']
+    assert 'validacion es parcial' in response['answer']
+    metrics['analisis_negocio']['operacion']['cartera_cxc'].update({
+        'fecha_corte': '2026-02-28', 'estado': 'available',
+    })
+    assert 'Corte declarado: 2026-02-28' in answer_for('cuanto me deben', metrics=metrics)['answer']
+    metrics['analisis_negocio']['operacion'].update({'cuentas_por_cobrar': None, 'cartera_cxc': {
+        'estado': 'blocked', 'advertencias': ['Hay monedas incompatibles.'],
+    }})
+    response = answer_for('cuanto me deben', metrics=metrics)
+    assert 'monedas incompatibles' in response['answer']
+    assert '$125' not in response['answer']
+
+
 def test_business_inventory_uses_snapshot_not_sold_units():
     metrics = sales_metrics()
     response = answer_for('cuanto tengo en inventario', metrics=metrics)

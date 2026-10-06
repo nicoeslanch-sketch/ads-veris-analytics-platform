@@ -139,10 +139,43 @@ def audit(source: Path, control: Path):
         "without_exact_copies": amount(sum((number(r["MontoNeto_CLP"]) or 0) for r in unique_expenses.values())),
     }
     receivables = records(workbook["CxC"])
+    receivable_groups = defaultdict(list)
+    for row in receivables:
+        receivable_groups[key(row["IDCxC"])].append(row)
+    valid_receivables = []
+    receivable_issues = Counter()
+    for identity, rows in receivable_groups.items():
+        variants = {tuple((col, key(value)) for col, value in row.items()) for row in rows}
+        if not identity or len(variants) > 1:
+            receivable_issues["conflicting_or_missing_ids"] += len(rows)
+            continue
+        receivable_issues["exact_copies"] += len(rows) - 1
+        row = rows[0]
+        balance, original = number(row["Saldo_CLP"]), number(row["MontoOriginal_CLP"])
+        header = all_sales.get(key(row["IDVenta"]))
+        if not header or cancelled(header["EstadoVenta"]):
+            receivable_issues["missing_or_cancelled_sales"] += 1
+            continue
+        if balance is None or balance < 0:
+            receivable_issues["invalid_balances"] += 1
+            continue
+        if original is None or original < 0 or balance > original + Decimal("0.01"):
+            receivable_issues["invalid_original_amounts"] += 1
+            continue
+        if key(row["EstadoCxC"]).startswith(("pagad", "cobrad", "saldad")) and balance > 0:
+            receivable_issues["paid_with_open_balance"] += 1
+            continue
+        if cancelled(row["EstadoCxC"]):
+            receivable_issues["cancelled_receivables"] += 1
+            continue
+        valid_receivables.append(balance)
     result["receivables"] = {
         "declared_balance": amount(sum(number(r["Saldo_CLP"]) or 0 for r in receivables)),
         "negative_balances": sum((number(r["Saldo_CLP"]) or 0) < 0 for r in receivables),
         "positive_documents": sum((number(r["Saldo_CLP"]) or 0) > 0 for r in receivables),
+        "validated_balance": amount(sum(valid_receivables, Decimal(0))) if valid_receivables else None,
+        "validated_open_accounts": sum(balance > 0 for balance in valid_receivables),
+        "issues": dict(receivable_issues),
     }
     inventory = records(workbook["Inventario_Mensual"])
     dated_inventory = []
@@ -195,6 +228,14 @@ def main():
             "inventory_value_matches": inventory.get("valor_inventario") == report["inventory"]["value"],
             "receivables_balance_matches": balance == report["receivables"]["declared_balance"],
         })
+        ledger = platform["business"].get("operacion", {}).get("cartera_cxc")
+        if ledger:
+            report["platform_comparison"].update({
+                "business_receivables_validated_matches": ledger.get("saldo_validado") == report["receivables"]["validated_balance"],
+                "business_receivables_count_matches": ledger.get("documentos_pendientes") == report["receivables"]["validated_open_accounts"],
+                "business_receivables_negative_check_matches": ledger.get("filas_saldo_invalido") == report["receivables"]["issues"].get("invalid_balances", 0),
+                "business_receivables_status_check_matches": ledger.get("filas_estado_inconsistente") == report["receivables"]["issues"].get("paid_with_open_balance", 0),
+            })
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     print(json.dumps({k: v for k, v in report.items() if k not in {"sheets", "oracle_kpis", "oracle_periods"}}, ensure_ascii=False))

@@ -12,6 +12,13 @@ frames = fixture['_frames']()
 frames['Detalle_T1']['CostoUnitario_CLP'] = 20
 frames['Detalle_T2']['CostoUnitario_CLP'] = 30
 import pandas as pd
+frames['CxC'] = pd.DataFrame({
+    'IDCxC': ['R1', 'R2', 'R3', 'R4', 'R5'],
+    'IDVenta': ['V1', 'V3', 'V2', 'V1', 'V1'],
+    'MontoOriginal_CLP': [500, 400, 100, 500, 500],
+    'Saldo_CLP': [200, 100, 50, -10, 60],
+    'EstadoCxC': ['Pendiente', 'Pendiente', 'Pendiente', 'Pendiente', 'Pagada'],
+})
 if sys.argv[2] == 'true':
     frames['Productos'] = pd.concat([frames['Productos'], frames['Productos'].assign(CostoUnitario_CLP=999)], ignore_index=True)
 with pd.ExcelWriter(sys.argv[1], engine='openpyxl') as writer:
@@ -24,7 +31,7 @@ with pd.ExcelWriter(sys.argv[1], engine='openpyxl') as writer:
   const chooser = page.waitForEvent('filechooser')
   await page.getByRole('button', { name: /Subir archivo/ }).click()
   await (await chooser).setFiles(path)
-  await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(6, { timeout: 120_000 })
+  await expect(page.getByText('Estandarizada', { exact: true })).toHaveCount(7, { timeout: 120_000 })
   await page.getByRole('link', { name: /Limpieza de datos/ }).first().click()
   await expect(page.getByRole('button', { name: 'Limpiar datos', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Limpiar datos', exact: true }).click()
@@ -48,6 +55,8 @@ with pd.ExcelWriter(sys.argv[1], engine='openpyxl') as writer:
   await expect(cards.getByText('$900', { exact: true })).toBeVisible()
   await expect(cards.getByText('$220', { exact: true })).toBeVisible()
   await expect(cards.getByText('$680', { exact: true })).toBeVisible()
+  await expect(cards.getByText('$300', { exact: true })).toBeVisible()
+  await expect(cards.getByText('2 cuentas pendientes · sin fecha de corte', { exact: true })).toBeVisible()
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 900 })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -56,6 +65,7 @@ with pd.ExcelWriter(sys.argv[1], engine='openpyxl') as writer:
       .map(node => node.textContent))
     expect(overflow).toEqual([])
     await cards.scrollIntoViewIfNeeded()
+    await cards.getByText('Cuentas por cobrar', { exact: true }).scrollIntoViewIfNeeded()
     await page.screenshot({ path: testInfo.outputPath(`documentos-${width}.png`), fullPage: true })
   }
   expect(errors).toEqual([])

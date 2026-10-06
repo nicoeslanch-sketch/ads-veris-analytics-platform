@@ -1050,11 +1050,19 @@ def _answer_operating_balances(metrics: dict[str, Any], question: str) -> dict[s
         if metrics.get("moneda_mixta") or metrics.get("datos_monetarios_disponibles") is False:
             return _answer_currency(metrics)
         value = _number(operation.get("cuentas_por_cobrar"))
+        ledger = operation.get("cartera_cxc") or {}
         if value is not None:
+            cutoff = ledger.get("fecha_corte")
+            ledger_note = (
+                f" Corte declarado: {cutoff}." if cutoff
+                else " El archivo no declara fecha de corte; no es un saldo historico."
+            ) if ledger else ""
+            if ledger.get("estado") == "partial":
+                ledger_note += " La validacion es parcial; revisa los controles de cartera antes de conciliar."
             return _result(
                 f"El saldo de cuentas por cobrar publicado es {format_amount(value, str(metrics.get('moneda') or 'CLP'))}. "
                 "Es deuda pendiente, no ventas nuevas ni dinero cobrado. Corresponde "
-                "al alcance visible; revisa saldos negativos, duplicados y conciliacion.",
+                "al alcance visible; revisa saldos negativos, duplicados y conciliacion." + ledger_note,
                 "metric_receivables_balance", metric_suggestions(metrics), "medium",
             )
         if (metrics.get("analisis_generico") or {}).get("subtipo") == "cuentas_por_cobrar":
@@ -1062,6 +1070,11 @@ def _answer_operating_balances(metrics: dict[str, Any], question: str) -> dict[s
             if answer:
                 answer["answer"] += " Es el saldo declarado, no dinero cobrado; revisa saldos negativos y duplicados antes de conciliarlo."
                 return answer
+        if ledger.get("estado") in {"blocked", "unavailable"}:
+            return _result(
+                "No puedo publicar ese saldo en esta vista. " + " ".join(ledger.get("advertencias", [])[:2]),
+                "metric_receivables_unavailable", metric_suggestions(metrics), "medium",
+            )
         return _result(
             "No hay un saldo de cuentas por cobrar publicado en esta vista. El cliente "
             "que mas compra no necesariamente es quien mas debe. Abre la hoja CxC "
