@@ -53,6 +53,57 @@ test('el bot conserva el hilo, renueva sugerencias y permite empezar una convers
   expect(requests[2].historial).toEqual([])
 })
 
+test('el historial y el borrador sobreviven al cambio entre panel lateral y movil', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const requests: BotRequest[] = []
+  await page.route('**/assistant/bot', async (route) => {
+    requests.push(route.request().postDataJSON())
+    await reply(route, `Respuesta conservada ${requests.length}`)
+  })
+  await page.goto('/')
+  const panel = botPanel(page)
+  await ask(page, 'Que puedo descargar')
+  await expect(panel.getByText('Respuesta conservada 1', { exact: true })).toBeVisible()
+  const input = panel.getByPlaceholder('Pregunta por tus cifras o por una función…')
+  await input.fill('y puedo conservar los duplicados')
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Abrir Asistente IA', exact: true }).click()
+  await expect(panel.getByText('Respuesta conservada 1', { exact: true })).toBeVisible()
+  await expect(input).toHaveValue('y puedo conservar los duplicados')
+  await panel.getByRole('button', { name: 'Enviar pregunta', exact: true }).click()
+  await expect(panel.getByText('Respuesta conservada 2', { exact: true })).toBeVisible()
+  expect(requests[1].historial).toEqual([
+    { role: 'user', content: 'Que puedo descargar' },
+    { role: 'assistant', content: 'Respuesta conservada 1' },
+  ])
+  await page.getByRole('button', { name: 'Cerrar Asistente IA', exact: true }).click()
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await expect(panel.getByText('Respuesta conservada 2', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Asistente ADS Veris' })).toHaveCount(1)
+  expect(requests).toHaveLength(2)
+})
+
+test('una respuesta en curso sobrevive al cambio de movil a escritorio sin reenviarse', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  let pending: Route | null = null
+  let calls = 0
+  await page.route('**/assistant/bot', (route) => {
+    calls += 1
+    pending = route
+  })
+  await page.goto('/')
+  await expect(botPanel(page)).toHaveCount(0)
+  await page.getByRole('button', { name: 'Abrir Asistente IA', exact: true }).click()
+  await ask(page, 'Que diferencia hay entre Resumen y Explorar')
+  await expect.poll(() => pending !== null).toBe(true)
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await reply(pending as unknown as Route, 'Respuesta recibida tras cambiar el ancho')
+  await expect(botPanel(page).getByText('Respuesta recibida tras cambiar el ancho', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Asistente ADS Veris' })).toHaveCount(1)
+  expect(calls).toBe(1)
+})
+
 test('cambiar hoja y periodo descarta respuestas pendientes y no mezcla historiales ni cifras', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const workbook = testInfo.outputPath('bot-contexto.xlsx')

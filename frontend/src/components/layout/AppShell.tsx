@@ -32,9 +32,8 @@ function useMediaQuery(query: string): boolean {
  * Fase 10 §9.1/§15.1 — responsive real:
  * - El sidebar es fijo en pantallas grandes y un cajón deslizante con
  *   hamburguesa en pantallas chicas.
- * - El panel IA SOLO se monta cuando es visible: en escritorio como columna,
- *   en pantallas menores como drawer que se abre con el botón flotante.
- *   Así jamás consume una consulta del cupo estando oculto.
+ * - El asistente se monta al mostrarse por primera vez y conserva su instancia
+ *   al alternar entre columna de escritorio y drawer móvil.
  */
 export default function AppShell() {
   const { pathname } = useLocation()
@@ -44,9 +43,12 @@ export default function AppShell() {
 
   const [navOpen, setNavOpen] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
-  // Una vez abierto, el drawer queda montado (oculto con CSS): el resumen IA
-  // se genera UNA vez y el historial del chat no se pierde al cerrarlo.
+  // Ocultar o redimensionar el panel no debe interrumpir una conversación.
   const [aiEverOpened, setAiEverOpened] = useState(false)
+
+  useEffect(() => {
+    if (showAiPanel && isDesktopAi) setAiEverOpened(true)
+  }, [showAiPanel, isDesktopAi])
 
   // Al navegar, cerrar los overlays móviles.
   useEffect(() => {
@@ -87,45 +89,42 @@ export default function AppShell() {
             </ViewErrorBoundary>
           </main>
 
-          {/* Panel IA escritorio: solo montado cuando es visible */}
-          {showAiPanel && isDesktopAi && <AiPanel />}
-        </div>
-      </div>
-
-      {/* Panel IA en pantallas chicas: botón flotante + drawer */}
-      {showAiPanel && !isDesktopAi && (
-        <>
-          {!aiOpen && (
-            <button
-              onClick={openAi}
-              className="fixed bottom-5 right-5 z-40 flex h-13 w-13 items-center justify-center rounded-full bg-navy-deep p-3.5 text-gold shadow-lg ring-1 ring-gold/40 transition-transform hover:scale-105"
-              aria-label="Abrir Asistente IA"
-              title="Asistente IA"
-            >
-              <Sparkles className="h-6 w-6" />
-            </button>
-          )}
-          {aiEverOpened && (
+          {showAiPanel && (isDesktopAi || aiEverOpened) && (
             <div
-              className={`fixed inset-0 z-50 justify-end bg-navy-deep/60 ${aiOpen ? 'flex' : 'hidden'}`}
+              className={isDesktopAi
+                ? 'min-h-0 shrink-0'
+                : `fixed inset-0 z-50 justify-end bg-navy-deep/60 ${aiOpen ? 'flex' : 'hidden'}`}
               onClick={() => setAiOpen(false)}
             >
               <div
-                className="relative h-full w-full max-w-sm"
+                className={isDesktopAi ? 'relative h-full' : 'relative h-full w-full max-w-sm'}
                 onClick={(e) => e.stopPropagation()}
               >
-                <button
-                  onClick={() => setAiOpen(false)}
-                  className="absolute right-3 top-4 z-10 rounded-lg p-1.5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-                  aria-label="Cerrar Asistente IA"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-                <AiPanel variant="drawer" />
+                {!isDesktopAi && (
+                  <button
+                    onClick={() => setAiOpen(false)}
+                    className="absolute right-3 top-4 z-10 rounded-lg p-1.5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                    aria-label="Cerrar Asistente IA"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                )}
+                <AiPanel variant={isDesktopAi ? 'panel' : 'drawer'} />
               </div>
             </div>
           )}
-        </>
+        </div>
+      </div>
+
+      {showAiPanel && !isDesktopAi && !aiOpen && (
+        <button
+          onClick={openAi}
+          className="fixed bottom-5 right-5 z-40 flex h-13 w-13 items-center justify-center rounded-full bg-navy-deep p-3.5 text-gold shadow-lg ring-1 ring-gold/40 transition-transform hover:scale-105"
+          aria-label="Abrir Asistente IA"
+          title="Asistente IA"
+        >
+          <Sparkles className="h-6 w-6" />
+        </button>
       )}
     </div>
   )
