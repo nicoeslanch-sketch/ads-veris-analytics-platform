@@ -1517,9 +1517,11 @@ def _answer_quality(metrics: dict[str, Any]) -> dict[str, Any]:
     )
     detected = int(_number(duplicates.get("detectados")) or 0)
     removed = int(_number(duplicates.get("eliminados")) or 0)
-    conserved = int(_number(duplicates.get("conservados")) or max(detected - removed, 0))
+    from .duplicate_assistant import conserved_duplicate_count
+    conserved = conserved_duplicate_count(metrics)
     if detected:
-        answer += f"Se detectaron {detected} duplicados: se eliminaron {removed} y se conservaron {conserved}. "
+        answer += f"Se detectaron {detected} duplicados: se eliminaron {removed}"
+        answer += f" y se conservaron {conserved}. " if conserved is not None else ". No hay un conteo valido de conservados. "
         if conserved:
             answer += "Los totales visibles sí incluyen los duplicados conservados. "
     if warnings:
@@ -2040,6 +2042,10 @@ def answer_metrics_question(
     correction = re.search(r"\bsino\s+(?:a |al |la |el )*(.+)$", original_question) or re.search(r"\bme refiero\s+(?:a |al |la |el )*(.+)$", original_question)
     if correction:
         original_question = question = correction.group(1)
+    from .duplicate_assistant import answer_duplicate_impact
+    duplicate_answer = answer_duplicate_impact(original_question, metrics, history)
+    if duplicate_answer is not None:
+        return duplicate_answer
     catalog_purchase_decision = (
         re.search(r"\b(?:debo|deberia|conviene|recomiendas|dejar|dejo|seguir|sigo|reinvertir)\b", original_question)
         and re.search(r"\b(?:comprar|comprando|reponer|invertir|reinvertir|promocionar|retirar)\b", original_question)

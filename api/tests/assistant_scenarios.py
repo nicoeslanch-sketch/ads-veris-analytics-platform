@@ -295,4 +295,18 @@ def conversation_scenarios():
             ("y en que moneda estan? son UF?", ["CLP", "pesos chilenos"]),
             ("si conservo los duplicados puedo descargar igual?", ["descargar conservando", "confirmas"]),
         ]),
+        ("duplicate_impact_followups", sales, [
+            ("cuantosduplicadostengo", ["1 duplicados", "eliminaron 0"]),
+            ("y esos duplicados cambian mis ingresos?", ["1 duplicado conservado", "No tengo calculado"]),
+            ("y cuanto quedaria si los quito?", ["no equivale a un importe", "signos y filtros"]),
+            ("entonces conviene borrarlos?", ["No conviene borrar", "fuente"]),
+            ("como los compruebo?", ["ID", "linea", "estado"]),
+            ("el mismo ID basta?", ["conflicto", "legitimas"]),
+            ("borralos", ["Este chat no elimina", "Limpieza"]),
+            ("ya lo hiciste?", ["Este chat no elimina"]),
+            ("cuantos duplicados hay en enero", ["ese periodo o segmento", "no lo sustituye"]),
+            ("y en febrero", ["ese periodo o segmento", "no lo sustituye"]),
+            ("cuanto vendi", ["$600"]),
+            ("y en febrero", ["$200"]),
+        ]),
     ]
