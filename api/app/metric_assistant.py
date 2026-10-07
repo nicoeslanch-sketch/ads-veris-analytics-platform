@@ -256,6 +256,13 @@ def metric_suggestions(metrics: dict[str, Any]) -> list[str]:
             period_suggestion,
             "¿Qué problemas de calidad debo revisar?",
         ]
+    if metrics.get("tipo_analisis") == "catalogo_productos" or metrics.get("analisis_productos"):
+        return [
+            "¿Cuántos productos hay en mi catálogo?",
+            "¿Cuál es el costo promedio del catálogo?",
+            "¿Cuál es el margen potencial del catálogo?",
+            "¿Qué problemas de calidad debo revisar?",
+        ]
     kpis = metrics.get("kpis") or {}
     suggestions: list[str] = []
     if _kpi_value(kpis.get("ingresos_totales")) is not None:
@@ -2082,7 +2089,7 @@ def answer_metrics_question(
         return _answer_product_catalog(metrics, status_question)
     if metrics.get("tipo_analisis") == "catalogo_productos" and _contains(
         original_question, "costo", "gasto", "gastado", "gaste", "ingresos",
-        "ventas totales", "cuanto vendi", "facturacion",
+        "ventas totales", "cuanto vendi", "facturacion", "margen potencial",
     ):
         from .assistant_queries import answer_scoped_question
         catalog_scope = answer_scoped_question(original_question, metrics, history)
