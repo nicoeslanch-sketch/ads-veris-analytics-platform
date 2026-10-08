@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.language_normalization import normalize_query
+from app.metric_assistant import metric_suggestions
 from app.support_knowledge import ARTICLES, answer_for
 from app.routes import assistant
 from tests.assistant_scenarios import conversation_scenarios, sales_metrics
@@ -148,6 +149,57 @@ def test_catalog_cost_unknown_or_mixed_currency_never_fabricates_amount():
     response = answer_for('y mi costo promedio', metrics=metrics)
     assert '$100' not in response['answer']
     assert response['matched_key'] == 'metric_currency'
+
+
+@pytest.mark.parametrize('catalog', [
+    {'tipo_analisis': 'catalogo_productos'},
+    {'analisis_productos': {'productos': 3}},
+])
+def test_catalog_suggestions_do_not_promote_sales_from_legacy_kpis(catalog):
+    metrics = {**sales_metrics(), **catalog}
+    assert metric_suggestions(metrics) == [
+        '¿Cuántos productos hay en mi catálogo?',
+        '¿Cuál es el costo promedio del catálogo?',
+        '¿Cuál es el margen potencial del catálogo?',
+        '¿Qué problemas de calidad debo revisar?',
+    ]
+
+
+def test_catalog_suggested_conversation_uses_reference_values_not_realized_profit():
+    metrics = {**sales_metrics(), 'tipo_analisis': 'catalogo_productos',
+        'analisis_productos': {'productos': 3, 'costos': {'promedio': 125},
+            'precios_lista': {'promedio': 200}, 'margen_potencial': {'promedio': 37.5}}}
+    history = []
+    for question, key, fact in [
+        ('¿Cuántos productos hay en mi catálogo?', 'metric_product_catalog', '3 productos'),
+        ('¿Cuál es el costo promedio del catálogo?', 'metric_catalog_reference_cost', '$125'),
+        ('¿Cuál es el margen potencial del catálogo?', 'metric_product_catalog', '37,5'),
+    ]:
+        response = answer_for(question, metrics=metrics, history=history)
+        assert response['matched_key'] == key, response
+        assert fact in response['answer'], response
+        assert response['suggestions'] == metric_suggestions(metrics)
+        history += [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': response['answer']}]
+
+
+@pytest.mark.parametrize('question', [
+    'margen potencial en enero', 'margen potencial del producto XYZ',
+    'margen potencial del SKU ABC',
+])
+def test_catalog_potential_margin_does_not_substitute_global_for_unpublished_scope(question):
+    metrics = {**sales_metrics(), 'tipo_analisis': 'catalogo_productos',
+        'analisis_productos': {'productos': 3, 'margen_potencial': {'promedio': 37.5}}}
+    response = answer_for(question, metrics=metrics)
+    assert '37,5' not in response['answer'], response
+    assert response['confidence'] == 'medium', response
+
+
+def test_catalog_potential_margin_respects_mixed_currency_guard():
+    metrics = {**sales_metrics(), 'tipo_analisis': 'catalogo_productos', 'moneda_mixta': True,
+        'analisis_productos': {'productos': 3, 'margen_potencial': {'promedio': 37.5}}}
+    response = answer_for('cual es el margen potencial del catalogo', metrics=metrics)
+    assert response['matched_key'] == 'metric_currency'
+    assert '37,5' not in response['answer']
 
 
 @pytest.mark.parametrize('question', ['costo promedio en enero', 'costo del producto XYZ', 'costo del SKU ABC'])

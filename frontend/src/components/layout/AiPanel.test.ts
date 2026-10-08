@@ -14,6 +14,19 @@ describe('hasAssistantMetricFilters', () => {
 })
 
 describe('initialMetricSuggestions', () => {
+  it.each([
+    { tipo_analisis: 'catalogo_productos' },
+    { analisis_productos: { productos: 3 } },
+  ])('keeps catalog prompts distinct from sales: %j', (catalog) => {
+    const metrics = { ...catalog, kpis: { ingresos_totales: { valor: 0 } } } as Partial<MetricsResult>
+    expect(initialMetricSuggestions(metrics)).toEqual([
+      '¿Cuántos productos hay en mi catálogo?',
+      '¿Cuál es el costo promedio del catálogo?',
+      '¿Cuál es el margen potencial del catálogo?',
+      '¿Qué problemas de calidad debo revisar?',
+    ])
+  })
+
   it('does not suggest sales for an operational sheet', () => {
     const metrics: Partial<MetricsResult> = { analisis_generico: {
       registros: 3, columnas: 2, celdas_informadas_pct: 100, columnas_disponibles: [],

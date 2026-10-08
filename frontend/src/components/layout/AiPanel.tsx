@@ -73,6 +73,10 @@ export function initialMetricSuggestions(metrics: Partial<MetricsResult>): strin
     return ['¿Cuánto recaudo de cobranza y cuánto queda fuera?',
       '¿Qué equipo aporta más a la cobranza?', '¿Qué tendencia hay en la cobranza?', quality]
   }
+  if (metrics.tipo_analisis === 'catalogo_productos' || metrics.analisis_productos) {
+    return ['¿Cuántos productos hay en mi catálogo?', '¿Cuál es el costo promedio del catálogo?',
+      '¿Cuál es el margen potencial del catálogo?', quality]
+  }
   if (metrics.analisis_inventario) {
     return ['¿Cuántas unidades tengo en stock?', '¿Cuántos registros están bajo el mínimo?',
       '¿Qué sucursal tiene más stock?', quality]
@@ -89,9 +93,8 @@ export function initialMetricSuggestions(metrics: Partial<MetricsResult>): strin
 
 export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'drawer' } = {}) {
   // 'panel': columna fija de escritorio (xl+). 'drawer': cajón móvil.
-  // El montaje lo decide AppShell — si este componente está montado, ES
-  // visible, y solo entonces genera el resumen IA (Fase 10 §9.1: jamás
-  // consumir cupo con el panel oculto).
+  // AppShell conserva la instancia al ocultar o redimensionar el panel.
+  // La IA avanzada requiere activación explícita; abrir el bot no consume cupo.
   const asideClass =
     variant === 'drawer'
       ? 'flex h-full w-full flex-col bg-navy-deep text-white shadow-2xl'
