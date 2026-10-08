@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from fastapi import HTTPException
 
 from .analysis_jobs import JobCancelled, _PROGRESS
+from .analysis_timing import analysis_stage, analysis_timing
 from .config import Settings, get_settings
 from .durable_analysis import DurableAnalysisRepository, durable_mode
 from .processing_capacity import HEAVY_WORK_SLOT
@@ -33,7 +34,7 @@ def job_lease(repository, job, stop: threading.Event):
     def check(action="heartbeat", payload=None):
         if stop.is_set() or lost.is_set():
             raise LeaseLost()
-        with lock:
+        with lock, analysis_stage("lease_rpc"):
             current = repository.call(action, job["user_id"], job["job_id"], payload, job["lease_token"])
         if not current:
             lost.set()
@@ -87,9 +88,11 @@ def execute_job(job: dict, settings: Settings) -> dict:
         raise HTTPException(409, "El trabajo corresponde a otra version del motor. Vuelve a crearlo.")
     user_id, dataset_id, opts = job["user_id"], job["dataset_id"], job["options"]
     # Subscription and ownership may have changed while waiting in the queue.
-    require_capability_for_user(user_id, capabilities[kind], settings)
+    with analysis_stage("authorization"):
+        require_capability_for_user(user_id, capabilities[kind], settings)
     path = normalize_user_storage_path(job["source_path"], user_id)
-    content = download_from_storage(path)
+    with analysis_stage("source_download"):
+        content = download_from_storage(path)
     filename = p._display_filename(os.path.basename(path))
     p.report_job_progress("opening", 0, 1)
     if kind == "standardize":
@@ -149,7 +152,7 @@ class AnalysisWorker:
             if not job:
                 return False
             try:
-                with job_lease(self.repository, job, self.stop) as check:
+                with analysis_timing(job["kind"]), job_lease(self.repository, job, self.stop) as check:
                     result = self.execute(job, self.settings)
                     check("source")
                     terminal = {"status": "completed", "result": result}
