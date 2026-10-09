@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, Link2, Loader2, RotateCw } from 'lucide-re
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useDataset } from '../data/DatasetContext'
-import { ApiError, apiPost, buildDatasetForm } from '../lib/api'
+import { ApiError, apiPostJob, buildDatasetForm } from '../lib/api'
 import { requestRelationships } from '../lib/analysisCache'
 import {
   compatibleAppendSheets,
@@ -317,8 +317,8 @@ export default function ActiveSheetSelector({
       const cacheKey = stableSerialize({ dataset: datasetKey, manifest: sheetManifest, focus })
       const response = await requestRelationships(
         cacheKey,
-        () => apiPost<RelationshipResult>(
-          '/sheets/relationships',
+        () => apiPostJob<RelationshipResult>(
+          '/analysis/jobs/relationships',
           buildDatasetForm(file, storagePath, {
             manifest: JSON.stringify(sheetManifest),
             ...(datasetId ? { dataset_id: datasetId } : {}),

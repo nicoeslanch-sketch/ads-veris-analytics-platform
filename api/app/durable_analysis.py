@@ -16,7 +16,7 @@ PUBLIC_FIELDS = frozenset({
     "current_sheet", "cancel_requested", "created_at", "updated_at", "result", "error",
 })
 KINDS = frozenset({"metrics", "standardize", "standardize_batch", "clean_batch", "clean_export",
-                   "relationship_catalog", "relationship_dashboard"})
+                   "relationships", "relationship_catalog", "relationship_dashboard"})
 
 
 def durable_mode(settings: Settings) -> str:

@@ -283,9 +283,9 @@ test('Fase 17 procesa, combina, relaciona y exporta un libro multihoja', async (
     if (request.method() !== 'POST') return
     const path = new URL(request.url()).pathname
     if (path.endsWith('/analysis/jobs/metrics')) analysisRequests.metrics += 1
-    else if (path.endsWith('/sheets/relationships')) analysisRequests.relationships += 1
-    else if (path.endsWith('/sheets/relationship-catalog')) analysisRequests.catalog += 1
-    else if (path.endsWith('/sheets/relationship-dashboard')) analysisRequests.dashboard += 1
+    else if (path.endsWith('/analysis/jobs/relationships')) analysisRequests.relationships += 1
+    else if (path.endsWith('/analysis/jobs/relationship-catalog')) analysisRequests.catalog += 1
+    else if (path.endsWith('/analysis/jobs/relationship-dashboard')) analysisRequests.dashboard += 1
   })
 
   await page.goto('/estandarizacion')

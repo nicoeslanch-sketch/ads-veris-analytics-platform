@@ -170,6 +170,7 @@ def test_worker_does_not_claim_while_legacy_work_owns_memory_slot():
 
 
 @pytest.mark.parametrize('kind,helper', [
+    ('relationships', '_relationships_cached_sync'),
     ('relationship_catalog', '_relationship_catalog_cached_sync'),
     ('relationship_dashboard', '_relationship_dashboard_cached_sync'),
 ])
@@ -258,6 +259,7 @@ def durable_client(client, monkeypatch):
 
 @pytest.mark.parametrize('endpoint,fields,kind', [
     ('/analysis/jobs/metrics', {}, 'metrics'),
+    ('/analysis/jobs/relationships', {'manifest': '{"hojas":[{"nombre":"Ventas","procesar":true}]}'}, 'relationships'),
     ('/standardize/jobs', {}, 'standardize'),
     ('/standardize/batch/jobs', {'sheets': '["Ventas"]'}, 'standardize_batch'),
     ('/clean/batch/jobs', {'manifest': '{"hojas":[{"nombre":"Ventas","procesar":true}]}'}, 'clean_batch'),
@@ -274,6 +276,70 @@ def test_routes_enqueue_references_without_loading_excel(durable_client, monkeyp
 def test_queue_poll_hides_other_account_and_does_not_leak_options(durable_client, monkeypatch):
     monkeypatch.setattr(durable.DurableAnalysisRepository, 'call', lambda *_args: None)
     assert durable_client.get('/analysis/jobs/' + job()['job_id']).status_code == 404
+
+
+@pytest.mark.parametrize('fields', [
+    {'focus': '{"sheets":["Ventas","Ventas"]}'},
+    {'relationship': '{"left_sheet":"Ventas","right_sheet":"Productos","left_keys":["SKU"],"right_keys":["SKU"]}'},
+])
+def test_business_connections_preserve_scope_without_loading_source(durable_client, monkeypatch, fields):
+    enqueue = Mock(return_value={'job_id': job()['job_id'], 'status': 'queued'})
+    monkeypatch.setattr(durable.DurableAnalysisRepository, 'enqueue', enqueue)
+    manifest = {'hojas': [{'nombre': name, 'procesar': True, 'eliminar_duplicados': False}
+                          for name in ['Ventas', 'Productos']]}
+    response = durable_client.post('/analysis/jobs/relationships', data={
+        'storage_path': PATH, 'dataset_id': DATASET, 'manifest': json.dumps(manifest), **fields,
+    })
+    assert response.status_code == 202, response.text
+    owner, dataset, path, kind, options = enqueue.call_args.args
+    assert (owner, dataset, path, kind) == (OWNER, DATASET, PATH, 'relationships')
+    assert options['manifest']['hojas'][0]['eliminar_duplicados'] is False
+    if 'focus' in fields:
+        assert options['focus'] == {'sheets': ['Ventas']}
+        assert options['relationship'] is None
+    else:
+        assert options['relationship']['right_keys'] == ['SKU']
+        assert options['focus'] is None
+
+
+@pytest.mark.parametrize('focus', ['[]', '{"sheets":[]}', '{"sheets":[null]}',
+                                   '{"sheets":["Otra"]}', '{"sheets":["NoSeleccionada"]}'])
+def test_business_connections_reject_invalid_scope_before_enqueue(durable_client, monkeypatch, focus):
+    enqueue = Mock(side_effect=AssertionError('Invalid scope reached queue'))
+    monkeypatch.setattr(durable.DurableAnalysisRepository, 'enqueue', enqueue)
+    response = durable_client.post('/analysis/jobs/relationships', data={
+        'storage_path': PATH, 'dataset_id': DATASET, 'focus': focus,
+        'manifest': json.dumps({'hojas': [{'nombre': 'Ventas', 'procesar': True},
+                                         {'nombre': 'NoSeleccionada', 'procesar': False}]}),
+    })
+    assert response.status_code == 422, response.text
+    enqueue.assert_not_called()
+
+
+@pytest.mark.parametrize('focus,right', [(None, 'Otra'), ('{"sheets":["Ventas"]}', 'Productos')])
+def test_manual_connections_reject_unknown_sheets_or_ambiguous_scope(durable_client, monkeypatch, focus, right):
+    enqueue = Mock(side_effect=AssertionError('Invalid relationship reached queue'))
+    monkeypatch.setattr(durable.DurableAnalysisRepository, 'enqueue', enqueue)
+    fields = {'storage_path': PATH, 'dataset_id': DATASET,
+              'manifest': json.dumps({'hojas': [{'nombre': name, 'procesar': True} for name in ['Ventas', 'Productos']]}),
+              'relationship': json.dumps({'left_sheet': 'Ventas', 'right_sheet': right,
+                                          'left_keys': ['SKU'], 'right_keys': ['SKU']})}
+    if focus:
+        fields['focus'] = focus
+    assert durable_client.post('/analysis/jobs/relationships', data=fields).status_code == 422
+    enqueue.assert_not_called()
+
+
+def test_connections_cannot_enqueue_when_plan_access_is_denied(durable_client, monkeypatch):
+    monkeypatch.setattr(pipeline, 'require_capability_for_user', Mock(side_effect=HTTPException(403, 'Denied')))
+    enqueue = Mock(side_effect=AssertionError('Denied request reached queue'))
+    monkeypatch.setattr(durable.DurableAnalysisRepository, 'enqueue', enqueue)
+    response = durable_client.post('/analysis/jobs/relationships', data={
+        'storage_path': PATH, 'dataset_id': DATASET,
+        'manifest': '{"hojas":[{"nombre":"Ventas","procesar":true}]}',
+    })
+    assert response.status_code == 403
+    enqueue.assert_not_called()
 
 
 def test_auto_mode_only_enables_production():

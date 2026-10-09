@@ -482,6 +482,27 @@ class SecurityLab:
             assert self.sql(f"select has_function_privilege('{role}', "
                             "'public.analysis_queue(text,uuid,text,jsonb,uuid)','execute')") == 'f'
         self.checks['initial_import_queue_admits_new_kind_and_isolates_owners'] = True
+        identifier = 'dq_' + uuid4().hex
+        payload.update(kind='relationships', engine_version='connections-queue-lab',
+                       options={'manifest': {'hojas': [{'nombre': 'Ventas', 'procesar': True}]},
+                                'focus': {'sheets': ['Ventas']}, 'relationship': None})
+        args.update(p_job_id=identifier, p_payload=payload)
+        queued = self.rpc('analysis_queue', args)
+        assert queued['status'] == 'queued' and queued['kind'] == 'relationships'
+        assert self.rpc('analysis_queue', args)['job_id'] == identifier
+        assert self.rpc('analysis_queue', {**args, 'p_user_id': foreign})['rejected'] == 404
+        for action in ('get', 'cancel', 'retry'):
+            assert self.rpc('analysis_queue', {'p_action': action, 'p_user_id': foreign,
+                                               'p_job_id': identifier}) is None
+        claimed = self.rpc('analysis_queue', {'p_action': 'claim',
+                                              'p_payload': {'engine_version': 'connections-queue-lab'}})
+        assert claimed['job_id'] == identifier and claimed['status'] == 'running'
+        completed = self.rpc('analysis_queue', {'p_action': 'finish', 'p_user_id': owner,
+                             'p_job_id': identifier, 'p_token': claimed['lease_token'],
+                             'p_payload': {'status': 'completed', 'result': {'safe_count': 0, 'candidates': []}}})
+        assert completed['status'] == 'completed'
+        assert self.rpc('analysis_queue', args)['result'] == {'safe_count': 0, 'candidates': []}
+        self.checks['business_connections_queue_recovers_result_and_isolates_owners'] = True
 
     def test_operational_health(self):
         signature = 'public.operational_health(text,uuid,jsonb)'

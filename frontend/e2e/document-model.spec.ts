@@ -42,16 +42,41 @@ test(`Cabecera-detalle conserva importes y muestra costo documentado, catalogo r
   await expect(page.getByText(/Todas las hojas están limpias/)).toBeVisible({ timeout: 120_000 })
   let releaseRelations!: () => void
   const relationsGate = new Promise<void>(resolve => { releaseRelations = resolve })
-  await page.route('**/sheets/relationships', async route => {
+  let connectionJobs = 0
+  let connectionJobId = ''
+  let interruptedPolls = 0
+  const admittedConnection = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/analysis/jobs/relationships'
+    && response.request().method() === 'POST')
+  await page.route('**/analysis/jobs/*', async route => {
+    if (route.request().method() === 'GET'
+      && new URL(route.request().url()).pathname === `/analysis/jobs/${connectionJobId}`
+      && interruptedPolls === 0) {
+      interruptedPolls += 1
+      await route.fulfill({ status: 503, json: { detail: 'Interrupcion transitoria de prueba' } })
+      return
+    }
+    await route.continue()
+  })
+  await page.route('**/analysis/jobs/relationships', async route => {
+    connectionJobs += 1
     await relationsGate
+    // Let the browser send the binary multipart body without re-encoding it.
     await route.continue()
   })
   await page.getByRole('link', { name: /Explorar datos/ }).first().click()
   await expect(page.getByText('Buscando conexiones seguras entre las hojas', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'No existen conexiones seguras entre las hojas.' })).toBeHidden()
   releaseRelations()
+  const admitted = await admittedConnection
+  expect(admitted.status()).toBe(202)
+  const job = await admitted.json()
+  connectionJobId = job.job_id
+  expect(['queued', 'running']).toContain(job.status)
   const analysis = page.getByTestId('exploration-analysis')
   await expect(analysis.getByText('900 CLP', { exact: false }).first()).toBeVisible({ timeout: 60_000 })
+  expect(interruptedPolls).toBe(1)
+  expect(connectionJobs).toBe(1)
   if (repeatedCatalog) await expect(page.getByText(/La unión con el catálogo está bloqueada/)).toBeVisible()
   await page.getByRole('link', { name: /Resumen/ }).first().click()
   const cards = page.getByLabel('Indicadores del negocio', { exact: true })
@@ -98,7 +123,7 @@ test(`La validacion fallida no se confunde con hojas sin relaciones: ${scenario.
   let releaseRetry!: () => void
   const retryGate = new Promise<void>(resolve => { releaseRetry = resolve })
   const focusSelections: string[] = []
-  await page.route('**/sheets/relationships', async route => {
+  await page.route('**/analysis/jobs/relationships', async route => {
     attempts += 1
     const body = route.request().postData() ?? ''
     focusSelections.push(body.match(/name="focus"\r?\n\r?\n([^\r\n]+)/)?.[1] ?? '')
@@ -108,7 +133,11 @@ test(`La validacion fallida no se confunde con hojas sin relaciones: ${scenario.
       return
     }
     await retryGate
-    if (scenario.empty) await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ candidates: [], safe_count: 0, message: 'Sin correspondencias validadas.' }) })
+    if (scenario.empty) await route.fulfill({ status: 202, json: {
+      job_id: 'empty-connections', status: 'completed', phase: 'completed',
+      completed_phases: 1, total_phases: 1, attempt: 1, error: null,
+      result: { candidates: [], safe_count: 0, message: 'Sin correspondencias validadas.' },
+    } })
     else await route.continue()
   })
   await page.getByRole('link', { name: scenario.view, exact: true }).first().click()
