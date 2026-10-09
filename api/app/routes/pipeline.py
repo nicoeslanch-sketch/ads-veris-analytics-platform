@@ -55,6 +55,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 logger = logging.getLogger(__name__)
 
 from .. import quota
+from ..analysis_timing import analysis_stage
 from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import Capability, require_capability_for_user
 from ..clean_artifacts import (
@@ -345,6 +346,7 @@ def _analysis_cache_store(key: tuple, value: dict) -> dict:
 _ANALYSIS_INFLIGHT_WAIT_SECONDS = 210
 
 
+@analysis_stage("analysis_cache")
 def _analysis_cache_compute(key: tuple, producer) -> dict:
     started = time.monotonic()
     deadline = started + _ANALYSIS_INFLIGHT_WAIT_SECONDS
@@ -920,6 +922,7 @@ def _parse_analysis_scope(raw: str | None, available_sheets: list[str]) -> dict:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
+@analysis_stage("prepare_sheets")
 def _processed_manifest_frames(
     filename: str,
     content: bytes,
@@ -1193,6 +1196,7 @@ def _currency_detection_from_dict(raw: object) -> CurrencyDetection | None:
         return None
 
 
+@analysis_stage("restore_clean_sheet")
 def _load_metrics_clean_artifact(
     filename: str,
     content: bytes,
@@ -3524,6 +3528,7 @@ def _cached_export_signed_download(
         return None
 
 
+@analysis_stage("compute_metrics")
 def _metrics_multi_from_processed(
     filename: str,
     frames: dict[str, object],

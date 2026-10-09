@@ -99,6 +99,37 @@ def test_worker_executes_and_publishes_only_with_current_lease():
     assert repo.calls.count('source') == 2
 
 
+@pytest.mark.parametrize('mode,outcome', [
+    ('success', 'returned'), ('cancel', 'raised'), ('failure', 'raised'), ('lost', 'raised'),
+])
+def test_worker_reports_bounded_timing_without_account_or_workbook_data(monkeypatch, mode, outcome):
+    from app import analysis_timing as timing
+    emit = Mock()
+    monkeypatch.setattr(timing.logger, 'info', emit)
+    repo = FakeRepository()
+    def execute(*_):
+        with timing.analysis_stage('compute_metrics'):
+            if mode == 'cancel':
+                repo.job['cancel_requested'] = True
+                report_job_progress('metrics', 1, 2, 'private-sheet')
+            if mode == 'failure':
+                raise HTTPException(422, 'private-source-detail')
+            if mode == 'lost':
+                repo.stale = True
+            return {'private-field': 42}
+    assert AnalysisWorker(settings(), repo, execute).run_once()
+    assert emit.call_count == 1
+    raw = emit.call_args.args[0]
+    row = json.loads(raw)
+    assert row['event'] == 'analysis_timing'
+    assert row['operation'] == 'metrics'
+    assert row['outcome'] == outcome
+    assert row['stages']['compute_metrics']['calls'] == 1
+    assert row['stages']['lease_rpc']['calls'] >= 1
+    for private in [OWNER, DATASET, PATH, repo.job['job_id'], 'private-', 'lease-1']:
+        assert private not in raw
+
+
 def test_worker_cannot_publish_after_lease_loss():
     repo = FakeRepository()
     def execute(*_):
