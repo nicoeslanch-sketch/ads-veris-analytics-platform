@@ -6111,6 +6111,42 @@ async def retry_analysis_job(
     return job
 
 
+@router.post("/analysis/jobs/relationships", status_code=status.HTTP_202_ACCEPTED)
+async def create_business_connections_job(
+    file: UploadFile | None = File(None), storage_path: str | None = Form(None),
+    dataset_id: str | None = Form(None), manifest: str = Form(...),
+    relationship: str | None = Form(None), focus: str | None = Form(None),
+    user: AuthenticatedUser = Depends(get_current_user), settings: Settings = Depends(get_settings),
+) -> dict:
+    await run_in_threadpool(require_capability_for_user, user.id, Capability.VIEW_DASHBOARD, settings)
+    sheet_manifest = _parse_sheet_manifest(manifest)
+    if sheet_manifest is None:
+        raise HTTPException(422, "Envia un manifiesto de hojas.")
+    names = {entry["nombre"] for entry in sheet_manifest["hojas"] if entry["procesar"]}
+    manual = _validate_manual_relationship(_parse_json_field(relationship, "relationship")) if relationship else None
+    parsed_focus = _parse_json_field(focus, "focus") if focus else None
+    if manual and (parsed_focus is not None or not {manual["left_sheet"], manual["right_sheet"]} <= names):
+        raise HTTPException(422, "La relacion debe usar solo hojas seleccionadas, sin otro alcance simultaneo.")
+    if parsed_focus is not None:
+        selected = parsed_focus.get("sheets")
+        if (not isinstance(selected, list) or not selected
+                or not all(isinstance(name, str) and name in names for name in selected)):
+            raise HTTPException(422, "El alcance debe contener hojas seleccionadas del manifiesto.")
+        parsed_focus = {"sheets": list(dict.fromkeys(selected))}
+    options = {"manifest": sheet_manifest, "relationship": manual, "focus": parsed_focus}
+    if use_durable_source(settings, file, storage_path, dataset_id):
+        return await run_in_threadpool(DurableAnalysisRepository(settings).enqueue,
+                                      user.id, dataset_id, storage_path, "relationships", options)
+    filename, content = await _read_input(file, storage_path, user)
+    key = _analysis_cache_key("relationships_job", user.id, filename, content, dataset_id, options)
+    return manager_for(settings).submit(
+        user.id, key,
+        lambda: _relationships_cached_sync(filename, content, sheet_manifest, manual, dataset_id,
+                                            parsed_focus, user.id),
+        retained_input_bytes=len(content),
+    )
+
+
 @router.post("/sheets/relationships")
 async def sheet_relationships(
     file: UploadFile | None = File(None),

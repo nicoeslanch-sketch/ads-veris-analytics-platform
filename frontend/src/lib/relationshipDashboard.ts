@@ -1,4 +1,4 @@
-import { apiPost, apiPostJob, buildDatasetForm } from './api'
+import { apiPostJob, buildDatasetForm } from './api'
 import { formatNumber } from './format'
 import { clearSessionAnalysis, readSessionAnalysis, writeSessionAnalysis } from './sessionAnalysisCache'
 import { stableSerialize } from './stableSerialize'
@@ -388,25 +388,21 @@ export async function fetchRelationshipDashboard(
   return request
 }
 
-/** Valida una relación manual reutilizando el endpoint existente. Devuelve la
+/** Valida una relación manual como trabajo recuperable. Devuelve la
  * candidata evaluada (safe/reason) sin activarla. */
 export async function validateManualRelationship(
   params: RelationshipRequestParams,
   join: { left_sheet: string; right_sheet: string; left_keys: string[]; right_keys: string[] },
   signal?: AbortSignal,
 ): Promise<RelationshipResult> {
-  return apiPost<RelationshipResult>(
-    '/sheets/relationships',
+  return apiPostJob<RelationshipResult>(
+    '/analysis/jobs/relationships',
     buildDatasetForm(params.file as File, params.storagePath, {
       manifest: JSON.stringify(params.manifest),
       relationship: JSON.stringify({ ...join, type: 'left' }),
       ...(params.datasetId ? { dataset_id: params.datasetId } : {}),
     }),
-    // Analizar el libro completo es trabajo de PIPELINE, no una lectura
-    // rápida: con el arranque en frío de Render (~50 s) un presupuesto de
-    // 60-90 s se agotaba antes de empezar y la petición se cancelaba sola
-    // ("La solicitud tardó demasiado"). Sin `timeoutMs` se usa el margen
-    // amplio del pipeline, el mismo que ya usa /metrics.
+    // Polling can recover a brief network interruption without resubmitting.
     { signal },
   )
 }

@@ -82,6 +82,7 @@ def execute_job(job: dict, settings: Settings) -> dict:
     capabilities = {"metrics": Capability.VIEW_DASHBOARD, "standardize": Capability.STANDARDIZE,
                     "standardize_batch": Capability.STANDARDIZE,
                     "clean_batch": Capability.CLEAN, "clean_export": Capability.DOWNLOAD_CLEAN_DATASET,
+                    "relationships": Capability.VIEW_DASHBOARD,
                     "relationship_catalog": Capability.VIEW_DASHBOARD,
                     "relationship_dashboard": Capability.VIEW_DASHBOARD}
     if kind not in capabilities or job["engine_version"] != ENGINE_VERSION:
@@ -100,6 +101,9 @@ def execute_job(job: dict, settings: Settings) -> dict:
                                           user_id, opts["revision"], opts.get("restore_state"))
     if kind == "relationship_catalog":
         return p._relationship_catalog_cached_sync(filename, content, opts["manifest"], dataset_id, user_id)
+    if kind == "relationships":
+        return p._relationships_cached_sync(filename, content, opts["manifest"], opts.get("relationship"),
+                                             dataset_id, opts.get("focus"), user_id)
     if kind == "relationship_dashboard":
         return p._relationship_dashboard_cached_sync(filename, content, opts["manifest"], opts["relationship"],
                                                       opts.get("date_from"), opts.get("date_to"), dataset_id, user_id)

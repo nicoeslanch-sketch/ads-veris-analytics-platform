@@ -10,7 +10,7 @@ from uuid import uuid4
 logger = logging.getLogger("uvicorn.error")
 _ACTIVE: ContextVar[dict | None] = ContextVar("analysis_timing", default=None)
 _OPERATIONS = frozenset({"metrics", "standardize", "standardize_batch", "clean_batch",
-                         "clean_export", "relationship_catalog", "relationship_dashboard"})
+                         "clean_export", "relationships", "relationship_catalog", "relationship_dashboard"})
 _STAGES = frozenset({"authorization", "source_download", "analysis_cache", "prepare_sheets",
                      "restore_clean_sheet", "compute_metrics", "lease_rpc"})
 
