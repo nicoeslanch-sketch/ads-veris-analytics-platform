@@ -27,6 +27,7 @@ from .standardize import map_unique, parse_date, physical_missing_mask
 from .service_model import analyze_service_business
 from .document_model import MATCH_COLUMN, document_id, line_number, prepare_document_lines
 from .receivables import analyze_receivables, is_receivable_sheet, receivable_document_key
+from .purchase_documents import analyze_purchase_documents
 
 BUSINESS_FILTER_KEYS = (
     "sucursal",
@@ -1051,6 +1052,7 @@ def _indicator_contract(
     prior_value: float | int | None = None,
     variation_type: str = "porcentaje",
     coverage: float | None = None,
+    coverage_decimals: int = 1,
     status: str | None = None,
     warnings: list[str] | None = None,
     required: list[str] | None = None,
@@ -1109,7 +1111,7 @@ def _indicator_contract(
         "denominador": round(float(denominator), 2)
         if denominator is not None
         else None,
-        "cobertura_datos_pct": round(float(coverage), 1)
+        "cobertura_datos_pct": round(float(coverage), coverage_decimals)
         if coverage is not None
         else None,
         "estado": effective_status,
@@ -2638,6 +2640,16 @@ def analyze_business_workbook(
         else:
             freight_warnings.append("La hoja de compras no contiene una columna de flete.")
 
+    purchase_currencies = available_filters.get('moneda', [])
+    purchase_currency = applied_filters.get('moneda') or (
+        purchase_currencies[0] if len(purchase_currencies) == 1 else 'mixta' if purchase_currencies else 'CLP')
+    purchase_documents = analyze_purchase_documents(
+        {name: frames[name] for name in kinds.get('compras', [])},
+        currency=purchase_currency, period_mask=analysis_period_mask,
+        dimensional_filter=dimensional_filter_applied,
+        currency_hints={name: results.get(name, {}).get('_moneda') for name in kinds.get('compras', [])},
+    )
+
     collections_frame = frames.get((kinds.get("cobranzas") or [None])[0]) if kinds.get("cobranzas") else None
     collected_total = None
     overpaid_documents = 0
@@ -3099,6 +3111,8 @@ def analyze_business_workbook(
     ]
     integrity = [item for item in integrity if item is not None]
     integrity.extend(document_model.relations)
+    if purchase_documents:
+        integrity.append(purchase_documents['relacion'])
 
     formula_controls = _formula_controls(frames, kinds)
     formula_issues = sum(item["filas_inconsistentes"] for item in formula_controls)
@@ -3506,6 +3520,7 @@ def analyze_business_workbook(
     used_sheets = {
         *sales_names,
         *(document_model.headers if document_model.details else set()),
+        *(purchase_documents['fuentes'] if purchase_documents else []),
         *[
             name
             for name in (
@@ -4049,6 +4064,18 @@ def analyze_business_workbook(
             polarity="neutral",
             visualizations=["kpi", "linea_temporal", "ranking_proveedores"],
         ),
+        *([_indicator_contract(
+            'compras_valorizadas', 'compras', 'Compras valorizadas',
+            purchase_documents['valor'], currency_unit,
+            period_from=purchase_documents['periodo_actual']['desde'],
+            period_to=purchase_documents['periodo_actual']['hasta'],
+            formula=purchase_documents['formula'], numerator=purchase_documents['valor'],
+            coverage=purchase_documents['cobertura_datos_pct'], status=purchase_documents['estado'],
+            coverage_decimals=2,
+            warnings=purchase_documents['advertencias'], sources=purchase_documents['fuentes'],
+            required=['ID compra', 'linea', 'cantidad', 'costo unitario', 'fecha y estado de cabecera'],
+            visualizations=['kpi'],
+        )] if purchase_documents else []),
         _indicator_contract(
             "fletes_compra",
             "compras",
@@ -4461,6 +4488,7 @@ def analyze_business_workbook(
             "inventario_bajo_minimo": inventory_below_minimum,
             "fecha_corte_inventario": inventory_snapshot_date,
             "compras_efectivas": round(purchases_total, 2) if purchases_total is not None else None,
+            "compras_valorizadas": purchase_documents,
             "fletes_compra": round(purchase_freight, 2)
             if purchase_freight is not None
             else None,

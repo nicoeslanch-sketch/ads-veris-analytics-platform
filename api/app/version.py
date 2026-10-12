@@ -11,7 +11,7 @@ Actualizar ENGINE_VERSION en cada release que cambie resultados del motor
 
 import os
 
-ENGINE_VERSION = "0.32.9"
+ENGINE_VERSION = "0.33.0"
 SERVICE_MODEL_VERSION = 2
 LATEST_MIGRATION = "20261009002253"
 
