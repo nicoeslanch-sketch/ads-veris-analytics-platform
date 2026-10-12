@@ -114,6 +114,18 @@ def conversation_scenarios():
             ('cuanto me deben en general', ['$300', 'no es un saldo historico']),
             ('y cuantas cuentas por cobrar', ['2 cuentas o cuotas']),
         ]),
+        ('catalog_missing_sales_is_not_zero', catalog, [
+            ('cuantosingresostengo', ['catalogo de productos', 'no significa', 'cero']),
+            ('entonces es cero', ['no significa', 'hoja de ventas']),
+            ('y eso es 0', ['no significa', 'hoja de ventas']),
+            ('entoncestengoceroventas', ['no significa', 'cero']),
+            ('no tengo ninguna venta', ['no significa', 'cero']),
+            ('y mi costo promedio es cero', ['$220', 'No es lo que has gastado']),
+            ('entonces tengo cero bentas', ['no significa', 'hoja de ventas']),
+            ('cuantos productos tengo', ['4 productos']),
+            ('y mi costo promedio', ['$220', 'costo unitario de referencia']),
+            ('cuanto vendi', ['no significa', 'cero']),
+        ]),
         ('catalog_status_followups', catalog, [
             ('cuantosproductos tengo', ['4 productos']),
             ('y cuantos estan inactvos', ['1 registro inactivo', 'por fila']),

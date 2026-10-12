@@ -1669,7 +1669,40 @@ def _answer_campaigns(metrics: dict[str, Any], question: str) -> dict[str, Any] 
     return _result(answer, "metric_campaigns", metric_suggestions(metrics))
 
 
+def _catalog_zero_sales_question(question: str, history: list[dict[str, Any]] | None) -> bool:
+    if not re.search(r"\b(?:cero|0|nada|ninguna|ninguno)\b", question):
+        return False
+    sales = r"\b(?:ventas?|ingresos?|facturacion|vendi|vendimos|vendido)\b"
+    # An explicit new topic wins over the previous sales question. Only short
+    # elliptical follow-ups inherit it; arbitrary zero-valued metrics do not.
+    other_topic = r"\b(?:costos?|gastos?|precios?|margen|utilidad|stock|inventario|saldo|coins|creditos|clientes?|productos?|duplicados|deuda)\b"
+    if re.search(other_topic, question):
+        return False
+    if re.search(sales, question):
+        return True
+    elliptical = r"(?:(?:y|entonces) )?(?:(?:eso|esto) )?(?:es|son|significa) (?:cero|0)"
+    if not re.fullmatch(elliptical, question):
+        return False
+    for item in reversed((history or [])[-12:]):
+        if item.get('role') != 'user':
+            continue
+        previous = normalize_query(item.get('content') or '')
+        if not previous or re.fullmatch(elliptical, previous):
+            continue
+        return bool(re.search(sales, previous) and not re.search(other_topic, previous))
+    return False
+
+
 def _answer_product_catalog(metrics: dict[str, Any], question: str) -> dict[str, Any] | None:
+    if _contains(question, "ingresos", "ventas totales", "cuanto vendi", "facturacion"):
+        return _result(
+            "La vista actual es un catalogo de productos, no un registro de ventas. "
+            "Que falten datos de ventas no significa que hayas vendido cero. "
+            "Los precios de lista y costos unitarios no son ingresos. Abre una hoja "
+            "de ventas o Vision del negocio para consultar importes vendidos con "
+            "sus cantidades y fechas.",
+            "metric_catalog_income_unavailable", metric_suggestions(metrics), "medium",
+        )
     products = metrics.get("analisis_productos") or {}
     if not products:
         return None
@@ -1700,14 +1733,6 @@ def _answer_product_catalog(metrics: dict[str, Any], question: str) -> dict[str,
     average_cost = _number((products.get("costos") or {}).get("promedio"))
     average_price = _number((products.get("precios_lista") or {}).get("promedio"))
     average_margin = _number((products.get("margen_potencial") or {}).get("promedio"))
-    if _contains(question, "ingresos", "ventas totales", "cuanto vendi", "facturacion"):
-        return _result(
-            "La vista actual es un catalogo de productos, no un registro de ventas. "
-            "Los precios de lista y costos unitarios no son ingresos. Abre una hoja "
-            "de ventas o Vision del negocio para consultar importes vendidos con "
-            "sus cantidades y fechas.",
-            "metric_catalog_income_unavailable", metric_suggestions(metrics), "medium",
-        )
     if _contains(question, "costo", "gasto", "gastado", "gaste", "precio", "margen") and metrics.get("moneda_mixta"):
         return _answer_currency(metrics)
     if _contains(question, "costo", "gasto", "gastado", "gaste"):
@@ -2053,6 +2078,8 @@ def answer_metrics_question(
     duplicate_answer = answer_duplicate_impact(original_question, metrics, history)
     if duplicate_answer is not None:
         return duplicate_answer
+    if metrics.get('tipo_analisis') == 'catalogo_productos' and _catalog_zero_sales_question(original_question, history):
+        return _answer_product_catalog(metrics, 'ingresos')
     catalog_purchase_decision = (
         re.search(r"\b(?:debo|deberia|conviene|recomiendas|dejar|dejo|seguir|sigo|reinvertir)\b", original_question)
         and re.search(r"\b(?:comprar|comprando|reponer|invertir|reinvertir|promocionar|retirar)\b", original_question)

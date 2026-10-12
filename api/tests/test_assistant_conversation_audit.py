@@ -151,6 +151,100 @@ def test_catalog_cost_unknown_or_mixed_currency_never_fabricates_amount():
     assert response['matched_key'] == 'metric_currency'
 
 
+@pytest.mark.parametrize('followup', [
+    'entonces tengo cero ventas?', 'entonces mis ventas son 0?',
+    'no tengo ninguna venta?', 'eso significa que no vendi nada?',
+    'entonces es cero?', 'y eso es 0?', 'entoncestengoceroventas',
+    'entonces tengo cero bentas?',
+])
+@pytest.mark.parametrize('currency', ['CLP', 'UF'])
+def test_catalog_missing_income_is_not_zero_in_followup(followup, currency):
+    metrics = {**sales_metrics(), 'tipo_analisis': 'catalogo_productos', 'moneda': currency,
+               'analisis_productos': {'productos': 3, 'costos': {'promedio': 125}}}
+    question = 'cuantosingresostengo?'
+    first = answer_for(question, metrics=metrics)
+    history = [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': first['answer']}]
+    reply = answer_for(followup, metrics=metrics, history=history)
+    assert reply['matched_key'] == 'metric_catalog_income_unavailable', reply
+    assert 'no significa' in reply['answer'].lower(), reply
+    assert 'cero' in reply['answer'].lower(), reply
+    assert 'hoja de ventas' in reply['answer'].lower(), reply
+    assert '$600' not in reply['answer'] and 'UF 600' not in reply['answer']
+    assert reply['confidence'] == 'medium'
+
+
+@pytest.mark.parametrize('followup', ['y mi costo promedio es cero?', 'y mi costo promedio es 0?'])
+def test_catalog_zero_income_followup_does_not_override_explicit_cost(followup):
+    metrics = {**sales_metrics(), 'tipo_analisis': 'catalogo_productos',
+               'analisis_productos': {'productos': 3, 'costos': {'promedio': 0}}}
+    history = [{'role': 'user', 'content': 'cuanto vendi'}]
+    reply = answer_for(followup, metrics=metrics, history=history)
+    assert reply['matched_key'] == 'metric_catalog_reference_cost', reply
+    assert '$0' in reply['answer']
+
+
+@pytest.mark.parametrize('question', [
+    'entonces tengo cero ventas', 'no tengo ninguna venta',
+    'eso significa que no vendi nada', 'entoncestengoceroventas',
+    'entonces tengo cero bentas',
+])
+def test_catalog_zero_sales_does_not_require_history(question):
+    metrics = {'tipo_analisis': 'catalogo_productos', 'analisis_productos': {'productos': 3}}
+    reply = answer_for(question, metrics=metrics)
+    assert reply['matched_key'] == 'metric_catalog_income_unavailable', reply
+    assert 'no significa' in reply['answer'] and 'cero' in reply['answer']
+
+
+def test_catalog_missing_profile_still_does_not_establish_zero_sales():
+    reply = answer_for('tengo cero ventas', metrics={'tipo_analisis': 'catalogo_productos'})
+    assert reply['matched_key'] == 'metric_catalog_income_unavailable', reply
+
+
+@pytest.mark.parametrize('question,previous', [
+    ('entonces es cero', ''), ('y eso es 0', 'cual es mi costo promedio'),
+    ('mi stock es cero', 'cuanto vendi'),
+    ('mis ADS Coins son cero', 'cuanto vendi'),
+    ('no tengo ningun cliente', 'cuanto vendi'),
+    ('hay cero duplicados', 'cuanto vendi'),
+    ('entonces es cero', 'cual es el costo de ventas'),
+])
+def test_catalog_zero_without_sales_context_is_not_income(question, previous):
+    metrics = {'tipo_analisis': 'catalogo_productos', 'analisis_productos': {'productos': 3}}
+    history = [{'role': 'user', 'content': previous}] if previous else []
+    reply = answer_for(question, metrics=metrics, history=history)
+    assert reply['matched_key'] != 'metric_catalog_income_unavailable', reply
+
+
+@pytest.mark.parametrize('currency,amount', [('CLP', '$0'), ('UF', 'UF 0')])
+def test_real_sales_zero_is_not_treated_as_missing_catalog_income(currency, amount):
+    metrics = {'tipo_analisis': 'ventas', 'moneda': currency,
+               'kpis': {'ingresos_totales': {'valor': 0}}}
+    reply = answer_for('cuantos ingresos tengo', metrics=metrics)
+    assert amount in reply['answer'], reply
+    assert reply['matched_key'] != 'metric_catalog_income_unavailable'
+
+
+@pytest.mark.parametrize('question,normalized', [
+    ('entoncestengoceroventas', 'entonces tengo cero ventas'),
+    ('entonces tengo cero bentas', 'entonces tengo cero ventas'),
+])
+def test_zero_sales_typo_normalization(question, normalized):
+    assert normalize_query(question) == normalized
+
+
+def test_catalog_zero_followups_preserve_context_until_user_changes_topic():
+    metrics = {'tipo_analisis': 'catalogo_productos',
+               'analisis_productos': {'productos': 3, 'costos': {'promedio': 125}}}
+    history = []
+    for question in ['cuanto vendi', 'entonces es cero', 'y eso es 0', 'entonces es cero']:
+        reply = answer_for(question, metrics=metrics, history=history)
+        assert reply['matched_key'] == 'metric_catalog_income_unavailable', reply
+        history += [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': reply['answer']}]
+    history += [{'role': 'user', 'content': 'mi costo promedio'}]
+    reply = answer_for('entonces es cero', metrics=metrics, history=history)
+    assert reply['matched_key'] != 'metric_catalog_income_unavailable', reply
+
+
 @pytest.mark.parametrize('catalog', [
     {'tipo_analisis': 'catalogo_productos'},
     {'analisis_productos': {'productos': 3}},
