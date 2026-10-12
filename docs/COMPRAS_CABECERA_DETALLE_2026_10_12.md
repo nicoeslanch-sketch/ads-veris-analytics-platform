@@ -38,6 +38,8 @@ netas, incluida la continuacion "y el total", no recibe otro tipo de importe.
 Explica la diferencia con pagos y muestra las fechas de las compras.
 El normalizador preserva `pagado`, `pagados`, `pagada`, `pagadas` y `pague`,
 evitando convertirlos en palabras de tiempo como `pasado`.
+Continuaciones sobre IVA no derivan a cobranza, y pedir una descarga
+conservando duplicados no se interpreta como un segmento financiero.
 
 ## Verificacion
 

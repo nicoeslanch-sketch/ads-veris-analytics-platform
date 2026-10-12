@@ -84,6 +84,15 @@ def answer_duplicate_impact(
     )
     if not (explicit or (followup and _previous_duplicate_topic(history))):
         return None
+    if explicit and intent is None and re.search(r'\b(?:descargar|descargo|exportar|exporto)\b', question) and re.search(
+        r'\b(?:sin (?:borrar|eliminar|quitar)|conservando|conservar)\b', question,
+    ):
+        return _result(
+            'Si. Puedes limpiar y descargar conservando los duplicados. Solo se eliminan '
+            'repeticiones exactas del original cuando lo confirmas; los conflictos de ID '
+            'y las coincidencias por normalizacion se conservan para revision.',
+            'metric_download_duplicates', _SUGGESTIONS,
+        )
     if intent == "action":
         return _result(
             "Este chat no elimina filas ni cambia tu archivo. Revisa los grupos en Limpieza "

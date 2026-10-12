@@ -192,6 +192,13 @@ def test_business_indicator_and_bot_do_not_call_valuation_net_or_paid(frames):
         ('y eso esta pagado', ['conciliar los pagos']),
         ('cuanto compre al proveedor S1', ['ese periodo o segmento']),
         ('mis compras en general', ['Compras valorizadas', '$110']),
+        ('y con iva', ['Esa medida de compras no esta publicada']),
+        ('y el total', ['Esa medida de compras no esta publicada']),
+        ('mis compras en general', ['Compras valorizadas', '$110']),
+        ('y netas', ['Compras netas', 'no hay un importe validado']),
+        ('y el total', ['Compras netas', 'no hay un importe validado']),
+        ('mis compras en general', ['Compras valorizadas', '$110']),
+        ('puedo descargar sin borrar duplicados', ['Puedes limpiar y descargar conservando los duplicados']),
     ]:
         answer = answer_for(question, metrics=metrics, history=history)
         assert all(part in answer['answer'] for part in snippets), (question, answer)
