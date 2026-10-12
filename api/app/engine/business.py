@@ -520,15 +520,23 @@ def _group_profit(
     grouped["ingreso_pareado"] = grouped["ingresos"].where(grouped["pareada"])
     grouped["costo_pareado"] = grouped["costo"].where(grouped["pareada"])
     total_positive = float(grouped.loc[grouped["ingresos"] > 0, "ingresos"].sum())
+    amounts = grouped["ingresos"].array
+    paired_amounts = grouped["ingreso_pareado"].array
+    paired_costs = grouped["costo_pareado"].array
+    paired = grouped["pareada"].array
     rows: list[dict[str, Any]] = []
-    for name, values in grouped.groupby("nombre", dropna=False):
-        income = float(values["ingresos"].dropna().sum())
-        positive_income = float(
-            values.loc[values["ingresos"] > 0, "ingresos"].dropna().sum()
-        )
-        paired_income = float(values["ingreso_pareado"].dropna().sum())
-        paired_cost = float(values["costo_pareado"].dropna().sum())
-        paired_rows = int(values["pareada"].sum())
+    # Select positions without constructing a DataFrame per group. Preserve
+    # dropna, dtype and summation order: groupby.sum can change cent rounding.
+    for name, positions in grouped.groupby("nombre", dropna=False).indices.items():
+        values = amounts.take(positions)
+        values = values[pd.notna(values)]
+        income = float(values.sum())
+        positive_income = float(values[values > 0].sum())
+        income_values = paired_amounts.take(positions)
+        cost_values = paired_costs.take(positions)
+        paired_income = float(income_values[pd.notna(income_values)].sum())
+        paired_cost = float(cost_values[pd.notna(cost_values)].sum())
+        paired_rows = int(paired.take(positions).sum())
         profit = paired_income - paired_cost if paired_rows else None
         rows.append(
             {
@@ -536,7 +544,7 @@ def _group_profit(
                 "ingresos": round(income, 2),
                 "ingresos_positivos": round(positive_income, 2),
                 "participacion_pct": round(
-                    float(values.loc[values["ingresos"] > 0, "ingresos"].sum())
+                    positive_income
                     / total_positive
                     * 100,
                     2,
@@ -548,9 +556,9 @@ def _group_profit(
                 "margen_pct": round(profit / paired_income * 100, 2)
                 if profit is not None and paired_income
                 else None,
-                "filas": int(len(values)),
+                "filas": int(len(positions)),
                 "filas_pareadas": paired_rows,
-                "cobertura_costos_pct": round(paired_rows / max(len(values), 1) * 100, 1),
+                "cobertura_costos_pct": round(paired_rows / max(len(positions), 1) * 100, 1),
             }
         )
     rows.sort(key=lambda item: item["ingresos"], reverse=True)
