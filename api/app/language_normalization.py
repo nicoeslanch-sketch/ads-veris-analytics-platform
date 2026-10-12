@@ -88,6 +88,7 @@ _VOCABULARY = frozenset(
     mensual mensuales trimestral trimestrales anual anuales dias diario diarios
     proyecte proyectarlo calcularlo calcularlos interpretarlo mejorarlo esto eso esos esas este
     esta estan son fue fueron hay puedo puedes podria deberia sirve sirven ver saber
+    entonces cero nada ninguna ninguno
     dame dime muestra muestran explica explicame ayudame ayuda porque como mas menos
     uno una de del la las un unos unas se me te tu tus su sus nuestro nuestros para con o e
     si no muy tambien realmente juntos juntas cada desde hasta entre todos todas ambos ambas negativo negativa
@@ -194,6 +195,7 @@ _TYPO_ALIASES = {
     "transasiones": "transacciones",
     "utlidad": "utilidad",
     "vetnas": "ventas",
+    "bentas": "ventas",
     "vuena": "buena",
     "servidro": "servidor",
     "coneccion": "conexion",
