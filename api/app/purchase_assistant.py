@@ -9,7 +9,7 @@ from .language_normalization import normalize_query
 _TOPIC = re.compile(r"\b(?:compras?|compre|compramos|comprad[oa]s?|fletes?)\b")
 _OTHER_TOPIC = re.compile(r"\b(?:vendi|ingresos|gastos|clientes|inventario|stock|plan|coins|limpieza|descargar|margen|utilidad|cxc|cobrar|deben)\b")
 _FOLLOWUP = re.compile(r"^(?:y |ahora |entonces |eso |esos )")
-_MEASURE_FOLLOWUP = re.compile(r"\b(?:total|importe|monto|cobertura|parcial|pagado|pagados|pague|dinero|caja|promedio|mediana|porcentaje|cuantos|cuantas)\b")
+_MEASURE_FOLLOWUP = re.compile(r"\b(?:total|importe|monto|cobertura|parcial|pagad[oa]s?|pague|dinero|caja|promedio|mediana|porcentaje|cuantos|cuantas|net[oa]s?|brut[oa]s?|valorizad[oa]s?|iva|impuestos?|unidades|proveedores)\b")
 
 
 def _context(question: str, history: list[dict[str, Any]] | None) -> list[str]:
@@ -54,11 +54,16 @@ def answer_purchases(question: str, metrics: dict[str, Any], history=None) -> di
             'credito o pagos de otro periodo. No deduzco caja pagada del total de compras.',
             'metric_purchases_not_cash', suggestions, 'medium',
         )
-    if re.search(
+    measure_pattern = (
         r'\b(?:cuantas|cuantos|numero|conteo|unidades|proveedores|promedio|mediana|'
         r'maximo|minimo|mayor|menor|brutas?|iva|impuesto|pagadas?|pagados?|'
-        r'porcentaje|proporcion|participacion|compara|comparar|tendencia)\b', question,
-    ):
+        r'porcentaje|proporcion|participacion|compara|comparar|tendencia)\b'
+    )
+    measure_question = question
+    if re.fullmatch(r'(?:y|ahora|entonces) (?:el )?(?:total|importe|monto)', question):
+        measure_question = next((text for text in reversed(context[:-1])
+                                 if not re.fullmatch(r'(?:y|ahora|entonces) (?:el )?(?:total|importe|monto)', text)), question)
+    if re.search(measure_pattern, measure_question):
         return _result(
             'Esa medida de compras no esta publicada en esta vista. El importe neto '
             'no sustituye cantidades, proveedores unicos, promedios, IVA ni pagos. '
@@ -94,8 +99,17 @@ def answer_purchases(question: str, metrics: dict[str, Any], history=None) -> di
     freight = bool(re.search(r'\bfletes?\b', topic))
     key = 'fletes_compra' if freight else 'compras_netas'
     label = 'Fletes de compra' if freight else 'Compras netas'
-    indicator = next((item for group in ((business.get('catalogo_indicadores') or {}).get('categorias') or [])
-                      for item in (group.get('indicadores') or []) if item.get('id') == key), {})
+    indicators = {item.get('id'): item for group in ((business.get('catalogo_indicadores') or {}).get('categorias') or [])
+                  for item in (group.get('indicadores') or [])}
+    indicator = indicators.get(key, {})
+    valuation = False
+    basis = next((text for text in reversed(context) if re.search(r'\b(?:net[oa]s?|valorizad[oa]s?)\b', text)), topic)
+    if not freight and not re.search(r'\bnet[oa]s?\b', basis) and (
+        indicator.get('estado') not in {'available', 'partial'} or _number(indicator.get('valor')) is None
+    ) and 'compras_valorizadas' in indicators:
+        indicator = indicators['compras_valorizadas']
+        label = 'Compras valorizadas'
+        valuation = True
     value = _number(indicator.get('valor'))
     warnings = [str(warning) for warning in (indicator.get('advertencias') or []) if warning]
     if indicator.get('estado') not in {'available', 'partial'} or value is None:
@@ -111,12 +125,17 @@ def answer_purchases(question: str, metrics: dict[str, Any], history=None) -> di
     if partial:
         answer += ' Es un importe parcial.'
     if coverage is not None:
-        answer += f' Cobertura de datos: {_percent(coverage)}.'
+        answer += f' Cobertura de datos: {_percent(coverage, decimals=2 if valuation else 1)}.'
     sources = indicator.get('fuentes') or []
     if sources:
         answer += ' Fuente: ' + ', '.join(str(source) for source in sources[:3]) + '.'
     answer += (' El flete se cuenta una vez por documento, sin repetirlo por linea.' if freight else
                ' Corresponde a compras no anuladas del alcance visible; no acredita pagos realizados.')
+    if valuation:
+        answer += ' Se calcula como cantidad por costo unitario declarado, no como importe neto de IVA o descuentos.'
+        period = indicator.get('periodo_actual') or {}
+        if period.get('desde') and period.get('hasta'):
+            answer += f" Fechas de las compras valorizadas: {period['desde']} a {period['hasta']}."
     if warnings:
         answer += ' ' + ' '.join(warnings[:2])
     return _result(answer, 'metric_purchase_freight' if freight else 'metric_purchases',
