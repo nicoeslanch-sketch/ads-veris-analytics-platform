@@ -3,6 +3,7 @@ import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ReferenceLin
 import { AlertTriangle, CalendarDays, GitMerge } from 'lucide-react'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
 import { formatNumber } from '../lib/format'
+import { periodSelectValue } from '../lib/periodPresentation'
 import { AXIS_INK, CHART, GRID_STROKE, truncateLabel } from '../lib/charts'
 import type { RelationalLedger } from '../lib/types'
 import KpiValue from './ui/KpiValue'
@@ -24,7 +25,7 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
   const axis = (value: number) => new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
   const months = ledger.periodo?.meses ?? []
   const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse()
-  const selectedPeriod = !period.from ? 'all' : period.label.length === 4 ? period.label : period.from.slice(0, 7)
+  const selectedPeriod = periodSelectValue(period)
   const cards = [
     ['Ventas netas', k.ventas_netas], ['Utilidad bruta', k.utilidad_bruta],
     ['Resultado antes de impuestos', k.resultado_antes_impuestos], ['Cuentas por cobrar al corte', k.cuentas_por_cobrar],
@@ -64,9 +65,11 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
       <label className="min-w-0 text-xs font-medium text-navy"><CalendarDays className="mr-1 inline h-4 w-4" />Período
         <select aria-label="Período del negocio" value={selectedPeriod} onChange={e => {
           const v = e.target.value
+          if (v === 'custom') return
           setPeriod(v === 'all' ? ALL_PERIOD : v.length === 4 ? { from: v + '-01-01', to: v + '-12-31', label: v } : monthPeriod(v))
         }} className="ml-2 max-w-full rounded-md border border-navy/20 bg-white p-2 text-sm">
           <option value="all">Todos los años</option>
+          {selectedPeriod === 'custom' && <option value="custom">{period.label}</option>}
           <optgroup label="Años">{years.map(y => <option key={y} value={y}>{y}</option>)}</optgroup>
           <optgroup label="Meses">{[...months].reverse().map(m => <option key={m} value={m}>{m}</option>)}</optgroup>
         </select>

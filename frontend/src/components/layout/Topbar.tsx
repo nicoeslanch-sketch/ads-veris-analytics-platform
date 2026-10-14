@@ -4,6 +4,7 @@ import { Calendar, Check, ChevronDown, LogOut, Menu, Settings, User } from 'luci
 import { useAuth } from '../../auth/AuthContext'
 import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../../data/DatasetContext'
 import { formatMonthShort } from '../../lib/charts'
+import { compactPeriodLabel } from '../../lib/periodPresentation'
 
 /** Rango por defecto: el mes actual, formateado es-CL (ej. "01 jun 2026 - 30 jun 2026"). */
 function currentMonthRange(): string {
@@ -78,12 +79,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
   // el rango real de datos — un valor inventado que luego cambiaba de golpe
   // al terminar la restauración. Ahora muestra un estado de carga honesto.
   const periodPending = restoring && monthsAvailable.length === 0
-  const compactPeriodLabel =
-    monthsAvailable.length > 0
-      ? period.from
-        ? formatMonthShort(period.from.slice(0, 7))
-        : 'Todo'
-      : 'Periodo'
+  const compactLabel = monthsAvailable.length > 0 ? compactPeriodLabel(period) : 'Periodo'
   const periodGroups = groupedPeriods(monthsAvailable)
 
   const handleLogout = async () => {
@@ -122,7 +118,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
             <span className="h-3.5 w-16 animate-pulse rounded bg-white/20" />
           ) : (
             <>
-              <span className="sm:hidden">{compactPeriodLabel}</span>
+              <span className="sm:hidden">{compactLabel}</span>
               <span className="hidden sm:inline">
                 {monthsAvailable.length > 0 ? period.label : currentMonthRange()}
               </span>
