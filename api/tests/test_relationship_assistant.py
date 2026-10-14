@@ -166,3 +166,56 @@ def test_relationship_context_http(client, auth_headers):
     data['kpis'][0]['value'] = float('nan')
     with pytest.raises(ValidationError):
         BotRequest(message='hola', relationship_dashboard=data)
+
+
+def purchase_context():
+    return {'relation': {'label': 'COMPRAS + PROVEEDORES'}, 'currency': 'CLP', 'available': True,
+            'kpis': [{'id': 'compras', 'label': 'Compras totales', 'value': 1500,
+                      'format': 'currency', 'available': True}],
+            'charts': [{'title': 'Compras por proveedor', 'category_key': 'proveedor',
+                        'series': [{'key': 'compras', 'label': 'Compras', 'format': 'currency'}],
+                        'data': [{'proveedor': 'Norte', 'compras': 1000}, {'proveedor': 'Sur', 'compras': 500}]}]}
+
+
+@pytest.mark.parametrize('question', ['cuanto compre', 'cuánto compramos', 'mis compras',
+                                     'total de compra', 'cuantocompre', 'miscompras'])
+def test_purchase_questions_read_the_selected_kpi(question):
+    data = RelationshipContext.model_validate(purchase_context()).model_dump()
+    result = answer_for(question, metrics={'relationship_dashboard': data})
+    assert '$1.500' in result['answer'], result
+    assert result['matched_key'] == 'metric_relationship'
+
+
+def test_purchase_conversation_preserves_measure_and_scope():
+    data = purchase_context()
+    history = []
+    for question, expected in [
+        ('cuanto compre', '$1.500'), ('y en 2025', 'no usare el total'),
+        ('a que proveedor compre mas', 'Norte: $1.000'),
+        ('a que proveedor compre menos', 'Sur: $500'),
+        ('cuanto compre al proveedor Norte', 'no usare el total'),
+        ('cuantas compras hice', 'no esta publicado'),
+        ('mi compra promedio', 'no esta publicado'),
+        ('a que proveedor compre mas en promedio', 'No confundire'),
+        ('que proveedor tiene mas cantidad de compras', 'No confundire'),
+        ('cuanto vendi', 'no esta publicado'),
+        ('cuanto gaste', 'no esta publicado'),
+        ('como contacto a un humano', 'Abre Ayuda'),
+        ('resume esta conexion', '$1.500'),
+    ]:
+        result = answer_for(question, metrics={'relationship_dashboard': data}, history=history[-12:])
+        assert expected in result['answer'], (question, result)
+        if 'no esta publicado' in expected or 'no usare' in expected:
+            assert '$' not in result['answer']
+        history += [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': result['answer']}]
+    data['currency'] = 'UF'
+    data['kpis'][0]['value'] = 125.75
+    assert 'UF 125,75' in answer_for('cuanto compre en UF', metrics={'relationship_dashboard': data})['answer']
+
+
+def test_purchase_question_http(client, auth_headers):
+    response = client.post('/assistant/bot', headers=auth_headers,
+                           json={'message': 'cuanto compre', 'relationship_dashboard': purchase_context()})
+    assert response.status_code == 200, response.text
+    assert '$1.500' in response.json()['answer']
+    assert response.json()['coins_charged'] == 0
