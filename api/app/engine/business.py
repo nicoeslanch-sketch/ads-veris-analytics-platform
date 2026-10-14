@@ -26,6 +26,7 @@ from .quality import (
 from .standardize import map_unique, parse_date, physical_missing_mask
 from .service_model import analyze_service_business
 from .document_model import MATCH_COLUMN, document_id, line_number, prepare_document_lines
+from .relational_ledger import analyze_relational_ledger
 from .receivables import analyze_receivables, is_receivable_sheet, receivable_document_key
 from .purchase_documents import analyze_purchase_documents
 
@@ -254,6 +255,7 @@ def _net_amount_column(columns: Any, *, domain: str | None = None) -> str | None
         ("importe", "neto"),
         ("total", "neto"),
         ("neto", "linea"),
+        ("neto", "documento"),
         ("net", "amount"),
         ("net", "sales"),
     ]
@@ -264,11 +266,11 @@ def _net_amount_column(columns: Any, *, domain: str | None = None) -> str | None
                 ("total", domain),
             ]
         )
-    candidates.extend([("monto",), ("importe",), ("total",)])
+    candidates.extend([("neto",), ("monto",), ("importe",), ("total",)])
     return _first_column(
         columns,
         tuple(candidates),
-        excluded=("iva", "impuesto", "unitario", "ticket", "promedio"),
+        excluded=("iva", "impuesto", "unitario", "ticket", "promedio", "costo", "deposito"),
     )
 
 
@@ -4376,7 +4378,7 @@ def analyze_business_workbook(
         row["estado"] == "partial" for row in indicator_catalog_rows
     )
 
-    return {
+    analysis = {
         "version": 2,
         "filtros": {
             "disponibles": available_filters,
@@ -4547,3 +4549,57 @@ def analyze_business_workbook(
             - catalog_partial,
         },
     }
+    ledger = analyze_relational_ledger(prepared, date_from=date_from, date_to=date_to,
+        currency_hints={name: results.get(name, {}).get('_moneda') for name in prepared})
+    if ledger is not None:
+        # This ledger is not a flat join. Do not imply that unrelated dimension
+        # filters also filter cash, payables or opening inventory.
+        if applied_filters:
+            ledger = {**ledger, "available": False, "advertencias": [
+                "Quita los filtros de dimension para conciliar el libro completo; el filtro de fechas si se admite."]}
+        analysis["conciliacion"] = ledger
+        analysis["filtros"] = {"disponibles": {}, "aplicados": applied_filters}
+        # Consumers outside the new panel must not reuse pre-reconciliation
+        # ratios, forecasts or indicator values based on a different ledger.
+        analysis['ratios'] = []
+        analysis['decisiones'] = []
+        analysis['catalogo_indicadores'] = {'version': 1, 'moneda': ledger['moneda'],
+            'categorias': [], 'disponibles': 0, 'parciales': 0, 'no_disponibles': 0}
+        if ledger["available"]:
+            k = ledger['kpis']
+            result = analysis['estado_resultados']
+            result.update({"ventas_brutas": k['ventas_emitidas_netas'],
+                "devoluciones_aceptadas": k['notas_credito_netas'],
+                "ventas_observadas": k['ventas_netas'], "ventas_certificables": k['ventas_netas'],
+                "ventas_pareadas": k['ventas_netas'], "ventas_certificables_pareadas": k['ventas_netas'],
+                "costo_venta_conocido": k['costo_ventas_neto'], "costo_certificable": k['costo_ventas_neto'],
+                "utilidad_bruta": k['utilidad_bruta'], "utilidad_certificable": k['utilidad_bruta'],
+                "margen_bruto_pct": k['margen_bruto_pct'], "margen_certificable_pct": k['margen_bruto_pct'],
+                "resultado_antes_impuestos": k['resultado_antes_impuestos']})
+            result.update({'gastos_operacionales': k['gastos_operacionales_netos'],
+                'resultado_operacional': None, 'resultado_operacional_certificable': None,
+                'margen_operacional_pct': None, 'margen_operacional_certificable_pct': None,
+                'ebitda': None})
+            count_keys = {'ventas_emitidas', 'ventas_anuladas', 'notas_credito', 'lineas_fisicas',
+                'lineas_emitidas', 'clientes_compradores', 'stock_unidades', 'unidades_emitidas'}
+            indicators = [_indicator_contract(key, 'conciliacion', key.replace('_', ' ').capitalize(), value,
+                '%' if key.endswith('_pct') else 'unidades' if key in count_keys else ledger['moneda'],
+                period_from=ledger['periodo']['desde'], period_to=ledger['periodo']['hasta'],
+                formula='Libro conciliado por claves: ' + '; '.join(ledger['criterios'][:3]),
+                sources=ledger['fuentes'], visualizations=['kpi']) for key, value in k.items()]
+            analysis['catalogo_indicadores'].update({'categorias': [{'id': 'conciliacion',
+                'nombre': 'Libro conciliado', 'indicadores': indicators}],
+                'disponibles': sum(row['valor'] is not None for row in indicators),
+                'no_disponibles': sum(row['valor'] is None for row in indicators)})
+            analysis['evolucion'] = [{**row, 'ventas_certificables': row['ventas'],
+                'parcial': False, 'margen_pct': round(row['utilidad'] / row['ventas'] * 100, 2) if row['ventas'] else None}
+                for row in ledger['mensual']]
+            analysis['agrupaciones'] = {key: ledger.get(key, []) for key in
+                ('productos', 'categorias', 'sucursales', 'canales', 'clientes', 'segmentos_clientes', 'vendedores')}
+            analysis['operacion'].update({'cuentas_por_cobrar': k['cuentas_por_cobrar'],
+                'stock_inventario': k['stock_unidades'], 'valor_inventario': k['inventario_valorizado'],
+                'compras_efectivas': k['compras_netas']})
+        else:
+            analysis['estado_certificacion'] = 'blocked'
+            analysis['confianza_pct'] = 0
+    return analysis

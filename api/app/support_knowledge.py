@@ -212,6 +212,13 @@ def answer_for(
                 "suggestions": suggestions[:4]}
     message = re.sub(r"^(?:hola|muchas gracias|gracias|por favor)[, ]+(?:y\s+)?(?=\S)", "", message, flags=re.I)
     normalized = normalize_query(message)
+    support_words = r'\b(?:human[oa]s?|persona|asesor|agente|soporte|ejecutivo)\b'
+    support_intent = r'\b(?:ayuda|ayudar|hablar|contactar|contacto|conseguir|comunicarme|atienda|atencion|necesito)\b'
+    if re.search(support_words, normalized) and re.search(support_intent, normalized):
+        item = next(row for row in ARTICLES if row['key'] == 'human_support')
+        return {"answer": item['response'] + ' No he enviado ninguna solicitud por ti. No incluyas contrasenas ni datos de tarjetas.',
+                "matched_key": 'human_support', "confidence": 'high',
+                "suggestions": ['Donde esta Ayuda', 'Problema con mi archivo', 'Mis datos y privacidad']}
     if re.search(r"\b(?:cerrar|cierro|cierre)\b", normalized) and re.search(r"\b(?:empresa|negocio)\b", normalized):
         return {
             "answer": "Para evaluar la continuidad del negocio hace falta revisar caja disponible, obligaciones y vencimientos, margen con costos completos, demanda y tendencia de varios periodos. Un mes bajo o un ranking de ventas no bastan para decidir un cierre. Podemos empezar por identificar que fuentes faltan y comparar escenarios de costos e ingresos.",

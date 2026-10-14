@@ -547,6 +547,7 @@ def is_transaction_profile(
             marker in compact
             for marker in (
                 "idventa",
+                "ventaid",
                 "idtransaccion",
                 "numeroventa",
                 "numeroboleta",

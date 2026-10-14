@@ -56,6 +56,7 @@ export default function ActiveSheetSelector({
     setAnalysisScope,
     setMetrics,
     setSheet,
+    setPeriod,
   } = useDataset()
   const { plan } = usePlan()
   const advanced = plan === 'analista' || plan === 'gold'
@@ -440,7 +441,14 @@ export default function ActiveSheetSelector({
 
   const selectMode = (next: Mode) => {
     if (next !== 'single' && (detecting || pendingSelectedCount > 0)) return
-    if (next === 'append' && compatibleSheets.length < 2) return
+    if (next === 'append' && compatibleSheets.length === 1) {
+      // All years can live in one fact table; there is nothing to concatenate.
+      setPeriod({ from: null, to: null, label: 'Todo el período' })
+      manualModeSelected.current = true
+      setMode('append_join')
+      void findRelationships('append_join')
+      return
+    }
     manualModeSelected.current = true
     setMode(next)
     if (next !== 'append_join') setValidation({ status: 'idle' })
@@ -501,11 +509,9 @@ export default function ActiveSheetSelector({
         append_join: 'Espera a que termine la limpieza de todas las hojas seleccionadas.',
         join: 'Espera a que termine la limpieza de todas las hojas seleccionadas.',
       }
-    : compatibleSheets.length < 2
+    : compatibleSheets.length < 1
       ? {
-          append: compatibleSheets.length === 1
-            ? 'Solo detectamos un periodo de venta. Se necesitan al menos dos para unirlos.'
-            : serviceWorkbook
+          append: serviceWorkbook
               ? 'Este libro no tiene periodos con el mismo esquema. Compartir ID_OT no basta para apilar: usa Relación manual.'
               : 'No detectamos periodos de venta seguros en este archivo.',
         }

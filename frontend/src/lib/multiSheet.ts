@@ -495,16 +495,19 @@ function transactionGroupScore(
   group: string[],
   results: Record<string, AppendCompatibilityResult | null | undefined>,
 ): number {
-  return group.filter((name) => {
+  return group.reduce((score, name) => {
     const result = results[name]
     const mapping = result?.mapeo ?? {}
-    return Boolean(
+    const transaction = Boolean(
       mapping.monto &&
       (mapping.cantidad || mapping.fecha) &&
       !looksLikeProductCatalog(result) &&
       !looksLikeOperationalSheet(name, result),
     )
-  }).length
+    const detail = result?.preview.columnas.some((column) =>
+      ['detalleventaid', 'iddetalleventa', 'saleslineid'].includes(normalizedColumnName(column).replace(/_/g, '')))
+    return score + (transaction ? (detail ? 3 : 1) : 0)
+  }, 0)
 }
 
 /** Clave para reconocer la MISMA columna escrita distinto entre hojas

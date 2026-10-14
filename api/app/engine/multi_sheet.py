@@ -16,7 +16,7 @@ from typing import Any
 
 import pandas as pd
 
-from .mapping import detect_columns_extended, norm_key, resolve_mapping, strip_accents_lower
+from .mapping import detect_columns_extended, is_identifier, norm_key, resolve_mapping, strip_accents_lower
 from .metrics import detect_currency, is_transaction_profile
 from .standardize import (
     MISSING_TOKENS,
@@ -437,9 +437,8 @@ def _candidate_pairs(left: pd.DataFrame, right: pd.DataFrame) -> list[tuple[str,
                     str(candidate)
                     for candidate in right.columns
                     if identifier_domain(str(candidate)) == left_domain
-                    and norm_key(str(candidate)).startswith(
-                        ("id", "codigo", "sku", "rut", "folio", "uuid", "clave")
-                    )
+                    and (is_identifier(str(candidate)) or norm_key(str(candidate)).startswith(
+                        ("sku", "rut", "folio", "uuid", "clave")))
                 ),
                 None,
             )

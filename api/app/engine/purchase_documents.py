@@ -26,10 +26,10 @@ def _key(value):
 
 def _fields(frame):
     return {
-        'date': _column(frame.columns, 'fechacompra', 'purchasedate', 'fecha'),
+        'date': _column(frame.columns, 'fechacompra', 'purchasedate', 'fecha', 'fechadocumento'),
         'status': _column(frame.columns, 'estadocompra', 'estado', 'status'),
-        'provider': _column(frame.columns, 'idproveedor', 'supplierid'),
-        'branch': _column(frame.columns, 'idsucursal', 'branchid'),
+        'provider': _column(frame.columns, 'idproveedor', 'proveedorid', 'supplierid'),
+        'branch': _column(frame.columns, 'idsucursal', 'sucursalid', 'branchid'),
         'currency': _column(frame.columns, 'moneda', 'currency', 'divisa'),
     }
 
@@ -49,7 +49,7 @@ def analyze_purchase_documents(
 ) -> dict | None:
     headers, details, warnings = [], [], []
     for name, frame in frames.items():
-        identity = _column(frame.columns, 'idcompra', 'purchaseid')
+        identity = _column(frame.columns, 'idcompra', 'compraid', 'purchaseid')
         if not identity:
             continue
         if sum(norm_key(column) in {'moneda', 'currency', 'divisa'} for column in frame.columns) > 1:
@@ -57,9 +57,9 @@ def analyze_purchase_documents(
             continue
         fields = _fields(frame)
         quantity = _column(frame.columns, 'cantidad', 'quantity', 'unidades')
-        cost = _column(frame.columns, 'costounitariocompra', 'costounitario', 'unitcost', 'purchaseunitcost')
-        product = _column(frame.columns, 'idproducto', 'skuproducto', 'sku', 'productid')
-        line = _column(frame.columns, 'linea', 'numerolinea', 'linenumber', 'lineid')
+        cost = _column(frame.columns, 'costounitariocompra', 'costounitario', 'unitcost', 'purchaseunitcost', 'costounitarioneto')
+        product = _column(frame.columns, 'idproducto', 'productoid', 'skuproducto', 'sku', 'productid')
+        line = _column(frame.columns, 'linea', 'numerolinea', 'linenumber', 'lineid', 'detallecompraid')
         rows = pd.DataFrame({'id': frame[identity].map(_key)})
         for field, column in fields.items():
             rows[field] = _attribute(frame[column], field) if column else pd.NaT if field == 'date' else None

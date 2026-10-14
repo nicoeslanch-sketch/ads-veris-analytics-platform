@@ -95,7 +95,7 @@ _FORMULA_XML_TAG_RE = re.compile(rb"<(?:[A-Za-z_][\w.-]*:)?f(?:\s|/?>)")
 
 _AUXILIARY_SHEET_NAME_RE = re.compile(
     r"(?i)(?:^|[_\s-])(guia|gu[ií]a|control|leeme|readme|instrucciones?|"
-    r"notas?|diccionario|par[aá]metros?|parametros?|configuraci[oó]n|"
+    r"notas?(?![_\s-]+(?:de[_\s-]+)?(?:cr[eé]dito|d[eé]bito))|diccionario|par[aá]metros?|parametros?|configuraci[oó]n|"
     r"portada|caratula|car[aá]tula)(?:$|[_\s-])"
 )
 _BUSINESS_TABLE_SHEET_NAME_RE = re.compile(
@@ -494,7 +494,7 @@ def _detect_header_row(raw: pd.DataFrame) -> int:
     candidates: list[tuple[float, int]] = []
     header_terms = re.compile(
         r"(?i)\b(?:id|cod(?:igo)?|fecha|estado|monto|cantidad|precio|cliente|"
-        r"producto|tecnico|contrato|periodo|moneda|descripcion|tipo|horas?)\b"
+        r"producto|tecnico|contrato|periodo|moneda|descripcion|tipo|horas?|hoja|columna|rol|referencia|regla)\b"
     )
     numeric_value = re.compile(
         r"^\s*[()$]?\s*-?(?:\d[\d.,]*|(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+)\s*%?\s*\)?$"

@@ -33,6 +33,7 @@ import KpiValue from './ui/KpiValue'
 import AdaptiveIndicatorCatalog from './AdaptiveIndicatorCatalog'
 import NominalCollectionDashboard from './NominalCollectionDashboard'
 import ServiceBusinessPanel from './ServiceBusinessPanel'
+import RelationalLedgerPanel from './RelationalLedgerPanel'
 import {
   AXIS_INK,
   CATEGORICAL,
@@ -1008,6 +1009,7 @@ export default function BusinessAnalysisPanel({
   analysis: BusinessAnalysis
   variant: Variant
 }) {
+  if (analysis.conciliacion) return <RelationalLedgerPanel ledger={analysis.conciliacion} variant={variant} />
   if (analysis.perfil === 'cobranza_nominal' && analysis.cobranza) {
     return <NominalCollectionDashboard analysis={analysis} variant={variant} />
   }

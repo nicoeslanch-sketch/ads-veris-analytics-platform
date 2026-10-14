@@ -47,6 +47,16 @@ def header_words(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", strip_accents_lower(text)).strip()
 
 
+def is_identifier(column: str) -> bool:
+    words = header_words(column).split()
+    compact = norm_key(column)
+    return bool(words and (words[0] in {"id", "codigo", "cod", "folio"}
+                          or words[-1] in {"id", "codigo", "code"})) or compact in {
+        "ventaid", "compraid", "saleid", "salesid", "purchaseid", "invoiceid",
+        "detalleventaid", "detallecompraid",
+    }
+
+
 # Abreviaciones societarias chilenas: mapeo DESPUÉS de norm_key.
 _ENTITY_ABBREVS: tuple[tuple[str, str], ...] = (
     ("limitada", "ltda"),
@@ -70,7 +80,7 @@ def dedup_norm_key(value: str) -> str:
 # El orden importa: el primer rol que matchea se queda con la columna.
 ROLE_KEYWORDS: list[tuple[str, list[str]]] = [
     ("fecha", ["fecha", "date", "periodo", "emision"]),
-    ("monto", ["venta", "monto", "total", "importe", "ingreso", "facturacion", "valor", "precio"]),
+    ("monto", ["venta", "monto", "total", "importe", "ingreso", "facturacion", "valor", "precio", "neto"]),
     ("costo", ["costo", "cost", "compra", "gasto"]),
     ("cantidad", ["cantidad", "unidades", "qty", "cant."]),
     ("producto", ["producto", "servicio", "articulo", "item", "sku"]),
@@ -96,6 +106,11 @@ def _semantic_role_rank(role: str, column: str) -> int:
     """
 
     compact = norm_key(column)
+    if role == "costo":
+        if "unitario" in compact:
+            return 50
+        if any(marker in compact for marker in ("costolinea", "costototal", "costoventa")):
+            return 200
     if role == "monto":
         if any(
             marker in compact
@@ -121,8 +136,9 @@ def _semantic_role_rank(role: str, column: str) -> int:
                 "netolinea",
                 "lineaneto",
                 "linenet",
+                "netodocumento",
             )
-        ):
+        ) or compact in {"neto", "netoclp", "netouf", "netousd", "netamount"}:
             return 200
         if any(
             marker in compact
@@ -156,6 +172,11 @@ def _legacy_semantically_compatible(role: str, normalized_column: str) -> bool:
     categoria del producto.
     """
     compact = norm_key(normalized_column)
+    if role in {"monto", "costo", "cantidad", "fecha"} and is_identifier(normalized_column):
+        return False
+    if role == "monto" and any(word in header_words(normalized_column).split()
+                               for word in ("costo", "cost", "comision", "sueldo")):
+        return False
     if role in {"monto", "costo"} and compact.startswith(
         ("id", "codigo", "codventa", "codcompra", "folio", "numero", "nro",
          "estado", "status", "fecha", "date", "tipo", "medio", "unidad")
@@ -170,7 +191,7 @@ def _legacy_semantically_compatible(role: str, normalized_column: str) -> bool:
     if role == "categoria" and "cliente" in compact:
         return False
     if role == "categoria" and "linea" in compact and any(
-        marker in compact for marker in ("total", "neto", "monto", "importe", "iva")
+        marker in compact for marker in ("total", "neto", "monto", "importe", "iva", "costo")
     ):
         return False
     if role == "monto" and any(
@@ -219,7 +240,7 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
     matches = detect_columns_extended(columns)
     compact_columns = {norm_key(col) for col in columns}
     document_lines = bool(
-        compact_columns.intersection({"idventa", "iddocumento", "saleid", "invoiceid"})
+        compact_columns.intersection({"idventa", "ventaid", "iddocumento", "saleid", "invoiceid"})
         and any("producto" in col or "sku" in col for col in compact_columns)
         and any("cantidad" in col or "qty" in col for col in compact_columns)
     )
@@ -236,16 +257,16 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
             if col in taken:
                 continue
             match = matches.get(col)
-            if (
-                not match
-                or match.rol_motor != role
-                or not compatible(role, str(col))
-            ):
+            semantic_rank = _semantic_role_rank(role, str(col))
+            explicit_measure = role in {"monto", "costo"} and semantic_rank >= 200
+            if not compatible(role, str(col)) or (not explicit_measure and (
+                not match or match.rol_motor != role
+            )):
                 continue
             rank = (
-                _semantic_role_rank(role, str(col)),
-                _METHOD_RANK.get(match.metodo, 0),
-                match.prioridad,
+                semantic_rank,
+                _METHOD_RANK.get(match.metodo, 0) if match else 0,
+                match.prioridad if match else 0,
                 -index,
             )
             if best is None or rank > best[0]:
@@ -259,7 +280,7 @@ def detect_column_roles(columns: list[str]) -> dict[str, str]:
     for role, keywords in ROLE_KEYWORDS:
         if role in mapping:
             continue
-        for col in columns:
+        for col in sorted(columns, key=lambda c: -_semantic_role_rank(role, str(c))):
             if col in taken:
                 continue
             if (

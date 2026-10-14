@@ -35,6 +35,7 @@ from .mapping import resolve_mapping
 from .metrics import CurrencyDetection
 from .multi_sheet import append_compatible_frames, join_related_frames, relation_stats
 from .quality import find_column, numeric_series, structural_total_mask
+from .document_model import MATCH_COLUMN, document_id, prepare_document_lines
 from .relationships import classify_relationship_template, collapse_inventory_snapshots
 
 # Umbrales de riesgo de inventario, centralizados (Parte 8).
@@ -771,6 +772,8 @@ def build_relationship_dashboard(
     """Construye el dashboard de UNA relación. Nunca lanza por datos: cuando la
     relación no es válida devuelve ``available: False`` con un motivo claro."""
 
+    documents = prepare_document_lines(frames, mappings)
+    frames, mappings = documents.frames, documents.mappings
     left_name = str(relationship.get("left_sheet", ""))
     right_name = str(relationship.get("right_sheet", ""))
     append_sheets = list(dict.fromkeys(relationship.get("append_sheets") or []))
@@ -1023,6 +1026,8 @@ class _DashboardContext:
         cancelled = _status_mask(merged, status_col, r"\b(?:anulad|cancelad|void)\w*")
         period_mask = _date_filter_mask(self.dates, self.date_from, self.date_to)
         self.mask = ~structural & ~cancelled & period_mask
+        if MATCH_COLUMN in merged:
+            self.mask &= numeric_series(merged, MATCH_COLUMN).eq(1)
         self.amount = numeric_series(merged, self.amount_col)
         self.quantity = numeric_series(merged, self.quantity_col)
         self.cost = numeric_series(merged, self.cost_col)
@@ -1059,6 +1064,9 @@ class _DashboardContext:
         rows_after = int(self.provenance.get("rows_after", len(self.merged)))
         matched = max(rows_after - unmatched, 0)
         warnings: list[str] = []
+        if MATCH_COLUMN in self.merged.columns:
+            warnings.append('Esta consulta usa lineas de documentos emitidos, antes de notas de credito. '
+                            'Los cobros y devoluciones no se suman mediante esta union.')
         if unmatched:
             left_label = (
                 "las ventas consolidadas"
@@ -1156,6 +1164,11 @@ class _DashboardContext:
             else None
         )
         registros = int(mask.sum())
+        document_key = document_id(self.merged.columns)
+        documents = registros
+        if document_key and document_key in self.merged:
+            keys = self.merged.loc[mask, document_key].astype('string').str.strip().str.casefold().replace('', pd.NA)
+            documents = int(keys.nunique()) if keys.notna().all() else None
         productos = None
         if self.product_key:
             keys = self.merged.loc[mask, self.product_key].astype("object")
@@ -1164,6 +1177,7 @@ class _DashboardContext:
             "ingresos": ingresos,
             "unidades": unidades,
             "registros": registros,
+            "documentos": documents,
             "productos": productos,
         }
 
@@ -1761,9 +1775,9 @@ class _DashboardContext:
         kpis = [
             _kpi("ingresos", "Ingresos", _clean_number(totals["ingresos"]), "currency"),
             _kpi("ticket", "Ticket promedio",
-                 _clean_number(totals["ingresos"] / totals["registros"])
-                 if totals["ingresos"] and totals["registros"] else None,
-                 "currency"),
+                 _clean_number(totals["ingresos"] / totals["documentos"])
+                 if totals["ingresos"] is not None and totals["documentos"] else None,
+                 "currency", help_text="Importe por documento de venta distinto; antes de notas de credito. Sin ID de venta, usa filas."),
         ]
         distinct = None
         if column and column in self.merged.columns:
@@ -1824,6 +1838,17 @@ class _DashboardContext:
         ]
         charts = [c for c in (self._top_products_chart(),) if c]
         table = self._top_products_table(with_margin=False)
+        provider = find_column(self.merged.columns, "razon", "social") or find_column(self.merged.columns, "nombre", "proveedor")
+        if provider and self.amount_col:
+            data = _group_sum(self.merged[provider].astype('object'), self.amount, self.mask)
+            rows = [{'proveedor': name, 'compras': _clean_number(value)} for name, value in data]
+            charts.append({'id': 'compras_proveedor', 'kind': 'bar', 'title': 'Compras por proveedor',
+                'help': f'Importes de {self.amount_col}; sin repetir documentos al relacionar.',
+                'category_key': 'proveedor', 'series': [{'key': 'compras', 'label': 'Compras', 'format': 'currency'}],
+                'data': rows[:TOP_LIMIT]})
+            table = {'id': 'proveedores', 'title': 'Compras por proveedor', 'columns': [
+                {'key': 'proveedor', 'label': 'Proveedor', 'format': 'text'},
+                {'key': 'compras', 'label': 'Compras', 'format': 'currency'}], 'rows': rows[:TABLE_LIMIT], 'total_rows': len(rows)}
         return kpis, charts, table, [], [], []
 
     # ── GASTOS ↔ SUCURSALES ──────────────────────────────────────────────────
@@ -1873,6 +1898,17 @@ class _DashboardContext:
             if chart:
                 charts.append(chart)
         table = None
+        if not charts:
+            group_col = next((col for col in self.right.columns if 'nombre' in str(col).lower()
+                              or 'razon' in str(col).lower()), None)
+            if group_col and group_col in self.merged:
+                counts = self.merged.loc[self.mask, group_col].dropna().value_counts()
+                rows = [{'nombre': str(name), 'registros': int(count)} for name, count in counts.items()]
+                if rows:
+                    charts.append({'id': 'registros_por_referencia', 'kind': 'bar',
+                        'title': f'Registros de {self.left_name} por {self.right_name}',
+                        'help': 'Conteo de filas relacionadas; no representa ingresos.', 'category_key': 'nombre',
+                        'series': [{'key': 'registros', 'label': 'Registros', 'format': 'integer'}], 'data': rows[:TOP_LIMIT]})
         return kpis, charts, table, [], [], []
 
 
