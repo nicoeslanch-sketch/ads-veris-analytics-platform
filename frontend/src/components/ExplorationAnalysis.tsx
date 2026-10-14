@@ -6,6 +6,7 @@ import { buildExplorationModel, explainExploration, explorationValue, exploratio
 import { CHART, GRID_STROKE, AXIS_INK, truncateLabel } from '../lib/charts'
 import type { MetricsResult } from '../lib/types'
 import { BusinessConclusions } from './BusinessAnalysisPanel'
+import RelationalLedgerPanel from './RelationalLedgerPanel'
 
 export default function ExplorationAnalysis({ metrics, from, to, onSave }: {
   metrics: MetricsResult
@@ -36,6 +37,7 @@ export default function ExplorationAnalysis({ metrics, from, to, onSave }: {
     } catch { setSaveState('fail') }
   }
 
+  if (metrics.analisis_negocio?.conciliacion) return <RelationalLedgerPanel ledger={metrics.analisis_negocio.conciliacion} variant="explore" />
   return (
     <div className="min-w-0 space-y-6 break-words [overflow-wrap:anywhere]" data-testid="exploration-analysis">
       {metrics.analisis_negocio && !metrics.analisis_negocio.servicios

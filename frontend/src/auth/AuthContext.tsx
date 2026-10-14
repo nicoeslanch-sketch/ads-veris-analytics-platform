@@ -10,6 +10,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { hasPasswordRecoveryHint } from './recovery'
 import { LEGAL_VERSION } from '../lib/privacy'
+import { observeSession } from './sessionSubscription'
 
 interface RegisterData {
   email: string
@@ -69,18 +70,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false)
       return
     }
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-      setLoading(false)
-    })
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, newSession) => {
+    return observeSession(supabase.auth, (newSession, event) => {
       setSession(newSession)
+      setLoading(false)
       if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true)
       if (event === 'SIGNED_OUT') setRecoveryMode(false)
-    })
-    return () => subscription.unsubscribe()
+    }, () => setLoading(false))
   }, [])
 
   const login: AuthContextValue['login'] = async (email, password) => {

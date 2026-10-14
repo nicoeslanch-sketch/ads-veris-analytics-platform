@@ -77,6 +77,7 @@ class BotRequest(BaseModel):
             "analisis_negocio.cobranza.comparacion", "analisis_productos.costos",
             "analisis_productos.precios_lista", "analisis_productos.margen_potencial", "indicadores_financieros.items",
             "analisis_negocio.catalogo_indicadores",
+            "analisis_negocio.conciliacion", "analisis_negocio.conciliacion.kpis", "analisis_negocio.conciliacion.periodo",
         )
         list_paths = (
             "clientes.top", "por_dia_semana", "analisis_negocio.ratios", "matriz_mes_dimension.valores",
@@ -86,6 +87,9 @@ class BotRequest(BaseModel):
             "analisis_negocio.cobranza.formas_pago", "analisis_negocio.cobranza.periodos_cotizados",
             "analisis_negocio.cobranza.evolucion",
             "analisis_negocio.catalogo_indicadores.categorias",
+            "analisis_negocio.conciliacion.mensual", "analisis_negocio.conciliacion.productos",
+            "analisis_negocio.conciliacion.categorias", "analisis_negocio.conciliacion.sucursales",
+            "analisis_negocio.conciliacion.inventario_lento",
         )
         for path in (*object_paths, *list_paths):
             node = value

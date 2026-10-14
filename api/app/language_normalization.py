@@ -27,6 +27,7 @@ _VOCABULARY = frozenset(
     a acerca activo activos activa activas inactivo inactivos inactiva inactivas descontinuado descontinuados actual actuales administracion administrativo agencia
     autenticador autentificador autenticacion authenticator totp mfa contrasena password
     recuperar recupero recuperacion restablecer olvide perdi perdido escanear codigo codigos
+    humano humana humanos humanas persona asesor agente soporte ejecutivo contactar contacto conseguir comunicarme atienda atencion ayudar
     vender vende venden vendo vendemos vendi vendimos vendia vendian vendio vendieron
     vendere venderemos venderan vendido vendidos vendida vendidas rentable rentables tuve tuvieron
     ganar gano ganamos gane ganaron ganare ganaremos

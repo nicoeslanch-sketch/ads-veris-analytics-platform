@@ -3720,6 +3720,17 @@ def _metrics_multi_from_processed(
         )
         if business is not None:
             computed["analisis_negocio"] = business
+            ledger = business.get("conciliacion")
+            if ledger and ledger.get('available'):
+                k = ledger['kpis']
+                computed['kpis'].update({
+                    'ingresos_totales': {'valor': k['ventas_netas'], 'variacion_pct': None},
+                    'gastos_totales': {'valor': k['costo_ventas_neto'], 'variacion_pct': None},
+                    'ganancia_neta': {'valor': k['utilidad_bruta'], 'variacion_pct': None},
+                    'transacciones': k['ventas_emitidas'],
+                    'ticket_promedio': round(k['ventas_emitidas_netas'] / k['ventas_emitidas'], 2) if k['ventas_emitidas'] else None,
+                })
+                computed['periodo']['meses_disponibles'] = ledger['periodo']['meses']
     report_job_progress("metrics", 2, 2)
     return computed
 
@@ -6239,7 +6250,7 @@ def _relationship_dashboard_sync(
     ):
         raise HTTPException(status_code=422, detail="La relación referencia hojas inválidas.")
     frames, mappings, results = _processed_manifest_frames(
-        filename, content, manifest, cache_dataset_id, requested_names, cache_user_id
+        filename, content, manifest, cache_dataset_id, None, cache_user_id
     )
     return build_relationship_dashboard(
         frames, mappings, results, relationship, date_from=date_from, date_to=date_to

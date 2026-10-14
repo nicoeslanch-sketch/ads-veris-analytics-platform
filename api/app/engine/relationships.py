@@ -37,7 +37,8 @@ from .multi_sheet import (
     join_related_frames,
     relation_stats,
 )
-from .quality import find_column
+from .quality import find_column, numeric_series
+from .document_model import prepare_document_lines
 
 # Plantillas de dashboard que el frontend sabe renderizar.
 RELATIONSHIP_TEMPLATES = (
@@ -540,6 +541,10 @@ def detect_relationship_catalog(
 
     mappings = mappings or {}
     results = results or {}
+    documents = prepare_document_lines(frames, mappings)
+    frames = {name: frame for name, frame in documents.frames.items()
+              if not documents.details or name not in documents.headers}
+    mappings = documents.mappings
     resolved = {
         name: resolve_mapping([str(column) for column in frame.columns], mappings.get(name))
         for name, frame in frames.items()
@@ -635,6 +640,20 @@ def detect_relationship_catalog(
         template, label, purpose = classify_relationship_template(
             left_name, left, resolved[left_name], right_name, right, resolved[right_name]
         )
+        # A valid key alone is not an analytical query. Reject connections
+        # without a measure or a descriptive grouping before offering them.
+        amount_col = resolved[left_name].get('monto')
+        measure_present = bool(amount_col in left and numeric_series(left, amount_col).notna().any())
+        if left.empty or (template != 'generic' and not measure_present
+                          and template not in {'sales_inventory', 'sales_costs'}):
+            discarded += 1
+            continue
+        if template == 'generic' and not (measure_present and resolved[left_name].get('categoria')):
+            labels_present = any(('nombre' in str(col).lower() or 'razon' in str(col).lower())
+                                 and right[col].notna().any() for col in right.columns)
+            if not labels_present:
+                discarded += 1
+                continue
         if template == "generic" and _unsupported_generic_pair(
             left_name, left, right_name, right
         ):

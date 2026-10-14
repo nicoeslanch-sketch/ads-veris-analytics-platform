@@ -896,7 +896,24 @@ export interface ServiceBusinessAnalysis {
   }
 }
 
+export interface RelationalLedger {
+  available: boolean
+  moneda: string
+  fuentes: string[]
+  advertencias: string[]
+  relaciones: { desde: string; hasta: string; clave: string; filas: number; sin_correspondencia: number }[]
+  kpis?: Record<string, number | null>
+  periodo?: { desde: string; hasta: string; meses: string[] }
+  mensual?: { mes: string; ventas: number; costo: number; utilidad: number; unidades: number }[]
+  productos?: { nombre: string; ventas: number; costo: number; utilidad: number; unidades: number }[]
+  categorias?: { nombre: string; ventas: number; costo: number; utilidad: number; unidades: number }[]
+  sucursales?: { nombre: string; ventas: number; costo: number; utilidad: number; unidades: number }[]
+  inventario_lento?: { nombre: string; stock: number; valor: number; dias_sin_venta: number | null }[]
+  criterios?: string[]
+}
+
 export interface BusinessAnalysis {
+  conciliacion?: RelationalLedger
   version: number
   perfil?: 'negocio' | 'cobranza_nominal' | string
   cobranza?: NominalCollectionAnalysis

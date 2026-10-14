@@ -20,13 +20,14 @@ MATCH_COLUMN = "_ads_document_match"
 
 def document_id(columns) -> str | None:
     return next((str(col) for col in columns if norm_key(col) in {
-        "idventa", "saleid", "salesid",
+        "idventa", "ventaid", "saleid", "salesid",
     }), None)
 
 
 def line_number(columns) -> str | None:
     return next((str(col) for col in columns if norm_key(col) in {
         "linea", "numerolinea", "nrolinea", "line", "linenumber", "lineid", "idlinea",
+        "detalleventaid", "iddetalleventa", "saleslineid", "saledetailid",
     }), None)
 
 
@@ -42,7 +43,8 @@ def _fields(frame: pd.DataFrame) -> dict[str, str]:
             or find_column(frame.columns, "fecha"),
         "IDCliente": find_column(frame.columns, "id", "cliente"),
         "IDSucursal": find_column(frame.columns, "id", "sucursal"),
-        "IDVendedor": find_column(frame.columns, "id", "vendedor"),
+        "IDVendedor": find_column(frame.columns, "id", "vendedor")
+            or find_column(frame.columns, "id", "empleado"),
         "EstadoVenta": find_column(frame.columns, "estado", "venta")
             or find_column(frame.columns, "estado"),
         "Canal": find_column(frame.columns, "canal"),
@@ -79,8 +81,16 @@ def prepare_document_lines(
         key = document_id(frame.columns)
         roles = resolve_mapping(list(frame.columns), mappings.get(name))
         fields = _fields(frame)
-        if not key or "FechaVenta" not in fields or any(
-            role in roles for role in ("monto", "cantidad", "producto")
+        # Payments/credit notes also reference a sale, but are not its header.
+        explicit_sale_date = find_column(frame.columns, "fecha", "venta")
+        sheet_key = norm_key(name)
+        sale_header = bool(explicit_sale_date) or (
+            "venta" in sheet_key and not any(token in sheet_key for token in (
+                "devolucion", "credito", "cobro", "reembolso",
+            ))
+        )
+        if not key or not sale_header or "FechaVenta" not in fields or any(
+            role in roles for role in ("cantidad", "producto")
         ):
             continue
         reference = pd.DataFrame({"_key": frame[key].map(_key)})

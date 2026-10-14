@@ -242,6 +242,9 @@ def _result(
 
 
 def metric_suggestions(metrics: dict[str, Any]) -> list[str]:
+    if isinstance((metrics.get('analisis_negocio') or {}).get('conciliacion'), dict):
+        from .ledger_assistant import SUGGESTIONS
+        return SUGGESTIONS
     collection = _collection_dashboard(metrics)
     if collection is not None:
         grain = str(collection.get("grano_temporal") or "periodo")
@@ -2037,6 +2040,12 @@ def answer_metrics_question(
     original_question = normalize_query(message)
     if not original_question:
         return None
+    ledger = (metrics.get('analisis_negocio') or {}).get('conciliacion')
+    if isinstance(ledger, dict):
+        from .ledger_assistant import answer_ledger
+        answer = answer_ledger(message, ledger, history)
+        if answer is not None:
+            return answer
     inactivity = r"(sin ventas|sin vender|no se venden|no se vendieron|producto.*estancad)"
     previous = " ".join(normalize_query(str(row.get("content") or "")) for row in (history or [])[-2:])
     decision_followup = bool(re.search(inactivity, previous) and re.search(r"(que hago|retiro|reinviert|marketing|dej(?:o|ar) de invertir)", original_question))

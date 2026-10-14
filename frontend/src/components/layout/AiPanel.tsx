@@ -18,7 +18,7 @@ import { useAccess } from '../../lib/access'
 import { ApiError, apiGet, apiPostJob, apiPostJson, apiStream, buildDatasetForm } from '../../lib/api'
 import { metricsCacheKey, requestMetrics } from '../../lib/analysisCache'
 import { setActiveCurrency } from '../../lib/format'
-import { metricsSnapshotMatchesScope, serializedAnalysisScope } from '../../lib/multiSheet'
+import { serializedAnalysisScope } from '../../lib/multiSheet'
 import type { MetricsResult } from '../../lib/types'
 
 // ── Tipos locales ─────────────────────────────────────────────────────────────
@@ -69,6 +69,9 @@ export function hasAssistantMetricFilters(
 
 export function initialMetricSuggestions(metrics: Partial<MetricsResult>): string[] {
   const quality = '¿Qué problemas de calidad debo revisar?'
+  if (metrics.analisis_negocio?.conciliacion) {
+    return ['Ventas netas', 'Resultado antes de impuestos', 'Producto mas rentable', 'Productos sin ventas']
+  }
   if (metrics.analisis_negocio?.perfil === 'cobranza_nominal') {
     return ['¿Cuánto recaudo de cobranza y cuánto queda fuera?',
       '¿Qué equipo aporta más a la cobranza?', '¿Qué tendencia hay en la cobranza?', quality]
@@ -101,7 +104,6 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
       : 'flex h-full w-80 shrink-0 flex-col bg-navy-deep text-white'
   const {
     cleaning,
-    metrics: contextMetrics,
     relationshipDashboard,
     file,
     datasetId,
@@ -114,7 +116,6 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     analysisScope,
     businessFilters,
     eliminarDuplicados,
-    setMetrics: setContextMetrics,
   } = useDataset()
   const active = Boolean(cleaning && file)
   const relationshipView = Boolean(analysisScope && ('relationship_id' in analysisScope && analysisScope.relationship_id
@@ -254,7 +255,6 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         if (!isCurrent()) return
         setActiveCurrency(m.moneda)
         localMetrics.current = m
-        setContextMetrics(m)
       } else {
         if (!isCurrent()) return
         setActiveCurrency(m.moneda)
@@ -352,11 +352,9 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     }
     if (fetchedForFile.current === activationKey) return
     fetchedForFile.current = activationKey
-    const visibleMetrics = hasAssistantMetricFilters(period, businessFilters)
-      || !metricsSnapshotMatchesScope(contextMetrics?.analysis_scope, analysisScope, sheet)
-      ? null
-      : contextMetrics
-    void runActivation(file, storagePath, visibleMetrics, mode === 'advanced')
+    // The shared request cache includes dates, filters and revision. A context
+    // snapshot carries only the relationship scope and can still be last month's.
+    void runActivation(file, storagePath, null, mode === 'advanced')
     return () => {
       // Fase 12b: liberar la clave al desmontar (StrictMode/remontaje) — la
       // activación abortada quedaba "ya hecha" y el panel en spinner eterno.
@@ -364,21 +362,6 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, mode, advancedBlocked, file, datasetId, storagePath, uploadedAt, period, sheet, sheetManifest, analysisScope, businessFilters, mappingOverride, eliminarDuplicados, cleaning, relationshipView])
-
-  // Si las métricas llegan al contexto después (usuario visitó Resumen),
-  // y el panel ya está activo con resumen, actualizar localMetrics silenciosamente.
-  useEffect(() => {
-    if (
-      contextMetrics
-      && active
-      && !relationshipView
-      && metricsSnapshotMatchesScope(contextMetrics.analysis_scope, analysisScope, sheet)
-      && !hasAssistantMetricFilters(period, businessFilters)
-    ) {
-      setActiveCurrency(contextMetrics.moneda)
-      localMetrics.current = contextMetrics
-    }
-  }, [contextMetrics, active, period, businessFilters, relationshipView, analysisScope, sheet])
 
   const sendMessage = async (text: string) => {
     const m = localMetrics.current
@@ -644,7 +627,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
             onClick={() => {
               if (file) {
                 fetchedForFile.current = null
-                void runActivation(file, storagePath, contextMetrics, true)
+                void runActivation(file, storagePath, null, true)
               }
             }}
             className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-xs font-semibold text-white/80 transition-colors hover:bg-white/15"
