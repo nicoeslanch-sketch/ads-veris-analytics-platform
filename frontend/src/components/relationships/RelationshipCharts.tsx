@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -35,6 +36,10 @@ function axisFormatter(format: KpiFormat, currency: string) {
 }
 
 function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: string }) {
+  const [width, setWidth] = useState(0)
+  const horizontal = chart.orientation === 'horizontal'
+    || (chart.kind === 'bar' && width > 0 && width < 420 && chart.data.length > 3)
+  const height = horizontal ? Math.max(256, Math.min(840, chart.data.length * 28 + 40)) : 256
   const primary = chart.series[0]
   const format = primary?.format ?? 'number'
   const tickFormat = axisFormatter(format, currency)
@@ -68,8 +73,8 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
           </span>
         )}
       </div>
-      <div className="h-64 w-full">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="min-w-0 w-full" style={{ height }} data-testid={`relationship-chart-${chart.id}`}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} onResize={setWidth}>
           {chart.kind === 'donut' && chart.data.length >= 3 ? (
             <PieChart>
               <Pie
@@ -162,20 +167,20 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
                 )
               ))}
             </ComposedChart>
-          ) : chart.orientation === 'horizontal' ? (
+          ) : horizontal ? (
             <BarChart
               data={chart.data}
               layout="vertical"
-              margin={{ top: 4, right: 18, bottom: 4, left: 8 }}
+              margin={{ top: 4, right: 8, bottom: 4, left: 0 }}
             >
               <CartesianGrid stroke={GRID_STROKE} horizontal={false} />
-              <XAxis type="number" tick={{ fill: AXIS_INK, fontSize: 10 }} tickFormatter={tickFormat} />
+              <XAxis type="number" tick={{ fill: AXIS_INK, fontSize: 10 }} tickFormatter={tickFormat} minTickGap={12} tickCount={width < 420 ? 3 : 5} />
               <YAxis
                 type="category"
                 dataKey={chart.category_key}
                 tick={{ fill: AXIS_INK, fontSize: 10 }}
-                tickFormatter={(value: string) => truncateLabel(String(value), 18)}
-                width={116}
+                tickFormatter={(value: string) => truncateLabel(String(value), width < 300 ? 14 : 18)}
+                width={width > 0 && width < 300 ? 90 : 116}
               />
               <Tooltip formatter={tooltipFormatter} cursor={{ fill: '#00a8a814' }} />
               {chart.series.map((series, index) => (
@@ -184,8 +189,10 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
                   dataKey={series.key}
                   name={series.label}
                   fill={seriesColor(series, index)}
+                  stackId={chart.stacked ? 'total' : undefined}
                   radius={[0, 4, 4, 0]}
                   maxBarSize={22}
+                  isAnimationActive={false}
                 />
               ))}
             </BarChart>
@@ -195,10 +202,9 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
               <XAxis
                 dataKey={chart.category_key}
                 tick={{ fill: AXIS_INK, fontSize: 11 }}
-                interval={0}
-                angle={-20}
-                textAnchor="end"
-                height={54}
+                interval="preserveStartEnd"
+                minTickGap={16}
+                height={40}
                 tickFormatter={(value: string) => truncateLabel(String(value), 12)}
               />
               <YAxis tick={{ fill: AXIS_INK, fontSize: 11 }} tickFormatter={tickFormat} width={54} />

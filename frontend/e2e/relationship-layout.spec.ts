@@ -14,6 +14,13 @@ for (const width of [320, 390, 768, 1280, 1600]) {
         && node.getBoundingClientRect().bottom <= node.parentElement!.parentElement!.getBoundingClientRect().bottom
     }))).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    const chart = page.getByTestId('relationship-chart-suppliers')
+    await expect(chart.locator('.recharts-bar-rectangle')).toHaveCount(10)
+    await expect.poll(() => chart.locator('.recharts-cartesian-axis-tick-value').evaluateAll(nodes => {
+      const boxes = nodes.map(node => node.getBoundingClientRect()).filter(r => r.width && r.height)
+      return boxes.every((a, i) => boxes.slice(i + 1).every(b =>
+        a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top))
+    })).toBe(true)
     await page.screenshot({ path: `test-results/relationship-${width}.png`, fullPage: true })
   })
 }

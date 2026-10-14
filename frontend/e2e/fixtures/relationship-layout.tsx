@@ -2,6 +2,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import RelationshipKpis from '../../src/components/relationships/RelationshipKpis'
 import RelationshipCatalog from '../../src/components/relationships/RelationshipCatalog'
+import RelationshipCharts from '../../src/components/relationships/RelationshipCharts'
 import type { CatalogRelationship, RelationshipKpi } from '../../src/lib/types'
 import '../../src/index.css'
 
@@ -19,6 +20,12 @@ const kpis: RelationshipKpi[] = [
 createRoot(document.getElementById('root')!).render(<React.StrictMode>
   <main className="mx-auto grid max-w-5xl gap-4 p-4 md:grid-cols-[300px_minmax(0,1fr)]">
     <RelationshipCatalog relationships={[relation]} selectedId={relation.id} onSelect={() => {}} onCreate={() => {}} />
-    <section aria-label="Indicadores de prueba" className="min-w-0"><RelationshipKpis kpis={kpis} currency="CLP" /></section>
+    <section aria-label="Indicadores de prueba" className="min-w-0 space-y-4"><RelationshipKpis kpis={kpis} currency="CLP" />
+      <RelationshipCharts currency="CLP" charts={[{
+        id: 'suppliers', kind: 'bar', title: 'Compras por proveedor', help: null, category_key: 'nombre',
+        series: [{ key: 'compras', label: 'Compras', format: 'currency' }],
+        data: Array.from({ length: 10 }, (_, i) => ({ nombre: `Proveedor con nombre extenso ${i + 1}`, compras: 26000000 - i * 1000000 })),
+      }]} />
+    </section>
   </main>
 </React.StrictMode>)
