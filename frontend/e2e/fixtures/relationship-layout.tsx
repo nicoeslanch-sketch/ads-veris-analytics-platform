@@ -26,6 +26,11 @@ createRoot(document.getElementById('root')!).render(<React.StrictMode>
         series: [{ key: 'compras', label: 'Compras', format: 'currency' }],
         data: Array.from({ length: 10 }, (_, i) => ({ nombre: `Proveedor con nombre extenso ${i + 1}`, compras: 26000000 - i * 1000000 })),
       }]} />
+      <RelationshipCharts currency="CLP" charts={[{
+        id: 'months', kind: 'bar', title: 'Compras por mes', help: null, category_key: 'mes',
+        series: [{ key: 'compras', label: 'Compras', format: 'currency' }],
+        data: Array.from({ length: 10 }, (_, i) => ({ mes: `2025-${String(i + 1).padStart(2, '0')}`, compras: 26000000 - i * 1000000 })),
+      }]} />
     </section>
   </main>
 </React.StrictMode>)

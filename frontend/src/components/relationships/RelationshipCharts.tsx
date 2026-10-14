@@ -17,7 +17,8 @@ import {
 } from 'recharts'
 import { HelpCircle } from 'lucide-react'
 import Card from '../ui/Card'
-import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, formatCLPCompact, truncateLabel } from '../../lib/charts'
+import { AXIS_INK, CATEGORICAL, CHART, GRID_STROKE, truncateLabel } from '../../lib/charts'
+import { formatCurrencyCompact } from '../../lib/format'
 import { formatKpiValue } from '../../lib/relationshipDashboard'
 import type { KpiFormat, RelationshipChart } from '../../lib/types'
 
@@ -28,7 +29,7 @@ interface RelationshipChartsProps {
 
 function axisFormatter(format: KpiFormat, currency: string) {
   return (value: number) => {
-    if (format === 'currency') return formatCLPCompact(value).replace('$', currency === 'USD' ? 'US$' : '$')
+    if (format === 'currency') return formatCurrencyCompact(value, currency)
     if (format === 'percent') return `${Math.round(value)}%`
     if (format === 'days') return `${Math.round(value)}d`
     return String(Math.round(value))
@@ -37,8 +38,12 @@ function axisFormatter(format: KpiFormat, currency: string) {
 
 function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: string }) {
   const [width, setWidth] = useState(0)
+  const crowdedCategories = chart.data.length > 3 && chart.data.some(
+    (row) => String(row[chart.category_key] ?? '').length > 12,
+  ) && width / chart.data.length < 110
   const horizontal = chart.orientation === 'horizontal'
-    || (chart.kind === 'bar' && width > 0 && width < 420 && chart.data.length > 3)
+    || (chart.kind === 'bar' && width > 0 && ((width < 420 && chart.data.length > 3) || crowdedCategories))
+  const categoryAxisWidth = Math.max(90, Math.min(220, Math.round(width * 0.35)))
   const height = horizontal ? Math.max(256, Math.min(840, chart.data.length * 28 + 40)) : 256
   const primary = chart.series[0]
   const format = primary?.format ?? 'number'
@@ -174,13 +179,13 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
               margin={{ top: 4, right: 8, bottom: 4, left: 0 }}
             >
               <CartesianGrid stroke={GRID_STROKE} horizontal={false} />
-              <XAxis type="number" tick={{ fill: AXIS_INK, fontSize: 10 }} tickFormatter={tickFormat} minTickGap={12} tickCount={width < 420 ? 3 : 5} />
+              <XAxis type="number" tick={{ fill: AXIS_INK, fontSize: 10 }} tickFormatter={tickFormat} tickMargin={10} minTickGap={12} tickCount={width < 420 ? 3 : 5} />
               <YAxis
                 type="category"
                 dataKey={chart.category_key}
                 tick={{ fill: AXIS_INK, fontSize: 10 }}
-                tickFormatter={(value: string) => truncateLabel(String(value), width < 300 ? 14 : 18)}
-                width={width > 0 && width < 300 ? 90 : 116}
+                tickFormatter={(value: string) => truncateLabel(String(value), Math.floor(categoryAxisWidth / 6))}
+                width={categoryAxisWidth}
               />
               <Tooltip formatter={tooltipFormatter} cursor={{ fill: '#00a8a814' }} />
               {chart.series.map((series, index) => (
@@ -204,6 +209,7 @@ function ChartFrame({ chart, currency }: { chart: RelationshipChart; currency: s
                 tick={{ fill: AXIS_INK, fontSize: 11 }}
                 interval="preserveStartEnd"
                 minTickGap={16}
+                tickMargin={10}
                 height={40}
                 tickFormatter={(value: string) => truncateLabel(String(value), 12)}
               />
