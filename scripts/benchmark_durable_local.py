@@ -73,7 +73,15 @@ def synthetic_csv(rows, account):
     return output.getvalue().encode(), daily_totals
 
 
-def synthetic_workbook(rows, account):
+def synthetic_cost_totals(rows):
+    totals = {}
+    for i in range(rows):
+        day = f'2026-{i % 12 + 1:02}-{i % 28 + 1:02}'
+        totals[day] = totals.get(day, 0) + 400 + i % 300
+    return totals
+
+
+def synthetic_workbook(rows, account, analysis='append'):
     """Portable CI fixture; independent totals originate before XLSX encoding."""
     from openpyxl import Workbook
     workbook = Workbook(write_only=True)
@@ -97,6 +105,11 @@ def synthetic_workbook(rows, account):
     manifest = {'hojas': [{'nombre': name, 'procesar': True, 'eliminar_duplicados': False}
                            for name in names + ['Productos']]}
     scope = {'mode': 'append', 'sheets': names}
+    if analysis == 'business':
+        scope = {'mode': 'append_join', 'sheets': names + ['Productos'],
+                 'active_sheet': names[0], 'append_sheets': names,
+                 'join': {'left_sheet': names[0], 'right_sheet': 'Productos',
+                          'left_keys': ['ID Producto'], 'right_keys': ['ID Producto'], 'type': 'left'}}
     return output.getvalue(), totals, manifest, scope
 
 
@@ -182,7 +195,8 @@ class Lab:
         self.stop = threading.Event()
         self.report = {'scope': 'ephemeral local Supabase; not production capacity certification',
                        'commit_sha': os.environ.get('GITHUB_SHA', 'local'),
-                       'parameters': {'accounts': args.clients, 'rows': args.rows, 'seconds': args.seconds, 'format': args.format},
+                       'parameters': {'accounts': args.clients, 'rows': args.rows, 'seconds': args.seconds,
+                                      'format': args.format, 'analysis': args.analysis},
                        'cpu_count': os.cpu_count(), 'checks': {}, 'passed': False,
                        'safety': {'production_requests': 0, 'customer_files_read': 0}}
         self.tmp = tempfile.TemporaryDirectory(prefix='ads-capacity-')
@@ -266,7 +280,7 @@ class Lab:
         headers = {'Authorization': 'Bearer ' + token}
         manifest, scope = None, None
         if self.args.format == 'xlsx':
-            body, totals, manifest, scope = synthetic_workbook(self.args.rows, index)
+            body, totals, manifest, scope = synthetic_workbook(self.args.rows, index, self.args.analysis)
             mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         else:
             body, totals = synthetic_csv(self.args.rows, index)
@@ -280,7 +294,8 @@ class Lab:
                      json={'id': dataset_id, 'user_id': user_id, 'name': name,
                            'storage_path': path, 'source': 'excel_csv'})
         return {'headers': headers, 'dataset_id': dataset_id, 'storage_path': path, 'totals': totals,
-                'manifest': manifest, 'scope': scope}
+                'manifest': manifest, 'scope': scope,
+                'cost_totals': synthetic_cost_totals(self.args.rows) if self.args.analysis == 'business' else None}
 
     def submit(self, account, start_date, expected_status=202):
         begin = time.monotonic()
@@ -295,6 +310,8 @@ class Lab:
         job = response.json()
         assert job['job_id'].startswith('dq_')
         return {'id': job['job_id'], 'account': account, 'start': begin,
+                'expected_cost': (sum(v for day, v in account['cost_totals'].items() if day >= start_date)
+                                  if account.get('cost_totals') is not None else None),
                 'expected': sum(v for day, v in account['totals'].items() if day >= start_date)}
 
     def poll(self, job):
@@ -309,6 +326,10 @@ class Lab:
     def verify_result(self, job, result):
         assert result['status'] == 'completed', f"Job ended as {result['status']}: {result.get('error')}"
         assert result['result']['kpis']['ingresos_totales']['valor'] == job['expected'], 'Incorrect income total'
+        if job.get('expected_cost') is not None:
+            business = result['result']['analisis_negocio']['estado_resultados']
+            assert business['ventas_brutas'] == job['expected'], 'Incorrect business income'
+            assert business['costo_venta_conocido'] == job['expected_cost'], 'Incorrect related product cost'
 
     def wait_result(self, job, timeout=240):
         deadline = time.monotonic() + timeout
@@ -433,6 +454,8 @@ class Lab:
                                     'end_to_end_seconds': quantiles([row['observed_seconds'] for row in completed]),
                                     'offered_load': 'closed loop, one outstanding/account, >=10s between starts, max 1800 jobs'}
         self.report['checks'].update(all_synthetic_totals_match=True, two_consumers_respect_global_limit=True)
+        if self.args.analysis == 'business':
+            self.report['checks']['business_income_and_related_costs_match'] = True
 
     def prepare_workbooks(self):
         if self.args.format != 'xlsx':
@@ -533,6 +556,7 @@ def main():
     parser.add_argument('--rows', type=int, default=4000)
     parser.add_argument('--seconds', type=int, default=120)
     parser.add_argument('--format', choices=['csv', 'xlsx'], default='csv')
+    parser.add_argument('--analysis', choices=['append', 'business'], default='append')
     parser.add_argument('--serve', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--fault-marker', type=Path, help=argparse.SUPPRESS)
@@ -542,6 +566,8 @@ def main():
         return
     if not args.status_file or not args.output or not 2 <= args.clients <= 10 or not 100 <= args.rows <= 10000 or not 60 <= args.seconds <= 1800:
         parser.error('Require --status-file, --output; clients 2..10, rows 100..10000, seconds 60..1800')
+    if args.analysis == 'business' and args.format != 'xlsx':
+        parser.error('Business analysis requires the four-sheet XLSX fixture')
     block_external_connections()
     Lab(args).run()
 

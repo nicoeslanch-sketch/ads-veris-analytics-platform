@@ -29,11 +29,14 @@ def run(status, checks):
     key = status['SERVICE_ROLE_KEY']
     headers = {'apikey': key, 'Authorization': 'Bearer ' + key}
     uid, dataset = str(uuid4()), str(uuid4())
+    other_uid, other_dataset = str(uuid4()), str(uuid4())
     erased_uid, erased_dataset = str(uuid4()), str(uuid4())
     email, password = uid + '@example.invalid', str(uuid4()) + 'aA1!'
+    other_email, other_password = other_uid + '@example.invalid', str(uuid4()) + 'aA1!'
     contents = b'ID,Fecha,Venta\nA,2026-01-01,669700\nB,2026-01-02,330300\n'
     object_path = uid + '/synthetic.csv'
     erased_contents = b'ID,Secret\nERASED,do-not-restore\n'
+    binary_contents = bytes(range(256)) * 4096
     with httpx.Client(timeout=30, trust_env=False) as http, tempfile.TemporaryDirectory(prefix='ads-recovery-lab-') as folder:
         folder = Path(folder)
         account = http.post(base + '/auth/v1/admin/users', headers=headers,
@@ -51,6 +54,19 @@ def run(status, checks):
         sql_json(f"insert into public.datasets(id,user_id,name,storage_path) values('{dataset}','{uid}',"
                  f"'Synthetic recovery','{object_path}'); select 'true'::json;", env)
         expected = sql_json(f"select row_to_json(d) from public.datasets d where id='{dataset}';", env)
+        other_account = http.post(base + '/auth/v1/admin/users', headers=headers,
+            json={'id': other_uid, 'email': other_email, 'password': other_password, 'email_confirm': True})
+        assert other_account.status_code in (200, 201)
+        other_uid = other_account.json()['id']
+        other_path = other_uid + '/synthetic.bin'
+        binary_upload = http.post(base + '/storage/v1/object/datasets/' + other_path,
+            headers={**headers, 'Content-Type': 'application/octet-stream'}, content=binary_contents)
+        assert binary_upload.status_code in (200, 201)
+        sql_json(f"update storage.objects set owner='{other_uid}',owner_id='{other_uid}' "
+                 f"where bucket_id='datasets' and name='{other_path}'; "
+                 f"insert into public.datasets(id,user_id,name,storage_path) values('{other_dataset}',"
+                 f"'{other_uid}','Second synthetic account','{other_path}'); select 'true'::json;", env)
+        other_expected = sql_json(f"select row_to_json(d) from public.datasets d where id='{other_dataset}';", env)
         erased_account = http.post(base + '/auth/v1/admin/users', headers=headers,
             json={'id': erased_uid, 'email': erased_uid + '@example.invalid',
                   'password': str(uuid4()) + 'aA1!', 'email_confirm': True})
@@ -124,12 +140,14 @@ def run(status, checks):
         checks['new_erasure_ledger_without_data_reexport'] = True
         # Only synthetic objects/accounts created in this disposable lab.
         deleted = http.request('DELETE', base + '/storage/v1/object/datasets', headers=headers,
-                               json={'prefixes': [object_path, erased_path]})
+                               json={'prefixes': [object_path, other_path, erased_path]})
         assert deleted.status_code == 200
         deleted_user = http.delete(base + '/auth/v1/admin/users/' + uid, headers=headers)
         assert deleted_user.status_code == 200
         deleted_erased_user = http.delete(base + '/auth/v1/admin/users/' + erased_uid, headers=headers)
         assert deleted_erased_user.status_code == 200
+        deleted_other_user = http.delete(base + '/auth/v1/admin/users/' + other_uid, headers=headers)
+        assert deleted_other_user.status_code == 200
         assert sql_json('select to_json(count(*)) from public.datasets;', env) == 0
         # The disposable image owns provider tables with supabase_admin.
         # No production role is altered or granted additional permissions.
@@ -140,7 +158,7 @@ def run(status, checks):
         started = time.monotonic()
         result = restore(archive, ledger)
         checks['restore_seconds'] = round(time.monotonic() - started, 3)
-        assert result['objects_verified'] == 1
+        assert result['objects_verified'] == 2
         assert result['objects_suppressed'] == 1 and result['accounts_suppressed'] == 1
         assert sql_json(f"select to_json(count(*)) from auth.users where id='{erased_uid}';", env) == 0
         assert sql_json(f"select to_json(count(*)) from public.datasets where id='{erased_dataset}';", env) == 0
@@ -148,6 +166,7 @@ def run(status, checks):
         assert erased_object.status_code in (400, 404) and erased_object.content != erased_contents
         checks['post_backup_erasure_not_resurrected'] = True
         assert sql_json(f"select row_to_json(d) from public.datasets d where id='{dataset}';", env) == expected
+        assert sql_json(f"select row_to_json(d) from public.datasets d where id='{other_dataset}';", env) == other_expected
         restored = http.get(base + '/storage/v1/object/datasets/' + object_path, headers=headers)
         assert restored.status_code == 200 and restored.content == contents
         checks['dataset_metadata_and_file_bytes_restored'] = True
@@ -167,6 +186,22 @@ def run(status, checks):
         anonymous = http.get(base + '/storage/v1/object/authenticated/datasets/' + object_path,
                              headers={'apikey': status['ANON_KEY'], 'Authorization': 'Bearer ' + status['ANON_KEY']})
         assert anonymous.status_code in (400, 401, 403, 404)
+        other_login = http.post(base + '/auth/v1/token?grant_type=password', headers={'apikey': status['ANON_KEY']},
+            json={'email': other_email, 'password': other_password})
+        assert other_login.status_code == 200
+        other_headers = {'apikey': status['ANON_KEY'], 'Authorization': 'Bearer ' + other_login.json()['access_token']}
+        other_visible = http.get(base + '/rest/v1/datasets?select=id', headers=other_headers)
+        assert other_visible.status_code == 200 and other_visible.json() == [{'id': other_dataset}]
+        binary_restored = http.get(base + '/storage/v1/object/authenticated/datasets/' + other_path,
+                                  headers=other_headers)
+        assert binary_restored.status_code == 200 and binary_restored.content == binary_contents
+        for reader, foreign_path in ((other_headers, object_path),
+                ({'apikey': status['ANON_KEY'], 'Authorization': 'Bearer ' + jwt}, other_path)):
+            foreign = http.get(base + '/storage/v1/object/authenticated/datasets/' + foreign_path, headers=reader)
+            assert foreign.status_code in (400, 401, 403, 404), ('cross-account file access', foreign.status_code)
+        checks['two_restored_accounts_remain_isolated'] = True
+        checks['binary_bytes_restored'] = len(binary_contents)
+        checks['binary_sha256'] = hashlib.sha256(binary_contents).hexdigest()
         checks['restored_private_file_owner_only'] = True
         checks['restored_password_login_and_owner_access'] = True
         assert sql_json("select to_json(not has_function_privilege('authenticated','public.analysis_queue(text,uuid,text,jsonb,uuid)','execute'));", env)

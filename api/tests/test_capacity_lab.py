@@ -58,3 +58,21 @@ def test_workbook_oracle_reconciles_disjoint_periods():
     assert len(manifest['hojas']) == len(workbook.sheetnames) == 4
     assert 'Productos' not in scope['sheets']
     workbook.close()
+
+
+def test_business_capacity_fixture_matches_independent_cost_oracle():
+    from app.routes.pipeline import _metrics_multi_sync, _parse_sheet_manifest
+    from app.engine.multi_sheet import validate_analysis_scope
+    import json
+
+    raw, income, manifest, scope = lab.synthetic_workbook(100, 2, 'business')
+    parsed = _parse_sheet_manifest(json.dumps(manifest))
+    scope = validate_analysis_scope(scope, [row['nombre'] for row in parsed['hojas']])
+    costs = lab.synthetic_cost_totals(100)
+    for start in ('2026-01-01', '2026-06-01', '2026-12-01'):
+        result = _metrics_multi_sync('synthetic.xlsx', raw, parsed, scope, start, None)
+        expected = sum(value for day, value in income.items() if day >= start)
+        expected_cost = sum(value for day, value in costs.items() if day >= start)
+        assert result['kpis']['ingresos_totales']['valor'] == expected
+        assert result['analisis_negocio']['estado_resultados']['ventas_brutas'] == expected
+        assert result['analisis_negocio']['estado_resultados']['costo_venta_conocido'] == expected_cost
