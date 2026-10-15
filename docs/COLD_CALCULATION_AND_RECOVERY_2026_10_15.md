@@ -40,6 +40,11 @@ the current request, includes an unsupported (`None`) result and is explicitly
 disabled when a date boundary or business filter is supplied. Tests cover these
 guards and assert one business calculation in the automatic discovery path.
 
+An alternating three-run local comparison of that discovery stage measured a
+median of 9.325 s before and 6.365 s after (31.7% lower), with identical complete
+responses. These timings exclude parsing/cleaning and cannot be added to the
+catalog percentage or interpreted as production response-time guarantees.
+
 The manual capacity workflow now offers `analysis=business` for its four-sheet
 XLSX fixture. It consolidates three periods, joins product costs and verifies
 both revenue and known cost against independent daily sums for every completed
@@ -47,6 +52,17 @@ job. `analysis=append` retains the older workload for comparison; business mode
 rejects CSV rather than silently measuring a different path. Preparation,
 persistence fault injection, worker-crash recovery, account isolation and the
 global one-heavy-job limit remain enabled.
+
+The first business-capacity run (`38823404964`) stopped before sustained load:
+standardization succeeded, but one concurrent snapshot write returned PostgreSQL
+23505. The schema had both a primary key on `dataset_id` and a redundant unique
+constraint on `(dataset_id, user_id)`. Only the first is an arbiter for the RPC's
+`ON CONFLICT (dataset_id)`. Migration `20261015233507` removes the redundant
+constraint, not the primary key or any ownership/revision check. No foreign key
+references that redundant constraint in the repository or the inspected live
+schema. A database regression exercises 128 simultaneous first-sheet writes across
+fresh datasets and both RPC versions, plus stale-revision and wrong-owner denials.
+The failed run is not capacity evidence; a successful repeat is required.
 
 ## Recovery drill
 

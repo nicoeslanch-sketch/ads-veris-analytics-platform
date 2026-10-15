@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import struct
 import sys
+import threading
 import time
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
@@ -375,7 +376,60 @@ class SecurityLab:
         self.test_privacy()
         self.test_operational_health()
         self.test_initial_import_queue()
+        self.test_concurrent_restore_snapshots()
         self.test_account_erasure_recovery()
+
+    def test_concurrent_restore_snapshots(self):
+        owner, foreign = self.account(), self.account()
+        # One unique arbiter, still enforced by the original primary key.
+        assert self.sql("select count(*) from pg_index where indrelid="
+                        "'public.dataset_restore_states'::regclass and indisunique") == '1'
+        assert self.sql("select count(*) from pg_constraint where conrelid="
+                        "'public.dataset_restore_states'::regclass and contype='p' "
+                        "and pg_get_constraintdef(oid)='PRIMARY KEY (dataset_id)'") == '1'
+        sheets = [f'Sheet_{i}' for i in range(8)]
+        for version in (1, 2):
+            function = 'store_restore_snapshot_guarded' + ('_v2' if version == 2 else '')
+            signature = 'uuid,uuid,text,jsonb,bigint,text,text,text,text,text,jsonb,jsonb,boolean,text'
+            if version == 2:
+                signature += ',jsonb,jsonb,jsonb'
+            for role in ('anon', 'authenticated'):
+                assert self.sql(f"select has_function_privilege('{role}',"
+                                f"'public.{function}({signature})','execute')") == 'f'
+            for _ in range(8):
+                dataset = str(uuid4())
+                self.sql(f"insert into public.datasets(id,user_id,name) "
+                         f"values('{dataset}','{owner}','concurrent.xlsx');")
+                revision = self.rpc('reserve_restore_snapshot_revision',
+                                    {'p_dataset_id': dataset, 'p_user_id': owner})
+                def payload(index, current_revision=revision):
+                    snapshot = {'revision': current_revision, 'source_sha256': 'a' * 64,
+                                'rules_hash': 'b' * 16, 'mapping_hash': 'c' * 16,
+                                'sheet': sheets[index], 'engine_version': 'concurrency-lab'}
+                    data = {f'p_{key}': value for key, value in snapshot.items()}
+                    data.update(p_dataset_id=dataset, p_user_id=owner, p_sheet_key=sheets[index],
+                                p_snapshot=snapshot, p_active_sheet=sheets[0],
+                                p_available_sheets=sheets, p_excluded_sheets=[], p_combine_sheets=False)
+                    if version == 2:
+                        data.update(p_selected_sheets=sheets, p_sheet_errors={}, p_analysis_scope={})
+                    return data
+                barrier = threading.Barrier(len(sheets))
+                def write(index):
+                    barrier.wait(timeout=10)
+                    return self.rpc(function, payload(index))
+                assert self.concurrent(write, count=len(sheets)) == [True] * len(sheets)
+                assert self.sql(f"select count(*) from public.dataset_sheet_snapshots "
+                                f"where dataset_id='{dataset}' and user_id='{owner}' "
+                                f"and revision={revision}") == str(len(sheets))
+                newer = self.rpc('reserve_restore_snapshot_revision',
+                                 {'p_dataset_id': dataset, 'p_user_id': owner})
+                assert self.rpc(function, payload(0, newer)) is True
+                assert self.rpc(function, payload(1)) is False
+                self.rpc(function, {**payload(1, newer), 'p_user_id': foreign}, expected=400)
+                assert self.sql(f"select revision from public.dataset_restore_states "
+                                f"where dataset_id='{dataset}' and user_id='{owner}'") == str(newer)
+        self.checks['parallel_first_sheet_snapshots_v1_v2_128_writes'] = True
+        self.checks['snapshot_owner_revision_and_private_rpc_guards_preserved'] = True
 
     def test_account_erasure_recovery(self):
         # Exercise the real orchestrator against disposable Auth, Storage and DB.
