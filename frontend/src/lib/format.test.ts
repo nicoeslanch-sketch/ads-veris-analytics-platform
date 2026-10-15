@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanFilename, formatCLP, formatRelativeTime, setActiveCurrency } from './format'
+import { cleanFilename, formatCLP, formatCurrencyCompact, formatRelativeTime, getActiveCurrency, setActiveCurrency } from './format'
 
 describe('formatCLP', () => {
   it('muestra UF cuando esa es la moneda activa', () => {
@@ -12,6 +12,21 @@ describe('formatCLP', () => {
   it('mantiene pesos como moneda predeterminada', () => {
     setActiveCurrency(undefined)
     expect(formatCLP(669700)).toBe('$669.700')
+  })
+})
+
+describe('formatCurrencyCompact', () => {
+  it.each([
+    ['CLP', 26000000, '$26M'],
+    ['USD', 26000000, 'US$26M'],
+    ['UF', 12.34, 'UF 12,34'],
+    ['EUR', -1500, '\u20ac-1,5K'],
+    ['unknown', 2500, '$2,5K'],
+  ])('usa %s sin heredar ni modificar la moneda global', (currency, value, expected) => {
+    setActiveCurrency('USD')
+    expect(formatCurrencyCompact(Number(value), String(currency))).toBe(expected)
+    expect(getActiveCurrency()).toBe('USD')
+    setActiveCurrency('CLP')
   })
 })
 

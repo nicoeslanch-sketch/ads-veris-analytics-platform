@@ -58,6 +58,23 @@ useful relations in the reference workbook produce charts.
 Neither the workbook nor the oracle is required by production code; they must
 not be committed or uploaded to the public repository.
 
+## Production verification (2026-10-14)
+
+The authenticated workflow completed standardization and cleaning of 22 data
+sheets, preserving 16,546 rows without requesting deduplication. The workbook
+download completed, and its exported data passed the same 259 oracle checks.
+Business mode rendered the reconciled figures and the 2025 filter matched the
+reference. Five live bot questions covered total revenue, a year follow-up,
+gross profit, product profitability and human support.
+
+Cold calculations and full-workbook export still took minutes on the current
+basic server. This is a correctness check, not a latency or capacity guarantee.
+An old browser tab also failed to load a removed JavaScript module; explicit
+reload restored the saved work. The recovery message now distinguishes that
+interface failure from a cleaning error and warns about unsaved changes rather
+than automatically reloading. Year, quarter and custom-range labels no longer
+masquerade as the first month; reconciled exploration uses one period selector.
+
 ## Limits and rollout
 
 The ledger does not infer an opening bank balance, complete balance sheet,

@@ -63,13 +63,13 @@ def answer_relationship(message, context, history=None):
     from .metric_assistant import _es_number, format_amount, _result
 
     question = normalize_query(message)
-    if re.search(r'\b(descargar|descargo|subir|limpiar|limpieza|estandarizar|contrasena|autenticador)\b', question):
+    if re.search(r'\b(descargar|descargo|subir|limpiar|limpieza|estandarizar|contrasena|autenticador|coins|monedas|planes|suscripcion)\b', question):
         return None
-    financial = r'\b(ventas|ingresos|utilidad|ganancia|margen|costo|costos|gastos|cobertura|stock|inventario|clientes|proveedores|riesgo|rentables|moneda|uf|pesos|caja|efectivo|liquidez|deuda|ticket|iva|dso|unidades|productos)\b'
+    financial = r'\b(ventas|vendi|vendimos|ingresos|compras|compra|compre|compramos|utilidad|ganancia|margen|costo|costos|gastos|gaste|gastamos|cobertura|stock|inventario|clientes|proveedor|proveedores|riesgo|rentables|moneda|uf|pesos|caja|efectivo|liquidez|deuda|ticket|iva|dso|unidades|productos)\b'
     previous = next((normalize_query(row.get('content', '')) for row in reversed(history or [])
                      if row.get('role') == 'user' and re.search(financial, normalize_query(row.get('content', '')))), '')
     followup = bool(re.search(r'\b(y eso|es bueno|es malo|como lo mejoro|que hago|por que)\b', question))
-    if previous and not re.search(financial, question) and re.search(r'\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b', question):
+    if previous and not re.search(financial, question) and re.search(r'\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|20\d{2})\b', question):
         followup = True
     if followup:
         question += ' ' + previous
@@ -89,12 +89,12 @@ def answer_relationship(message, context, history=None):
     if re.search(r'\b(convertir|convierte|conversion|pasar|pasalo)\b', question) and re.search(r'\b(uf|pesos|clp|usd|dolares)\b', question):
         return _result(scope + f"la moneda es {context['currency']}. Para convertir necesito la tasa y su fecha; no aplicare una tasa inventada.", 'metric_relationship_conversion', suggestions, 'medium')
     dated = re.search(r'\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|ayer|hoy|trimestre|semestre|mes pasado)\b|\b20\d{2}\b', question)
-    scoped_ranking = re.search(r'\b(en|para|sin|excepto) (?:la |el )?(sucursal|cliente|producto|vendedor)\b', question)
-    named_entity = re.search(r'\b(sucursal|cliente|producto|vendedor)\s+\w+', question)
+    scoped_ranking = re.search(r'\b(en|para|sin|excepto) (?:la |el )?(sucursal|cliente|producto|vendedor|proveedor)\b', question)
+    named_entity = re.search(r'\b(sucursal|cliente|producto|vendedor|proveedor)\s+\w+', question)
     ranking = re.search(r'\b(mas|menos|top|ranking|mejor|peor)\b', question)
     if dated or scoped_ranking or (named_entity and not ranking):
         return _result(scope + 'no tengo ese desglose por fecha o entidad en los indicadores publicados. Ajusta el periodo o filtro en la vista; no usare el total como si fuera ese segmento.', 'metric_relationship_scope', suggestions, 'medium')
-    if re.search(r'\b(moneda|uf|pesos)\b', question) and not re.search(r'\b(ventas|ingresos|utilidad|ganancia|costo|costos|gastos|stock)\b', question):
+    if re.search(r'\b(moneda|uf|pesos)\b', question) and not re.search(r'\b(ventas|vendi|vendimos|ingresos|compras|compra|compre|compramos|utilidad|ganancia|costo|costos|gastos|gaste|stock)\b', question):
         return _result(scope + f"los importes estan expresados en {context['currency']}. No hice una conversion a pesos ni a otra moneda.",
                        'metric_relationship_currency', suggestions)
     kpis = [row for row in context.get('kpis', []) if row.get('available') and row.get('value') is not None]
@@ -107,13 +107,21 @@ def answer_relationship(message, context, history=None):
             return format_amount(value, context['currency'])
         return _es_number(value, decimals=1 if row['format'] in {'percent', 'days'} else 2) + {'percent': '%', 'days': ' dias'}.get(row['format'], '')
 
-    if re.search(r'\b(mas|menos|top|ranking|mejor|peor)\b', question) and re.search(r'\b(producto|productos|sucursal|sucursales|cliente|clientes|vendedor|vendedores)\b', question):
-        measure = 'unidades|cantidad' if re.search(r'\b(unidades|cantidad|vendidos)\b', question) else 'utilidad|ganancia' if re.search(r'\b(utilidad|ganancia|rentables)\b', question) else 'ventas|ingresos'
-        dimension = next(word for word in ('producto', 'sucursal', 'cliente', 'vendedor') if word in question)
+    purchase = bool(re.search(r'\b(compras|compra|compre|compramos)\b', question))
+    purchase_count = purchase and bool(re.search(r'\b(cuantas|cantidad|numero)\b', question))
+    purchase_average = purchase and bool(re.search(r'\b(promedio|unitario)\b', question))
+    if re.search(r'\b(mas|menos|top|ranking|mejor|peor)\b', question) and re.search(r'\b(producto|productos|sucursal|sucursales|cliente|clientes|vendedor|vendedores|proveedor|proveedores)\b', question):
+        measure = 'unidades|cantidad' if re.search(r'\b(unidades|cantidad|vendidos)\b', question) else 'utilidad|ganancia' if re.search(r'\b(utilidad|ganancia|rentables)\b', question) else 'compras|compra' if purchase else 'ventas|ingresos'
+        if purchase_count:
+            measure = 'cantidad|numero|documentos|operaciones'
+        elif purchase_average:
+            measure = 'promedio|unitario'
+        dimension = next(word for word in ('producto', 'sucursal', 'cliente', 'vendedor', 'proveedor') if word in question)
         for chart in context.get('charts', []):
             if dimension not in normalize_query(chart['title'] + ' ' + chart['category_key']):
                 continue
-            series = next((s for s in chart['series'] if re.search(measure, normalize_query(s['label'] + ' ' + s['key']))), None)
+            series = next((s for s in chart['series'] if re.search(measure, normalize_query(s['label'] + ' ' + s['key']))
+                           and (not purchase_count or s['format'] in {'integer', 'number'})), None)
             if not series:
                 continue
             rows = [r for r in chart['data'] if isinstance(r.get(series['key']), (int, float)) and r.get(chart['category_key']) is not None]
@@ -122,7 +130,7 @@ def answer_relationship(message, context, history=None):
             ascending = bool(re.search(r'\b(menos|peor)\b', question))
             rows = sorted(rows, key=lambda r: r[series['key']], reverse=not ascending)[:3]
             text = '; '.join(f"{r[chart['category_key']]}: {formatted({'value': r[series['key']], 'format': series['format']})}" for r in rows)
-            return _result(scope + f"entre los elementos mostrados en '{chart['title']}', por {series['label']}: {text}. No implica que sean todos los productos o clientes del archivo.", 'metric_relationship_ranking', suggestions)
+            return _result(scope + f"entre los elementos mostrados en '{chart['title']}', por {series['label']}: {text}. No implica que sean todos los productos, clientes o proveedores del archivo.", 'metric_relationship_ranking', suggestions)
         return _result(scope + 'no tengo un grafico con ese desglose y esa medida. No confundire mas unidades con mas ingresos o mayor margen.', 'metric_relationship_ranking_missing', suggestions, 'medium')
 
     topics = (
@@ -130,8 +138,9 @@ def answer_relationship(message, context, history=None):
         (r'\b(utilidad|ganancia|beneficio)\b', r'utilidad|ganancia'),
         (r'\bmargen\b', r'margen'),
         (r'\b(costo|costos)\b', r'^costo$|costo de'),
-        (r'\b(ventas|ingresos)\b', r'ventas|ingresos'),
-        (r'\bgastos\b', r'gasto'),
+        (r'\b(ventas|vendi|vendimos|ingresos)\b', r'ventas|ingresos'),
+        (r'\b(compras|compra|compre|compramos)\b', r'compra'),
+        (r'\b(gastos|gaste|gastamos)\b', r'gasto'),
         (r'\b(stock|inventario)\b', r'stock|inventario'),
         (r'\bclientes\b', r'cliente'),
         (r'\b(riesgo|rentables)\b', r'riesgo|rentables'),
@@ -151,6 +160,15 @@ def answer_relationship(message, context, history=None):
             if 'utilidad|ganancia' in target and re.search(r'\b(neta|neto)\b', question):
                 target = r'(utilidad|ganancia|resultado).*net[oa]'
             matches = [row for row in kpis if re.search(target, normalize_query(row['id'] + ' ' + row['label']))]
+            if target == 'compra':
+                if purchase_count:
+                    matches = [row for row in matches if row['format'] in {'integer', 'number'}
+                               and re.search(r'cantidad|numero|documentos|operaciones', normalize_query(row['id'] + ' ' + row['label']))]
+                elif purchase_average:
+                    matches = [row for row in matches if re.search(r'promedio|unitario', normalize_query(row['id'] + ' ' + row['label']))]
+                else:
+                    matches = [row for row in matches if row['format'] == 'currency'
+                               and not re.search(r'promedio|unitario', normalize_query(row['id'] + ' ' + row['label']))]
             selected.extend(matches)
             if not matches:
                 missing.append(re.search(pattern, question)[0])

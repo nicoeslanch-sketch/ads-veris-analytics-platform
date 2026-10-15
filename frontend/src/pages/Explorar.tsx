@@ -15,6 +15,7 @@ import { getCachedMetrics, metricsCacheKey, requestMetrics } from '../lib/analys
 import { ApiError, apiPostJob, buildDatasetForm } from '../lib/api'
 import { saveAnalysis } from '../lib/datasets'
 import { setActiveCurrency } from '../lib/format'
+import { periodSelectValue } from '../lib/periodPresentation'
 import type { AnalysisScope, MetricsResult } from '../lib/types'
 
 export default function Explorar() {
@@ -39,6 +40,7 @@ export default function Explorar() {
   const [fetchedMetrics, setMetrics] = useState<MetricsResult | null>(null)
   const metrics = demo.active ? demo.metrics : fetchedMetrics
   const visiblePeriod = demo.active ? ALL_PERIOD : rango
+  const selectedPeriod = periodSelectValue(visiblePeriod)
   const standaloneBusinessAvailable = (
     analysisScope?.mode === 'single'
     && metrics?.tipo_analisis === 'ventas'
@@ -237,17 +239,22 @@ export default function Explorar() {
         <RelationshipWorkspace />
       ) : (
         <>
-          <div className="mb-5 flex min-w-0 flex-wrap items-center gap-3">
+          {!metrics?.analisis_negocio?.conciliacion?.available && <div className="mb-5 flex min-w-0 flex-wrap items-center gap-3">
             <label className="flex min-w-0 max-w-full flex-1 items-center gap-2 text-sm font-medium text-navy sm:flex-none">
               <CalendarDays className="h-4 w-4 shrink-0 text-teal" aria-hidden />
               Período
-              <select aria-label="Período del análisis" disabled={demo.active} value={visiblePeriod.from?.slice(0, 7) ?? 'all'} onChange={(event) => setRango(event.target.value === 'all' ? ALL_PERIOD : monthPeriod(event.target.value))} className="min-w-0 max-w-full flex-1 rounded-lg border border-navy/20 bg-white px-3 py-2 text-sm disabled:opacity-60 sm:flex-none">
+              <select aria-label="Período del análisis" disabled={demo.active} value={selectedPeriod} onChange={(event) => {
+                const value = event.target.value
+                if (value === 'all') setRango(ALL_PERIOD)
+                else if (/^\d{4}-\d{2}$/.test(value)) setRango(monthPeriod(value))
+              }} className="min-w-0 max-w-full flex-1 rounded-lg border border-navy/20 bg-white px-3 py-2 text-sm disabled:opacity-60 sm:flex-none">
                 <option value="all">Todo el período</option>
+                {(selectedPeriod === 'custom' || /^\d{4}$/.test(selectedPeriod)) && <option value={selectedPeriod}>{visiblePeriod.label}</option>}
                 {monthsAvailable.map((month) => <option key={month} value={month}>{month}</option>)}
               </select>
             </label>
             {loading && <span role="status" className="text-xs text-navy/60">Actualizando el análisis...</span>}
-          </div>
+          </div>}
           {metrics?.analisis_negocio?.filtros && <BusinessFilterBar options={metrics.analisis_negocio.filtros.disponibles} value={businessFilters} disabled={loading} onChange={setBusinessFilters} />}
           {error && <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-coral/30 px-4 py-3 text-sm text-coral"><p className="min-w-0 break-words">{error}</p><button type="button" onClick={() => setRetryTick((tick) => tick + 1)} className="font-semibold underline">Reintentar</button></div>}
           {loading ? <AnalysisLoadingPanel operation={`Preparando el análisis${sheet ? ` de ${sheet}` : ''}`} detail="Se conserva la limpieza realizada." onCancel={cancelMetrics} /> : error ? null : metrics?.moneda_mixta ? (
