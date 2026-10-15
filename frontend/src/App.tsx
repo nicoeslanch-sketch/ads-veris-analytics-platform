@@ -1,14 +1,11 @@
-import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { startApiWarmup } from './lib/api'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { hasPasswordRecoveryHint, PASSWORD_RECOVERY_PATH } from './auth/recovery'
-import { AccessProvider } from './lib/access'
-import { DatasetProvider } from './data/DatasetContext'
-import { DemoProvider } from './demo/DemoContext'
+import WorkspaceProviders from './data/WorkspaceProviders'
 import ProtectedRoute from './auth/ProtectedRoute'
-import SecurityGate from './auth/SecurityGate'
 import AppShell from './components/layout/AppShell'
 import Login from './pages/Login'
 
@@ -25,12 +22,6 @@ const Configuracion = lazy(() => import('./pages/Configuracion'))
 const AdminCuentas = lazy(() => import('./pages/AdminCuentas'))
 const RestablecerContrasena = lazy(() => import('./pages/RestablecerContrasena'))
 const Legal = lazy(() => import('./pages/Legal'))
-
-function WorkspaceProviders({ children }: { children: ReactNode }) {
-  // Consent is collected at signup. Returning accounts enter their workspace
-  // after authentication and the existing session security verification.
-  return <SecurityGate><AccessProvider><DatasetProvider><DemoProvider>{children}</DemoProvider></DatasetProvider></AccessProvider></SecurityGate>
-}
 
 function lazyPage(Page: LazyExoticComponent<ComponentType>) {
   return (
