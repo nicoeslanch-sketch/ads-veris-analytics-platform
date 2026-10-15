@@ -34,6 +34,12 @@ matched their previous complete JSON output. All 259 independent oracle checks
 
 ## Capacity workload
 
+Automatic business discovery also reuses the full unfiltered analysis it has
+already computed when constructing the response metrics. The reuse is local to
+the current request, includes an unsupported (`None`) result and is explicitly
+disabled when a date boundary or business filter is supplied. Tests cover these
+guards and assert one business calculation in the automatic discovery path.
+
 The manual capacity workflow now offers `analysis=business` for its four-sheet
 XLSX fixture. It consolidates three periods, joins product costs and verifies
 both revenue and known cost against independent daily sums for every completed

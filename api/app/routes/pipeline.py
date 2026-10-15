@@ -3528,6 +3528,9 @@ def _cached_export_signed_download(
         return None
 
 
+_BUSINESS_ANALYSIS_UNSET = object()
+
+
 @analysis_stage("compute_metrics")
 def _metrics_multi_from_processed(
     filename: str,
@@ -3538,6 +3541,8 @@ def _metrics_multi_from_processed(
     date_from: str | None,
     date_to: str | None,
     business_filters: dict[str, str] | None = None,
+    *,
+    _unfiltered_business: object = _BUSINESS_ANALYSIS_UNSET,
 ) -> dict:
     business_view = analysis_scope["mode"] == "append_join"
     _validate_scope_currencies(analysis_scope, mappings, results, business_filters)
@@ -3548,18 +3553,22 @@ def _metrics_multi_from_processed(
     # join genérico bloqueaba la visión aun cuando las 11 fuentes estaban
     # completas. El modelo controlado valida toda la red antes de publicar KPI.
     report_job_progress("business", 0, 2)
-    business_analysis = (
-        analyze_business_workbook(
-            frames,
-            mappings,
-            results,
-            date_from=date_from,
-            date_to=date_to,
-            filters=business_filters,
-        )
-        if business_view
-        else None
-    )
+    business_analysis = None
+    if business_view:
+        # Automatic relationship discovery has already analyzed these same
+        # frames. Reuse only its unfiltered result within the current request.
+        if (_unfiltered_business is not _BUSINESS_ANALYSIS_UNSET
+                and date_from is None and date_to is None and not business_filters):
+            business_analysis = _unfiltered_business
+        else:
+            business_analysis = analyze_business_workbook(
+                frames,
+                mappings,
+                results,
+                date_from=date_from,
+                date_to=date_to,
+                filters=business_filters,
+            )
     if (
         isinstance(business_analysis, dict)
         and business_analysis.get("perfil") == "servicios_tecnicos"
@@ -4063,6 +4072,7 @@ def _relationships_sync(
         "manual": manual_result,
         "message": None if safe else "No encontramos una conexion segura entre estas hojas. Puedes analizarlas por separado.",
     }
+    service_business = _BUSINESS_ANALYSIS_UNSET
     if manual is None:
         service_business = analyze_business_workbook(
             all_frames,
@@ -4123,6 +4133,7 @@ def _relationships_sync(
                     service_scope,
                     None,
                     None,
+                    _unfiltered_business=service_business,
                 )
                 response["message"] = None
     if focused_transaction_order:
@@ -4181,6 +4192,7 @@ def _relationships_sync(
                     scope,
                     None,
                     None,
+                    _unfiltered_business=service_business,
                 )
                 if document_fallback:
                     if not response["metrics"].get("analisis_negocio"):
