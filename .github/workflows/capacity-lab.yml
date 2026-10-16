@@ -21,6 +21,12 @@ on:
         options: [csv, xlsx]
         default: xlsx
         required: true
+      analysis:
+        description: Append periods or business view with product costs (XLSX only)
+        type: choice
+        options: [append, business]
+        default: business
+        required: true
 
 permissions:
   contents: read
@@ -40,6 +46,7 @@ jobs:
       ROWS: ${{ inputs.rows }}
       DURATION_SECONDS: ${{ inputs.seconds }}
       FILE_FORMAT: ${{ inputs.format }}
+      ANALYSIS_MODE: ${{ inputs.analysis }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -67,7 +74,8 @@ jobs:
         run: >-
           python scripts/benchmark_durable_local.py
           --status-file "$STATUS_FILE" --clients "$CLIENTS" --rows "$ROWS"
-          --seconds "$DURATION_SECONDS" --format "$FILE_FORMAT" --output artifacts/capacity-lab.json
+          --seconds "$DURATION_SECONDS" --format "$FILE_FORMAT" --analysis "$ANALYSIS_MODE"
+          --output artifacts/capacity-lab.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

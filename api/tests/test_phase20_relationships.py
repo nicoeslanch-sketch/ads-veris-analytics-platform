@@ -92,6 +92,48 @@ def test_catalog_id_is_stable_across_calls():
     assert first == second
 
 
+@pytest.mark.parametrize("periods", [1, 3])
+def test_catalog_classifies_each_immutable_sheet_once(monkeypatch, periods):
+    from app.engine import relationships
+
+    frames = {f"Ventas_{year}": _ventas() for year in range(2024, 2024 + periods)}
+    frames["Productos"] = _productos()
+    frames.update({f"Notas_{i}": pd.DataFrame({"Nota": [f"text {i}"]}) for i in range(16)})
+    original = relationships._sheet_kind
+    calls = []
+
+    def classify(name, frame):
+        calls.append((name, len(frame)))
+        return original(name, frame)
+
+    monkeypatch.setattr(relationships, "_sheet_kind", classify)
+    catalog = detect_relationship_catalog(frames)
+    assert catalog["relationships"]
+    assert len(calls) == len(frames) + int(periods > 1)
+    if periods > 1:
+        assert catalog["relationships"][0]["append_sheets"] == list(frames)[:periods]
+
+
+def test_catalog_does_not_reuse_classification_from_another_request(monkeypatch):
+    from app.engine import relationships
+
+    frames = {"Ventas": _ventas(), "Productos": _productos()}
+    first = detect_relationship_catalog(frames)
+    calls = []
+    original = relationships._sheet_kind
+
+    def classify(name, frame):
+        calls.append(name)
+        return original(name, frame)
+
+    monkeypatch.setattr(relationships, "_sheet_kind", classify)
+    frames["Productos"] = pd.concat([_productos(), _productos()], ignore_index=True)
+    second = detect_relationship_catalog(frames)
+    assert first["relationships"]
+    assert second["relationships"] == []
+    assert calls == list(frames)
+
+
 def test_catalog_finds_multiple_safe_relationships():
     ventas = _ventas()
     ventas["ID_Cliente"] = ["C1", "C2", "C1", "C3", "C2", "C1"]

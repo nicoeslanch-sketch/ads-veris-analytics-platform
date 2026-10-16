@@ -136,6 +136,8 @@ def _is_sales_transaction(
     name: str,
     frame: pd.DataFrame,
     mapping: dict[str, str],
+    *,
+    kind: str | None = None,
 ) -> bool:
     """Reconoce ventas por semántica aunque la hoja se llame solo "Enero".
 
@@ -144,7 +146,8 @@ def _is_sales_transaction(
     transaccional completo detectado por el motor.
     """
 
-    kind = _sheet_kind(name, frame)
+    if kind is None:
+        kind = _sheet_kind(name, frame)
     if kind == "ventas":
         return True
     if kind in {
@@ -216,6 +219,9 @@ def classify_relationship_template(
     right_name: str,
     right_frame: pd.DataFrame,
     right_mapping: dict[str, str],
+    *,
+    left_kind: str | None = None,
+    right_kind: str | None = None,
 ) -> tuple[str, str, str]:
     """Clasifica la relación en (template, label, purpose).
 
@@ -223,9 +229,11 @@ def classify_relationship_template(
     nombre como señal secundaria), nunca en nombres exactos de hoja.
     """
 
-    left_kind = _sheet_kind(left_name, left_frame)
-    right_kind = _sheet_kind(right_name, right_frame)
-    left_sales = _is_sales_transaction(left_name, left_frame, left_mapping)
+    if left_kind is None:
+        left_kind = _sheet_kind(left_name, left_frame)
+    if right_kind is None:
+        right_kind = _sheet_kind(right_name, right_frame)
+    left_sales = _is_sales_transaction(left_name, left_frame, left_mapping, kind=left_kind)
     label = f"{right_name} ↔ {left_name}"
 
     def build(template: str, purpose: str, pretty: str) -> tuple[str, str, str]:
@@ -265,16 +273,14 @@ def classify_relationship_template(
 
 
 def _unsupported_generic_pair(
-    left_name: str,
-    left: pd.DataFrame,
-    right_name: str,
-    right: pd.DataFrame,
+    left_kind: str,
+    right_kind: str,
 ) -> bool:
     """Descarta cruces que comparten una clave pero no tienen todavía una
     plantilla empresarial honesta. No deben aparecer para terminar luego en
     "Conexión no disponible"."""
 
-    kinds = {_sheet_kind(left_name, left), _sheet_kind(right_name, right)}
+    kinds = {left_kind, right_kind}
     return kinds in (
         {"inventario", "costos"},
         {"inventario", "historial_costos"},
@@ -314,6 +320,7 @@ def _consolidated_sales_relationships(
     frames: dict[str, pd.DataFrame],
     resolved: dict[str, dict[str, str]],
     results: dict[str, dict],
+    kinds: dict[str, str],
 ) -> list[dict[str, Any]]:
     """Crea conexiones explícitas de todos los periodos de venta con una
     dimensión de costos/productos. La izquierda se concatena, nunca se une
@@ -322,7 +329,7 @@ def _consolidated_sales_relationships(
     sales_names = [
         name
         for name, frame in frames.items()
-        if _is_sales_transaction(name, frame, resolved[name])
+        if _is_sales_transaction(name, frame, resolved[name], kind=kinds[name])
     ]
     if len(sales_names) < 2:
         return []
@@ -336,6 +343,9 @@ def _consolidated_sales_relationships(
         # No se inventa una consolidacion cuando las tablas de venta tienen
         # granos o esquemas realmente incompatibles.
         return []
+    # Concatenation creates a new frame; classify that frame once, not once
+    # per candidate dimension. Never retain classifications across requests.
+    combined_kind = _sheet_kind(sales_names[0], combined)
     consolidated: list[dict[str, Any]] = []
     supported_right_kinds = {
         "costos",
@@ -349,7 +359,7 @@ def _consolidated_sales_relationships(
     for right_name, right in frames.items():
         if right_name in sales_names:
             continue
-        right_kind = _sheet_kind(right_name, right)
+        right_kind = kinds[right_name]
         right_mapping = resolved[right_name]
         if right_kind not in supported_right_kinds:
             continue
@@ -402,6 +412,8 @@ def _consolidated_sales_relationships(
             right_name,
             right,
             right_mapping,
+            left_kind=combined_kind,
+            right_kind=right_kind,
         )
         currency_ok = all(
             _currency_compatible(
@@ -612,7 +624,7 @@ def detect_relationship_catalog(
     for first, second in itertools.combinations(frames, 2):
         oriented = orient_pair(first, second)
         if oriented is None:
-            if _unsupported_generic_pair(first, frames[first], second, frames[second]):
+            if _unsupported_generic_pair(kinds[first], kinds[second]):
                 discarded += 1
             continue
         left_name, right_name = oriented
@@ -638,7 +650,8 @@ def detect_relationship_catalog(
         if best is None:
             continue
         template, label, purpose = classify_relationship_template(
-            left_name, left, resolved[left_name], right_name, right, resolved[right_name]
+            left_name, left, resolved[left_name], right_name, right, resolved[right_name],
+            left_kind=kinds[left_name], right_kind=kinds[right_name],
         )
         # A valid key alone is not an analytical query. Reject connections
         # without a measure or a descriptive grouping before offering them.
@@ -655,7 +668,7 @@ def detect_relationship_catalog(
                 discarded += 1
                 continue
         if template == "generic" and _unsupported_generic_pair(
-            left_name, left, right_name, right
+            kinds[left_name], kinds[right_name]
         ):
             discarded += 1
             continue
@@ -716,7 +729,7 @@ def detect_relationship_catalog(
             discarded += 1
 
     relationships.extend(
-        _consolidated_sales_relationships(frames, resolved, results)
+        _consolidated_sales_relationships(frames, resolved, results, kinds)
     )
 
     # El libro de servicios declara relaciones de dominio que un detector

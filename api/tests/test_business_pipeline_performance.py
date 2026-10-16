@@ -79,3 +79,37 @@ def test_cancellation_after_business_phase_skips_remaining_metrics(prepared, mon
     with pytest.raises(JobCancelled):
         pipeline._metrics_multi_from_processed('synthetic', *prepared, None, None)
     assert not metrics.called
+
+
+def test_automatic_relationship_discovery_computes_business_only_once(prepared, monkeypatch):
+    frames, mappings, results, _ = prepared
+    monkeypatch.setattr(pipeline, '_processed_manifest_frames', lambda *args: (frames, mappings, results))
+    analyzer = Mock(wraps=pipeline.analyze_business_workbook)
+    monkeypatch.setattr(pipeline, 'analyze_business_workbook', analyzer)
+    manifest = {'hojas': [{'nombre': name, 'procesar': True, 'mapping': mappings[name]} for name in frames]}
+    result = pipeline._relationships_sync('synthetic.xlsx', b'', manifest, focus={'sheets': ['Ventas']})
+    assert analyzer.call_count == 1
+    assert result['metrics']['kpis']['ingresos_totales']['valor'] == 800
+    assert result['metrics']['analisis_negocio']['estado_resultados']['costo_venta_conocido'] == 400
+
+
+@pytest.mark.parametrize('analysis', [None, {'perfil': 'servicios_tecnicos', 'evidence': 'synthetic'}])
+def test_unfiltered_detection_result_including_none_is_reused(prepared, monkeypatch, analysis):
+    analyzer = Mock(side_effect=AssertionError('Already computed in this request'))
+    monkeypatch.setattr(pipeline, 'analyze_business_workbook', analyzer)
+    result = pipeline._metrics_multi_from_processed('synthetic', *prepared, None, None,
+                                                    _unfiltered_business=analysis)
+    assert not analyzer.called
+    assert result.get('analisis_negocio') == analysis
+
+
+@pytest.mark.parametrize('start,end,filters', [
+    ('2026-01-01', None, None), (None, '2026-01-31', None), (None, None, {'canal': 'Web'}),
+])
+def test_unfiltered_result_cannot_override_requested_period_or_filter(prepared, monkeypatch, start, end, filters):
+    analyzer = Mock(wraps=pipeline.analyze_business_workbook)
+    monkeypatch.setattr(pipeline, 'analyze_business_workbook', analyzer)
+    result = pipeline._metrics_multi_from_processed('synthetic', *prepared, start, end, filters,
+                                                    _unfiltered_business={'wrong': True})
+    assert analyzer.call_count == 1
+    assert result['analisis_negocio'] != {'wrong': True}
