@@ -364,7 +364,8 @@ def test_identidad_de_despliegue_declara_fase_16():
         response = client.get("/version")
     assert response.status_code == 200
     assert response.json()["engine_version"] == ENGINE_VERSION == "0.34.0"
-    assert response.json()["database_migration"] == LATEST_MIGRATION == "20261009002253"
+    latest_file = max(path.name.split("_", 1)[0] for path in (REPO / "supabase/migrations").glob("*.sql"))
+    assert response.json()["database_migration"] == LATEST_MIGRATION == latest_file
 
 
 def test_standardize_reserva_revision_antes_de_leer_archivo(

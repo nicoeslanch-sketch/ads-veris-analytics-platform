@@ -62,7 +62,42 @@ constraint, not the primary key or any ownership/revision check. No foreign key
 references that redundant constraint in the repository or the inspected live
 schema. A database regression exercises 128 simultaneous first-sheet writes across
 fresh datasets and both RPC versions, plus stale-revision and wrong-owner denials.
-The failed run is not capacity evidence; a successful repeat is required.
+The failed run is not capacity evidence. The successful repeat is described below.
+
+### Verified isolated run
+
+[Run 38824606157](https://github.com/nicoeslanch-sketch/ads-veris-analytics-platform/actions/runs/38824606157)
+tested commit `1cb9824`, ten synthetic accounts and 4,000 sales rows per workbook.
+The four sheets were standardized, cleaned and persisted before sustained load.
+Each subsequent query changed its date filter and checked independent revenue
+and related-product cost totals.
+
+| Measurement | Result |
+| --- | ---: |
+| Sustained window | 600.752 s |
+| Submitted / completed analyses | 590 / 590 |
+| Observed end-to-end median / p95 / maximum | 2.539 / 7.964 / 16.943 s |
+| Queue wait p95 | 6.713 s |
+| Processing p95 | 0.896 s |
+| Four-sheet standardization median | 1.613 s |
+| Four-sheet cleaning median | 1.609 s |
+| API peak RSS | 213.71 MiB |
+| Highest individual worker RSS | 206.47 MiB |
+
+The runner had four CPUs and local database/Storage, with separate API and worker
+processes. RSS figures are per process, not total infrastructure memory. There
+was at most one running heavy job, despite two consumers. Offered load was one
+outstanding query per account and at least ten seconds between submissions;
+this was not a saturation or maximum-capacity test. No production request or
+customer file was used. These figures do not certify ten simultaneous commercial
+users on Render's current resource allocation.
+
+The run also verified API restart, recovery after a worker was killed (122.584 s,
+including a real 120-second lease expiry), per-account admission limits,
+cross-account denial and transient/lost-reply persistence recovery. There were
+no recorded restore RPC errors after the schema correction. The separate
+PostgreSQL security run `38824593336` passed the 128 concurrent snapshot writes,
+in groups of eight, and preserved the owner/revision/private-RPC guards.
 
 ## Recovery drill
 
@@ -71,6 +106,11 @@ checks their isolation in both directions, not only anonymous access. It verifie
 dataset metadata, password login, original CSV bytes and a 1 MiB binary object.
 A third account erased after the backup must remain erased after restoration.
 The encrypted backup and independent erasure ledger retain integrity checks.
+
+The expanded drill passed in runs `38823403082` and `38824593406`. It restored the
+CSV and binary object, preserved both accounts' password access and isolation,
+and did not recreate the account erased after the backup. These small synthetic
+restoration timings are deliberately not used as a production recovery promise.
 
 The drill uses fresh loopback-only infrastructure. It is not a backup of the live
 project and does not establish a production RTO/RPO. Provider settings and root
