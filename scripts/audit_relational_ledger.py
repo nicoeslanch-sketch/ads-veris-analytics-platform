@@ -56,7 +56,7 @@ def main():
     parser.add_argument('--from-date')
     parser.add_argument('--to-date')
     parser.add_argument('--oracle', type=Path)
-    parser.add_argument('--pipeline-focus', help='Run the same automatic relationship flow as the UI, focused on this sales sheet.')
+    parser.add_argument('--pipeline-focus', help='Run the automatic UI relationship flow, focused on a transaction-line sheet (e.g. DET_VENTAS, not its document header VENTAS).')
     args = parser.parse_args()
     content = args.workbook.read_bytes()
     started = time.perf_counter()
@@ -73,6 +73,16 @@ def main():
         metrics = flow.get('metrics') or {}
         BotRequest(message='Ventas netas', metrics=metrics)
         integration = (metrics.get('analisis_negocio') or {}).get('conciliacion')
+        if not integration or integration.get('kpis') != report.get('kpis'):
+            expected = report.get('kpis') or {}
+            actual = (integration or {}).get('kpis') or {}
+            diagnostic = {'available': (integration or {}).get('available'),
+                          'warnings': (integration or {}).get('advertencias'),
+                          'flow_warnings': metrics.get('advertencias'),
+                          'differences': {key: {'expected': expected.get(key), 'actual': actual.get(key)}
+                                          for key in expected.keys() | actual.keys() if expected.get(key) != actual.get(key)}}
+            raise RuntimeError('Automatic UI relationship flow differs from the independently reconciled ledger: '
+                               + json.dumps(diagnostic, ensure_ascii=False, default=str))
         catalog = _relationship_catalog_sync(args.workbook.name, content, manifest)
         dashboards = []
         for relationship in catalog.get('relationships', []):
@@ -86,8 +96,6 @@ def main():
             'relationships': catalog.get('relationships', []),
             'manual_dashboards': dashboards,
             'processed_sheets': [row['nombre'] for row in manifest['hojas'] if row['procesar']]}
-        if not integration or integration.get('kpis') != report.get('kpis'):
-            raise RuntimeError('Automatic UI relationship flow differs from the independently reconciled ledger.')
     if args.oracle and report and report['available']:
         report['validation'] = compare_oracle(frames, report, json.loads(args.oracle.read_text(encoding='utf-8-sig')))
     args.output.parent.mkdir(parents=True, exist_ok=True)

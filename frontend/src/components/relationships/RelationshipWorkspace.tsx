@@ -88,7 +88,7 @@ function WorkspaceState({ icon: Icon, title, detail, action }: {
   )
 }
 
-export default function RelationshipWorkspace() {
+export default function RelationshipWorkspace({ variant = 'summary' }: { variant?: 'summary' | 'explore' }) {
   const {
     file,
     datasetId,
@@ -401,7 +401,7 @@ export default function RelationshipWorkspace() {
             />
           ) : dashboard ? (
             <div className={dashboardLoading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
-              <RelationshipDashboardView dashboard={dashboard} />
+              <RelationshipDashboardView dashboard={dashboard} variant={variant} />
             </div>
           ) : null}
         </div>

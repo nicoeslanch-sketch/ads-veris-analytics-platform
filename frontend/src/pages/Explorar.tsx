@@ -236,7 +236,7 @@ export default function Explorar() {
       ) : businessUnavailable && !loading ? (
         <EmptyState icon={Search} title="No existen conexiones seguras entre las hojas." description="Sin correspondencias validadas no se construye un resultado conjunto." ctaLabel="Relacionar hojas a mano" onCta={() => setOpenRelationsNonce((nonce) => nonce + 1)} />
       ) : relationshipMode && !demo.active ? (
-        <RelationshipWorkspace />
+        <RelationshipWorkspace variant="explore" />
       ) : (
         <>
           {!metrics?.analisis_negocio?.conciliacion?.available && <div className="mb-5 flex min-w-0 flex-wrap items-center gap-3">

@@ -7,6 +7,7 @@ import { CHART, GRID_STROKE, AXIS_INK, truncateLabel } from '../lib/charts'
 import type { MetricsResult } from '../lib/types'
 import { BusinessConclusions } from './BusinessAnalysisPanel'
 import RelationalLedgerPanel from './RelationalLedgerPanel'
+import ExplorationChartBank from './ExplorationChartBank'
 
 export default function ExplorationAnalysis({ metrics, from, to, onSave }: {
   metrics: MetricsResult
@@ -26,6 +27,8 @@ export default function ExplorationAnalysis({ metrics, from, to, onSave }: {
   const fmt = (value: number | null | undefined) => explorationValue(value, measure?.format ?? 'numero', metrics.moneda)
   const axis = (value: number) => new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value) + (measure?.format === 'porcentaje' ? '%' : '')
   const series = measure?.series.filter((row) => (!from || row.period.slice(0, 7) >= from.slice(0, 7)) && (!to || row.period.slice(0, 7) <= to.slice(0, 7))) ?? []
+  const finiteSeries = series.flatMap(row => row.value != null && Number.isFinite(row.value) ? [row.value] : [])
+  const flatSeries = finiteSeries.length > 0 && finiteSeries.every(value => value === finiteSeries[0])
   const groups = dimension?.groups.filter((row) => row.value != null && Number.isFinite(row.value)).slice().sort((a, b) => ranking === 'high' ? b.value! - a.value! : a.value! - b.value!) ?? []
   const rankRows = groups.slice(0, 6)
   const tooltipStyle = { maxWidth: 260, whiteSpace: 'normal' as const, overflowWrap: 'anywhere' as const, fontSize: 12, borderRadius: 6 }
@@ -75,7 +78,7 @@ export default function ExplorationAnalysis({ metrics, from, to, onSave }: {
               <LineChart data={series} margin={{ top: 12, right: 12, bottom: 0, left: 0 }} accessibilityLayer>
                 <CartesianGrid stroke={GRID_STROKE} vertical={false} />
                 <XAxis dataKey="period" minTickGap={35} tick={{ fontSize: 11, fill: AXIS_INK }} tickFormatter={(value: string) => truncateLabel(value, 10)} />
-                <YAxis width={56} tick={{ fontSize: 11, fill: AXIS_INK }} tickFormatter={axis} domain={['auto', 'auto']} />
+                <YAxis width={56} tick={{ fontSize: 11, fill: AXIS_INK }} tickFormatter={axis} domain={flatSeries ? [Math.min(0, finiteSeries[0]), Math.max(1, finiteSeries[0])] : ['auto', 'auto']} />
                 <Tooltip contentStyle={tooltipStyle} formatter={(value) => [fmt(Number(value)), measure?.label ?? 'Valor']} labelFormatter={(value) => String(value) + (series.find((row) => row.period === String(value))?.partial ? ' · cobertura parcial/no certificada' : '')} />
                 <Line type="linear" dataKey="value" stroke={CHART.ingresos} strokeWidth={2} dot={{ r: 2.5 }} connectNulls={false} isAnimationActive={false} />
               </LineChart>
@@ -106,6 +109,8 @@ export default function ExplorationAnalysis({ metrics, from, to, onSave }: {
           <p className="mt-2 text-xs leading-relaxed text-navy/65"><strong>{rankRows[0].name}</strong>: {fmt(rankRows[0].value)}. {measure?.id === 'ingresos' ? 'Ordenado por ingresos, no por unidades ni rentabilidad.' : 'El orden describe esta medida y los grupos publicados.'}</p>
         </section>}
       </div>
+
+      <ExplorationChartBank metrics={metrics} measure={measure} dimension={dimension?.name} from={from} to={to} />
 
       <section className="border-t border-navy/10 pt-4" aria-labelledby="exploration-actions-title">
         <h2 id="exploration-actions-title" className="flex items-center gap-2 text-base font-semibold text-navy"><Lightbulb className="h-5 w-5 shrink-0 text-gold" aria-hidden />Oportunidades para revisar</h2>

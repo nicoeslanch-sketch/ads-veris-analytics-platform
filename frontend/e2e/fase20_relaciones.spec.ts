@@ -129,4 +129,15 @@ test('Fase 20: botonera de 4 modos y workspace de relaciones', async ({ page }, 
   await page.screenshot({
     path: testInfo.outputPath('relaciones-movil-dashboard.png'),
   })
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.getByRole('link', { name: 'Explorar datos', exact: true }).first().click()
+  await page.getByRole('button', { name: 'Relación manual', exact: true }).click()
+  const exploration = page.getByTestId('relationship-exploration')
+  await expect(exploration).toBeVisible()
+  await expect(exploration.getByRole('heading', { name: 'Lectura de la conexión' })).toBeVisible()
+  await expect(exploration.getByLabel('Comparación analizada')).toBeVisible()
+  await expect(exploration.getByText('Indicadores de la conexión', { exact: true })).toBeVisible()
+  await page.setViewportSize({ width: 320, height: 900 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
+  await exploration.screenshot({ path: testInfo.outputPath('relacion-explorar-320.png') })
 })

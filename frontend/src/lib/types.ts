@@ -896,7 +896,19 @@ export interface ServiceBusinessAnalysis {
   }
 }
 
+export interface ProductPatterns {
+  meses: string[]
+  anos_comparables: string[]
+  productos_revisados: number
+  series: { id: string; nombre: string; valores: { mes: string; ventas_netas: number; ventas_positivas: number }[] }[]
+  picos_recurrentes: { id: string; nombre: string; mes: number; evidencia: { ano: string; mes: number; ventas_positivas: number; participacion_pct: number }[] }[]
+  total_picos: number
+  criterio: string
+  limite: string
+}
+
 export interface RelationalLedger {
+  patrones_productos?: ProductPatterns | null
   available: boolean
   moneda: string
   fuentes: string[]
@@ -1124,6 +1136,7 @@ export interface BusinessAnalysis {
 }
 
 export interface MetricsResult {
+  patrones_productos?: ProductPatterns | null
   actividad_productos?: {
     clave: string
     fecha_corte: string

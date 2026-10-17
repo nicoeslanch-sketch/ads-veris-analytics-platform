@@ -152,7 +152,7 @@ export function buildExplorationModel(m: MetricsResult): ExplorationModel {
         ...(m.agrupaciones_flexibles ?? []).map((row) => [row.columna, row.grupos_completos ?? row.grupos] as const),
       ] as Array<readonly [string, GroupRow[]]>
       measure.dimensions = rows.filter(([, groups]) => groups.length > 0).map(([name, groups]) => ({ name: label(name), groups: groups.map((row) => ({ name: row.nombre, value: groupValue(row), records: row.filas, coverage: row.cobertura_costos_pct })) }))
-      if (id === 'ingresos' && m.matriz_mes_dimension) measure.movement = {
+      if (!business && id === 'ingresos' && m.matriz_mes_dimension) measure.movement = {
         dimension: label(m.matriz_mes_dimension.columna),
         values: m.matriz_mes_dimension.valores.map((row) => ({ period: row.mes, name: row.nombre, value: row.ingresos })),
       }
@@ -198,7 +198,7 @@ export function explorationActions(measure: ExplorationMeasure, metrics: Metrics
   const groups = selected?.groups.filter((row) => valid(row.value)).slice().sort((a, b) => b.value! - a.value!) ?? []
   const leader = groups[0]
   const fmt = (value: number | null) => explorationValue(value, measure.format, metrics.moneda)
-  const activity = metrics.actividad_productos
+  const activity = metrics.analisis_negocio ? null : metrics.actividad_productos
   if (measure.id === 'ingresos' && activity?.productos.length) {
     const product = activity.productos[0]
     actions.push({ title: 'Revisar productos sin ventas recientes', evidence: product.nombre + ': ' + product.meses_sin_venta_observada + ' meses sin ventas positivas observadas al ' + activity.fecha_corte + '. Última venta: ' + product.ultima_venta + '.', action: 'Verifica stock, estacionalidad y cobertura del archivo; prueba precio o marketing antes de reducir reposición o reasignar presupuesto. No equivale a falta de demanda.' })

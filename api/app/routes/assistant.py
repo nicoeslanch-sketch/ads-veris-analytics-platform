@@ -71,6 +71,7 @@ class BotRequest(BaseModel):
         # Validate containers that the deterministic readers traverse, without
         # coercing missing values to zero or discarding unfamiliar metric fields.
         object_paths = (
+            "patrones_productos", "actividad_productos", "analisis_negocio.conciliacion.patrones_productos",
             "kpis.cobertura_costos", "kpis.devoluciones", "analisis_generico.evolucion",
             "analisis_negocio.cobranza", "analisis_negocio.estado_resultados", "analisis_negocio.filtros", "analisis_negocio.filtros.aplicados",
             "analisis_negocio.cobranza.kpis", "analisis_negocio.cobranza.periodo",
@@ -80,6 +81,8 @@ class BotRequest(BaseModel):
             "analisis_negocio.conciliacion", "analisis_negocio.conciliacion.kpis", "analisis_negocio.conciliacion.periodo",
         )
         list_paths = (
+            "actividad_productos.productos", "patrones_productos.series", "patrones_productos.picos_recurrentes",
+            "analisis_negocio.conciliacion.patrones_productos.series", "analisis_negocio.conciliacion.patrones_productos.picos_recurrentes",
             "clientes.top", "por_dia_semana", "analisis_negocio.ratios", "matriz_mes_dimension.valores",
             "analisis_generico.numericas", "analisis_generico.desgloses", "analisis_generico.distribuciones",
             "analisis_generico.evolucion.valores", "analisis_inventario.por_sucursal",
@@ -101,6 +104,10 @@ class BotRequest(BaseModel):
             if not valid:
                 raise ValueError(f"Estructura de indicadores invalida: {path}.")
         for rows, keys in (
+            ((value.get('patrones_productos') or {}).get('series') or [], ('valores',)),
+            ((value.get('patrones_productos') or {}).get('picos_recurrentes') or [], ('evidencia',)),
+            ((((value.get('analisis_negocio') or {}).get('conciliacion') or {}).get('patrones_productos') or {}).get('series') or [], ('valores',)),
+            ((((value.get('analisis_negocio') or {}).get('conciliacion') or {}).get('patrones_productos') or {}).get('picos_recurrentes') or [], ('evidencia',)),
             (value.get("agrupaciones_flexibles") or [], ("grupos", "grupos_completos")),
             ((value.get("analisis_generico") or {}).get("desgloses") or [], ("valores",)),
             ((value.get("analisis_generico") or {}).get("distribuciones") or [], ("valores",)),
