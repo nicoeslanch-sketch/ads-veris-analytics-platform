@@ -2040,6 +2040,10 @@ def answer_metrics_question(
     original_question = normalize_query(message)
     if not original_question:
         return None
+    from .product_pattern_assistant import answer_product_patterns
+    pattern_answer = answer_product_patterns(message, metrics, history)
+    if pattern_answer is not None:
+        return pattern_answer
     ledger = (metrics.get('analisis_negocio') or {}).get('conciliacion')
     if isinstance(ledger, dict):
         from .ledger_assistant import answer_ledger
