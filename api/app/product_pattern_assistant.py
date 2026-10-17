@@ -13,12 +13,15 @@ def answer_product_patterns(message, metrics, history=None):
     q = normalize_query(message)
     previous_questions = [normalize_query(row.get('content', '')) for row in reversed(history or []) if row.get('role') == 'user']
     previous = previous_questions[0] if previous_questions else ''
+    context_questions = []
     for candidate in previous_questions[:4]:
         if re.search(TOPIC, candidate):
+            context_questions.append(candidate)
             previous = candidate
             break
         if not re.search(r'^(y |en |entonces|que hago|debo|deberia)', candidate):
             break
+        context_questions.append(candidate)
     followup = bool(re.search(TOPIC, previous) and re.search(r'^(y |en |entonces|que hago|debo|deberia)', q)
                     and re.search(r'reponer|comprar|invertir|marketing|retirar|dejar|temporada|producto|20\d{2}|ano|hago|' + '|'.join(MONTHS), q))
     if not re.search(TOPIC, q) and not followup:
@@ -57,17 +60,22 @@ def answer_product_patterns(message, metrics, history=None):
         rows = [row for row in rows if row.get('mes') == requested]
     # Do not substitute the first ranked product for a named product or ID.
     named = []
-    lookup = previous + ' ' + q if followup and not re.search(r'\b(producto|sku|id)\b', q) else q
-    for row in [*(patterns.get('series') or []), *rows]:
-        if not isinstance(row, dict) or not isinstance(row.get('id'), str):
-            continue
-        name = normalize_query(row.get('nombre', ''))
-        if (name and re.search(r'\b' + re.escape(name) + r'\b', lookup)
-                or re.search(r'\bid\s+' + re.escape(str(row.get('id'))) + r'\b', lookup, re.I)):
-            named.append(row)
+    explicit_product = r'(?:producto|sku|id)\s+(?!tiene|con|por|es|son|se|de|mas|menos|en|que)([a-z0-9]+)'
+    unknown_product = False
+    for lookup in [q, *(context_questions if followup else [])]:
+        for row in [*(patterns.get('series') or []), *rows]:
+            if not isinstance(row, dict) or not isinstance(row.get('id'), str):
+                continue
+            name = normalize_query(row.get('nombre', ''))
+            if (name and re.search(r'\b' + re.escape(name) + r'\b', lookup)
+                    or re.search(r'\b(?:id|sku)\s+' + re.escape(str(row.get('id'))) + r'\b', lookup, re.I)):
+                named.append(row)
+        unknown_product = bool(not named and re.search(explicit_product, lookup))
+        if named or unknown_product:
+            break
     if named:
         rows = [row for row in rows if row.get('id') in {item.get('id') for item in named}]
-    elif re.search(r'(?:producto|sku|id)\s+(?!tiene|con|por|es|son|se|de|mas|menos|en|que)([a-z0-9]+)', q):
+    elif unknown_product:
         return reply('No puedo identificar con certeza ese producto en las series disponibles. Indica su ID exacto o revisa el Calendario de productos en Explorar; no usare otro producto como sustituto.', 'product_scope')
     if not rows:
         return reply('No se detecto un pico recurrente que cumpla el criterio en los productos y meses consultados. Esto no descarta estacionalidad: pueden faltar anos comparables o existir un patron menos concentrado. No infiero ausencia de ventas de un ranking recortado.', 'none')
