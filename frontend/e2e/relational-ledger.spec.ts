@@ -55,7 +55,9 @@ with pd.ExcelWriter(sys.argv[1], engine='openpyxl') as writer:
   await page.getByRole('link', { name: 'Explorar datos', exact: true }).first().click()
   await expect(panel.getByRole('heading', { name: 'Decisiones del período' })).toBeVisible()
   await expect(page.getByLabel('Período del análisis')).toHaveCount(0)
-  await expect(panel.getByRole('heading', { name: /Composición del resultado/ })).toBeVisible()
+  await expect(panel.getByRole('heading', { name: 'Profundizar en los datos' })).toBeVisible()
+  await expect(panel.getByTestId('ledger-monthly')).toHaveCount(0)
+  await expect(panel.getByLabel('Pregunta de análisis')).toBeVisible()
   await page.getByRole('link', { name: 'Resumen', exact: true }).first().click()
   await expect(panel.getByText('200 CLP', { exact: true })).toBeVisible()
   for (const [question, expected] of [['cuanto vendi', '$200'], ['y en 2025', '$100'],

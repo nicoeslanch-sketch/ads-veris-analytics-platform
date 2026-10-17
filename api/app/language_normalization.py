@@ -24,6 +24,10 @@ def normalize_basic(text: object) -> str:
 # se almacenan sin tildes porque normalize_basic se ejecuta antes de consultarlas.
 _VOCABULARY = frozenset(
     """
+    estacional estacionales estacionalidad temporada temporadas recurrente recurrentes pico picos
+    repite repiten repetirse calendario pareto dispersion histograma mapa calor
+    ceros izquierda separador separadores decimales atipico atipicos outlier outliers imputar imputacion
+    porcentaje porcentajes encabezado encabezados trim pivot despivotar anulacion anomalia
     a acerca activo activos activa activas inactivo inactivos inactiva inactivas descontinuado descontinuados actual actuales administracion administrativo agencia
     autenticador autentificador autenticacion authenticator totp mfa contrasena password
     recuperar recupero recuperacion restablecer olvide perdi perdido escanear codigo codigos
@@ -244,6 +248,10 @@ _JOINED_ALIASES = {
     "cuantosusuariospuedenusarlaplataforma": "cuantos usuarios pueden usar la plataforma",
     "cuantosusuariossoporta": "cuantos usuarios soporta",
     "analisisfinanciero": "analisis financiero",
+    "cerosalaizquierda": "ceros a la izquierda",
+    "separadordecimal": "separador decimal",
+    "valoresatipicos": "valores atipicos",
+    "limpiezayestandarizacion": "limpieza y estandarizacion",
     "analisisvertical": "analisis vertical",
     "analisishorizontal": "analisis horizontal",
     "balanceneneral": "balance general",

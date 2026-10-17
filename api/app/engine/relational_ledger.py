@@ -316,7 +316,12 @@ def analyze_relational_ledger(frames, *, date_from=None, date_to=None, currency_
     latest = sale_lines.loc[mask(sale_lines, 'date', balance=True)].groupby('productoid').date.max()
     inventory['dias_sin_venta'] = (end.normalize() - inventory.productoid.map(latest)).dt.days
     slow = inventory.loc[inventory.stock.gt(0) & (inventory.dias_sin_venta.ge(90) | inventory.dias_sin_venta.isna())]
-    report.update({'available': True, 'kpis': {key: round(value, 2) if isinstance(value, float) else value for key, value in k.items()},
+    from .product_patterns import product_patterns
+    complete_months = [str(month) for month in pd.period_range(start, end, freq='M')
+                       if month.start_time >= start and month.end_time.normalize() <= end.normalize()]
+    patterns = product_patterns(selected.productoid, selected.producto, selected.date, selected.ventas,
+                                complete_months=complete_months)
+    report.update({'available': True, 'patrones_productos': patterns, 'kpis': {key: round(value, 2) if isinstance(value, float) else value for key, value in k.items()},
         'periodo': {'desde': start.date().isoformat(), 'hasta': end.date().isoformat(), 'meses': months},
         'mensual': aggregate('mes'), 'productos': aggregate('producto', 'productoid'),
         'categorias': aggregate('categoria', 'categoriaid'), 'sucursales': aggregate('sucursal', 'sucursalid'),

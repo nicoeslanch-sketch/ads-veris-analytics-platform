@@ -34,6 +34,7 @@ from .standardize import (
 )
 from .quality import line_sales_evidence, structural_total_mask
 from .product_activity import product_activity
+from .product_patterns import product_patterns
 
 FINANCIAL_RATIOS = [
     "roa",
@@ -1711,6 +1712,21 @@ def compute_metrics(
             activity = product_activity(selection, roles["producto"], dates_all[mask], amounts, evolucion)
             if activity:
                 result["actividad_productos"] = activity
+            from .quality import find_column
+            product_key = (find_column(selection.columns, "sku", "producto")
+                           or find_column(selection.columns, "id", "producto")
+                           or find_column(selection.columns, "codigo", "producto"))
+            if product_key:
+                observed_dates = dates_all[mask].dropna()
+                observed_start = observed_dates.min().normalize() if not observed_dates.empty else None
+                observed_end = observed_dates.max().normalize() if not observed_dates.empty else None
+                complete_months = [row["mes"] for row in evolucion if not row.get("parcial")
+                                   and observed_start is not None
+                                   and pd.Period(row["mes"], freq="M").start_time >= observed_start
+                                   and pd.Period(row["mes"], freq="M").end_time.normalize() <= observed_end]
+                result["patrones_productos"] = product_patterns(
+                    selection[product_key], selection[roles["producto"]], dates_all[mask], amounts,
+                    complete_months=complete_months)
         productos_completos = _group_sum(
             selection[roles["producto"]], amounts, group_costs
         )

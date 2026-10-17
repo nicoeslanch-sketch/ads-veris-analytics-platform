@@ -8,6 +8,7 @@ import RelationshipInsights from './RelationshipInsights'
 
 interface RelationshipDashboardViewProps {
   dashboard: RelationshipDashboard
+  variant?: 'summary' | 'explore'
 }
 
 function TableCell({ value, format, currency }: { value: string | number | null; format: RelationshipTableColumn['format']; currency: string }) {
@@ -26,9 +27,11 @@ const STATE_BADGE: Record<string, string> = {
   sin_datos: 'bg-navy/10 text-navy/50',
 }
 
-export default function RelationshipDashboardView({ dashboard }: RelationshipDashboardViewProps) {
+export default function RelationshipDashboardView({ dashboard, variant = 'summary' }: RelationshipDashboardViewProps) {
   const { relation, currency, quality } = dashboard
   const [highlightTable, setHighlightTable] = useState<string | null>(null)
+  const [chartId, setChartId] = useState('')
+  const chart = dashboard.charts.find(item => item.id === chartId) ?? dashboard.charts[0]
   const tableRef = useRef<HTMLDivElement | null>(null)
 
   const handleAction = (action: RelationshipAction) => {
@@ -104,6 +107,29 @@ export default function RelationshipDashboardView({ dashboard }: RelationshipDas
         <div className="rounded-xl border border-navy/10 bg-white p-6 text-center text-sm text-navy/60 shadow-sm">
           {dashboard.message ?? 'Esta relación no tiene variables suficientes para un dashboard.'}
         </div>
+      ) : variant === 'explore' ? (
+        <section className="min-w-0 space-y-4 border-y border-navy/10 py-4" data-testid="relationship-exploration">
+          <h3 className="text-base font-semibold text-navy">Lectura de la conexión</h3>
+          {chart && <>
+            <label className="block min-w-0 text-xs font-medium text-navy/65">Comparación analizada
+              <select value={chart.id} onChange={event => setChartId(event.target.value)} className="mt-1 block w-full min-w-0 rounded-md border border-navy/20 bg-white p-2 text-sm text-navy">
+                {dashboard.charts.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+              </select>
+            </label>
+            <RelationshipCharts charts={[chart]} currency={currency} />
+          </>}
+          <ul className="divide-y divide-navy/10">
+            {[...dashboard.alerts, ...dashboard.findings].slice(0, 3).map(item => <li key={item.id} className="min-w-0 py-3 [overflow-wrap:anywhere]">
+              <h4 className="text-sm font-semibold text-navy">{item.title}</h4>
+              <p className="mt-1 text-xs leading-relaxed text-navy/70">{item.detail} {item.evidence}</p>
+              {item.impact && <p className="mt-1 text-xs text-navy/70">{item.impact.label}: {formatKpiValue(item.impact.value, item.impact.format, currency)}</p>}
+            </li>)}
+          </ul>
+          <p className="text-xs leading-relaxed text-navy/65">La correspondencia por ID permite comparar estas fuentes, pero no demuestra por sí sola qué causó las diferencias. Revisa cobertura, período y unidad antes de decidir.</p>
+          <details className="text-xs text-navy/70"><summary className="cursor-pointer font-semibold">Indicadores de la conexión</summary>
+            <dl className="mt-2 divide-y divide-navy/10">{dashboard.kpis.map(item => <div key={item.id} className="grid min-w-0 grid-cols-2 gap-3 py-2 [overflow-wrap:anywhere]"><dt>{item.label}</dt><dd className="text-right">{item.available ? formatKpiValue(item.value, item.format, currency) : 'No disponible'}</dd></div>)}</dl>
+          </details>
+        </section>
       ) : (
         <>
           <RelationshipKpis kpis={dashboard.kpis} currency={currency} />

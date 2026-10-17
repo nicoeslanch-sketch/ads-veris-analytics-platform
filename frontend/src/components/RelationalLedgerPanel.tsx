@@ -7,6 +7,7 @@ import { periodSelectValue } from '../lib/periodPresentation'
 import { AXIS_INK, CHART, GRID_STROKE, truncateLabel } from '../lib/charts'
 import type { RelationalLedger } from '../lib/types'
 import KpiValue from './ui/KpiValue'
+import ExplorationChartBank from './ExplorationChartBank'
 
 type Measure = 'ventas' | 'utilidad' | 'unidades'
 const labels = { ventas: 'Ventas netas', utilidad: 'Utilidad bruta', unidades: 'Unidades netas' }
@@ -75,6 +76,8 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
         </select>
       </label>
     </div>
+    {variant === 'explore' && <ExplorationChartBank ledger={ledger} from={ledger.periodo?.desde} to={ledger.periodo?.hasta} />}
+    {variant === 'summary' && <>
     <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {cards.map(([label, value]) => <div key={label} className="min-w-0 rounded-lg border border-navy/10 bg-white p-4">
         <p className="min-h-8 text-xs text-navy/65">{label}</p><KpiValue value={money(value)} maxPx={24} />
@@ -100,7 +103,6 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
         <section className="min-w-0"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Productos · Top 10</h3>
           <select aria-label="Medida de productos" value={measure} onChange={e => setMeasure(e.target.value as Measure)} className="max-w-full rounded-md border border-navy/20 bg-white p-2 text-xs">{Object.entries(labels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
           {rank(ranking, measure, measure === 'unidades' ? 'count' : 'money')}
-          {variant === 'explore' && ranking[0] && <p className="text-xs leading-relaxed text-navy/70">{ranking[0].nombre} lidera en {labels[measure].toLowerCase()}. Compara su margen y disponibilidad antes de aumentar las compras.</p>}
         </section>
         <section className="min-w-0"><h3 className="text-sm font-semibold">Utilidad bruta por sucursal</h3>{rank(ledger.sucursales ?? [], 'utilidad')}
           <p className="text-xs text-navy/60">Detalle de venta → lote → sucursal. Las devoluciones se descuentan por su fecha.</p></section>
@@ -108,7 +110,7 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
     </>}
     {view === 'resultado' && <div className="grid min-w-0 gap-6 xl:grid-cols-2">
       <section className="min-w-0"><h3 className="text-sm font-semibold">Composición del resultado · {ledger.moneda}</h3>{rank(resultRows, 'valor')}
-        {variant === 'explore' && k.resultado_antes_impuestos != null && k.resultado_antes_impuestos < 0 && <p className="text-xs text-navy/70">La utilidad bruta no alcanza a cubrir los gastos, nóminas, comisiones e intereses registrados. Revisa estos rubros antes de concluir que vender más resolverá la pérdida.</p>}</section>
+        </section>
       <section className="min-w-0"><h3 className="text-sm font-semibold">Caja y obligaciones</h3><dl className="mt-3 divide-y divide-navy/10">{[
         ['Depósitos netos del período', k.depositos_netos], ['Flujo antes de liquidación de IVA', k.flujo_caja_antes_iva],
         ['CxC acumuladas al corte', k.cuentas_por_cobrar], ['CxP acumuladas al corte', k.cuentas_por_pagar],
@@ -121,6 +123,7 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
       {(ledger.inventario_lento?.length ?? 0) > 0 ? <><h4 className="mt-5 text-sm font-semibold">Stock con 90 días sin venta observada</h4>{rank(ledger.inventario_lento ?? [], 'valor')}
         <p className="text-xs text-navy/70">Revisa estacionalidad, stock disponible durante el período, precio y marketing. La ausencia de ventas no demuestra por sí sola que debas retirar el producto.</p></> : <p className="mt-4 text-sm text-navy/65">No hay productos con stock que cumplan el umbral de 90 días sin venta en este corte.</p>}
     </section>}
+    </>}
     <details className="border-y border-navy/10 py-3"><summary className="cursor-pointer text-sm font-semibold"><GitMerge className="mr-2 inline h-4 w-4" />Fuentes, conexiones y criterios</summary>
       <ul className="mt-3 list-disc space-y-2 pl-5 text-xs text-navy/65">{ledger.criterios?.map(s => <li key={s}>{s}</li>)}</ul>
       <div className="mt-3 overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">Desde</th><th>Hacia</th><th>Clave</th><th>Sin vínculo</th></tr></thead><tbody>{ledger.relaciones.map((r, i) => <tr key={i} className="border-t border-navy/10"><td className="p-2">{r.desde}</td><td>{r.hasta}</td><td>{r.clave}</td><td>{r.sin_correspondencia}</td></tr>)}</tbody></table></div>
