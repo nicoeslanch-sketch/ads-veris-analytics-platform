@@ -27,6 +27,10 @@ unlimited capacity, legal certification or perfect security.
   `X-ADS-Signature` against the exact body. Delivery is at least once, not exactly once.
 - The administration panel distinguishes informational retention from automatic
   expiry and configured notifications from confirmed receipt.
+- Support conversations distinguish account recovery, missing files, data access,
+  checkout availability and coin value. Real conversation failures are regression
+  cases: valid `llega` is no longer autocorrected to `llena`, and shared words like
+  `cuenta` or `datos` alone cannot select instructions for account erasure.
 
 ## Configuration still requiring an operator
 
