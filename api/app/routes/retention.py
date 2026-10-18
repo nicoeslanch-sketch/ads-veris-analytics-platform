@@ -17,6 +17,7 @@ plataforma se mantiene rápida y barata de operar.
 """
 
 from datetime import datetime, timezone
+import logging
 import re
 
 import httpx
@@ -27,10 +28,12 @@ from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import get_profile_flags
 from ..config import Settings, get_settings
 from ..storage import invalidate_storage_cache
+from ..commercial_rpc import commercial_rpc
 
 router = APIRouter(prefix="/storage")
 
 _TIMEOUT = 30
+logger = logging.getLogger('uvicorn.error')
 
 
 def _configured(settings: Settings) -> bool:
@@ -55,10 +58,11 @@ def max_files_for(plan: str, is_admin: bool, settings: Settings) -> int:
 
 
 def _parse_ts(value: str | None) -> datetime | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
 
@@ -79,21 +83,28 @@ def _list_user_files(user_id: str, settings: Settings) -> list[dict]:
         f"{settings.supabase_url.rstrip('/')}/storage/v1/object/list/"
         f"{settings.supabase_storage_bucket}"
     )
-    response = httpx.post(
-        url,
-        json={
-            "prefix": f"{user_id}/",
-            "limit": 1000,
-            "offset": 0,
-            "sortBy": {"column": "created_at", "order": "desc"},
-        },
-        headers=_headers(settings),
-        timeout=_TIMEOUT,
-    )
-    response.raise_for_status()
-    items = response.json()
-    # Storage devuelve también "carpetas" virtuales (id null): se ignoran.
-    return [i for i in items if i.get("id")]
+    files, seen = [], set()
+    for offset in range(0, 10_000, 1000):
+        response = httpx.post(url, json={"prefix": f"{user_id}/", "limit": 1000,
+            "offset": offset, "sortBy": {"column": "name", "order": "asc"}},
+            headers=_headers(settings), timeout=_TIMEOUT)
+        response.raise_for_status()
+        items = response.json()
+        if not isinstance(items, list):
+            raise HTTPException(503, "No se pudo verificar el inventario de archivos.")
+        for item in items:
+            if not isinstance(item, dict):
+                raise HTTPException(503, "Inventario de archivos incompleto.")
+            if not item.get("id"):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or not name or name in ('.', '..') or '/' in name or '\\' in name or name in seen:
+                raise HTTPException(503, "Inventario de archivos no verificable.")
+            seen.add(name)
+            files.append(item)
+        if len(items) < 1000:
+            return files
+    raise HTTPException(503, "Inventario demasiado grande para una retencion segura.")
 
 
 def _delete_files(user_id: str, names: list[str], settings: Settings) -> None:
@@ -109,17 +120,21 @@ def _delete_files(user_id: str, names: list[str], settings: Settings) -> None:
         timeout=_TIMEOUT,
     )
     response.raise_for_status()
+    removed = response.json()
+    expected = {f'{user_id}/{name}' for name in names}
+    if not isinstance(removed, list) or not expected.issubset({
+        row.get('name') for row in removed if isinstance(row, dict)
+    }):
+        raise HTTPException(503, 'No se pudo confirmar la eliminacion del archivo.')
     for name in names:
         invalidate_storage_cache(f"{user_id}/{name}")
 
 
 def _unlink_datasets(user_id: str, names: list[str], settings: Settings) -> None:
-    """Deja storage_path en null en los datasets purgados (best-effort):
-    el historial conserva la fila, pero la UI sabe que el archivo ya no está."""
+    """A failed unlink remains recoverable in the private retention journal."""
     rest = f"{settings.supabase_url.rstrip('/')}/rest/v1/datasets"
     for name in names:
-        try:
-            response = httpx.patch(
+        response = httpx.patch(
                 rest,
                 params={
                     "user_id": f"eq.{user_id}",
@@ -128,14 +143,8 @@ def _unlink_datasets(user_id: str, names: list[str], settings: Settings) -> None
                 json={"storage_path": None},
                 headers={**_headers(settings), "Prefer": "return=minimal"},
                 timeout=_TIMEOUT,
-            )
-            if response.status_code >= 400:
-                print(
-                    f"[retencion] datasets respondió {response.status_code} al "
-                    f"desvincular '{name}' — quedará apuntando a un archivo borrado."
-                )
-        except httpx.HTTPError as exc:
-            print(f"[retencion] No se pudo desvincular el dataset ({exc.__class__.__name__}).")
+        )
+        response.raise_for_status()
 
 
 def _prune_activity(user_id: str, settings: Settings) -> int:
@@ -227,15 +236,8 @@ def _prune_activity(user_id: str, settings: Settings) -> int:
     return deleted_count
 
 
-def _retention_sync(user_id: str, settings: Settings) -> dict:
-    activity_deleted = 0
-    try:
-        activity_deleted = _prune_activity(user_id, settings)
-    except httpx.HTTPError as exc:
-        # Una incidencia en activity_log no debe impedir la poda de Storage.
-        print(f"[retencion] No se pudo podar actividad ({exc.__class__.__name__}).")
-
-    plan, is_admin = get_profile_flags(user_id, settings)
+def _retention_plan(user_id: str, settings: Settings) -> tuple[dict, list[dict], list[dict]]:
+    plan, is_admin = get_profile_flags(user_id, settings, require_profile=True)
     limit = max_files_for(plan, is_admin, settings)
     keep_last = settings.storage_keep_last
     max_age_days = settings.storage_retention_days
@@ -244,26 +246,85 @@ def _retention_sync(user_id: str, settings: Settings) -> dict:
     files.sort(key=_last_use, reverse=True)  # más reciente primero
 
     now = datetime.now(timezone.utc)
-    to_delete: list[str] = []
+    candidates: list[dict] = []
     for index, item in enumerate(files):
         if index < keep_last:
             continue  # los más recientes jamás se tocan
+        if not any(_parse_ts(item.get(key)) for key in ('created_at', 'updated_at', 'last_accessed_at')):
+            continue
         over_limit = index >= limit
         expired = (now - _last_use(item)).days > max_age_days
         if over_limit or expired:
-            to_delete.append(item["name"])
-
-    if to_delete:
-        _delete_files(user_id, to_delete, settings)
-        _unlink_datasets(user_id, to_delete, settings)
-
+            candidates.append(item)
     return {
-        "eliminados": len(to_delete),
-        "conservados": len(files) - len(to_delete),
+        "eliminados": 0,
+        "conservados": len(files),
         "limite": limit,
         "plan": plan,
-        "actividad_eliminada": activity_deleted,
-    }
+        "actividad_eliminada": 0,
+        "candidatos": len(candidates),
+    }, files, candidates
+
+
+def _journal(action, user_id, settings, **payload):
+    return commercial_rpc('retention_journal_operation', {'p_action': action, 'p_user_id': user_id, **payload}, settings)
+
+
+def _retention_sync(user_id: str, settings: Settings, *, dry_run: bool = False) -> dict:
+    if dry_run:
+        report, _, _ = _retention_plan(user_id, settings)
+        return {**report, 'simulacion': True}
+    lease = commercial_rpc('retention_guard', {'p_action': 'claim', 'p_user_id': user_id}, settings)
+    if not lease:
+        raise HTTPException(409, 'La conservacion de archivos ya esta en curso.')
+    def renew():
+        renewed = commercial_rpc('retention_guard', {
+            'p_action': 'renew', 'p_user_id': user_id, 'p_lease': lease}, settings)
+        if not renewed:
+            raise HTTPException(409, 'El turno de conservacion de archivos vencio.')
+    try:
+        return _retention_locked(user_id, settings, renew)
+    finally:
+        try:
+            commercial_rpc('retention_guard', {'p_action': 'release', 'p_user_id': user_id, 'p_lease': lease}, settings)
+        except Exception:
+            logger.warning('retention_guard_release_pending')
+
+
+def _retention_locked(user_id: str, settings: Settings, renew) -> dict:
+    report, files, candidates = _retention_plan(user_id, settings)
+    pending = _journal('list', user_id, settings)
+    for item in candidates[:100]:
+        renew()
+        job = _journal('begin', user_id, settings, p_name=item['name'],
+                       p_object_id=str(item['id']), p_stamp=_last_use(item).isoformat())
+        if job['stage'] in ('pending', 'storage_deleted') and not any(row['id'] == job['id'] for row in pending):
+            pending.append(job)
+    if pending:
+        # A fresh inventory protects files accessed/replaced since planning.
+        _, fresh, eligible = _retention_plan(user_id, settings)
+        current = {row['name']: row for row in fresh}
+        allowed = {row['name'] for row in eligible}
+        for job in pending[:100]:
+            renew()
+            name, present = job['object_name'], current.get(job['object_name'])
+            if present and (name not in allowed or str(present['id']) != job['object_id']
+                            or _last_use(present).isoformat() != job['object_stamp']
+                            or job['stage'] == 'storage_deleted'):
+                _journal('advance', user_id, settings, p_id=job['id'], p_stage='cancelled')
+                continue
+            if present:
+                _delete_files(user_id, [name], settings)
+                report['eliminados'] += 1
+            _journal('advance', user_id, settings, p_id=job['id'], p_stage='storage_deleted')
+            _unlink_datasets(user_id, [name], settings)
+            _journal('advance', user_id, settings, p_id=job['id'], p_stage='completed')
+        report['conservados'] = max(0, len(fresh) - report['eliminados'])
+    try:
+        report['actividad_eliminada'] = _prune_activity(user_id, settings)
+    except httpx.HTTPError:
+        report['actividad_error'] = True
+    return report
 
 
 @router.post("/retention")
@@ -282,9 +343,9 @@ async def apply_retention(
         }
     try:
         return await run_in_threadpool(_retention_sync, user.id, settings)
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, HTTPException) as exc:
         # La retención jamás debe romper el flujo de carga del usuario.
-        print(f"[retencion] Falló la poda de Storage ({exc.__class__.__name__}).")
+        logger.warning('retention_incomplete')
         return {
             "eliminados": 0,
             "conservados": 0,

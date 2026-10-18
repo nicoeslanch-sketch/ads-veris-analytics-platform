@@ -31,6 +31,9 @@ _VOCABULARY = frozenset(
     a acerca activo activos activa activas inactivo inactivos inactiva inactivas descontinuado descontinuados actual actuales administracion administrativo agencia
     autenticador autentificador autenticacion authenticator totp mfa contrasena password
     recuperar recupero recuperacion restablecer olvide perdi perdido escanear codigo codigos
+    correo correos email llega llegan enlace enlaces tarjeta tarjetas cvv otro otra otros otras
+    suscripcion suscripciones renovar webpay transbank pasarela desaparecio desaparecieron
+    caducan caduca conservan guardan originales coin vale valen equivalencia
     humano humana humanos humanas persona asesor agente soporte ejecutivo contactar contacto conseguir comunicarme atienda atencion ayudar
     vender vende venden vendo vendemos vendi vendimos vendia vendian vendio vendieron
     vendere venderemos venderan vendido vendidos vendida vendidas rentable rentables tuve tuvieron
@@ -143,6 +146,9 @@ _VOCABULARY = frozenset(
 
 # Errores frecuentes observados en conversaciones reales y variantes foneticas.
 _TYPO_ALIASES = {
+    "tarjtea": "tarjeta",
+    "tarjta": "tarjeta",
+    "corero": "correo",
     "usaurios": "usuarios",
     "usuairos": "usuarios",
     "simultaneoss": "simultaneos",
@@ -312,6 +318,10 @@ _JOINED_ALIASES = {
     "cuantosarchivospuedoguardar": "cuantos archivos puedo guardar",
     "cuantosarchivospuedosubir": "cuantos archivos puedo subir",
     "cuotadealmacenamiento": "cuota de almacenamiento",
+    "caducanmisarchivos": "caducan mis archivos",
+    "retenciondearchivos": "retencion de archivos",
+    "csvvieneenzip": "csv viene en zip",
+    "descargueunzip": "descargue un zip",
     "espaciolleno": "espacio lleno",
     "cuantoespaciotengo": "cuanto espacio tengo",
 }

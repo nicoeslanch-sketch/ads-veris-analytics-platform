@@ -15,6 +15,9 @@ def test_readiness_is_not_a_payment_or_capacity_certificate(monkeypatch):
     assert states['mfa'] == 'ready'
     assert states['payments'] == 'deferred'
     assert states['capacity'] == states['recovery'] == states['catalog'] == 'pending'
+    assert states['notifications'] == 'prepared'
+    assert states['retention'] == 'configured'
+    assert any('sin borrar originales' in i['detail'] for i in result['items'])
 
 
 def test_readiness_checks_admin_before_fetching(client, auth_headers, monkeypatch):

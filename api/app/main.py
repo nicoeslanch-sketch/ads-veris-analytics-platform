@@ -79,11 +79,18 @@ async def lifespan(_app):
     thread = None
     monitor = None
     monitor_thread = None
+    maintenance = None
+    maintenance_thread = None
     if settings.app_env.strip().lower() == 'production' and settings.supabase_url:
         from .operational_health import OperationalMonitor
         monitor = OperationalMonitor(settings)
         monitor_thread = threading.Thread(target=monitor.run, name='operational-monitor', daemon=True)
         monitor_thread.start()
+        if settings.retention_schedule_mode != 'off':
+            from .maintenance import RetentionScheduler
+            maintenance = RetentionScheduler(settings)
+            maintenance_thread = threading.Thread(target=maintenance.run, name='retention-scheduler', daemon=True)
+            maintenance_thread.start()
     if durable_mode(settings) == "embedded":
         from .analysis_worker import AnalysisWorker
         worker = AnalysisWorker(settings)
@@ -96,6 +103,10 @@ async def lifespan(_app):
             monitor.shutdown()
         if monitor_thread:
             monitor_thread.join(timeout=1)
+        if maintenance:
+            maintenance.shutdown()
+        if maintenance_thread:
+            maintenance_thread.join(timeout=1)
         if worker:
             worker.shutdown()
         # Bounded shutdown. A terminated attempt is recovered by its lease;

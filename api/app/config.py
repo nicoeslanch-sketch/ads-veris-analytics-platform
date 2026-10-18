@@ -1,6 +1,7 @@
 import re
 from typing import Literal
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Variables de entorno del motor de datos (ver .env.example)."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     # Fase 15: entorno declarado del despliegue. En "production" la API se
     # NIEGA a arrancar con configuración insegura (ver validate_production_config
@@ -110,6 +111,15 @@ class Settings(BaseSettings):
     storage_max_files_gold: int = 50
     storage_retention_days: int = 60
     storage_keep_last: int = 5
+    # Scheduled scans are read-only until the operator approves automatic expiry.
+    retention_schedule_mode: Literal['off', 'audit', 'apply'] = 'audit'
+    operations_webhook_url: str = ''
+    operations_webhook_secret: str = ''
+    operations_email_to: str = 'servicios@adsveris.com'
+    operations_email_from: str = ''
+    operations_gmail_client_id: str = ''
+    operations_gmail_client_secret: str = ''
+    operations_gmail_refresh_token: str = ''
     # La bitácora se acota por documentos, no por calendario: así una cuenta
     # activa no ve cientos de limpiezas y una cuenta esporádica no pierde una
     # acción útil solo porque pasaron algunos días.
@@ -168,6 +178,22 @@ class Settings(BaseSettings):
             raise ValueError("Los limites HTTP deben ser positivos y JSON no debe superar el total.")
         if self.ads_coins_advanced_message_cost < 1:
             raise ValueError("El costo del chat avanzado en ADS Coins debe ser positivo.")
+        if min(self.storage_max_files_basico, self.storage_max_files_analista,
+               self.storage_max_files_gold, self.storage_keep_last, self.storage_retention_days) < 1:
+            raise ValueError('Los limites de conservacion deben ser positivos.')
+        if self.operations_webhook_url:
+            url = urlsplit(self.operations_webhook_url)
+            if url.scheme != 'https' or not url.hostname or url.username or url.password or url.fragment or url.port not in (None, 443):
+                raise ValueError('El destino de avisos debe ser HTTPS sin credenciales en la URL.')
+            if len(self.operations_webhook_secret) < 32:
+                raise ValueError('Los avisos externos requieren una clave de firma de al menos 32 caracteres.')
+        email_config = (self.operations_email_from, self.operations_gmail_client_id,
+                        self.operations_gmail_client_secret, self.operations_gmail_refresh_token)
+        if any(email_config) and not all(email_config):
+            raise ValueError('La configuracion del remitente de avisos esta incompleta.')
+        for address in (self.operations_email_to, self.operations_email_from):
+            if address and not re.fullmatch(r'[A-Za-z0-9.!#$%&\'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}', address):
+                raise ValueError('Los avisos requieren una direccion de correo simple y valida.')
         return self
 
 

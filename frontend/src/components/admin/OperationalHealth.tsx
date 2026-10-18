@@ -8,6 +8,10 @@ interface Health {
   queue: { queued: number; running: number; max_active: number; oldest_wait_seconds: number }
   storage: { used_bytes: number; reserved_bytes: number; limit_bytes: number }
   alerts: { code: string; severity: 'critical' | 'warning'; title: string; detail: string }[]
+  external_notifications_configured?: boolean
+  maintenance?: { completed_at: string | null; report: {
+    mode?: 'audit' | 'apply'; accounts?: number; candidates?: number; deleted?: number; errors?: number
+  } } | null
 }
 
 const number = (value: number) => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)
@@ -67,12 +71,22 @@ export default function OperationalHealth() {
             <dd className="mt-1 break-words text-sm font-semibold tabular-nums text-navy">{value}</dd>
           </div>)}
         </dl>
+        {data.maintenance?.completed_at && <div className="border-t border-navy/10 pt-3 text-xs text-navy/70">
+          <p className="font-semibold">Conservacion: {data.maintenance.report.mode === 'apply' ? 'caducidad automatica' : 'solo revision'}</p>
+          <p className="mt-1 break-words">Ultimo lote: {new Date(data.maintenance.completed_at).toLocaleString('es-CL')}.{' '}
+            {number(data.maintenance.report.accounts ?? 0)} cuentas revisadas;{' '}
+            {number(data.maintenance.report.candidates ?? 0)} archivos candidatos;{' '}
+            {number(data.maintenance.report.deleted ?? 0)} eliminados;{' '}
+            {number(data.maintenance.report.errors ?? 0)} errores.</p>
+        </div>}
         {data.alerts.length ? <ul className="divide-y divide-navy/10">{data.alerts.map(alert => <li key={alert.code} className="flex min-w-0 gap-2 py-3">
           <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${alert.severity === 'critical' ? 'text-coral' : 'text-amber-600'}`} />
           <div className="min-w-0"><p className="text-sm font-semibold text-navy">{alert.title}</p><p className="mt-1 break-words text-xs leading-relaxed text-navy/70">{alert.detail}</p></div>
         </li>)}</ul> : <p className="text-sm text-teal">Sin alertas en las mediciones disponibles.</p>}
       </>}
-      <p className="text-xs text-navy/55">Avisos externos por correo pendientes de configurar. Un servidor detenido requiere supervision externa.</p>
+      <p className="text-xs text-navy/55">{data?.external_notifications_configured
+        ? 'Avisos externos configurados con reintentos. Verifica la recepcion en el canal de destino.'
+        : 'Avisos externos pendientes de configurar.'} Un servidor detenido requiere supervision externa independiente.</p>
     </div>}
   </section>
 }

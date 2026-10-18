@@ -37,6 +37,12 @@ def article(
 
 
 ARTICLES: list[dict[str, Any]] = [
+    article("payment_availability", "planes", "Pagar ADS Veris", ["pagar con tarjeta", "pagar el plan", "comprar un plan", "webpay", "transbank", "renovar suscripcion"], "En ADS Veris los cobros reales y las compras de planes o Coins estan desactivados. No se hacen cargos automaticos. Antes de habilitarlos se deben publicar precios y condiciones y probar la pasarela. No envies datos de tarjeta, CVV ni claves por este chat.", "¿Quieres comparar planes o consultar los usos de ADS Coins?", 94),
+    article("coin_value", "ads_coins", "Valor de ADS Coins", ["cuanto vale una ads coin", "valor de las coins", "coins a pesos", "monedas a pesos"], "ADS Coins son creditos de servicio, no dinero retirable ni una moneda de inversion. No hay una equivalencia de venta en pesos aprobada para informarte; las compras estan desactivadas. El consumo depende de la funcion y de su costo publicado antes de usarla. No debo inventar un precio ni prometer conversion a efectivo.", "¿Quieres revisar tu saldo o los consumos disponibles?", 94),
+    article("data_access", "seguridad", "Acceso a tus archivos", ["quien ve mis datos", "otro usuario ve mis datos", "otros clientes ven mis archivos", "quien puede acceder a mis archivos"], "Los archivos y analisis estan asociados a tu cuenta y protegidos por controles de acceso: otro cliente no debe poder leerlos. Las funciones administrativas autorizadas tienen permisos separados. No es una promesa de seguridad absoluta. Si ves datos ajenos o sospechas un acceso, abre Ayuda o escribe a servicios@adsveris.com sin reenviar esos datos ni compartir contrasenas.", "¿Preguntas por acceso a archivos o por una solicitud de privacidad?", 96),
+    article("missing_file", "datos", "Archivo que ya no aparece", ["me borraste mi archivo", "mi archivo desaparecio", "no aparece mi archivo", "se perdio mi archivo"], "Este chat no borra archivos ni puede confirmar que uno haya sido eliminado. Revisa Historial, la cuenta con la que entraste y el archivo seleccionado. Si sigue en Historial, intenta reabrirlo; una vista vacia no demuestra un borrado. Si indica que el original ya no esta disponible, consulta Ayuda: no puedo garantizar su recuperacion. No elimines el registro para intentar arreglarlo.", "¿El archivo sigue en Historial y que aviso aparece al abrirlo?", 94),
+    article("file_retention", "datos", "Conservacion de archivos", ["caducan mis archivos", "se borran mis archivos", "retencion de archivos", "cuanto tiempo guardan", "cuenta inactiva", "dejo de entrar", "dejo de usar la plataforma"], "La politica de originales protege los cinco archivos mas recientes. En el flujo activo pueden vencer originales antiguos por superar 60 dias sin uso o el limite de archivos del plan; el historial se conserva indicando cuando el original ya no esta disponible. Los barridos de cuentas inactivas estan en modo de revision, sin borrado automatico. Esto no equivale a un respaldo externo ni garantiza recuperar un archivo eliminado. Este chat no borra archivos ni cambia la politica.", "¿Preguntas por un original antiguo o por eliminar tu cuenta?", 94),
+    article("download_audit_zip", "limpieza", "CSV con auditoria", ["descargue un zip", "descarga zip", "csv viene en zip", "archivo zip", "donde esta la auditoria", "zip en vez de csv"], "La exportacion CSV se entrega dentro de un ZIP: contiene los datos limpios, su auditoria y un manifest. Descomprimelo para abrir los CSV. En Excel, los datos y la auditoria van en hojas separadas. Un cambio de formato no debe cambiar reglas, mapeos ni la decision sobre duplicados; revisa el alcance y las observaciones antes de usarlo.", "¿Necesitas datos limpios o revisar que se modifico?", 94),
     article("chart_selection", "analisis", "Elegir una vista", ["elegir un grafico", "que grafico", "banco de graficos", "tipos de graficos", "mapa de calor", "pareto", "grafico de dispersion"], "En Explorar datos, Pregunta de analisis agrupa las vistas disponibles por evolucion, composicion, productos y operacion. Compara el mismo mes entre anos, cambios mensuales, concentracion, calendario por ID o ingresos frente a utilidad cuando existan las fuentes necesarias. No aparecen vistas sin evidencia suficiente. Los valores exactos quedan desplegables; cada vista incluye una comprobacion sugerida, no una orden automatica de compra.", "¿Quieres revisar tendencia, concentracion o productos?", 92),
     article("cleaning_ids", "limpieza", "Identificadores y ceros iniciales", ["ceros a la izquierda", "cero a la izquierda", "id como numero", "codigo como numero"], "Un ID identifica un registro, no es una cantidad. Conserva los ceros iniciales y revisa el rol y tipo de esa columna en Estandarizacion. Convertir 0012 en 12 puede romper conexiones o unir clientes distintos. Si Excel ya perdio los ceros antes de subirlo, no es seguro reconstruirlos sin una regla o catalogo de referencia.", "¿La columna es un ID o una cantidad?", 94),
     article("cleaning_outliers", "limpieza", "Valores atipicos", ["valor atipico", "valores atipicos", "outlier", "outliers", "eliminar extremos"], "Un valor atipico es una señal para revisar, no necesariamente un error. Comprueba documento, moneda, unidad, descuentos y devoluciones antes de corregirlo. Una venta grande real no debe borrarse solo por ser distinta; conserva trazabilidad de cualquier cambio.", "¿Es un importe, una fecha o una cantidad?", 94),
@@ -164,6 +170,10 @@ def rank_articles(message: str, articles: list[dict[str, Any]] | None = None) ->
     words = set(normalized.split()) - stop_words
     ranked: list[tuple[float, dict[str, Any]]] = []
     for item in articles or ARTICLES:
+        if item.get('key') == 'privacy_erasure' and not re.search(r'\b(?:elimin\w*|borr\w*|cerr\w*)\b', normalized):
+            continue
+        if item.get('key') == 'payment_availability' and re.search(r'\b(?:proveedores|proveedor|ventas|negocio|mis clientes)\b', normalized):
+            continue
         trigger_scores: list[float] = []
         for trigger in item.get("triggers") or []:
             trigger_norm = normalize(str(trigger))
@@ -249,6 +259,14 @@ def answer_for(
     # Account questions precede metric matching, without inheriting stale topics.
     previous_user = next((normalize_query(str(item.get('content') or ''))
                           for item in reversed(history or []) if item.get('role') == 'user'), '')
+    retention_topic = re.search(r'\b(?:archivos|originales|cuenta inactiva)\b', normalized) and re.search(
+        r'\b(?:caducan|caduca|retencion|conservan|guardan|borran|inactiva)\b', normalized)
+    retention_followup = re.search(r'\b(?:caducan|retencion|conservan|cuenta inactiva)\b', previous_user) and re.search(
+        r'\b(?:no entro|no ingreso|dejo de entrar|inactivo|inactiva|es un respaldo)\b', normalized)
+    if retention_topic or retention_followup:
+        item = next(row for row in ARTICLES if row['key'] == 'file_retention')
+        return {"answer": item['response'], "matched_key": item['key'], "confidence": "high",
+                "suggestions": ["Cuota de almacenamiento", "Historial", "Eliminar cuenta y datos"]}
     mfa_pattern = r'\b(?:autenticador|autentificador|authenticator|autenticacion|totp|mfa|dos pasos|doble factor|segundo factor|escanear (?:el )?qr)\b'
     mfa_topic = bool(re.search(mfa_pattern, normalized))
     mfa_followup = bool(re.search(mfa_pattern, previous_user)) and bool(re.search(
@@ -256,20 +274,42 @@ def answer_for(
     password_topic = bool(re.search(r'\b(?:contrasena|password|clave)\b', normalized)) and bool(re.search(
         r'\b(?:olvide|recuperar|recupero|restablecer|cambiar|perdi)\b', normalized))
     recovery_email = bool(re.search(r'\bcorreo\b', normalized)) and (
-        'recuperacion' in normalized or (bool(re.search(r'\b(?:contrasena|password|clave)\b', previous_user))
+        bool(re.search(r'\b(?:recuperacion|recuperar|recupero|restablecer)\b', normalized)) or (bool(re.search(r'\b(?:contrasena|password|clave|recuperar|recupero|recuperacion)\b', previous_user))
         and bool(re.search(r'\b(?:no|llega|vencio|enlace)\b', normalized))))
+    account_recovery = bool(re.search(r'\b(?:recuperar|recupero|restablecer)\b', normalized)) and bool(
+        re.search(r'\b(?:mi cuenta|la cuenta|acceso)\b', normalized))
     account_key = None
     if re.search(r'\b(?:cerrar|cerre)\s+(?:todas las |la |mi )?sesiones?\b', normalized):
         account_key = 'session_logout'
     elif mfa_topic or mfa_followup:
         lost = re.search(r'\b(?:perdi|perdido|quitar|quitarl[oa]|sin|no tengo|no puedo|no funciona)\b', normalized)
         account_key = 'mfa_recovery' if lost else 'mfa_optional'
-    elif (password_topic or recovery_email) and not re.search(r'\b(?:bancaria|bancario|cvv|tarjeta)\b', normalized):
+    elif (password_topic or recovery_email or account_recovery) and not re.search(r'\b(?:bancaria|bancario|cvv|tarjeta)\b', normalized):
         account_key = 'password_recovery'
     if account_key:
         item = next(row for row in ARTICLES if row['key'] == account_key)
         return {"answer": item['response'], "matched_key": account_key, "confidence": "high",
                 "suggestions": ["Recuperar contrasena", "Autenticador y acceso", "Mis datos y privacidad"]}
+    # Product billing and data-access questions must not fall through to ratios.
+    product_key = None
+    if re.search(r'\b(?:coin|coins|monedas)\b', normalized) and re.search(r'\b(?:vale|valen|valor|precio|equivalencia|pesos|clp)\b', normalized):
+        product_key = 'coin_value'
+    elif re.search(r'\b(?:pagar|pago|comprar|contratar|renovar|cobro|cobros)\b', normalized) and re.search(
+        r'\b(?:tarjeta|tarjetas|webpay|transbank|pasarela|plan|planes|suscripcion|coins)\b', normalized
+    ) and not re.search(r'\b(?:proveedores|proveedor|ventas|negocio|mis clientes)\b', normalized):
+        product_key = 'payment_availability'
+    elif re.search(r'\b(?:datos|archivos|analisis)\b', normalized) and re.search(r'\b(?:ver|ve|ven|leer|acceder)\b', normalized) and re.search(
+        r'\b(?:quien|otro usuario|otros usuarios|otros clientes|otra cuenta)\b', normalized
+    ):
+        product_key = 'data_access'
+    elif re.search(r'\b(?:archivo|archivos)\b', normalized) and re.search(
+        r'\b(?:borraste|desaparecio|desaparecieron|no aparece|se perdio)\b', normalized
+    ):
+        product_key = 'missing_file'
+    if product_key:
+        item = next(row for row in ARTICLES if row['key'] == product_key)
+        return {"answer": item['response'], "matched_key": product_key, "confidence": "high",
+                "suggestions": ["Soporte humano", "Mis datos y privacidad", "Planes"]}
     # Privacy actions must not be mistaken for financial account metrics.
     if re.search(r"\b(?:eliminar|borrar|borra|cerrar)\s+(?:todos\s+)?(?:mi|mis|la)\s+(?:cuenta|datos)\b", normalized) or re.search(
         r"\b(?:ya lo borraste|ya estan borrados)\b", normalized,
@@ -369,7 +409,7 @@ def answer_for(
         )
     ranked = rank_articles(ranking_message, catalog)
     if not ranked or ranked[0][0] < 3.5:
-        suggestions = [item["title"] for item in sorted(catalog, key=lambda row: row.get("priority", 0), reverse=True)[:4]]
+        suggestions = ["Mis ingresos totales", "Calidad y duplicados", "Descargar datos limpios", "Soporte humano"]
         return {
             "answer": "Puedo leer los indicadores visibles de tu archivo y orientarte sobre importación, limpieza, Google Sheets, finanzas, relaciones, gráficos, planes, ADS Coins y soporte. Pregunta por una cifra o usa el nombre del indicador. Si una fuente no está disponible, te diré qué falta en vez de estimarla; para un caso no cubierto también puedes abrir Ayuda y conversar con soporte humano.",
             "matched_key": None,

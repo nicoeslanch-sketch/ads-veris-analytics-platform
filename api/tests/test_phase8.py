@@ -1,6 +1,18 @@
 """Pruebas de la Fase 8: panel admin, soporte, retención y adaptividad."""
 
 
+def _retention_journal(monkeypatch, module):
+    monkeypatch.setattr(module, 'commercial_rpc', lambda *a, **k: 'lease')
+    def journal(action, user, settings, **payload):
+        if action == 'list':
+            return []
+        if action == 'begin':
+            return dict(id=payload['p_name'], object_name=payload['p_name'], stage='pending',
+                        object_id=payload['p_object_id'], object_stamp=payload['p_stamp'])
+        return {}
+    monkeypatch.setattr(module, '_journal', journal)
+
+
 # ── Panel de administración ───────────────────────────────────────────────────
 
 
@@ -156,7 +168,7 @@ def test_retention_poda_excedente_y_antiguos(monkeypatch):
 
     deleted: list[list[str]] = []
     monkeypatch.setattr(
-        retention_module, "get_profile_flags", lambda uid, s: ("basico", False)
+        retention_module, "get_profile_flags", lambda uid, s, **kw: ("basico", False)
     )
     monkeypatch.setattr(
         retention_module, "_list_user_files", lambda uid, s: list(files)
@@ -173,9 +185,10 @@ def test_retention_poda_excedente_y_antiguos(monkeypatch):
         retention_module, "_prune_activity", lambda uid, s: 2
     )
 
+    _retention_journal(monkeypatch, retention_module)
     result = retention_module._retention_sync("user-1", settings)
     assert result["eliminados"] == 3
-    assert deleted[0] == ["f3.csv", "f4.csv", "f5.csv"]
+    assert deleted == [["f3.csv"], ["f4.csv"], ["f5.csv"]]
     assert result["conservados"] == 3
     assert result["limite"] == 4
     assert result["actividad_eliminada"] == 2
@@ -197,7 +210,7 @@ def test_retention_keep_last_es_intocable(monkeypatch):
     files = [{"id": str(i), "name": f"f{i}.csv", "created_at": old} for i in range(3)]
 
     monkeypatch.setattr(
-        retention_module, "get_profile_flags", lambda uid, s: ("basico", False)
+        retention_module, "get_profile_flags", lambda uid, s, **kw: ("basico", False)
     )
     monkeypatch.setattr(retention_module, "_list_user_files", lambda uid, s: list(files))
     monkeypatch.setattr(
@@ -208,6 +221,7 @@ def test_retention_keep_last_es_intocable(monkeypatch):
     monkeypatch.setattr(retention_module, "_unlink_datasets", lambda uid, names, s: None)
     monkeypatch.setattr(retention_module, "_prune_activity", lambda uid, s: 0)
 
+    _retention_journal(monkeypatch, retention_module)
     result = retention_module._retention_sync("user-1", settings)
     assert result["eliminados"] == 0
     assert result["conservados"] == 3
