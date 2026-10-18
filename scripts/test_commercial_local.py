@@ -375,6 +375,7 @@ class SecurityLab:
         self.test_account_limits()
         self.test_privacy()
         self.test_operational_health()
+        self.test_maintenance()
         self.test_initial_import_queue()
         self.test_concurrent_restore_snapshots()
         self.test_account_erasure_recovery()
@@ -557,6 +558,93 @@ class SecurityLab:
         assert completed['status'] == 'completed'
         assert self.rpc('analysis_queue', args)['result'] == {'safe_count': 0, 'candidates': []}
         self.checks['business_connections_queue_recovers_result_and_isolates_owners'] = True
+
+    def test_maintenance(self):
+        functions = ('retention_guard(text,uuid,uuid)',
+                     'retention_journal_operation(text,uuid,uuid,text,text,text,text)',
+                     'operational_notification(text,text,text[],text,uuid,bigint,boolean)',
+                     'retention_schedule_operation(text,uuid,jsonb)')
+        tables = ('retention_guards', 'retention_journal', 'operational_notifications', 'retention_schedule')
+        for role in ('anon', 'authenticated'):
+            for fn in functions:
+                assert self.sql(f"select has_function_privilege('{role}','public.{fn}','execute')") == 'f'
+            for table in tables:
+                assert self.sql(f"select has_table_privilege('{role}','app_private.{table}','select')") == 'f'
+        owner, other = self.account(), self.account()
+        claims = self.concurrent(lambda _: self.rpc('retention_guard', {'p_action': 'claim', 'p_user_id': owner}))
+        assert len([c for c in claims if c]) == 1
+        lease = next(c for c in claims if c)
+        assert self.rpc('retention_guard', {'p_action': 'renew', 'p_user_id': other, 'p_lease': lease}) is None
+        assert self.rpc('retention_guard', {'p_action': 'renew', 'p_user_id': owner, 'p_lease': lease}) == lease
+        self.rpc('retention_guard', {'p_action': 'release', 'p_user_id': owner, 'p_lease': lease})
+        args = dict(p_action='begin', p_user_id=owner, p_name='synthetic.csv', p_object_id='original', p_stamp='old')
+        jobs = self.concurrent(lambda _: self.rpc('retention_journal_operation', args))
+        assert len({j['id'] for j in jobs}) == 1
+        job = jobs[0]
+        assert self.rpc('retention_journal_operation', dict(p_action='list', p_user_id=other)) == []
+        wrong_owner = self.http.post(self.base + '/rest/v1/rpc/retention_journal_operation', headers=self.headers,
+            json=dict(p_action='advance', p_user_id=other, p_id=job['id'], p_stage='cancelled'))
+        assert wrong_owner.status_code >= 400
+        self.rpc('retention_journal_operation', {**args, 'p_name': '../other.csv'}, expected=400)
+        self.rpc('retention_journal_operation', dict(p_action='advance', p_user_id=owner, p_id=job['id'], p_stage='cancelled'))
+        assert self.rpc('retention_journal_operation', args)['stage'] == 'pending'
+        self.checks['retention_journal_private_owner_scoped_idempotent_and_leased'] = True
+
+        destination = hashlib.sha256(b'synthetic-local-destination').hexdigest()
+        def notify(action, **kw):
+            return self.rpc('operational_notification', dict(p_action=action, p_destination=destination, **kw))
+        notify('sync', p_codes=['HTTP_ERRORS'])
+        self.concurrent(lambda _: notify('sync', p_codes=['HTTP_ERRORS']))
+        claims = self.concurrent(lambda _: notify('claim'))
+        assert len([c for c in claims if c]) == 1
+        item = next(c for c in claims if c)
+        assert item['revision'] == 1
+        notify('sync', p_codes=[])
+        assert not notify('ack', p_code=item['code'], p_lease=item['lease'], p_revision=1, p_success=True)['acknowledged']
+        resolved = notify('claim')
+        assert not resolved['active'] and resolved['revision'] == 2
+        assert notify('ack', p_code=resolved['code'], p_lease=resolved['lease'], p_revision=2, p_success=False)['acknowledged']
+        assert notify('claim') is None
+        self.sql(f"update app_private.operational_notifications set next_attempt=now()-interval '1 minute' where destination='{destination}'")
+        retry = notify('claim')
+        assert retry['revision'] == 2 and retry['lease'] != resolved['lease']
+        notify('ack', p_code=retry['code'], p_lease=retry['lease'], p_revision=2, p_success=True)
+        assert notify('claim') is None
+        self.checks['notifications_coalesce_lease_fence_and_retry_without_duplicate_claims'] = True
+
+        self.sql('update app_private.retention_schedule set cursor_user=null,next_scan=now()')
+        scans = self.concurrent(lambda _: self.rpc('retention_schedule_operation', {'p_action': 'claim'}))
+        assert len([s for s in scans if s]) == 1
+        scan = next(s for s in scans if s)
+        assert len(scan['users']) <= 5
+        report = dict(mode='audit', accounts=1, candidates=1, deleted=0, errors=0)
+        assert not self.rpc('retention_schedule_operation', dict(p_action='complete', p_lease=str(uuid4()), p_report=report))['acknowledged']
+        self.rpc('retention_schedule_operation', dict(p_action='complete', p_lease=scan['lease'], p_report={**report, 'file': 'private.csv'}), expected=400)
+        assert self.rpc('retention_schedule_operation', dict(p_action='complete', p_lease=scan['lease'], p_report=report))['acknowledged']
+        status = self.rpc('retention_schedule_operation', {'p_action': 'status'})
+        assert set(status) == {'completed_at', 'report'} and status['report'] == report
+        self.checks['retention_schedule_global_bounded_and_aggregate_only'] = True
+
+        # Exercise the actual Storage delete response and recovery journal, not mocks.
+        from app.config import Settings
+        from app.routes.retention import _retention_sync
+        uid = self.account()
+        for name in ('recent.csv', 'expired.csv'):
+            path = uid + '/' + name
+            upload = self.http.post(self.base + '/storage/v1/object/datasets/' + path,
+                headers={**self.headers, 'Content-Type': 'text/csv'}, content=b'ID,Amount\n1,10\n')
+            assert upload.status_code == 200
+            self.sql(f"insert into public.datasets(id,user_id,name,storage_path) values('{uuid4()}','{uid}','{name}','{path}')")
+        self.sql(f"begin; set local session_replication_role=replica; "
+                 f"update storage.objects set created_at=now()-interval '100 days',updated_at=now()-interval '100 days',"
+                 f"last_accessed_at=now()-interval '100 days' where name='{uid}/expired.csv'; commit;")
+        settings = Settings(_env_file=None, supabase_url=self.base, supabase_service_role_key=self.headers['apikey'], storage_keep_last=1)
+        assert _retention_sync(uid, settings, dry_run=True)['candidatos'] == 1
+        assert _retention_sync(uid, settings)['eliminados'] == 1
+        assert self.sql(f"select count(*) from storage.objects where name='{uid}/expired.csv'") == '0'
+        assert self.sql(f"select count(*) from public.datasets where user_id='{uid}' and name='expired.csv' and storage_path is null") == '1'
+        assert _retention_sync(uid, settings)['eliminados'] == 0
+        self.checks['retention_real_storage_expiry_preserves_history_and_recent_file'] = True
 
     def test_operational_health(self):
         signature = 'public.operational_health(text,uuid,jsonb)'

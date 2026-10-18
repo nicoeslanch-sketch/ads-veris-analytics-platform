@@ -12,6 +12,10 @@ for (const width of [320, 390, 1280]) {
         http: { instances: 1, requests: 12345678, errors: 12, limited: 30, slow: 100 },
         queue: { queued: 27, running: 1, max_active: 32, oldest_wait_seconds: 999 },
         storage: { used_bytes: 98765432100000, reserved_bytes: 1000, limit_bytes: 100000000000000 },
+        external_notifications_configured: true,
+        maintenance: { completed_at: '2026-10-18T12:00:00Z', report: {
+          mode: 'audit', accounts: 5, candidates: 50000, deleted: 0, errors: 0,
+        } },
         alerts: [{ code: 'QUEUE_WAIT', severity: 'warning', title: 'Archivos esperando', detail: 'Revisa la actividad del worker.' }],
       } })
     })
@@ -20,6 +24,8 @@ for (const width of [320, 390, 1280]) {
     expect(requests).toBe(0)
     await page.getByRole('button', { name: 'Estado operativo' }).click()
     await expect(page.getByText('Archivos esperando', { exact: true })).toBeVisible()
+    await expect(page.getByText('Conservacion: solo revision', { exact: true })).toBeVisible()
+    await expect(page.getByText('Avisos externos configurados', { exact: false })).toBeVisible()
     expect(requests).toBe(1)
     const overflow = await page.getByRole('region', { name: 'Estado operativo', exact: true }).evaluate(root => [root, ...root.querySelectorAll('p, dt, dd, button')]
       .filter(node => node.scrollWidth > node.clientWidth + 1).map(node => node.tagName))

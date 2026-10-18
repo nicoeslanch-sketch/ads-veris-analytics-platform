@@ -132,7 +132,7 @@ def get_plan(user_id: str, settings: Settings) -> str:
     return get_profile_flags(user_id, settings)[0]
 
 
-def get_profile_flags(user_id: str, settings: Settings) -> tuple[str, bool]:
+def get_profile_flags(user_id: str, settings: Settings, *, require_profile: bool = False) -> tuple[str, bool]:
     """(plan, is_admin) en UNA consulta a profiles. Sin Supabase → ('basico', False)."""
     if not settings.supabase_url or not settings.supabase_service_role_key:
         return "basico", False
@@ -144,6 +144,8 @@ def get_profile_flags(user_id: str, settings: Settings) -> tuple[str, bool]:
     )
     response.raise_for_status()
     rows = response.json()
+    if require_profile and (not rows or rows[0].get("plan") not in PLAN_CAPABILITIES):
+        raise HTTPException(503, "No se pudo verificar el plan de conservacion. No se eliminaron archivos.")
     if not rows:
         return "basico", False
     return normalize_plan(rows[0].get("plan")), bool(rows[0].get("is_admin"))

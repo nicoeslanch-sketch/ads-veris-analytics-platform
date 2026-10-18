@@ -2671,6 +2671,8 @@ def _write_clean_sheet(
         )
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = header_fill
+        if isinstance(value, str):
+            cell.data_type = "s"
         header_cells.append(cell)
     if wb.write_only:
         ws.append(header_cells)
@@ -2744,6 +2746,20 @@ def _write_clean_sheet(
                 cell[0].number_format = "dd/mm/yyyy"
 
 
+def _append_literal_metadata(ws, values) -> None:
+    from openpyxl.cell import WriteOnlyCell
+
+    cells = []
+    for value in values:
+        if isinstance(value, str) and value.lstrip().startswith("="):
+            cell = WriteOnlyCell(ws, value=value)
+            cell.data_type = "s"
+            cells.append(cell)
+        else:
+            cells.append(value)
+    ws.append(cells)
+
+
 def _write_observations_sheet(
     wb, observations: list[tuple], title: str = "Observaciones"
 ) -> None:
@@ -2762,7 +2778,7 @@ def _write_observations_sheet(
     ws.append(headers)
     if observations:
         for source_row, source_sheet, column, kind, message in observations:
-            ws.append([source_row, source_sheet or "CSV", column, kind, message])
+            _append_literal_metadata(ws, [source_row, source_sheet or "CSV", column, kind, message])
     else:
         ws.append([
             "—",
@@ -2923,7 +2939,7 @@ def _write_manifest_sheet(wb, records: list[dict], title: str = "Manifest") -> N
         headers.append(cell)
     ws.append(headers)
     for record in records:
-        ws.append([
+        _append_literal_metadata(ws, [
             record.get("hoja"),
             record.get("estado"),
             record.get("procesada"),
@@ -2973,7 +2989,8 @@ def _clean_download_sync(
         sheet=sheet,
         eliminar_duplicados=eliminar_duplicados,
     )
-    df = result["_df_limpio"].copy()
+    # Writers create their own export copy; keep the cached frame read-only.
+    df = result["_df_limpio"]
     stem = re.sub(r"[^\w\-]", "_", os.path.splitext(filename)[0])
     numeric_columns = {
         column for column, kind in result.get("column_types", {}).items() if kind == "numero"
@@ -2981,14 +2998,14 @@ def _clean_download_sync(
     date_columns = {
         column for column, kind in result.get("column_types", {}).items() if kind == "fecha"
     }
-    df_export = safe_export_dataframe(
-        df, numeric_columns=numeric_columns, canonical_numeric=True
-    )
     audit = _build_export_audit(
         filename, content, sheet, result, rules, mapping, scope
     )
 
     if fmt == "csv":
+        df_export = safe_export_dataframe(
+            df, numeric_columns=numeric_columns, canonical_numeric=True
+        )
         # CSV no soporta hojas: se entrega un ZIP con datos y auditoría
         # separada, ambos legibles y sin contaminar las columnas empresariales.
         output = io.BytesIO()
@@ -3027,8 +3044,7 @@ def _clean_download_sync(
 
     import openpyxl
 
-    wb = openpyxl.Workbook()
-    wb.remove(wb.active)
+    wb = openpyxl.Workbook(write_only=True)
     yellow, red, observations = _export_annotations(result, df)
     _write_clean_sheet(
         wb,

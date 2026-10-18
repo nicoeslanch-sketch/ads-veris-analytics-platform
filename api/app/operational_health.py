@@ -8,6 +8,7 @@ from time import monotonic
 from uuid import uuid4
 
 from .commercial_rpc import commercial_rpc
+from .operational_notifications import configured, deliver
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -77,7 +78,30 @@ def alerts_for(snapshot):
 
 def health_snapshot(settings):
     data = commercial_rpc('operational_health', {'p_action': 'snapshot'}, settings)
-    return {**data, 'alerts': alerts_for(data), 'external_notifications_configured': False}
+    alerts = alerts_for(data)
+    maintenance, retention_alerts = maintenance_status(settings)
+    return {**data, 'alerts': alerts + retention_alerts, 'maintenance': maintenance,
+            'external_notifications_configured': configured(settings)}
+
+
+def maintenance_status(settings):
+    maintenance = None
+    alerts = []
+    if getattr(settings, 'retention_schedule_mode', 'off') == 'off':
+        return maintenance, alerts
+    try:
+        maintenance = commercial_rpc('retention_schedule_operation', {'p_action': 'status'}, settings)
+        report = (maintenance or {}).get('report', {})
+        if report.get('errors', 0):
+            alerts.append({'code': 'RETENTION_FAILED', 'severity': 'warning', 'title': 'Conservacion pendiente',
+                           'detail': 'El ultimo lote de revision tuvo errores. Los intentos incompletos se conservan para reintentar.'})
+        elif report.get('mode') == 'audit' and report.get('candidates', 0):
+            alerts.append({'code': 'RETENTION_PENDING', 'severity': 'warning', 'title': 'Archivos candidatos a vencer',
+                           'detail': 'La revision programada es solo informativa. No elimina archivos de cuentas inactivas.'})
+    except Exception:
+        alerts.append({'code': 'RETENTION_FAILED', 'severity': 'warning', 'title': 'Retencion sin verificacion',
+                       'detail': 'No se pudo consultar el ultimo barrido. No se confirma su ejecucion.'})
+    return maintenance, alerts
 
 
 class OperationalMonitor:
@@ -91,7 +115,8 @@ class OperationalMonitor:
         try:
             data = commercial_rpc('operational_health', {'p_action': 'heartbeat',
                 'p_instance_id': self.instance_id, 'p_sample': request_window.snapshot()}, self.settings)
-            current = {item['code'] for item in alerts_for(data)}
+            _, retention_alerts = maintenance_status(self.settings)
+            current = {item['code'] for item in alerts_for(data) + retention_alerts}
         except Exception:
             # Only fixed codes leave this boundary; never provider responses.
             current = {'MONITOR_UNAVAILABLE'}
@@ -100,6 +125,10 @@ class OperationalMonitor:
         for code in sorted(self.previous - current):
             logger.info(json.dumps({'event': 'operational_alert', 'code': code, 'state': 'resolved'}))
         self.previous = current
+        try:
+            deliver(self.settings, current)
+        except Exception:
+            logger.warning('operational_notification_queue_unavailable')
 
     def run(self):
         while not self.stop.is_set():
