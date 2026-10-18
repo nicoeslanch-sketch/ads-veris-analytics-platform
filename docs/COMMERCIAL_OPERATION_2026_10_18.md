@@ -19,6 +19,8 @@ unlimited capacity, legal certification or perfect security.
   Default `RETENTION_SCHEDULE_MODE=audit` only reports candidates. `apply` requires
   explicit operator approval. This expires originals, not all analytical snapshots.
   The existing on-upload policy remains separate and unchanged in its limits.
+  Terminal journal metadata expires after 30 days in bounded batches; pending
+  recovery entries are retained. This does not delete customer files.
 - Optional signed HTTPS alerts contain fixed codes and aggregate state, never
   customer content. PostgreSQL coalesces states, leases delivery, fences late ACKs
   and retries failures with backoff. Receivers deduplicate `event_id` and verify
@@ -60,10 +62,10 @@ It is not an independent always-on scheduler or uptime monitor.
 
 - [x] Focused unit tests: export types/formula safety, retention recovery and
   ownership, webhook signing, destination restrictions, safe error reporting.
-- [ ] Full backend/frontend regression suites and desktop/mobile browser checks.
-- [ ] Disposable PostgreSQL/Storage tests: privileges, concurrent claims,
+- [x] Full backend/frontend regression suites and desktop/mobile browser checks.
+- [x] Disposable PostgreSQL/Storage tests: privileges, concurrent claims,
   retry fences, expiry, protected recent file, retained history.
-- [ ] New sustained capacity lab report with synthetic users and XLSX business view.
+- [x] New sustained capacity lab report with synthetic users and XLSX business view.
 - [x] Before/after export measurements in fresh processes on identical input.
 - [ ] Protected PR checks, additive migration, backend/frontend deployment identity.
 
@@ -74,6 +76,24 @@ Synthetic cached single-sheet export, 20,000 rows x 12 columns, local Windows:
 export 90.35 -> 25.08 MiB. One run per revision, not statistical p95 or a Render
 claim. Both output workbooks were reopened and all 20,000 rows verified. Reproduce
 with `python scripts/benchmark_export_streaming.py --rows 20000`.
+
+[Capacity run 39122495283](https://github.com/nicoeslanch-sketch/ads-veris-analytics-platform/actions/runs/39122495283)
+tested commit `96ac14e`, 10 synthetic accounts, 10,000 rows per four-sheet XLSX,
+business joins and changing date filters, on four CPUs with local Supabase and
+separate processes. 399/399 analyses completed in 613.182 seconds, 39.042/minute;
+end-to-end median 14.620 s, p95 16.187 s, maximum 26.199 s. Queue wait p95 was
+14.162 s, processing p95 1.569 s. API peak RSS 202.87 MiB, worker 263.07 MiB
+(per-process, not total infrastructure). One outstanding request/account and at
+least ten seconds between starts; not a saturation benchmark. Correct income and
+related costs were checked independently for every completed job. API restart,
+worker loss, persistence retries and tenant isolation passed. Worker recovery
+took 123.632 s including lease expiry. Zero production requests/customer files.
+
+The private relational fixture was rerun locally with its independent oracle:
+259/259 global, period and branch checks passed; all eight available manual
+relationship dashboards returned results. Fixture contents stay outside Git.
+Frontend unit tests: 257 passed. Monitoring screenshots and overflow checks passed
+at 320, 390 and 1280 px. Protected CI verifies the full backend and E2E suites.
 
 Existing tests cover registration/recovery UI, optional customer MFA, plan expiry,
 atomic coins, cleaning, relational totals, period selection, downloads, history,

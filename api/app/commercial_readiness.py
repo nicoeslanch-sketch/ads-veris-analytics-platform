@@ -4,6 +4,7 @@ from .account_security import mfa_enforced, security_context
 from .config import Settings
 from .durable_analysis import durable_mode
 from .version import LATEST_MIGRATION
+from .operational_notifications import configured as notifications_configured
 
 
 def commercial_readiness(user_id: str, settings: Settings) -> dict:
@@ -27,6 +28,12 @@ def commercial_readiness(user_id: str, settings: Settings) -> dict:
              'detail': 'Pospuestos por el titular. Sin pasarela, tarjeta almacenada ni cargos. Requiere integracion y pruebas antes de activar.'},
             {'id': 'catalog', 'title': 'Precios y condiciones', 'state': 'pending',
              'detail': 'Falta aprobar precios en CLP, impuestos, renovacion, cancelacion y devoluciones.'},
+            {'id': 'notifications', 'title': 'Avisos operativos externos',
+             'state': 'configured' if notifications_configured(settings) else 'prepared',
+             'detail': 'Envio por correo preparado con reintentos persistentes. Requiere autorizar la cuenta remitente y comprobar recepcion; configurado no significa entregado. Un servicio detenido necesita supervision independiente.'},
+            {'id': 'retention', 'title': 'Revision programada de originales',
+             'state': 'configured' if settings.retention_schedule_mode != 'off' else 'pending',
+             'detail': f"Modo: {settings.retention_schedule_mode}. En audit solo se revisan candidatos, sin borrar originales. Estado operativo informa el ultimo lote; un servidor dormido pausa el barrido."},
             {'id': 'recovery', 'title': 'Recuperacion ante desastre', 'state': 'pending',
              'detail': 'Restauracion cifrada ensayada en laboratorio aislado. Falta destino externo aprobado, copia real y prueba de recuperacion de produccion. Los snapshots analiticos no la sustituyen.'},
             {'id': 'capacity', 'title': 'Capacidad comercial', 'state': 'pending',

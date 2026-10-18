@@ -612,11 +612,16 @@ class SecurityLab:
         assert notify('claim') is None
         self.checks['notifications_coalesce_lease_fence_and_retry_without_duplicate_claims'] = True
 
+        terminal = self.rpc('retention_journal_operation', {**args, 'p_name': 'finished.csv'})
+        self.sql(f"update app_private.retention_journal set stage='completed',updated_at=now()-interval '31 days' where id='{terminal['id']}'; "
+                 f"update app_private.retention_journal set updated_at=now()-interval '31 days' where id='{job['id']}'")
         self.sql('update app_private.retention_schedule set cursor_user=null,next_scan=now()')
         scans = self.concurrent(lambda _: self.rpc('retention_schedule_operation', {'p_action': 'claim'}))
         assert len([s for s in scans if s]) == 1
         scan = next(s for s in scans if s)
         assert len(scan['users']) <= 5
+        assert self.sql(f"select count(*) from app_private.retention_journal where id='{terminal['id']}'") == '0'
+        assert self.sql(f"select count(*) from app_private.retention_journal where id='{job['id']}'") == '1'
         report = dict(mode='audit', accounts=1, candidates=1, deleted=0, errors=0)
         assert not self.rpc('retention_schedule_operation', dict(p_action='complete', p_lease=str(uuid4()), p_report=report))['acknowledged']
         self.rpc('retention_schedule_operation', dict(p_action='complete', p_lease=scan['lease'], p_report={**report, 'file': 'private.csv'}), expected=400)

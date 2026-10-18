@@ -42,6 +42,8 @@ create table app_private.retention_journal (
 );
 create index retention_journal_pending on app_private.retention_journal(user_id, updated_at)
   where stage in ('pending','storage_deleted');
+create index retention_journal_finished on app_private.retention_journal(updated_at)
+  where stage in ('completed','cancelled');
 alter table app_private.retention_journal enable row level security;
 revoke all on app_private.retention_journal from public, anon, authenticated;
 grant select, insert, update, delete on app_private.retention_journal to service_role;
@@ -172,6 +174,11 @@ begin
     return jsonb_build_object('completed_at',state.completed_at,'report',state.report);
   elsif p_action = 'claim' then
     if state.next_scan > now() then return null; end if;
+    -- Only terminal maintenance metadata expires, never files or pending recovery.
+    delete from app_private.retention_journal where id in (
+      select id from app_private.retention_journal where stage in ('completed','cancelled')
+      and updated_at < now() - interval '30 days' order by updated_at limit 1000
+    );
     select array_agg(user_id order by user_id) into users from (
       select user_id from (
         select distinct user_id from public.datasets where storage_path is not null
