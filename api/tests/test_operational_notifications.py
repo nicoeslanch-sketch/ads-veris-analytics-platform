@@ -2,6 +2,10 @@ import hashlib
 import hmac
 import json
 from contextlib import contextmanager
+import base64
+from email import policy
+from email.parser import BytesParser
+import httpx
 
 import pytest
 from pydantic import ValidationError
@@ -73,3 +77,50 @@ def test_retention_health_reports_only_actionable_states(monkeypatch, report, co
     data, alerts = health.maintenance_status(Settings(_env_file=None))
     assert data['report'] == report
     assert [a['code'] for a in alerts] == ([code] if code else [])
+
+
+@pytest.mark.parametrize('token_status,send_status,expected', [(200, 200, True), (400, 200, False), (200, 429, False)])
+def test_gmail_uses_only_send_api_and_fixed_recipient(monkeypatch, token_status, send_status, expected):
+    config = Settings(_env_file=None, operations_email_from='servicios@adsveris.com',
+        operations_gmail_client_id='client', operations_gmail_client_secret='secret', operations_gmail_refresh_token='refresh')
+    calls = []
+    def handler(request):
+        calls.append(request)
+        if request.url.host == 'oauth2.googleapis.com':
+            return httpx.Response(token_status, json={'access_token': 'short-lived-token'})
+        assert str(request.url) == 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+        assert request.headers['Authorization'] == 'Bearer short-lived-token'
+        msg = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(json.loads(request.content)['raw']))
+        assert msg['To'] == 'servicios@adsveris.com' and msg['From'] == 'servicios@adsveris.com'
+        assert 'HTTP_ERRORS' in msg['Subject'] and msg['Message-ID'] == '<event-1@adsveris.com>'
+        assert 'secret' not in msg.get_content() and 'refresh' not in msg.get_content()
+        return httpx.Response(send_status, json={'id': 'provider-id'})
+    real_client = httpx.Client
+    monkeypatch.setattr(mod.httpx, 'Client', lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    assert mod.email_configured(config)
+    assert mod._send_email(config, dict(event_id='event-1', code='HTTP_ERRORS', state='active', sent_at='2026-10-18')) is expected
+    assert len(calls) == (1 if token_status != 200 else 2)
+
+
+def test_gmail_partial_configuration_fails_closed():
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, operations_email_from='servicios@adsveris.com')
+
+
+def test_email_has_priority_over_optional_webhook(monkeypatch):
+    config = settings()
+    config.operations_email_from = 'servicios@adsveris.com'
+    config.operations_gmail_client_id = 'client'
+    config.operations_gmail_client_secret = 'secret'
+    config.operations_gmail_refresh_token = 'refresh'
+    claims, sent = [], []
+    def rpc(name, p, s):
+        if p['p_action'] == 'claim':
+            claims.append(p)
+            if len(claims) == 1:
+                return dict(code='HTTP_ERRORS', active=True, revision=1, lease='lease')
+    monkeypatch.setattr(mod, 'commercial_rpc', rpc)
+    monkeypatch.setattr(mod, '_send_email', lambda s, e: sent.append(e) or True)
+    monkeypatch.setattr(mod.socket, 'getaddrinfo', lambda *a, **k: pytest.fail('webhook must not be used'))
+    mod.deliver(config, {'HTTP_ERRORS'})
+    assert len(sent) == 1

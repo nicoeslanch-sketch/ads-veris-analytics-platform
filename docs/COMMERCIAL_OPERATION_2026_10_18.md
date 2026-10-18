@@ -28,6 +28,20 @@ unlimited capacity, legal certification or perfect security.
 
 ## Configuration still requiring an operator
 
+The owner selected email to `servicios@adsveris.com` and audit-only inactive-account
+retention. Public MX lookup on October 18 points to `smtp.google.com`; this identifies
+Google routing but does not prove mailbox ownership or active sending permission.
+The Gmail HTTPS adapter is prepared, not activated: use a Google OAuth client and
+an owner-approved refresh token with only `https://www.googleapis.com/auth/gmail.send`.
+Set `OPERATIONS_EMAIL_FROM`, `OPERATIONS_GMAIL_CLIENT_ID`,
+`OPERATIONS_GMAIL_CLIENT_SECRET`, and `OPERATIONS_GMAIL_REFRESH_TOKEN` in protected
+server configuration. The mailbox owner must authorize this separately; no inbox
+password or inbox-reading permission is needed. Default recipient is the selected
+address. Gmail takes priority over the optional webhook if both are configured.
+Gmail acceptance is not delivery/read confirmation. Lost acknowledgements can
+cause duplicates despite a stable Message-ID; do not promise exactly-once email.
+Reference: https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send
+
 `OPERATIONS_WEBHOOK_URL`: an existing public HTTPS endpoint on port 443, no URL
 credentials, fragment or redirects. `OPERATIONS_WEBHOOK_SECRET`: a random secret
 at least 32 characters, entered only in server environment and receiver settings.
@@ -39,6 +53,8 @@ of receipt; perform a synthetic delivery and recovery before calling it operatio
 `RETENTION_SCHEDULE_MODE`: `off`, `audit` (default), or `apply`. Do not enable apply
 without approving the published policy and considering postponed external backups.
 The panel shows only the last batch, not a claim that every account was checked.
+On a sleeping free service this in-process scheduler pauses; it resumes on wake.
+It is not an independent always-on scheduler or uptime monitor.
 
 ## Verification Checklist
 
@@ -48,10 +64,16 @@ The panel shows only the last batch, not a claim that every account was checked.
 - [ ] Disposable PostgreSQL/Storage tests: privileges, concurrent claims,
   retry fences, expiry, protected recent file, retained history.
 - [ ] New sustained capacity lab report with synthetic users and XLSX business view.
-- [ ] Before/after export measurements in fresh processes on identical input.
+- [x] Before/after export measurements in fresh processes on identical input.
 - [ ] Protected PR checks, additive migration, backend/frontend deployment identity.
 
 ## Boundaries of Commercial Readiness
+
+Synthetic cached single-sheet export, 20,000 rows x 12 columns, local Windows:
+4.620 -> 3.806 seconds; peak RSS 223.05 -> 155.95 MiB; additional RSS during
+export 90.35 -> 25.08 MiB. One run per revision, not statistical p95 or a Render
+claim. Both output workbooks were reopened and all 20,000 rows verified. Reproduce
+with `python scripts/benchmark_export_streaming.py --rows 20000`.
 
 Existing tests cover registration/recovery UI, optional customer MFA, plan expiry,
 atomic coins, cleaning, relational totals, period selection, downloads, history,
@@ -60,7 +82,7 @@ happy-path claim. Production email delivery and customer-device behavior are
 separate checks; synthetic load is not a certified Render user limit.
 
 The accepted input contract, not marketing language, determines compatibility:
-supported XLSX/CSV/text-delimited formats and supported Google Sheets imports;
+supported XLSX/CSV files and supported Google Sheets tab imports;
 invalid formulas, ambiguous currencies and joins must remain visible as limitations.
 No plan price, coin value, paid provider or user-company authorization model is
 changed in this release. Existing commercial catalog/entitlement tests remain gates.

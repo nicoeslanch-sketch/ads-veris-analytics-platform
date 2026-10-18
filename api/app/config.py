@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     retention_schedule_mode: Literal['off', 'audit', 'apply'] = 'audit'
     operations_webhook_url: str = ''
     operations_webhook_secret: str = ''
+    operations_email_to: str = 'servicios@adsveris.com'
+    operations_email_from: str = ''
+    operations_gmail_client_id: str = ''
+    operations_gmail_client_secret: str = ''
+    operations_gmail_refresh_token: str = ''
     # La bitácora se acota por documentos, no por calendario: así una cuenta
     # activa no ve cientos de limpiezas y una cuenta esporádica no pierde una
     # acción útil solo porque pasaron algunos días.
@@ -182,6 +187,13 @@ class Settings(BaseSettings):
                 raise ValueError('El destino de avisos debe ser HTTPS sin credenciales en la URL.')
             if len(self.operations_webhook_secret) < 32:
                 raise ValueError('Los avisos externos requieren una clave de firma de al menos 32 caracteres.')
+        email_config = (self.operations_email_from, self.operations_gmail_client_id,
+                        self.operations_gmail_client_secret, self.operations_gmail_refresh_token)
+        if any(email_config) and not all(email_config):
+            raise ValueError('La configuracion del remitente de avisos esta incompleta.')
+        for address in (self.operations_email_to, self.operations_email_from):
+            if address and not re.fullmatch(r'[A-Za-z0-9.!#$%&\'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}', address):
+                raise ValueError('Los avisos requieren una direccion de correo simple y valida.')
         return self
 
 

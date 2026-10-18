@@ -312,6 +312,10 @@ _JOINED_ALIASES = {
     "cuantosarchivospuedoguardar": "cuantos archivos puedo guardar",
     "cuantosarchivospuedosubir": "cuantos archivos puedo subir",
     "cuotadealmacenamiento": "cuota de almacenamiento",
+    "caducanmisarchivos": "caducan mis archivos",
+    "retenciondearchivos": "retencion de archivos",
+    "csvvieneenzip": "csv viene en zip",
+    "descargueunzip": "descargue un zip",
     "espaciolleno": "espacio lleno",
     "cuantoespaciotengo": "cuanto espacio tengo",
 }

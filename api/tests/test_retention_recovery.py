@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.config import Settings
 from app.routes import retention as mod
 from app import maintenance
+from app import capabilities
 
 
 @pytest.fixture
@@ -138,3 +139,14 @@ def test_scheduler_is_bounded_read_only_and_reports_no_identifiers(monkeypatch):
     maintenance.RetentionScheduler(Settings(_env_file=None)).poll()
     assert calls[-1]['p_report'] == dict(mode='audit', accounts=1, candidates=2, deleted=0, errors=0)
     assert 'owner-private' not in str(calls[-1])
+
+
+@pytest.mark.parametrize('rows', [[], {}, [None], [{'plan': 'unknown', 'is_admin': False}],
+    [{'plan': 'basico', 'is_admin': 'false'}]])
+def test_retention_profile_must_be_known_before_removing_files(monkeypatch, rows):
+    monkeypatch.setattr(capabilities.httpx, 'get', lambda *a, **kw: httpx.Response(200,
+        request=httpx.Request('GET', 'https://example.test'), json=rows))
+    config = Settings(_env_file=None, supabase_url='https://example.test', supabase_service_role_key='synthetic')
+    with pytest.raises(HTTPException) as exc:
+        capabilities.get_profile_flags('owner', config, require_profile=True)
+    assert exc.value.status_code == 503

@@ -37,6 +37,8 @@ def article(
 
 
 ARTICLES: list[dict[str, Any]] = [
+    article("file_retention", "datos", "Conservacion de archivos", ["caducan mis archivos", "se borran mis archivos", "retencion de archivos", "cuanto tiempo guardan", "cuenta inactiva", "dejo de entrar", "dejo de usar la plataforma"], "La politica de originales protege los cinco archivos mas recientes. En el flujo activo pueden vencer originales antiguos por superar 60 dias sin uso o el limite de archivos del plan; el historial se conserva indicando cuando el original ya no esta disponible. Los barridos de cuentas inactivas estan en modo de revision, sin borrado automatico. Esto no equivale a un respaldo externo ni garantiza recuperar un archivo eliminado. Este chat no borra archivos ni cambia la politica.", "¿Preguntas por un original antiguo o por eliminar tu cuenta?", 94),
+    article("download_audit_zip", "limpieza", "CSV con auditoria", ["descargue un zip", "descarga zip", "csv viene en zip", "archivo zip", "donde esta la auditoria", "zip en vez de csv"], "La exportacion CSV se entrega dentro de un ZIP: contiene los datos limpios, su auditoria y un manifest. Descomprimelo para abrir los CSV. En Excel, los datos y la auditoria van en hojas separadas. Un cambio de formato no debe cambiar reglas, mapeos ni la decision sobre duplicados; revisa el alcance y las observaciones antes de usarlo.", "¿Necesitas datos limpios o revisar que se modifico?", 94),
     article("chart_selection", "analisis", "Elegir una vista", ["elegir un grafico", "que grafico", "banco de graficos", "tipos de graficos", "mapa de calor", "pareto", "grafico de dispersion"], "En Explorar datos, Pregunta de analisis agrupa las vistas disponibles por evolucion, composicion, productos y operacion. Compara el mismo mes entre anos, cambios mensuales, concentracion, calendario por ID o ingresos frente a utilidad cuando existan las fuentes necesarias. No aparecen vistas sin evidencia suficiente. Los valores exactos quedan desplegables; cada vista incluye una comprobacion sugerida, no una orden automatica de compra.", "¿Quieres revisar tendencia, concentracion o productos?", 92),
     article("cleaning_ids", "limpieza", "Identificadores y ceros iniciales", ["ceros a la izquierda", "cero a la izquierda", "id como numero", "codigo como numero"], "Un ID identifica un registro, no es una cantidad. Conserva los ceros iniciales y revisa el rol y tipo de esa columna en Estandarizacion. Convertir 0012 en 12 puede romper conexiones o unir clientes distintos. Si Excel ya perdio los ceros antes de subirlo, no es seguro reconstruirlos sin una regla o catalogo de referencia.", "¿La columna es un ID o una cantidad?", 94),
     article("cleaning_outliers", "limpieza", "Valores atipicos", ["valor atipico", "valores atipicos", "outlier", "outliers", "eliminar extremos"], "Un valor atipico es una señal para revisar, no necesariamente un error. Comprueba documento, moneda, unidad, descuentos y devoluciones antes de corregirlo. Una venta grande real no debe borrarse solo por ser distinta; conserva trazabilidad de cualquier cambio.", "¿Es un importe, una fecha o una cantidad?", 94),
@@ -249,6 +251,14 @@ def answer_for(
     # Account questions precede metric matching, without inheriting stale topics.
     previous_user = next((normalize_query(str(item.get('content') or ''))
                           for item in reversed(history or []) if item.get('role') == 'user'), '')
+    retention_topic = re.search(r'\b(?:archivos|originales|cuenta inactiva)\b', normalized) and re.search(
+        r'\b(?:caducan|caduca|retencion|conservan|guardan|borran|inactiva)\b', normalized)
+    retention_followup = re.search(r'\b(?:caducan|retencion|conservan|cuenta inactiva)\b', previous_user) and re.search(
+        r'\b(?:no entro|no ingreso|dejo de entrar|inactivo|inactiva|es un respaldo)\b', normalized)
+    if retention_topic or retention_followup:
+        item = next(row for row in ARTICLES if row['key'] == 'file_retention')
+        return {"answer": item['response'], "matched_key": item['key'], "confidence": "high",
+                "suggestions": ["Cuota de almacenamiento", "Historial", "Eliminar cuenta y datos"]}
     mfa_pattern = r'\b(?:autenticador|autentificador|authenticator|autenticacion|totp|mfa|dos pasos|doble factor|segundo factor|escanear (?:el )?qr)\b'
     mfa_topic = bool(re.search(mfa_pattern, normalized))
     mfa_followup = bool(re.search(mfa_pattern, previous_user)) and bool(re.search(

@@ -190,7 +190,7 @@ begin
     if p_report is null or jsonb_typeof(p_report) <> 'object' or length(p_report::text) > 1000 or exists(
       select 1 from jsonb_object_keys(p_report) x where x not in ('mode','accounts','candidates','deleted','errors')) then raise invalid_parameter_value; end if;
     if not (p_report ?& array['mode','accounts','candidates','deleted','errors'])
-      or p_report->>'mode' not in ('audit','apply')
+      or coalesce(p_report->>'mode','') not in ('audit','apply')
       or exists(select 1 from jsonb_each(p_report) x where x.key <> 'mode' and
         (jsonb_typeof(x.value) <> 'number' or x.value::text !~ '^[0-9]{1,7}$'))
       or (p_report->>'accounts')::integer > 5 or (p_report->>'errors')::integer > 5
