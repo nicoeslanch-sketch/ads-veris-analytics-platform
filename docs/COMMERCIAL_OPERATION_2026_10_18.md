@@ -67,7 +67,9 @@ It is not an independent always-on scheduler or uptime monitor.
   retry fences, expiry, protected recent file, retained history.
 - [x] New sustained capacity lab report with synthetic users and XLSX business view.
 - [x] Before/after export measurements in fresh processes on identical input.
-- [ ] Protected PR checks, additive migration, backend/frontend deployment identity.
+- [x] Additive migration `20261018232928` applied; all four new private tables
+  have RLS and deny client reads; all four new RPCs deny client execution.
+- [ ] Final protected PR checks and backend/frontend deployment identity.
 
 ## Boundaries of Commercial Readiness
 
@@ -92,8 +94,10 @@ took 123.632 s including lease expiry. Zero production requests/customer files.
 The private relational fixture was rerun locally with its independent oracle:
 259/259 global, period and branch checks passed; all eight available manual
 relationship dashboards returned results. Fixture contents stay outside Git.
-Frontend unit tests: 257 passed. Monitoring screenshots and overflow checks passed
-at 320, 390 and 1280 px. Protected CI verifies the full backend and E2E suites.
+CI at `8b94890`: 2,141 backend tests and 257 frontend unit tests passed;
+59 browser tests passed and one was skipped. Monitoring screenshots and overflow
+checks passed at 320, 390 and 1280 px. These checks do not substitute for real
+mail delivery or tests on a customer's device.
 
 Existing tests cover registration/recovery UI, optional customer MFA, plan expiry,
 atomic coins, cleaning, relational totals, period selection, downloads, history,
@@ -106,3 +110,12 @@ supported XLSX/CSV files and supported Google Sheets tab imports;
 invalid formulas, ambiguous currencies and joins must remain visible as limitations.
 No plan price, coin value, paid provider or user-company authorization model is
 changed in this release. Existing commercial catalog/entitlement tests remain gates.
+
+Security Advisor was reviewed on October 18. Backend-only private tables have RLS
+with no client policies intentionally; client privileges are separately revoked.
+The existing `can_process_data()` warning was inspected: it returns only the
+authenticated user's commercial eligibility and is used by existing RLS policies.
+It was not blindly revoked or changed in this maintenance release. Leaked-password
+protection remains an operator/provider configuration item, not a completed feature.
+References: [function advisor](https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable),
+[password protection](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
