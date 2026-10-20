@@ -192,6 +192,10 @@ class Lab:
         self.samples = []
         self.jobs = []
         self.peak = {}
+        self.aggregate_resources = {'complete_samples': 0, 'incomplete_samples': 0,
+                                    'peak_sum_rss_mib': 0, 'max_live_processes': 0,
+                                    'scope': 'Owned API and worker processes only; excludes database, Storage and load driver. '
+                                             'Sampled sum of RSS may double-count shared pages; not physical host usage.'}
         self.stop = threading.Event()
         self.report = {'scope': 'ephemeral local Supabase; not production capacity certification',
                        'commit_sha': os.environ.get('GITHUB_SHA', 'local'),
@@ -256,16 +260,30 @@ class Lab:
         raise TimeoutError('Isolated API startup exceeded 30 seconds')
 
     def sample_resources(self):
-        import psutil
         while not self.stop.wait(.1):
-            for role, process, _ in list(self.processes):
-                if process.poll() is not None:
-                    continue
-                try:
-                    rss = psutil.Process(process.pid).memory_info().rss / 1024**2
-                    self.peak[role] = max(self.peak.get(role, 0), rss)
-                except psutil.Error:
-                    pass
+            self.sample_resources_once()
+
+    def sample_resources_once(self):
+        import psutil
+        live = [(role, process) for role, process, _ in list(self.processes) if process.poll() is None]
+        if not live:
+            return
+        total, complete = 0, True
+        for role, process in live:
+            try:
+                rss = psutil.Process(process.pid).memory_info().rss / 1024**2
+                self.peak[role] = max(self.peak.get(role, 0), rss)
+                total += rss
+            except psutil.Error:
+                complete = False
+        resources = self.aggregate_resources
+        resources['max_live_processes'] = max(resources['max_live_processes'], len(live))
+        if complete:
+            resources['complete_samples'] += 1
+            # Sum simultaneous samples, not independent per-role peaks.
+            resources['peak_sum_rss_mib'] = max(resources['peak_sum_rss_mib'], total)
+        else:
+            resources['incomplete_samples'] += 1
 
     def seed_account(self, index):
         email, password = f'capacity-{uuid4().hex}@example.invalid', uuid4().hex + 'A!7'
@@ -529,6 +547,11 @@ class Lab:
                         process.kill()
                         process.wait(timeout=10)
             self.report['peak_process_rss_mib'] = {k: round(v, 2) for k, v in self.peak.items()}
+            self.report['aggregate_process_resources'] = {
+                **self.aggregate_resources,
+                'peak_sum_rss_mib': (round(self.aggregate_resources['peak_sum_rss_mib'], 2)
+                                     if self.aggregate_resources['complete_samples'] else None),
+            }
             self.report['restore_rpc_failures'] = [
                 {'status': int(status), 'code': code}
                 for _, _, log in self.processes

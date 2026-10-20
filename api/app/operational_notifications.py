@@ -1,4 +1,4 @@
-"""Signed, content-free webhook notifications with PostgreSQL retry leases."""
+"""Content-free operational notifications with PostgreSQL retry leases."""
 
 import hashlib
 import base64
@@ -9,13 +9,16 @@ import logging
 import socket
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from email.utils import format_datetime
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import httpx
 
 from .commercial_rpc import commercial_rpc
 
 logger = logging.getLogger('uvicorn.error')
+GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send'
 
 
 def configured(settings):
@@ -39,15 +42,25 @@ def _send_email(settings, event):
         })
         if response.status_code != 200:
             return False
-        token = response.json().get('access_token')
+        payload = response.json()
+        if not isinstance(payload, dict):
+            return False
+        token = payload.get('access_token')
         if not isinstance(token, str) or not token:
+            return False
+        # Refresh replies can omit scope; when present, refuse broader grants.
+        scope = payload.get('scope')
+        if scope is not None and (not isinstance(scope, str) or set(scope.split()) != {GMAIL_SEND_SCOPE}):
+            return False
+        if str(payload.get('token_type', 'Bearer')).lower() != 'bearer':
             return False
         message = EmailMessage()
         message['From'] = settings.operations_email_from
         message['To'] = settings.operations_email_to
-        state = 'Alerta' if event['state'] == 'active' else 'Recuperado'
+        state = {'active': 'Alerta', 'resolved': 'Recuperado', 'test': 'Prueba'}[event['state']]
         message['Subject'] = f"ADS Veris | {state}: {event['code']}"
         message['Message-ID'] = f"<{event['event_id']}@adsveris.com>"
+        message['Date'] = format_datetime(datetime.now(timezone.utc))
         message.set_content(f"{state}: {event['code']}\nFecha UTC: {event['sent_at']}\n\n"
             "Revisa Estado operativo en la administracion de ADS Veris.\n"
             "Este aviso no contiene archivos ni informacion de clientes.\n"
@@ -55,7 +68,20 @@ def _send_email(settings, event):
         response = client.post('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
             headers={'Authorization': 'Bearer ' + token},
             json={'raw': base64.urlsafe_b64encode(message.as_bytes()).decode('ascii')})
-        return response.status_code == 200 and bool(response.json().get('id'))
+        if response.status_code != 200:
+            return False
+        receipt = response.json()
+        return isinstance(receipt, dict) and isinstance(receipt.get('id'), str) and bool(receipt['id'])
+
+
+def send_test_email(settings):
+    """One synthetic message; no customer data, queue state or automatic retry."""
+    if not email_configured(settings):
+        return False
+    return _send_email(settings, {
+        'event_id': uuid4().hex, 'code': 'DELIVERY_TEST', 'state': 'test',
+        'sent_at': datetime.now(timezone.utc).isoformat(),
+    })
 
 
 def deliver(settings, codes):

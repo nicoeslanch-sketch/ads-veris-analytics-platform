@@ -4,6 +4,7 @@ import csv
 import importlib.util
 import io
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -76,3 +77,46 @@ def test_business_capacity_fixture_matches_independent_cost_oracle():
         assert result['kpis']['ingresos_totales']['valor'] == expected
         assert result['analisis_negocio']['estado_resultados']['ventas_brutas'] == expected
         assert result['analisis_negocio']['estado_resultados']['costo_venta_conocido'] == expected_cost
+
+
+def test_resource_sampler_sums_all_live_consumers_at_the_same_instant(monkeypatch):
+    import psutil
+    subject = object.__new__(lab.Lab)
+    subject.peak = {}
+    subject.aggregate_resources = {'complete_samples': 0, 'incomplete_samples': 0,
+                                   'peak_sum_rss_mib': 0, 'max_live_processes': 0}
+    subject.processes = [(role, SimpleNamespace(pid=pid, poll=lambda: None), None)
+                         for role, pid in [('api', 1), ('worker', 2), ('worker', 3)]]
+    memory = {1: 100, 2: 200, 3: 150}
+    monkeypatch.setattr(psutil, 'Process', lambda pid: SimpleNamespace(
+        memory_info=lambda: SimpleNamespace(rss=memory[pid] * 1024**2)))
+    subject.sample_resources_once()
+    assert subject.aggregate_resources['peak_sum_rss_mib'] == 450
+    memory.update({1: 300, 2: 20, 3: 10})
+    subject.sample_resources_once()
+    assert subject.peak == {'api': 300, 'worker': 200}
+    assert subject.aggregate_resources['peak_sum_rss_mib'] == 450
+    assert subject.aggregate_resources['complete_samples'] == 2
+    assert subject.aggregate_resources['max_live_processes'] == 3
+
+
+def test_resource_sampler_does_not_claim_partial_readings_are_complete(monkeypatch):
+    import psutil
+    subject = object.__new__(lab.Lab)
+    subject.peak = {}
+    subject.aggregate_resources = {'complete_samples': 0, 'incomplete_samples': 0,
+                                   'peak_sum_rss_mib': 0, 'max_live_processes': 0}
+    subject.processes = [('api', SimpleNamespace(pid=1, poll=lambda: None), None),
+                         ('worker', SimpleNamespace(pid=2, poll=lambda: None), None),
+                         ('old_worker', SimpleNamespace(pid=3, poll=lambda: 0), None)]
+    def inspect(pid):
+        if pid == 2:
+            raise psutil.NoSuchProcess(pid)
+        assert pid == 1
+        return SimpleNamespace(memory_info=lambda: SimpleNamespace(rss=100 * 1024**2))
+    monkeypatch.setattr(psutil, 'Process', inspect)
+    subject.sample_resources_once()
+    assert subject.peak == {'api': 100}
+    assert subject.aggregate_resources['complete_samples'] == 0
+    assert subject.aggregate_resources['incomplete_samples'] == 1
+    assert subject.aggregate_resources['peak_sum_rss_mib'] == 0
