@@ -70,6 +70,22 @@ reads are counted separately and never treated as complete observations. This
 RSS sum excludes PostgreSQL, Storage and the load driver, can double-count shared
 pages, and is not total host physical memory. It is not a production user limit.
 
+## Activation Evidence (2026-10-20)
+
+- The owner granted send-only access. Protected Render variables were merged,
+  preserving other settings, and the resulting deployment became live.
+- The single workstation test was accepted by Google and the owner confirmed
+  receipt. No inbox-reading permission was used to verify it.
+- Independently, the deployed operational monitor emitted `RETENTION_PENDING`.
+  Its database delivery revision was acknowledged with zero failures and no
+  outstanding lease. This verifies provider acceptance from the deployed API,
+  without pretending to confirm reading of that separate alert.
+- Public API health returned OK. Inactive-account retention stays audit-only.
+- The reproducible bot audit passed all 192 synthetic conversation turns.
+- The new dependency gate found Vite advisories published that same day. The
+  frontend minimum is raised to the compatible patched 6.4.4 release, without
+  suppressing the advisories or upgrading to a new major version.
+
 ## References
 
 - [Google OAuth for installed apps](https://developers.google.com/identity/protocols/oauth2/native-app)
