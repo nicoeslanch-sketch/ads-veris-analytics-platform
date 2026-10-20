@@ -87,6 +87,7 @@ jobs:
       # severidad high+ para no bloquear por ruido de advisories menores).
       - run: pip install pip-audit
       - run: pip-audit -r api/requirements.txt
+      - run: pip-audit -r scripts/requirements-mail-setup.txt
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

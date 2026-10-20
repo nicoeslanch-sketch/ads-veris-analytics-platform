@@ -1,10 +1,12 @@
 import hashlib
 import hmac
 import json
+import importlib.util
 from contextlib import contextmanager
 import base64
 from email import policy
 from email.parser import BytesParser
+from pathlib import Path
 import httpx
 
 import pytest
@@ -124,3 +126,98 @@ def test_email_has_priority_over_optional_webhook(monkeypatch):
     monkeypatch.setattr(mod.socket, 'getaddrinfo', lambda *a, **k: pytest.fail('webhook must not be used'))
     mod.deliver(config, {'HTTP_ERRORS'})
     assert len(sent) == 1
+
+
+@pytest.mark.parametrize('payload', [
+    [], {'access_token': None}, {'access_token': ''},
+    {'access_token': 'token', 'scope': 'https://mail.google.com/'},
+    {'access_token': 'token', 'scope': mod.GMAIL_SEND_SCOPE + ' profile'},
+    {'access_token': 'token', 'scope': ['invalid']},
+    {'access_token': 'token', 'token_type': 'unsupported'},
+])
+def test_gmail_rejects_invalid_or_excessive_token_grants(monkeypatch, payload):
+    config = Settings(_env_file=None, operations_email_from='servicios@adsveris.com',
+        operations_gmail_client_id='client', operations_gmail_client_secret='secret',
+        operations_gmail_refresh_token='refresh')
+    calls = []
+    def handler(request):
+        calls.append(request)
+        assert request.url.host == 'oauth2.googleapis.com'
+        return httpx.Response(200, json=payload)
+    real_client = httpx.Client
+    monkeypatch.setattr(mod.httpx, 'Client', lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    assert mod.send_test_email(config) is False
+    assert len(calls) == 1
+
+
+def test_synthetic_email_is_explicit_and_does_not_touch_alert_state(monkeypatch):
+    config = Settings(_env_file=None, operations_email_from='servicios@adsveris.com',
+        operations_gmail_client_id='client', operations_gmail_client_secret='secret',
+        operations_gmail_refresh_token='refresh')
+    messages = []
+    def handler(request):
+        if request.url.host == 'oauth2.googleapis.com':
+            return httpx.Response(200, json={'access_token': 'token', 'token_type': 'Bearer',
+                                          'scope': mod.GMAIL_SEND_SCOPE})
+        assert str(request.url) == 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+        msg = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(json.loads(request.content)['raw']))
+        messages.append(msg)
+        assert msg['Subject'] == 'ADS Veris | Prueba: DELIVERY_TEST'
+        assert msg['Date'] and msg['To'] == config.operations_email_to
+        assert list(msg.iter_attachments()) == []
+        return httpx.Response(200, json={'id': 'accepted'})
+    real_client = httpx.Client
+    monkeypatch.setattr(mod.httpx, 'Client', lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(mod, 'commercial_rpc', lambda *a: pytest.fail('test must not modify real alerts'))
+    assert mod.send_test_email(config) is True
+    assert len(messages) == 1
+
+
+def test_unconfigured_test_email_never_connects(monkeypatch):
+    monkeypatch.setattr(mod.httpx, 'Client', lambda **kw: pytest.fail('unconfigured'))
+    assert mod.send_test_email(Settings(_env_file=None)) is False
+
+
+def load_email_check():
+    spec = importlib.util.spec_from_file_location('check_operational_email',
+        Path(__file__).resolve().parents[2] / 'scripts/check_operational_email.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize('configured,send,accepted,status,exit_code', [
+    (False, False, False, 'not_configured', 2),
+    (False, True, False, 'not_configured', 2),
+    (True, False, False, 'configured_not_tested', 0),
+    (True, True, True, 'provider_accepted', 0),
+    (True, True, False, 'provider_rejected', 1),
+])
+def test_email_check_requires_explicit_send_and_reports_acceptance(
+        monkeypatch, capsys, configured, send, accepted, status, exit_code):
+    check = load_email_check()
+    calls = []
+    def configuration(**kwargs):
+        assert kwargs == {'_env_file': None}
+        return object()
+    monkeypatch.setattr(check, 'Settings', configuration)
+    monkeypatch.setattr(check, 'email_configured', lambda s: configured)
+    monkeypatch.setattr(check, 'send_test_email', lambda s: calls.append(True) or accepted)
+    assert check.main(['--send-test'] if send else []) == exit_code
+    report = json.loads(capsys.readouterr().out)
+    assert report['status'] == status
+    assert len(calls) == int(configured and send)
+    if status == 'provider_accepted':
+        assert report['receipt_confirmed'] is False
+
+
+def test_email_check_redacts_configuration_errors(monkeypatch, capsys):
+    check = load_email_check()
+    def fail(**kwargs):
+        raise RuntimeError('private-refresh-token customer@example.invalid')
+    monkeypatch.setattr(check, 'Settings', fail)
+    assert check.main([]) == 1
+    output = capsys.readouterr()
+    assert json.loads(output.out)['status'] == 'check_failed'
+    assert 'private-refresh-token' not in output.out + output.err
+    assert 'customer@example.invalid' not in output.out + output.err
