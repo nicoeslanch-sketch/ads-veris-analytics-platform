@@ -1,9 +1,8 @@
 """Catalogo determinista del asistente ADS Veris.
 
-No usa modelos, embeddings ni servicios externos. El catalogo se replica en
-``support_bot_articles`` de forma best-effort para que soporte pueda editarlo
-sin cambiar el motor; esta copia versionada garantiza una respuesta aun si la
-base esta temporalmente indisponible.
+No usa modelos ni embeddings. El catalogo versionado permite responder sin red;
+``support_bot_articles`` puede aportar articulos adicionales administrados por
+soporte. Una consulta nunca modifica ese catalogo.
 """
 
 from __future__ import annotations
@@ -37,6 +36,7 @@ def article(
 
 
 ARTICLES: list[dict[str, Any]] = [
+    article("platform_purpose", "primeros_pasos", "Que hace ADS Veris", ["que hace esta plataforma", "para que sirve ads veris", "que es ads veris", "que puedo hacer en la plataforma"], "ADS Veris permite importar Excel o CSV, revisar Estandarizacion y aplicar Limpieza con reglas trazables. Resumen muestra indicadores y graficos; Explorar datos ayuda a interpretar tendencias y detectar aspectos del negocio que conviene revisar. Puedes relacionar hojas por identificadores compatibles y consultar al bot sobre los datos visibles. La calidad del analisis depende de las fuentes, sus roles y su cobertura; el bot no inventa datos que faltan.", "¿Quieres empezar con un archivo o revisar uno que ya cargaste?", 95),
     article("payment_availability", "planes", "Pagar ADS Veris", ["pagar con tarjeta", "pagar el plan", "comprar un plan", "webpay", "transbank", "renovar suscripcion"], "En ADS Veris los cobros reales y las compras de planes o Coins estan desactivados. No se hacen cargos automaticos. Antes de habilitarlos se deben publicar precios y condiciones y probar la pasarela. No envies datos de tarjeta, CVV ni claves por este chat.", "¿Quieres comparar planes o consultar los usos de ADS Coins?", 94),
     article("coin_value", "ads_coins", "Valor de ADS Coins", ["cuanto vale una ads coin", "valor de las coins", "coins a pesos", "monedas a pesos"], "ADS Coins son creditos de servicio, no dinero retirable ni una moneda de inversion. No hay una equivalencia de venta en pesos aprobada para informarte; las compras estan desactivadas. El consumo depende de la funcion y de su costo publicado antes de usarla. No debo inventar un precio ni prometer conversion a efectivo.", "¿Quieres revisar tu saldo o los consumos disponibles?", 94),
     article("data_access", "seguridad", "Acceso a tus archivos", ["quien ve mis datos", "otro usuario ve mis datos", "otros clientes ven mis archivos", "quien puede acceder a mis archivos"], "Los archivos y analisis estan asociados a tu cuenta y protegidos por controles de acceso: otro cliente no debe poder leerlos. Las funciones administrativas autorizadas tienen permisos separados. No es una promesa de seguridad absoluta. Si ves datos ajenos o sospechas un acceso, abre Ayuda o escribe a servicios@adsveris.com sin reenviar esos datos ni compartir contrasenas.", "¿Preguntas por acceso a archivos o por una solicitud de privacidad?", 96),
@@ -214,6 +214,9 @@ def answer_for(
         parts = [part.strip(' ¿,.') for part in re.split(
             r"[?;]+|\by\s+(?=(?:cu[aá]ntos?|cu[aá]les?|c[oó]mo|qu[eé])\b)", message, flags=re.I,
         ) if part.strip(' ¿,.')]
+        if len(parts) == 1:
+            from .assistant_queries import split_metric_questions
+            parts = split_metric_questions(message, metrics or {}) or parts
         if len(parts) > 1:
             answers = [answer_for(part, articles, metrics, history, _compound=False) for part in parts[:3]]
             answers = list({answer['answer']: answer for answer in answers}.values())
@@ -228,11 +231,15 @@ def answer_for(
                 "suggestions": suggestions[:4]}
     message = re.sub(r"^(?:hola|muchas gracias|gracias|por favor)[, ]+(?:y\s+)?(?=\S)", "", message, flags=re.I)
     normalized = normalize_query(message)
+    if re.search(r'\b(?:que hace|que es|para que sirve|que puedo hacer en)\s+(?:(?:esta|la|tu)\s+)?(?:plataforma|ads veris)\b', normalized):
+        item = next(row for row in ARTICLES if row['key'] == 'platform_purpose')
+        return {"answer": item['response'], "matched_key": item['key'], "confidence": "high",
+                "suggestions": ["Como empezar", "Limpieza y estandarizacion", "Soporte humano"]}
     support_words = r'\b(?:human[oa]s?|persona|asesor|agente|soporte|ejecutivo)\b'
     support_intent = r'\b(?:ayuda|ayudar|hablar|contactar|contacto|conseguir|comunicarme|atienda|atencion|necesito)\b'
     if re.search(support_words, normalized) and re.search(support_intent, normalized):
         item = next(row for row in ARTICLES if row['key'] == 'human_support')
-        return {"answer": item['response'] + ' No he enviado ninguna solicitud por ti. No incluyas contrasenas ni datos de tarjetas.',
+        return {"answer": item['response'] + ' Tambien puedes escribir a servicios@adsveris.com. No he enviado ninguna solicitud por ti. No incluyas contrasenas ni datos de tarjetas.',
                 "matched_key": 'human_support', "confidence": 'high',
                 "suggestions": ['Donde esta Ayuda', 'Problema con mi archivo', 'Mis datos y privacidad']}
     if re.search(r"\b(?:cerrar|cierro|cierre)\b", normalized) and re.search(r"\b(?:empresa|negocio)\b", normalized):

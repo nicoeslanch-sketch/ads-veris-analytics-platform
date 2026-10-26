@@ -344,6 +344,12 @@
   "registros_con_monto": 279,
   "ticket_promedio": 38611.43,
   "transacciones": 279,
+  "unidades_detalle": {
+   "filas_monto_negativo_cantidad_positiva": 2,
+   "filas_sin_cantidad": 0,
+   "negativas": 0.0,
+   "positivas": 1717.0
+  },
   "unidades_totales": 1717.0
  },
  "lideres_productos": {

@@ -150,6 +150,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const botInputRef = useRef<HTMLTextAreaElement>(null)
   const fetchedForFile = useRef<string | null>(null)
   const activationRequest = useRef(0)
   const activationAbortRef = useRef<AbortController | null>(null)
@@ -178,6 +179,13 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, botMessages])
+
+  useEffect(() => {
+    if (!botInput && botInputRef.current) {
+      botInputRef.current.scrollTop = 0
+      botInputRef.current.scrollLeft = 0
+    }
+  }, [botInput, mode])
 
   const runActivation = async (
     fileObj: File,
@@ -503,7 +511,7 @@ export default function AiPanel({ variant = 'panel' }: { variant?: 'panel' | 'dr
         </div>
         <div className="border-t border-white/10 p-3">
           <div className="flex items-end gap-2 rounded-lg bg-white/5 px-3 py-2">
-            <textarea value={botInput} onChange={(event) => setBotInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendBotMessage(botInput) } }} rows={1} maxLength={1200} disabled={loading} placeholder="Pregunta por tus cifras o por una función…" className="max-h-24 min-h-5 w-full resize-none bg-transparent text-sm text-white placeholder:text-white/30 outline-none disabled:cursor-wait" />
+            <textarea ref={botInputRef} value={botInput} onChange={(event) => setBotInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendBotMessage(botInput) } }} rows={1} maxLength={1200} disabled={loading} placeholder="Pregunta por tus cifras o por una función…" className="max-h-24 min-h-5 w-full resize-none bg-transparent text-sm text-white placeholder:text-white/30 outline-none disabled:cursor-wait" />
             <button title="Nueva conversación" aria-label="Nueva conversación" onClick={resetBotConversation} disabled={loading || botMessages.length === 0} className="flex h-7 w-7 shrink-0 items-center justify-center disabled:opacity-30"><RefreshCw className="h-3.5 w-3.5" /></button>
             <button title="Enviar pregunta" aria-label="Enviar pregunta" onClick={() => void sendBotMessage(botInput)} disabled={!botInput.trim() || botSending || loading} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal disabled:bg-white/10"><ArrowUp className="h-3.5 w-3.5" /></button>
           </div>

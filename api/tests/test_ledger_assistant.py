@@ -76,3 +76,30 @@ def test_long_conversation_switches_intents_without_dragging_old_values(metrics)
 def test_rejects_malformed_ledger_context(key, value):
     with pytest.raises(ValidationError):
         BotRequest(message='ventas', metrics={'analisis_negocio': {'conciliacion': {key: value}}})
+
+
+@pytest.mark.parametrize('question', ['mejor mes de Accesorios', 'peor mes de la categoria Accesorios',
+                                    'ventas de Accesorios en 2026'])
+def test_named_segment_does_not_fall_back_to_whole_ledger_month(metrics, question):
+    answer = answer_for(question, metrics=metrics)
+    assert answer['matched_key'] == 'metric_ledger_cross_scope', answer
+    assert '$' not in answer['answer']
+
+
+def test_return_explanation_uses_ledger_definition_not_signed_sheet_sum(metrics):
+    answer = answer_for('las unidades vendidas incluyen las devoluciones', metrics=metrics)
+    assert 'antes de devoluciones' in answer['answer'] and '3' in answer['answer'], answer
+    assert 'notas de credito netas:' not in answer['answer'].lower()
+
+
+def test_operational_result_is_not_gross_profit_or_pre_tax_profit(metrics):
+    answer = answer_for('Dime el total de unidades vendidas vs la utilidad operacional', metrics=metrics)
+    assert '3' in answer['answer'] and 'No hay un resultado operacional' in answer['answer'], answer
+    assert '$120' not in answer['answer']
+
+
+def test_named_categories_sum_uses_all_requested_groups(metrics):
+    ledger = metrics['analisis_negocio']['conciliacion']
+    ledger['categorias'] = [{'nombre': 'Retail', 'ventas': 120}, {'nombre': 'Ferreteria', 'ventas': 80}]
+    reply = answer_for('suma los ingresos de Retail y Ferreteria', metrics=metrics)
+    assert '$200' in reply['answer'] and '$120' in reply['answer'] and '$80' in reply['answer'], reply

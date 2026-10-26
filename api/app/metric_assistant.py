@@ -115,14 +115,20 @@ def _with_conversation_context(
     if _contains(question, "que porcentaje es eso", "que porcentaje representa eso"):
         return "porcentaje corresponde a cobranza"
     if _contains(question, "y la peor", "y el peor"):
+        if re.search(r'\b(?:categoria|producto|sucursal|canal|cliente|mes|semana|periodo)\b', question):
+            return question
         grain = next(
-            (value for value in ("semana", "mes", "periodo") if value in previous),
+            (value for value in ("categoria", "producto", "sucursal", "canal", "cliente", "semana", "mes", "periodo")
+             if re.search(r'\b' + value + r's?\b', previous)),
             "periodo",
         )
         return f"peor {grain}"
     if _contains(question, "y la mejor", "y el mejor"):
+        if re.search(r'\b(?:categoria|producto|sucursal|canal|cliente|mes|semana|periodo)\b', question):
+            return question
         grain = next(
-            (value for value in ("semana", "mes", "periodo") if value in previous),
+            (value for value in ("categoria", "producto", "sucursal", "canal", "cliente", "semana", "mes", "periodo")
+             if re.search(r'\b' + value + r's?\b', previous)),
             "periodo",
         )
         return f"mejor {grain}"
@@ -159,6 +165,9 @@ def _with_conversation_context(
         "ticket",
         "unidades",
         "producto",
+        "categoria",
+        "sucursal",
+        "canal",
         "inventario",
         "stock",
         "me deben",
@@ -1445,14 +1454,19 @@ def _group_answer(
             metric_suggestions(metrics),
             "medium",
         )
+    if metrics.get('moneda_mixta') or metrics.get('datos_monetarios_disponibles') is False:
+        return _answer_currency(metrics)
     ranked = sorted(
-        rows,
+        [row for row in rows if _number(row.get('ingresos') if 'ingresos' in row else row.get('valor')) is not None],
         key=lambda item: float(
             _number(item.get("ingresos") if "ingresos" in item else item.get("valor"))
             or 0
         ),
         reverse=True,
     )
+    if not ranked:
+        return _result(f'No hay importes validos para comparar {label.lower()}.',
+                       f'{key}_unavailable', metric_suggestions(metrics), 'medium')
     named = [
         row
         for row in ranked
@@ -1461,6 +1475,44 @@ def _group_answer(
             rf"\b{re.escape(_normalize(row.get('nombre') or ''))}\b", question
         )
     ]
+    currency = str(metrics.get('moneda') or 'CLP')
+    combine = bool(re.search(r'\b(?:suma|sumar|suman|juntos|juntas|combinado|combinada)\b', question))
+    if named and re.search(r'\by\b|,', question):
+        # Every listed entity must be present; never silently omit an unknown one.
+        remainder = question
+        for row in sorted(named, key=lambda row: len(str(row.get('nombre') or '')), reverse=True):
+            remainder = re.sub(r'\b' + re.escape(_normalize(row['nombre'])) + r'\b', 'zzgroupzz', remainder)
+        tails = re.split(r'\by\b|,', remainder)[1:]
+        unknown = any(tail.strip() and 'zzgroupzz' not in tail and
+                      not re.fullmatch(r'\s*(?:en total|juntos|juntas|por favor)\s*', tail) for tail in tails)
+        if combine:
+            query_words = set(re.findall(r'[a-z0-9]+', remainder))
+            allowed = set(('dime dame muestra cuanto cuantos la el las los de del por para '
+                           'suma sumar suman ingresos ingreso ventas venta total totales '
+                           'categoria categorias canal canales sucursal sucursales '
+                           'producto productos cliente clientes grupos grupo en y con '
+                           'juntos juntas combinado combinada por favor zzgroupzz').split())
+            allowed.update(_normalize(label).split())
+            unknown = unknown or bool(query_words - allowed) or len(named) < 2
+        if unknown:
+            return _result('No identifico todos los grupos solicitados en el desglose publicado. '
+                           'Indica sus nombres exactos y la dimension; no sumare solo los que reconozco.',
+                           f'{key}_selection_unavailable', metric_suggestions(metrics), 'medium')
+    if len(named) >= 2:
+        # Preserve requested order and include every group, even in a comparison.
+        named.sort(key=lambda row: question.find(_normalize(row['nombre'])))
+        values = [float(row.get('ingresos') if 'ingresos' in row else row['valor']) for row in named]
+        details = '; '.join(f'{row["nombre"]}: {format_amount(value, currency)}' for row, value in zip(named, values))
+        if combine:
+            if metrics.get('moneda_mixta'):
+                return _answer_currency(metrics)
+            return _result(f'La suma de los {len(named)} grupos de {label.lower()} es '
+                           f'{format_amount(sum(values), currency)} ({details}). '
+                           'Solo incluye los grupos solicitados en el alcance visible.',
+                           f'{key}_sum', metric_suggestions(metrics))
+        if not _contains(question, 'compara', 'versus', 'vs', 'cuanto mas', 'diferencia') or len(named) > 2:
+            return _result(details + '. Son los grupos solicitados, no el total del archivo.',
+                           f'{key}_values', metric_suggestions(metrics))
     if len(named) >= 2 and _contains(
         question, "compara", "versus", "vs", "cuanto mas", "diferencia"
     ):
@@ -1484,7 +1536,7 @@ def _group_answer(
         row = ranked[1]
     elif named:
         row = named[0]
-    elif _contains(question, "menos", "menor", "ultimo", "ultima"):
+    elif _contains(question, "menos", "menor", "ultimo", "ultima", "peor", "mas baja", "mas bajo"):
         row = ranked[-1]
     else:
         row = ranked[0]
@@ -1496,7 +1548,7 @@ def _group_answer(
         position = "segunda" if article == "La" else "segundo"
     elif named:
         position = "consultada" if article == "La" else "consultado"
-    elif _contains(question, "menos", "menor", "ultimo", "ultima"):
+    elif _contains(question, "menos", "menor", "ultimo", "ultima", "peor", "mas baja", "mas bajo"):
         position = "con menor ingreso"
     else:
         position = "líder"
@@ -2272,6 +2324,11 @@ def answer_metrics_question(
     if _contains(question, "gastos", "mis costos", "costos totales", "costo total", "cuanto gaste"):
         return _answer_expenses(metrics)
     if _contains(question, "ganancia", "utilidad", "beneficio", "cuanto gane", "cuanto ganamos"):
+        if _contains(question, 'operacional', 'operativo', 'operativa'):
+            return _result('No hay un resultado operacional publicado en este alcance. '
+                           'La utilidad calculada con ingresos y costos pareados no demuestra que esten '
+                           'incluidos todos los gastos operacionales; no la renombro como tal.',
+                           'metric_operational_unavailable', metric_suggestions(metrics), 'medium')
         return _answer_profit(metrics)
     if _contains(question, "margen", "rentabilidad de venta"):
         return _answer_margin(metrics)
@@ -2314,8 +2371,28 @@ def answer_metrics_question(
     if _contains(question, "unidades", "cantidad vendida"):
         units = _number((metrics.get("kpis") or {}).get("unidades_totales"))
         if units is not None:
+            answer = f"El total publicado es {_es_number(units)} unidades. No debe confundirse con el número de transacciones."
+            if _contains(question, 'devolucion', 'reversa', 'signo', 'negativa'):
+                answer += (' Se suman las cantidades numericas conservando su signo: las negativas restan '
+                           'y las positivas suman. Una devolucion con cantidad positiva no se resta '
+                           'automaticamente solo porque su importe sea negativo.')
+                detail = (metrics.get('kpis') or {}).get('unidades_detalle')
+                if isinstance(detail, dict):
+                    answer += (f' En este alcance, las cantidades positivas suman {_es_number(detail.get("positivas"))} '
+                               f'y las negativas {_es_number(detail.get("negativas"))}.')
+                    inconsistent = _number(detail.get('filas_monto_negativo_cantidad_positiva'))
+                    if inconsistent:
+                        answer += (f' Hay {_es_number(inconsistent)} filas con importe negativo y cantidad positiva: '
+                                   'revisa si son devoluciones o ajustes antes de interpretar el total como unidades netas vendidas.')
+                    missing = _number(detail.get('filas_sin_cantidad'))
+                    if missing:
+                        answer += f' {_es_number(missing)} filas no tienen cantidad numerica y no aportan al total.'
+                    answer += ' Un signo negativo por si solo no confirma la causa del movimiento.'
+                else:
+                    answer += (' Con este resumen no puedo confirmar como estan registradas todas las devoluciones; '
+                               'hay que revisar cantidad e importe de esas filas en la fuente.')
             return _result(
-                f"El total publicado es {_es_number(units)} unidades. No debe confundirse con el número de transacciones.",
+                answer,
                 "metric_units",
                 metric_suggestions(metrics),
             )
