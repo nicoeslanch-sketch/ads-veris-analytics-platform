@@ -19,12 +19,35 @@ _MEASURES = (
     (r"\b(?:ganancia|utilidad|gane)\b", "ganancia"),
     (r"\b(?:costos?|gastos?|gaste|egresos)\b", "gastos"),
     (r"\biva\b", "iva"),
-    (r"\b(?:ingresos|ventas|vendi|facturacion)\b", "ingresos"),
+    (r"\b(?:ingresos|ventas|vendi|vendio|vendido|vendidos|vendida|vendidas|facturacion)\b", "ingresos"),
 )
 
 
 def _measure(question):
     return next((name for pattern, name in _MEASURES if re.search(pattern, question)), "")
+
+
+def split_metric_questions(message, metrics):
+    """Split requests for distinct KPIs, not definitions or lists of entities."""
+    question = _normalize_scoped(message, metrics)
+    if not re.search(r'\b(?:dime|dame|muestra|total|cuanto|cuantos|compara)\b', question):
+        return None
+    if re.search(r'\b(?:diferencia|equivale|significa|formula|divide|por cada|ratio)\b', question):
+        return None
+    parts = re.split(r'\s+(?:vs|versus|y)\s+', question)
+    if not 2 <= len(parts) <= 3:
+        return None
+    measures = [_measure(part) for part in parts]
+    if not all(measures) or len(set(measures)) != len(measures):
+        return None
+    # A trailing scope belongs to the whole request unless a part overrides it.
+    period, segment = _scope_parts(question, metrics)
+    scoped = []
+    for part in parts:
+        own_period, own_segment = _scope_parts(part, metrics)
+        scoped.append(' '.join(filter(None, [part, period if not own_period else '',
+                                            segment if not own_segment else ''])))
+    return scoped
 
 
 def _normalize_scoped(message, metrics):
@@ -141,6 +164,8 @@ def answer_scoped_question(message, metrics, history):
         return result("No tengo detalle diario para esa fecha en el contexto mensual. Filtra ese dia en Explorar; el total del archivo no es el total de ese dia.", "metric_daily_scope_unavailable", "medium")
     # Definitions and support about periods are not requests for a new subtotal.
     temporal = bool(month_mentions or iso_mentions or (years and re.search(r"\b(vendi|ventas|ingresos|gaste|gastos|compara|total|en)\b", question)))
+    month_ranking = bool(re.search(r'\bmes(?:es)?\b', question) and re.search(
+        r'\b(?:mejor|peor|mas|menos|mayor|menor|maximo|minimo)\b', question))
     if re.search(r"\b(como|por que|porque)\b.*\b(filtro|filtrar|selecciono|seleccionar|importar|descargar)\b", question):
         return None
     relative_period = re.search(r"\b(hoy|ayer|trimestre|semestre|semana|mes pasado|mes anterior|ultimo mes|ultimos \d+ dias)\b", question)
@@ -165,6 +190,33 @@ def answer_scoped_question(message, metrics, history):
         chosen = named_dimensions[0]
     distinct_names = {normalize_basic(row.get("nombre")) for entry in named_dimensions for row in entry[2]}
     different_segments = len(distinct_names) > 1 and sum(bool(entry[2]) for entry in named_dimensions) > 1
+    if month_ranking and named_dimensions:
+        matrix = metrics.get('matriz_mes_dimension') or {}
+        # Never infer a segment/month intersection from independent totals.
+        compatible = (chosen and len(named_dimensions) == 1 and len(chosen[2]) == 1
+                      and normalize_basic(matrix.get('dimension') or '') == normalize_basic(chosen[0])
+                      and not temporal and _measure(question) in {'', 'ingresos'}
+                      and not metrics.get('moneda_mixta'))
+        if compatible:
+            name = chosen[2][0]['nombre']
+            complete = {str(row.get('mes')) for row in metrics.get('evolucion_mensual') or []
+                        if not row.get('parcial') and _number(row.get('ingresos')) is not None}
+            cells = [row for row in matrix.get('valores') or []
+                     if normalize_basic(row.get('nombre') or '') == normalize_basic(name)
+                     and str(row.get('mes')) in complete and _number(row.get('ingresos')) is not None]
+            if cells and len({row['mes'] for row in cells}) == len(cells):
+                worst = bool(re.search(r'\b(?:peor|menos|menor|minimo)\b', question))
+                target = (min if worst else max)(float(row['ingresos']) for row in cells)
+                selected = [row for row in cells if float(row['ingresos']) == target]
+                periods = ', '.join(str(row['mes']) for row in selected)
+                qualifier = 'menor' if worst else 'mayor'
+                return result(f'{name}: el {qualifier} ingreso mensual publicado es '
+                              f'{format_amount(target, str(metrics.get("moneda") or "CLP"))} en {periods}. '
+                              f'Comparo {len(cells)} meses con datos del segmento y cobertura mensual completa; '
+                              'un mes ausente no equivale a cero.', 'metric_segment_month_rank')
+        return result('No tengo publicado un cruce compatible entre ese segmento y sus meses completos. '
+                      'El mejor o peor mes de todo el archivo no lo sustituye. Aplica el segmento en Explorar '
+                      'y vuelve a preguntar con ese alcance.', 'metric_cross_scope_unavailable', 'medium')
     if (temporal and named_dimensions) or sum(entry[3] for entry in named_dimensions) > 1 or different_segments:
         return result("No tengo publicado el cruce entre ese segmento y ese periodo. Sus totales separados no permiten deducir la interseccion. Aplica ambos filtros en Explorar y vuelve a preguntar con ese alcance.", "metric_cross_scope_unavailable", "medium")
     if len(named_dimensions) > 1 and sum(bool(entry[2]) for entry in named_dimensions) > 1 and not chosen:
@@ -240,8 +292,8 @@ def answer_scoped_question(message, metrics, history):
                       "metric_month_value", "medium" if partial else "high")
     if chosen:
         label, rows, named, explicit = chosen
-        money_question = re.search(r"\b(vendi|ventas|ingresos|ingreso|aporta|aportan|compara|versus|vs)\b", question)
-        if named and re.search(r"\b(unidades|margen|utilidad|ganancia|neto|neta|iva|costos|gastos|clientes|ticket|transacciones)\b", question):
+        money_question = re.search(r"\b(vendi|vendio|ventas|ingresos|ingreso|aporta|aportan|compara|versus|vs|suma|suman|juntos|juntas)\b", question)
+        if (named or explicit) and re.search(r"\b(unidades|margen|utilidad|ganancia|neto|neta|iva|costos|gastos|ticket|transacciones)\b", question):
             return result("El desglose disponible de ese segmento es de ingresos, no de la medida que pides. No sustituire unidades, costos o margen por un importe de ventas. Selecciona la medida y el filtro en Explorar.", "metric_group_measure_unavailable", "medium")
         if named and (money_question or literal.startswith("y ")):
             if metrics.get("moneda_mixta"):
@@ -255,4 +307,7 @@ def answer_scoped_question(message, metrics, history):
             return result(f"No encuentro {unknown.group(1).title()} en el desglose publicado de {label}. Puede faltar en el top visible o estar fuera del filtro; no lo interpreto como cero ni uso el total general.", "metric_named_group_unavailable", "medium")
     if re.search(r"\b(?:vendi|ventas|ingresos)\s+(?:en|para|con)\s+", question):
         return result("No reconozco ese filtro en los desgloses publicados. Indica la dimension y el valor exacto, o seleccionalos en Explorar. No usare el total general como si correspondiera a ese segmento.", "metric_filter_unavailable", "medium")
+    if month_ranking and re.search(r'\b(?:en|de|del|para)\s+(?!(?:donde|que|todos|todo|general|el archivo|mi archivo)\b)\w+', question):
+        return result('No reconozco el segmento solicitado para comparar meses. Indica su dimension y nombre exacto; '
+                      'no usare el total general.', 'metric_cross_scope_unavailable', 'medium')
     return None

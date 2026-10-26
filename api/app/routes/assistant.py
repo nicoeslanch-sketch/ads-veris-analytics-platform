@@ -1,6 +1,7 @@
 """Asistente gratuito determinista y configuracion del chat avanzado."""
 
 import json
+import math
 from collections import defaultdict, deque
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
@@ -24,6 +25,7 @@ _TIMEOUT = 10
 _requests: dict[str, deque[datetime]] = defaultdict(deque)
 _request_lock = Lock()
 _catalog_lock = Lock()
+_catalog_refresh_lock = Lock()
 _catalog_cache: OrderedDict[tuple[str, str], tuple[float, list[dict]]] = OrderedDict()
 _last_rate_sweep = 0.0
 
@@ -58,7 +60,13 @@ class BotRequest(BaseModel):
             count += 1
             if depth > 18 or count > 20000:
                 raise ValueError("El contexto de metricas excede la estructura permitida.")
+            if isinstance(node, str) and len(node) > 4000:
+                raise ValueError('Un texto del contexto excede el limite permitido.')
+            if isinstance(node, float) and not math.isfinite(node):
+                raise ValueError('Los indicadores deben contener numeros finitos.')
             if isinstance(node, dict):
+                if any(len(str(key)) > 256 for key in node):
+                    raise ValueError('Una clave del contexto excede el limite permitido.')
                 stack.extend((child, depth + 1) for child in node.values())
             elif isinstance(node, list):
                 stack.extend((child, depth + 1) for child in node)
@@ -72,7 +80,7 @@ class BotRequest(BaseModel):
         # coercing missing values to zero or discarding unfamiliar metric fields.
         object_paths = (
             "patrones_productos", "actividad_productos", "analisis_negocio.conciliacion.patrones_productos",
-            "kpis.cobertura_costos", "kpis.devoluciones", "analisis_generico.evolucion",
+            "kpis.cobertura_costos", "kpis.devoluciones", "kpis.unidades_detalle", "analisis_generico.evolucion",
             "analisis_negocio.cobranza", "analisis_negocio.estado_resultados", "analisis_negocio.filtros", "analisis_negocio.filtros.aplicados",
             "analisis_negocio.cobranza.kpis", "analisis_negocio.cobranza.periodo",
             "analisis_negocio.cobranza.comparacion", "analisis_productos.costos",
@@ -177,7 +185,7 @@ def _load_catalog(settings: Settings) -> list[dict]:
                 "limit": "500",
             },
             headers=_headers(settings),
-            timeout=_TIMEOUT,
+            timeout=3,
         )
         response.raise_for_status()
         rows = response.json()
@@ -188,38 +196,12 @@ def _load_catalog(settings: Settings) -> list[dict]:
             # base puede seguir agregando articulos con claves propias.
             merged = dict(rows_by_key)
             merged.update({str(item.get("key")): item for item in ARTICLES})
-            missing = [
-                item for item in ARTICLES if str(item.get("key")) not in rows_by_key
-            ]
-            if missing:
-                try:
-                    httpx.post(
-                        _rest(settings, "support_bot_articles"),
-                        json=missing,
-                        headers={
-                            **_headers(settings),
-                            "Prefer": "resolution=merge-duplicates,return=minimal",
-                        },
-                        timeout=_TIMEOUT,
-                    ).raise_for_status()
-                except httpx.HTTPError:
-                    pass
             return sorted(
                 merged.values(),
                 key=lambda item: int(item.get("priority") or 0),
                 reverse=True,
             )
-        # Primer uso: poblar la base editable con el catalogo versionado.
-        seed = httpx.post(
-            _rest(settings, "support_bot_articles"),
-            json=ARTICLES,
-            headers={
-                **_headers(settings),
-                "Prefer": "resolution=merge-duplicates,return=minimal",
-            },
-            timeout=_TIMEOUT,
-        )
-        seed.raise_for_status()
+        # Answering a question is read-only. Catalog writes belong to admin setup.
         return ARTICLES
     except httpx.HTTPError:
         return ARTICLES
@@ -234,12 +216,18 @@ def _cached_catalog(settings: Settings) -> list[dict]:
         if cached and cached[0] > monotonic():
             _catalog_cache.move_to_end(key)
             return cached[1]
+    if not _catalog_refresh_lock.acquire(blocking=False):
+        return cached[1] if cached else ARTICLES
+    try:
         rows = _load_catalog(settings)
-        _catalog_cache[key] = (monotonic() + 120, rows)
-        _catalog_cache.move_to_end(key)
-        while len(_catalog_cache) > 4:
-            _catalog_cache.popitem(last=False)
+        with _catalog_lock:
+            _catalog_cache[key] = (monotonic() + 120, rows)
+            _catalog_cache.move_to_end(key)
+            while len(_catalog_cache) > 4:
+                _catalog_cache.popitem(last=False)
         return rows
+    finally:
+        _catalog_refresh_lock.release()
 
 
 @router.get("/config")
@@ -277,7 +265,7 @@ async def ask_quick_help(
     result = await run_in_threadpool(answer_for, body.message, ARTICLES, context, history)
     catalog = ARTICLES
     # Published metrics and conversation control do not depend on a database read.
-    if not str(result.get("matched_key") or "").startswith(("metric_", "conversation_", "greeting")):
+    if result.get('confidence') != 'high' and not str(result.get("matched_key") or "").startswith(("metric_", "conversation_", "greeting")):
         catalog = await run_in_threadpool(_cached_catalog, settings)
         if catalog is not ARTICLES:
             result = await run_in_threadpool(answer_for, body.message, catalog, context, history)

@@ -240,6 +240,9 @@ _TYPO_ALIASES = {
 # Atajos muy habituales. El segmentador cubre otras combinaciones, mientras estas
 # entradas permiten tolerar incluso una pequena errata dentro de una frase pegada.
 _JOINED_ALIASES = {
+    "quehaceestaplataforma": "que hace esta plataforma",
+    "quehacestaplataforma": "que hace esta plataforma",
+    "paraquesirveadsveris": "para que sirve ads veris",
     "olvidecontrasena": "olvide contrasena",
     "recuperarcontrasena": "recuperar contrasena",
     "perdielautenticador": "perdi el autenticador",

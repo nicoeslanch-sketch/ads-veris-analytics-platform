@@ -1532,9 +1532,16 @@ def compute_metrics(
     if devoluciones:
         kpis["devoluciones"] = devoluciones
     if roles.get("cantidad"):
+        quantities = _numeric_series(selection, roles["cantidad"])
         kpis["unidades_totales"] = round(
-            float(_numeric_series(selection, roles["cantidad"]).dropna().sum()), 2
+            float(quantities.dropna().sum()), 2
         )
+        kpis['unidades_detalle'] = {
+            'positivas': round(float(quantities[quantities > 0].sum()), 2),
+            'negativas': round(float(quantities[quantities < 0].sum()), 2),
+            'filas_sin_cantidad': int(quantities.isna().sum()),
+            'filas_monto_negativo_cantidad_positiva': int(((amounts < 0) & (quantities > 0)).sum()),
+        }
     if has_costs and utilidad is not None:
         kpis["gastos_totales"] = _kpi(gastos, prev_costs)
         # Nota Fase 10 §4.2: esto es UTILIDAD BRUTA (venta − costo directo),

@@ -127,6 +127,15 @@ def test_invalid_content_length_is_bad_request(value):
     assert sent[0]["status"] == 400 and not entered and not consumed
 
 
+def test_slow_chunks_cannot_extend_upload_deadline_forever(monkeypatch):
+    from app import request_security
+    times = iter([0, 0, 29, 58, 87, 116, 145])
+    monkeypatch.setattr(request_security, 'monotonic', lambda: next(times))
+    sent, entered, consumed = _request_probe([b'x'] * 10)
+    assert sent[0]['status'] == 408
+    assert not entered and len(consumed) == 5
+
+
 @pytest.mark.parametrize("path", ["other-user/data.xlsx", "user/../other/data.csv", "user/%2e%2e/data.csv", "user/%252e%252e/data.csv", "user//data.csv", "user\\other/data.csv", "user/./data.csv"])
 def test_storage_paths_reject_cross_user_and_traversal(path):
     with pytest.raises(HTTPException) as rejected:

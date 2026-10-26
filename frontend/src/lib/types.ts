@@ -1185,6 +1185,12 @@ export interface MetricsResult {
     transacciones: number
     ticket_promedio: number | null
     unidades_totales?: number
+    unidades_detalle?: {
+      positivas: number
+      negativas: number
+      filas_sin_cantidad: number
+      filas_monto_negativo_cantidad_positiva: number
+    }
     gastos_totales: KpiValue | null
     ganancia_neta: KpiValue | null
     margen_utilidad_pct: { valor: number | null; variacion_puntos: number | null } | null

@@ -40,6 +40,21 @@ def purchase_metrics():
     return metrics
 
 
+def screenshot_metrics():
+    metrics = sales_metrics()
+    metrics['por_categoria'] = [
+        {'nombre': 'Retail', 'ingresos': 15640000},
+        {'nombre': 'Distribucion', 'ingresos': 8160000},
+        {'nombre': 'Ferreteria', 'ingresos': 2000000},
+    ]
+    metrics['kpis']['unidades_totales'] = 201323
+    metrics['analisis_negocio'] = {'estado_resultados': {
+        'resultado_operacional': 147140533, 'margen_operacional_pct': 7.5,
+        'cobertura_costos_pct': 100,
+    }}
+    return metrics
+
+
 def conversation_scenarios():
     sales = sales_metrics()
     years = deepcopy(sales)
@@ -63,6 +78,18 @@ def conversation_scenarios():
     partial_receivables['analisis_negocio']['operacion']['cartera_cxc'].update(
         estado='partial', estado_vencimiento='partial', fecha_corte=None)
     return [
+        ('user_screenshots_and_followups', screenshot_metrics(), [
+            ('cual fue el mes en donde mas se vendio en Retail', ['cruce compatible', 'segmento']),
+            ('cual fue la peor categoria', ['Ferreteria', '$2.000.000']),
+            ('Dime la suma de los ingresos de categorias por Distribucion y Ferreteria', ['$10.160.000', 'Distribucion', 'Ferreteria']),
+            ('que hace esta plataforma', ['Limpieza', 'Explorar']),
+            ('como puedo conseguir ayuda de un humano', ['servicios@adsveris.com', 'No he enviado']),
+            ('Dime el total de unidades vendidas vs la utilidad operacional', ['201.323', '$147.140.533']),
+            ('las unidades vendidas incluyen las devoluciones', ['negativas restan', 'positivas suman', 'no puedo confirmar']),
+            ('quehaceestaplataforma', ['Limpieza', 'Explorar']),
+            ('suma los ingresos de Distribucion y Desconocido', ['No identifico todos']),
+            ('que categoria vendio menos', ['Ferreteria', '$2.000.000']),
+        ]),
         ('purchase_evidence_and_topic_changes', purchase_metrics(), [
             ('cuantocompre', ['$120', 'parcial', '50%']),
             ('y los fletes', ['$10', 'una vez por documento']),

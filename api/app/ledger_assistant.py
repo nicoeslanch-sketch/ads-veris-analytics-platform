@@ -2,7 +2,7 @@
 import math
 import re
 
-from .language_normalization import normalize_query
+from .language_normalization import normalize_basic, normalize_query
 from .metric_assistant import format_amount
 
 
@@ -52,7 +52,7 @@ def answer_ledger(message, ledger, history=None):
     previous_questions = [normalize_query(row.get('content', '')) for row in reversed(history or []) if row.get('role') == 'user']
     previous = next((text for text in previous_questions if any(re.search(pattern, text) for pattern, *_ in FIELDS)
                      or re.search(r'producto|sucursal|categoria|mes|negocio', text)), '')
-    new_metric = any(re.search(pattern, q) for pattern, *_ in FIELDS)
+    new_metric = any(re.search(pattern, q) for pattern, *_ in FIELDS) or bool(re.search(r'\b(?:categoria|producto|sucursal)\b', q))
     if re.match(r'^(y |en |del |durante |ese |esa |esos |esas |por que|que hago|entonces)', q) and previous and not new_metric:
         if re.search(r'\b20\d{2}\b', q):
             previous = re.sub(r'\b(?:20\d{2}|' + '|'.join(MONTHS) + r')\b', '', previous)
@@ -83,6 +83,35 @@ def answer_ledger(message, ledger, history=None):
     years = re.findall(r'\b20\d{2}\b', q)
     mentioned_months = [i + 1 for i, name in enumerate(MONTHS) if re.search(r'\b' + name + r'\b', q)]
     explicit_period = bool(years or mentioned_months or re.search(r'\bhoy|ayer|semana|trimestre\b', q))
+    literal = normalize_basic(message)
+    named_groups = {}
+    for group_key in ('productos', 'sucursales', 'categorias'):
+        matches = [row for row in ledger.get(group_key) or [] if any(
+            normalize_basic(row.get(key) or '') and re.search(
+                r'\b' + re.escape(normalize_basic(row[key])) + r'\b', literal)
+            for key in ('nombre', 'id'))]
+        if matches:
+            named_groups[group_key] = matches
+    month_rank = bool(re.search(r'\bmes\b', q) and re.search(r'\b(?:mejor|peor|mas|menos|mayor|menor)\b', q))
+    if (explicit_period or month_rank) and (named_groups or re.search(r'\b(?:producto|categoria|sucursal)\b', q)):
+        return reply('No tengo publicado ese cruce entre segmento y periodo en la conciliacion. '
+                     'Aplica el filtro de fechas y el de segmento; el total mensual del negocio no sustituye al segmento.' + scope,
+                     'cross_scope', 'medium')
+    if re.search(r'\b(?:unidades|cantidad vendida)\b', q) and re.search(r'devolucion|signo', q):
+        if explicit_period or named_groups or re.search(r'\b(?:producto|categoria|sucursal)\b', q):
+            return reply('Para explicar las unidades y devoluciones de ese segmento o periodo, selecciona '
+                         'ese alcance. No sustituyo su desglose por el total del libro.' + scope, 'units_scope', 'medium')
+        return reply('El indicador de unidades emitidas es ' + number(k.get('unidades_emitidas'), 'count') +
+                     ': corresponde a ventas emitidas antes de devoluciones, no a unidades netas. '
+                     'En esta conciliacion las devoluciones se vinculan por ID y fecha de nota de credito; '
+                     'los rankings indican por separado las unidades netas de devoluciones. '
+                     'No se debe cambiar el signo de las cantidades del Excel sin revisar su definicion.' + scope,
+                     'units_returns')
+    if re.search(r'\b(?:utilidad|resultado|ganancia|margen)\b', q) and re.search(r'\b(?:operacional|operativo|operativa)\b', q):
+        return reply('No hay un resultado operacional publicado por separado en esta conciliacion. '
+                     'La utilidad bruta y el resultado antes de impuestos son medidas distintas; '
+                     'este ultimo tambien descuenta intereses, por lo que no lo renombro como operacional.' + scope,
+                     'operational_missing', 'medium')
     field = next(((key, label, unit) for pattern, key, label, unit in FIELDS if re.search(pattern, q)), None)
     if re.search(r'cuantas ventas emitidas|numero.*ventas emitidas', q):
         field = ('ventas_emitidas', 'Documentos de venta emitidos', 'count')
@@ -102,10 +131,24 @@ def answer_ledger(message, ledger, history=None):
             evidence = 'No se detecto stock con 90 o mas dias sin ventas observadas'
         return reply(evidence + '. Antes de reducir compras, comprueba estacionalidad, disponibilidad y margen. Prueba ajustes acotados de precio, presentacion o marketing; el archivo no demuestra la causa de la baja.' + scope, 'slow_inventory')
     group = next((key for word, key in [('producto', 'productos'), ('sucursal', 'sucursales'), ('categoria', 'categorias')] if word in q), None)
+    if group is None and len(named_groups) == 1:
+        group = next(iter(named_groups))
+    if len(named_groups) > 1:
+        return reply('Hay varios segmentos o dimensiones en la pregunta. Sus totales no permiten '
+                     'deducir la interseccion; indica una sola dimension o aplica el cruce en Explorar.' + scope,
+                     'group_ambiguous', 'medium')
     if group:
         rows = ledger.get(group) or []
         measure = 'utilidad' if re.search(r'rentab|utilidad|ganancia|beneficio', q) else 'unidades' if 'unidades' in q else 'ventas'
-        mentioned = [row for row in rows if normalize_query(str(row.get('nombre', ''))) in q or (row.get('id') and str(row['id']).casefold() in q)]
+        mentioned = named_groups.get(group, [])
+        if mentioned and measure == 'ventas' and re.search(r'\b(?:suma|sumar|suman|juntos|juntas)\b', q):
+            from .metric_assistant import _group_answer
+            result = _group_answer({'moneda': currency},
+                                   [{'nombre': row.get('nombre'), 'ingresos': row.get('ventas')} for row in rows],
+                                   {'productos': 'producto', 'categorias': 'categoria', 'sucursales': 'sucursal'}[group],
+                                   'metric_ledger_group', literal)
+            result['answer'] += ' La medida es ventas netas de devoluciones.' + scope
+            return result
         if mentioned:
             rows = mentioned
         elif not re.search(r'mas|menos|mejor|peor|principal|top|ranking|lider', q):

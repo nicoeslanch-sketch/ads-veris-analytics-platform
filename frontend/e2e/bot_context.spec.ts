@@ -25,6 +25,55 @@ async function ask(page: Page, question: string) {
   await panel.getByRole('button', { name: 'Enviar pregunta', exact: true }).click()
 }
 
+test('las preguntas reportadas usan el motor real sin perder medidas ni alcance', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const metrics = {
+    moneda: 'CLP', kpis: { unidades_totales: 201323, ingresos_totales: { valor: 25800000 } },
+    por_categoria: [{ nombre: 'Retail', ingresos: 15640000 },
+      { nombre: 'Distribucion', ingresos: 8160000 }, { nombre: 'Ferreteria', ingresos: 2000000 }],
+    evolucion_mensual: [{ mes: '2026-01', ingresos: 100 }, { mes: '2026-02', ingresos: 300 }],
+    analisis_negocio: { estado_resultados: { resultado_operacional: 147140533,
+      margen_operacional_pct: 7.5, cobertura_costos_pct: 100 } },
+  }
+  // Only supply synthetic context. The local API computes every answer.
+  await page.route('**/assistant/bot', async (route) => {
+    await route.continue({ postData: JSON.stringify({ ...route.request().postDataJSON(), metrics }) })
+  })
+  await page.goto('/')
+  const panel = botPanel(page)
+  const turns = [
+    ['que hace esta plataforma', 'Limpieza'],
+    ['cual fue el mes en donde mas se vendio en Retail', 'cruce compatible'],
+    ['cual fue la peor categoria', 'Ferreteria'],
+    ['Dime la suma de los ingresos de categorias por Distribucion y Ferreteria', '$10.160.000'],
+    ['Dime el total de unidades vendidas vs la utilidad operacional', '201.323'],
+    ['las unidades vendidas incluyen las devoluciones', 'negativas restan'],
+  ]
+  for (const [question, expected] of turns) {
+    const responsePromise = page.waitForResponse((response) => response.url().endsWith('/assistant/bot')
+      && response.request().postDataJSON()?.message === question)
+    await ask(page, question)
+    const response = await responsePromise
+    expect(response.status()).toBe(200)
+    const result = await response.json()
+    expect(result.answer).toContain(expected)
+    expect(result.coins_charged).toBe(0)
+    await expect(panel.getByText(result.answer, { exact: true })).toBeVisible()
+    const input = panel.getByPlaceholder('Pregunta por tus cifras o por una función…')
+    await expect(input).toHaveValue('')
+    expect(await input.evaluate((element) => element.scrollTop)).toBe(0)
+  }
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Abrir Asistente IA', exact: true }).click()
+  expect(await panel.getByPlaceholder('Pregunta por tus cifras o por una función…')
+    .evaluate((element) => element.scrollTop)).toBe(0)
+  const overflow = await panel.evaluate((root) => [root, ...root.querySelectorAll('p, button, textarea')]
+    .filter((element) => element.getBoundingClientRect().width > 0 && element.scrollWidth > element.clientWidth + 2)
+    .map((element) => element.tagName))
+  expect(overflow).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath('bot-real-answers-mobile.png') })
+})
+
 test('el bot conserva el hilo, renueva sugerencias y permite empezar una conversacion limpia', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   const requests: BotRequest[] = []

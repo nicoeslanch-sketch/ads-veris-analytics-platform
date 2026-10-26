@@ -2,6 +2,7 @@
 
 import asyncio
 from tempfile import SpooledTemporaryFile
+from time import monotonic
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
@@ -9,10 +10,12 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 class RequestSecurityMiddleware:
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int, max_json_bytes: int) -> None:
+    def __init__(self, app: ASGIApp, *, max_body_bytes: int, max_json_bytes: int,
+                 max_upload_seconds: float = 120) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
         self.max_json_bytes = max_json_bytes
+        self.max_upload_seconds = max_upload_seconds
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -51,9 +54,13 @@ class RequestSecurityMiddleware:
         # chunked requests and clients lying about Content-Length.
         with SpooledTemporaryFile(max_size=1024 * 1024) as body:
             received = 0
+            deadline = monotonic() + self.max_upload_seconds
             while True:
                 try:
-                    message = await asyncio.wait_for(receive(), timeout=30)
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError
+                    message = await asyncio.wait_for(receive(), timeout=min(30, remaining))
                 except TimeoutError:
                     await JSONResponse({"detail": "La carga tardo demasiado. Vuelve a intentar."}, 408)(scope, receive, secure_send)
                     return
