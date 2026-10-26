@@ -41,6 +41,9 @@ Cached older contexts retain a cautious explanation when quantity detail is abse
   receives the local fallback without waiting for that network operation.
 - Metric context rejects non-finite numbers, overlong strings/keys and malformed
   quantity metadata in addition to the existing depth/node/body limits.
+- Vitest and its mocker dependency are upgraded to 4.1.12, which patches the
+  Windows path traversal advisory GHSA-xp26-3454-mjgp. These are development
+  dependencies, not the production web server.
 - Uploads have a 120-second total body-receive deadline plus the existing
   30-second idle limit. Sending small chunks cannot extend the upload indefinitely.
   This bounds network reception, not spreadsheet calculation time.
@@ -63,13 +66,16 @@ hosts and incident logs were not inspected, and no exploit traffic was sent.
 
 ## Verification
 
-- Full local API suite: 2240 passed before six additional follow-up regressions.
+- Full API suite: 2240 passed locally before six additional follow-up regressions;
+  GitHub CI subsequently passed all 2246 tests.
 - Frontend unit suite: 257 passed; production build and type checking successful.
 - Browser bot suite: 6 passed, including real local API answers, context changes,
   desktop/mobile continuity and overflow assertions; screenshot inspected.
+- Full GitHub browser suite: 60 passed, one skipped.
 - `scripts/exercise_assistant.py`: 202 turns, zero expectation failures.
 - `pip-audit -r api/requirements.txt`: no known vulnerabilities reported.
-- Frontend audit: no applicable high/critical findings under the existing policy.
+- Frontend audit after Vitest 4.1.12 update: npm reports zero vulnerabilities;
+  all 257 frontend unit tests passed again with the patched version.
 - Gitleaks: 331 historical commits, no exposed secrets detected, redacted output.
 - Production `/version` before release: HTTP 200, commit `cd33b38`, engine `0.36.0`.
   A preceding cold `/health` request timed out; this release does not eliminate
