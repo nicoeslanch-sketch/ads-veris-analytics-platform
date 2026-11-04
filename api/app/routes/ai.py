@@ -12,6 +12,7 @@ frontend. La API key vive solo en la variable de entorno ANTHROPIC_API_KEY.
 """
 
 import json
+import logging
 import uuid
 from typing import Literal
 
@@ -28,6 +29,14 @@ from ..config import Settings, get_settings
 from ..metric_assistant import format_amount
 
 router = APIRouter(prefix="/ai", dependencies=[Depends(get_current_user)])
+logger = logging.getLogger(__name__)
+
+
+def _log_incident(exc: Exception) -> str:
+    # Provider messages/bodies may echo prompts, credentials or customer data.
+    incident = uuid.uuid4().hex[:8]
+    logger.warning("ai_failure incident=%s error_type=%s", incident, type(exc).__name__)
+    return incident
 
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
@@ -333,16 +342,14 @@ async def ai_summary(
         # Bug: el detalle de APIStatusError (tipo, texto del proveedor,
         # request_id — ej. "credit balance is too low") llegaba tal cual al
         # panel. Al cliente jamás se le filtran detalles internos del
-        # proveedor; el detalle real queda en los logs con un incidente.
-        incident = uuid.uuid4().hex[:8]
-        print(f"[ai] incidente {incident}: {exc.__class__.__name__}: {exc}")
+        # proveedor; solo el tipo de error queda asociado a un incidente.
+        incident = _log_incident(exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="El asistente no está disponible en este momento. Intenta de nuevo más tarde.",
         ) from exc
     except Exception as exc:
-        incident = uuid.uuid4().hex[:8]
-        print(f"[ai] incidente {incident}: {exc.__class__.__name__}: {exc}")
+        incident = _log_incident(exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno del asistente (incidente {incident}). Intenta nuevamente.",
@@ -413,16 +420,14 @@ async def ai_recommendation(
         # Bug: el detalle de APIStatusError (tipo, texto del proveedor,
         # request_id — ej. "credit balance is too low") llegaba tal cual al
         # panel. Al cliente jamás se le filtran detalles internos del
-        # proveedor; el detalle real queda en los logs con un incidente.
-        incident = uuid.uuid4().hex[:8]
-        print(f"[ai] incidente {incident}: {exc.__class__.__name__}: {exc}")
+        # proveedor; solo el tipo de error queda asociado a un incidente.
+        incident = _log_incident(exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="El asistente no está disponible en este momento. Intenta de nuevo más tarde.",
         ) from exc
     except Exception as exc:
-        incident = uuid.uuid4().hex[:8]
-        print(f"[ai] incidente {incident}: {exc.__class__.__name__}: {exc}")
+        incident = _log_incident(exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno del asistente (incidente {incident}). Intenta nuevamente.",
@@ -492,10 +497,9 @@ async def ai_chat(
             yield "data: [DONE]\n\n"
         except Exception as exc:
             # Fase 10 §9.3: al cliente jamás se le filtran detalles internos
-            # (proveedor, red, configuración). El detalle queda en los logs
-            # con un código de incidente para correlacionar.
-            incident = uuid.uuid4().hex[:8]
-            print(f"[ai/chat] incidente {incident} user={user.id}: {exc.__class__.__name__}: {exc}")
+            # (proveedor, red, configuración). Solo registramos tipo de error
+            # e incidente, sin el mensaje del proveedor.
+            incident = _log_incident(exc)
             mensaje = (
                 "No se pudo completar la respuesta del asistente. "
                 f"Intenta nuevamente (incidente {incident})."

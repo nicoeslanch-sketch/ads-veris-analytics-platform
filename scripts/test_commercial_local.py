@@ -270,8 +270,28 @@ class SecurityLab:
         assert not self.rpc('account_privacy_state', {'p_user_id': foreign})['accepted']
         self.checks['privacy_isolation_concurrent_idempotency_server_evidence_and_admin_audit'] = True
 
+    def test_schema_security_invariants(self):
+        assert self.sql("select count(*) from pg_tables where schemaname in ('public','app_private') "
+                        "and not rowsecurity") == '0', 'Application tables must enable RLS'
+        assert self.sql("select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace "
+                        "where n.nspname='app_private' and c.relkind in ('r','p') and "
+                        "(has_table_privilege('anon',c.oid,'SELECT,INSERT,UPDATE,DELETE') or "
+                        "has_table_privilege('authenticated',c.oid,'SELECT,INSERT,UPDATE,DELETE'))") == '0'
+        assert self.sql("select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace "
+                        "where n.nspname='public' and p.prosecdef and "
+                        "(has_function_privilege('anon',p.oid,'EXECUTE') or "
+                        "(has_function_privilege('authenticated',p.oid,'EXECUTE') and "
+                        "p.oid <> 'public.can_process_data()'::regprocedure))") == '0'
+        assert self.sql("select count(*) from information_schema.columns where table_schema='public' "
+                        "and table_name='profiles' and column_name not in "
+                        "('company','country','full_name','phone','preferences','rut') and "
+                        "has_column_privilege('authenticated','public.profiles',column_name,'UPDATE')") == '0'
+        assert self.sql("select count(*) from storage.buckets where id='datasets' and public") == '0'
+        self.checks['rls_private_grants_rpc_allowlist_profile_privileges_and_private_bucket'] = True
+
     def run(self):
         assert self.sql("select count(*) from auth.users") == "0", "Refusing populated database"
+        self.test_schema_security_invariants()
         owner, foreign, admin = self.account(), self.account(), self.account(admin=True)
         own_dataset, foreign_dataset, source = (str(uuid4()) for _ in range(3))
         self.sql(f"insert into public.datasets(id,user_id,name) values "

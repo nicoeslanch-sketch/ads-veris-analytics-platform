@@ -56,7 +56,17 @@ def _guard_xlsx_zip(content: bytes) -> None:
     """Rechaza .xlsx corruptos o con expansión anómala ANTES de cargarlos."""
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as zf:
-            total_uncompressed = sum(info.file_size for info in zf.infolist())
+            entries = zf.infolist()
+            if len(entries) > 10_000:
+                raise UnsupportedFileError("El Excel contiene demasiadas partes internas. Divide el archivo.")
+            names = [info.filename for info in entries]
+            if len(set(names)) != len(names) or any(info.flag_bits & 1 for info in entries):
+                raise UnsupportedFileError("El Excel tiene partes duplicadas o cifradas. Guarda una copia .xlsx sin clave.")
+            if any(name.startswith('/') or '\\' in name or '..' in name.split('/') for name in names):
+                raise UnsupportedFileError("El Excel contiene rutas internas no validas.")
+            if any('vbaproject' in name.lower() or name.lower().startswith('xl/activex/') for name in names):
+                raise UnsupportedFileError("No se admiten macros ni controles activos. Exporta una copia .xlsx sin macros.")
+            total_uncompressed = sum(info.file_size for info in entries)
     except zipfile.BadZipFile:
         raise UnsupportedFileError(
             "El archivo .xlsx está dañado o no es un Excel válido. "
@@ -73,6 +83,38 @@ def _guard_xlsx_zip(content: bytes) -> None:
             "El archivo tiene una compresión anómala y no se puede procesar de "
             "forma segura. Exporta la base como CSV e inténtalo de nuevo."
         )
+
+
+def validate_source_content(filename: str, content: bytes) -> None:
+    """Cheap preflight before persistence; does not materialize worksheet cells."""
+    name = (filename or "").lower()
+    if not content or not name.endswith(SUPPORTED_EXTENSIONS):
+        raise UnsupportedFileError("Sube un archivo Excel (.xlsx) o CSV (.csv) con datos.")
+    if name.endswith('.xlsx'):
+        _guard_xlsx_zip(content)
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                for required in ('[Content_Types].xml', 'xl/workbook.xml', '_rels/.rels'):
+                    archive.getinfo(required)
+                if archive.getinfo('[Content_Types].xml').file_size > 1024 * 1024:
+                    raise UnsupportedFileError("Los metadatos del Excel superan el limite permitido.")
+                metadata = archive.read('[Content_Types].xml')
+                if b'<!DOCTYPE' in metadata.upper() or b'<!ENTITY' in metadata.upper():
+                    raise UnsupportedFileError("El Excel contiene declaraciones XML no admitidas.")
+                root = ET.fromstring(metadata)
+                workbook_types = [item.get('ContentType', '') for item in root
+                                  if item.get('PartName') == '/xl/workbook.xml']
+                if workbook_types != ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml']:
+                    raise UnsupportedFileError("El contenido no corresponde a un libro .xlsx sin macros.")
+        except (KeyError, zipfile.BadZipFile, ET.ParseError, RuntimeError, NotImplementedError) as exc:
+            raise UnsupportedFileError("El archivo no contiene una estructura Excel .xlsx valida.") from exc
+    else:
+        if content.startswith((b'PK\x03\x04', b'MZ', b'%PDF-', b'\xd0\xcf\x11\xe0')) or any(
+            byte < 32 and byte not in (9, 10, 13) for byte in content
+        ):
+            raise UnsupportedFileError("El CSV contiene datos binarios. Exportalo como CSV UTF-8.")
+        if not content.strip().lstrip(b'\xef\xbb\xbf').strip():
+            raise UnsupportedFileError("El archivo CSV esta vacio.")
 
 # Fila-resumen al final de la planilla. La etiqueta puede estar en cualquier
 # columna de texto (muchos ERP la ponen en "Categoría", no en la primera).
