@@ -53,6 +53,7 @@ def test_invalid_source_never_reaches_storage(monkeypatch, name, content):
     ('normal.xlsx', workbook_bytes()), ('accents.csv', 'nombre;valor\nCafe;10\n'.encode()),
     ('latin.csv', 'nombre;valor\nPi\xf1a;10\n'.encode('latin-1')),
     ('quoted.csv', b'name,notes\nitem,"line one\nline two"\n'),
+    ('legitimate-header.csv', b'MZ,amount\nitem,10\n'),
 ])
 def test_preflight_keeps_supported_files_unchanged(monkeypatch, name, content):
     monkeypatch.setattr(storage_upload, 'require_capability_for_user', lambda *a: None)
@@ -79,6 +80,21 @@ def test_generic_zip_not_accepted_as_workbook():
         archive.writestr('notes.txt', 'not Excel')
     with pytest.raises(UnsupportedFileError):
         validate_source_content('fake.xlsx', output.getvalue())
+
+
+@pytest.mark.parametrize('encoding', ['utf-8', 'utf-16', 'utf-32'])
+def test_content_type_entities_are_rejected_in_all_xml_encodings(encoding):
+    metadata = ('<?xml version="1.0" encoding="' + encoding + '"?>'
+                '<!DOCTYPE Types [<!ENTITY note "synthetic">]>'
+                '<Types><Override PartName="/xl/workbook.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                '</Types>').encode(encoding)
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes())) as source, zipfile.ZipFile(output, 'w') as target:
+        for entry in source.infolist():
+            target.writestr(entry, metadata if entry.filename == '[Content_Types].xml' else source.read(entry))
+    with pytest.raises(UnsupportedFileError, match='XML no admitidas'):
+        validate_source_content('entities.xlsx', output.getvalue())
 
 
 def test_upload_distributed_budget_rejects_before_read(monkeypatch):

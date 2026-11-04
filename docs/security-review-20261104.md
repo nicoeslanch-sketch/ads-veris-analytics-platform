@@ -76,8 +76,13 @@ This is not a penetration-test certification or a guarantee against compromise.
 
 ## Local verification
 
-- Backend: 2,273 tests passed (131 existing deprecation/runtime warnings).
+- Backend: 2,273 tests passed (131 existing deprecation/runtime warnings), followed
+  by 31 focused review tests including four additional encoding/CSV regressions.
 - Frontend: 267 tests passed; production build succeeded.
-- npm audit policy passed. Full dependency and tracked-history secret scans, E2E
-  and disposable PostgreSQL tests also run as PR checks; inspect their results
-  before merging. pip-audit was not installed in the local runtime.
+- npm audit policy passed. CI dependency and tracked-history secret scans passed.
+- Disposable PostgreSQL run 41928084898 passed all 39 checks, including tenant
+  isolation, revoked sessions, protected roles and transaction rollback. It made
+  zero production requests and accessed zero customer files.
+- Restore lab run 41928085278 passed. This is a synthetic recovery drill, NOT a
+  production disaster backup. Repeat PR checks on the final commit before merge.
+- pip-audit was not installed locally; the dependency audit ran in CI instead.

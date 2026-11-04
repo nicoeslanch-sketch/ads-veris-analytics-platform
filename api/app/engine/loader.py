@@ -99,7 +99,8 @@ def validate_source_content(filename: str, content: bytes) -> None:
                 if archive.getinfo('[Content_Types].xml').file_size > 1024 * 1024:
                     raise UnsupportedFileError("Los metadatos del Excel superan el limite permitido.")
                 metadata = archive.read('[Content_Types].xml')
-                if b'<!DOCTYPE' in metadata.upper() or b'<!ENTITY' in metadata.upper():
+                declarations = metadata.replace(b'\x00', b'').upper()
+                if b'<!DOCTYPE' in declarations or b'<!ENTITY' in declarations:
                     raise UnsupportedFileError("El Excel contiene declaraciones XML no admitidas.")
                 root = ET.fromstring(metadata)
                 workbook_types = [item.get('ContentType', '') for item in root
@@ -109,11 +110,11 @@ def validate_source_content(filename: str, content: bytes) -> None:
         except (KeyError, zipfile.BadZipFile, ET.ParseError, RuntimeError, NotImplementedError) as exc:
             raise UnsupportedFileError("El archivo no contiene una estructura Excel .xlsx valida.") from exc
     else:
-        if content.startswith((b'PK\x03\x04', b'MZ', b'%PDF-', b'\xd0\xcf\x11\xe0')) or any(
+        if content.startswith((b'PK\x03\x04', b'%PDF-', b'\xd0\xcf\x11\xe0')) or any(
             byte < 32 and byte not in (9, 10, 13) for byte in content
         ):
             raise UnsupportedFileError("El CSV contiene datos binarios. Exportalo como CSV UTF-8.")
-        if not content.strip().lstrip(b'\xef\xbb\xbf').strip():
+        if not content.removeprefix(b'\xef\xbb\xbf').strip():
             raise UnsupportedFileError("El archivo CSV esta vacio.")
 
 # Fila-resumen al final de la planilla. La etiqueta puede estar en cualquier
