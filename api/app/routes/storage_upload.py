@@ -11,6 +11,8 @@ from ..auth import AuthenticatedUser, get_current_user
 from ..capabilities import Capability, require_capability_for_user
 from ..config import Settings, get_settings
 from ..file_formats import SUPPORTED_EXTENSIONS
+from ..engine.loader import UnsupportedFileError, validate_source_content
+from ..request_budget import consume_budget
 from ..storage import MAX_DOWNLOAD_BYTES, _storage_object_url
 from ..storage_capacity import capacity_rpc, safe_storage_write
 
@@ -27,6 +29,17 @@ def _upload_source(file: UploadFile, user_id: str, settings: Settings) -> dict:
     name = file.filename or "datos.xlsx"
     if not name.lower().endswith(SUPPORTED_EXTENSIONS):
         raise HTTPException(422, "Formato no admitido. Usa Excel (.xlsx) o CSV (.csv).")
+    if settings.app_env.strip().lower() == 'production':
+        consume_budget('upload:' + user_id, settings, limit=20, window=60)
+    file.file.seek(0)
+    content = file.file.read(MAX_DOWNLOAD_BYTES + 1)
+    if len(content) != size or len(content) > MAX_DOWNLOAD_BYTES:
+        raise HTTPException(413, "El tamano del archivo no coincide o supera 15 MB.")
+    try:
+        validate_source_content(name, content)
+    except UnsupportedFileError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    del content
     safe_name = re.sub(r"[^\w.\-]+", "_", name, flags=re.ASCII)[-180:]
     path = f"{user_id}/{uuid4().hex}_{safe_name}"
     file.file.seek(0)

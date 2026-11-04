@@ -14,10 +14,10 @@ function csvNumber(value: number | null | undefined): string {
   return String(Math.round(value * 100) / 100).replace('.', ',')
 }
 
-function csvCell(value: string): string {
+export function csvCell(value: string): string {
   // Neutraliza formula injection: Excel interpreta =, +, -, @ al inicio como fórmula
-  const safe = /^[=+\-@]/.test(value) ? `'${value}` : value
-  return /[;"\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
+  const safe = /^(?:[\s\u0000-\u001f]*[=+\-@]|[\t\r\n])/.test(value) ? `'${value}` : value
+  return /[;"\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
 }
 
 /** Arma el CSV completo del reporte (todas las secciones del dashboard). */

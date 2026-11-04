@@ -5,7 +5,9 @@ Fase 1: pipeline /standardize, /clean y /metrics (SPEC §6), protegido con JWT.
 """
 
 import logging
+import re
 import threading
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -64,6 +66,23 @@ def validate_production_config(cfg: Settings) -> list[str]:
     ]
     if not non_local and not cfg.allowed_origin_regex:
         violations.append("ALLOWED_ORIGINS solo contiene orígenes locales")
+    for origin in cfg.cors_origins:
+        parsed = urlsplit(origin)
+        if ('*' in origin or origin == 'null' or not parsed.hostname
+                or parsed.username or parsed.password or parsed.query or parsed.fragment
+                or parsed.path not in ('', '/')
+                or (parsed.scheme != 'https' and parsed.hostname not in ('localhost', '127.0.0.1', '::1'))):
+            violations.append("ALLOWED_ORIGINS contiene un origen inseguro")
+    if cfg.allowed_origin_regex:
+        try:
+            pattern = re.compile(cfg.allowed_origin_regex)
+            if any(pattern.fullmatch(origin) for origin in (
+                'https://untrusted.invalid', 'http://untrusted.invalid', 'null',
+                'https://unrelated-project.vercel.app',
+            )):
+                violations.append("ALLOWED_ORIGIN_REGEX permite origenes ajenos")
+        except re.error:
+            violations.append("ALLOWED_ORIGIN_REGEX no es valida")
     return violations
 
 
@@ -145,15 +164,12 @@ app.add_middleware(RequestObservabilityMiddleware)
 
 @app.middleware("http")
 async def _warn_denied_origin(request, call_next):
-    """Log seguro para diagnosticar CORS en producción: solo Origin + ruta, jamás tokens."""
+    """Record denied-origin counts without retaining attacker-controlled values."""
     origin = request.headers.get("origin")
     if origin and not settings.is_cors_origin_allowed(origin):
         logger.warning(
-            "[CORS] Origen NO permitido: %s -> %s %s "
-            "(ALLOWED_ORIGINS tiene %d orígenes)",
-            origin,
+            "[CORS] Origen NO permitido; metodo=%s (ALLOWED_ORIGINS tiene %d origenes)",
             request.method,
-            request.url.path,
             len(settings.cors_origins),
         )
     return await call_next(request)
