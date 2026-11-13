@@ -27,7 +27,8 @@ import re
 import threading
 import unicodedata
 import zipfile
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from collections import OrderedDict
 
 import pandas as pd
@@ -107,7 +108,7 @@ def validate_source_content(filename: str, content: bytes) -> None:
                                   if item.get('PartName') == '/xl/workbook.xml']
                 if workbook_types != ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml']:
                     raise UnsupportedFileError("El contenido no corresponde a un libro .xlsx sin macros.")
-        except (KeyError, zipfile.BadZipFile, ET.ParseError, RuntimeError, NotImplementedError) as exc:
+        except (KeyError, zipfile.BadZipFile, ET.ParseError, DefusedXmlException, RuntimeError, NotImplementedError) as exc:
             raise UnsupportedFileError("El archivo no contiene una estructura Excel .xlsx valida.") from exc
     else:
         if content.startswith((b'PK\x03\x04', b'%PDF-', b'\xd0\xcf\x11\xe0')) or any(

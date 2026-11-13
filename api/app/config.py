@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     analysis_worker_poll_seconds: float = 5.0
     request_json_max_bytes: int = 2 * 1024 * 1024
     request_body_max_bytes: int = 16 * 1024 * 1024
+    request_max_pending_bodies: int = 8
 
     # ── Fase 10: cuenta administradora de respaldo ──
     # Legacy configuration only; authorization uses profiles.is_admin, never email.
@@ -176,6 +177,8 @@ class Settings(BaseSettings):
             raise ValueError("Los presupuestos de entrada y retencion de trabajos deben ser positivos.")
         if not 0 < self.request_json_max_bytes <= self.request_body_max_bytes:
             raise ValueError("Los limites HTTP deben ser positivos y JSON no debe superar el total.")
+        if not 1 <= self.request_max_pending_bodies <= 64:
+            raise ValueError("El limite de recepciones HTTP debe estar entre 1 y 64 por proceso.")
         if self.ads_coins_advanced_message_cost < 1:
             raise ValueError("El costo del chat avanzado en ADS Coins debe ser positivo.")
         if min(self.storage_max_files_basico, self.storage_max_files_analista,

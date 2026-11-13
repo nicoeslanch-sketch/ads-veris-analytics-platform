@@ -87,8 +87,15 @@ def numeric_series(frame: pd.DataFrame, column: str | None) -> pd.Series:
     if not column or column not in frame.columns:
         return pd.Series(float("nan"), index=frame.index, dtype=float)
     canonical = bool(frame.attrs.get(NUMERIC_CANONICAL_ATTR))
+    source = frame[column]
+    # Python considers True == 1 and False == 0. Exclude booleans before the
+    # unique-value cache can merge them with legitimate numeric cells.
+    if pd.api.types.is_bool_dtype(source.dtype):
+        return pd.Series(float("nan"), index=frame.index, dtype=float)
+    if pd.api.types.is_object_dtype(source.dtype):
+        source = source.mask(source.map(pd.api.types.is_bool))
     return map_unique(
-        frame[column].astype(str),
+        source,
         lambda value: parse_number(
             value,
             dot3_convention="decimal" if canonical else "miles",

@@ -1,17 +1,36 @@
 import { describe, expect, it } from 'vitest'
-import { cleanFilename, formatCLP, formatCurrencyCompact, formatRelativeTime, getActiveCurrency, setActiveCurrency } from './format'
+import { cleanFilename, formatCLP, formatCurrencyCompact, formatNumber, formatRelativeTime, getActiveCurrency, setActiveCurrency } from './format'
 
 describe('formatCLP', () => {
+  it.each([NaN, Infinity, -Infinity])('no presenta %s como un KPI real', (value) => {
+    expect(formatCLP(value)).toBe('\u2014')
+    expect(formatNumber(value)).toBe('\u2014')
+    expect(formatCurrencyCompact(value)).toBe('\u2014')
+  })
+
   it('muestra UF cuando esa es la moneda activa', () => {
     setActiveCurrency('UF')
     expect(formatCLP(669700)).toBe('UF 669.700')
     expect(formatCLP(12.34)).toBe('UF 12,34')
+    expect(formatCLP(0.004)).toBe('UF 0,004')
+    expect(formatCurrencyCompact(0.004, 'UF')).toBe('UF 0,004')
+    expect(formatCLP(1e-9)).toBe('<UF 0,00000001')
+    expect(formatCurrencyCompact(-1e-9, 'UF')).toBe('>UF -0,00000001')
     setActiveCurrency('CLP')
   })
 
   it('mantiene pesos como moneda predeterminada', () => {
     setActiveCurrency(undefined)
     expect(formatCLP(669700)).toBe('$669.700')
+  })
+
+  it('conserva centavos de monedas extranjeras sin cambiar su unidad', () => {
+    setActiveCurrency('USD')
+    expect(formatCLP(12.34)).toBe('US$12,34')
+    expect(formatCurrencyCompact(12.34, 'USD')).toBe('US$12,34')
+    setActiveCurrency('EUR')
+    expect(formatCLP(12.34)).toBe('\u20ac12,34')
+    setActiveCurrency('CLP')
   })
 })
 

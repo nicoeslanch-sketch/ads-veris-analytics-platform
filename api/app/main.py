@@ -148,6 +148,7 @@ app.add_middleware(
     RequestSecurityMiddleware,
     max_body_bytes=settings.request_body_max_bytes,
     max_json_bytes=settings.request_json_max_bytes,
+    max_pending_bodies=settings.request_max_pending_bodies,
 )
 
 app.add_middleware(

@@ -487,7 +487,7 @@ def _analysis_manifest_identity(manifest: dict) -> dict:
 def _frame_key(kind: str, filename: str, content: bytes, sheet: str | None, extra: str = "") -> tuple:
     return (
         kind,
-        hashlib.sha1(content).digest(),
+        hashlib.sha256(content).digest(),
         os.path.splitext(filename)[1].lower(),
         sheet or "",
         extra,
@@ -1347,7 +1347,6 @@ def _prune_caches_for_export(
     no recalcularlas. El resto ya tiene caché durable o puede regenerarse y no
     debe competir con openpyxl dentro del límite de memoria de Render.
     """
-    source_sha1 = hashlib.sha1(content).digest()
     source_sha256 = hashlib.sha256(content).digest()
     allowed_clean_keys = {
         _cache_key(
@@ -1366,7 +1365,7 @@ def _prune_caches_for_export(
     }
     with _FRAME_CACHE_LOCK:
         for key in list(_FRAME_CACHE):
-            if len(key) < 2 or key[1] != source_sha1 or key[0] != "raw":
+            if len(key) < 2 or key[1] != source_sha256 or key[0] != "raw":
                 _FRAME_CACHE.pop(key, None)
     with _CACHE_LOCK:
         for key in list(_CLEAN_CACHE):
@@ -1540,7 +1539,7 @@ def _cache_key(
         SERVICE_MODEL_VERSION,
         cache_dataset_id or "",
         int(cache_revision or 0),
-        hashlib.sha1(content).digest(),
+        hashlib.sha256(content).digest(),
         json.dumps(effective_rules, sort_keys=True),
         apply,
         json.dumps(mapping or {}, sort_keys=True),
@@ -3355,9 +3354,10 @@ def _clean_download_book_uncached_sync(
     # Desde aquí solo se escriben las salidas limpias y la auditoría. Las
     # tramas crudas/estandarizadas ya no se volverán a consultar en este job.
     preloaded.clear()
+    source_digest = hashlib.sha256(content).digest()
     with _FRAME_CACHE_LOCK:
         for key in list(_FRAME_CACHE):
-            if len(key) >= 2 and key[1] == hashlib.sha1(content).digest():
+            if len(key) >= 2 and key[1] == source_digest:
                 _FRAME_CACHE.pop(key, None)
     gc.collect()
     wb = _workbook_for_clean_export(content, all_sheets_processed)

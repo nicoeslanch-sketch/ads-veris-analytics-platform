@@ -2,6 +2,7 @@
 
 import asyncio
 from tempfile import SpooledTemporaryFile
+from threading import BoundedSemaphore
 from time import monotonic
 
 from starlette.datastructures import Headers, MutableHeaders
@@ -11,11 +12,14 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 class RequestSecurityMiddleware:
     def __init__(self, app: ASGIApp, *, max_body_bytes: int, max_json_bytes: int,
-                 max_upload_seconds: float = 120) -> None:
+                 max_upload_seconds: float = 120, max_pending_bodies: int = 8) -> None:
+        if max_pending_bodies < 1:
+            raise ValueError("max_pending_bodies must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
         self.max_json_bytes = max_json_bytes
         self.max_upload_seconds = max_upload_seconds
+        self._body_slots = BoundedSemaphore(max_pending_bodies)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -50,6 +54,28 @@ class RequestSecurityMiddleware:
                 await self._too_large(scope, receive, secure_send)
                 return
 
+        # Bound pre-authentication buffering as well as expensive downstream work.
+        # Admission is immediate: waiting uploads must not create another queue.
+        if not self._body_slots.acquire(blocking=False):
+            await JSONResponse(
+                {"detail": "Hay varias cargas en curso. Vuelve a intentar en unos segundos."},
+                429, headers={"Retry-After": "5"},
+            )(scope, receive, secure_send)
+            return
+        released = False
+
+        def release_slot():
+            nonlocal released
+            if not released:
+                released = True
+                self._body_slots.release()
+
+        try:
+            await self._buffer_request(scope, receive, secure_send, limit, release_slot)
+        finally:
+            release_slot()
+
+    async def _buffer_request(self, scope, receive, send, limit, release_slot):
         # Spill to disk above 1 MB. No unbounded body reaches a parser, including
         # chunked requests and clients lying about Content-Length.
         with SpooledTemporaryFile(max_size=1024 * 1024) as body:
@@ -62,14 +88,14 @@ class RequestSecurityMiddleware:
                         raise TimeoutError
                     message = await asyncio.wait_for(receive(), timeout=min(30, remaining))
                 except TimeoutError:
-                    await JSONResponse({"detail": "La carga tardo demasiado. Vuelve a intentar."}, 408)(scope, receive, secure_send)
+                    await JSONResponse({"detail": "La carga tardo demasiado. Vuelve a intentar."}, 408)(scope, receive, send)
                     return
                 if message["type"] == "http.disconnect":
                     return
                 chunk = message.get("body", b"")
                 received += len(chunk)
                 if received > limit:
-                    await self._too_large(scope, receive, secure_send)
+                    await self._too_large(scope, receive, send)
                     return
                 body.write(chunk)
                 if not message.get("more_body", False):
@@ -85,9 +111,12 @@ class RequestSecurityMiddleware:
                 chunk = body.read(256 * 1024)
                 replayed += len(chunk)
                 complete = replayed >= received
+                if complete:
+                    body.close()
+                    release_slot()
                 return {"type": "http.request", "body": chunk, "more_body": not complete}
 
-            await self.app(scope, bounded_receive, secure_send)
+            await self.app(scope, bounded_receive, send)
 
     @staticmethod
     async def _too_large(scope: Scope, receive: Receive, send: Send) -> None:

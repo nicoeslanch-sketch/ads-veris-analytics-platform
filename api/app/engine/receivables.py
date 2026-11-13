@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import pandas as pd
 
 from .mapping import norm_key, strip_accents_lower
@@ -124,7 +125,6 @@ def analyze_receivables(
         warnings.append("Saldo declarado sin fecha de corte: no acredita un saldo historico ni la mora a una fecha especifica.")
 
     finite_balances = rows["_balance"].between(float("-inf"), float("inf"), inclusive="neither")
-    declared = float(rows.loc[finite_balances, "_balance"].sum()) if finite_balances.any() else None
     unique = rows.drop_duplicates()
     duplicates = len(rows) - len(unique)
     conflicts = unique["_id"].notna() & unique["_id"].duplicated(keep=False)
@@ -174,16 +174,31 @@ def analyze_receivables(
     # An all-invalid/nonmatching source is unavailable, not a healthy zero.
     available_balance = not blocked and (bool(eligible.any()) or rows.empty and has_cut)
     coverage = float(eligible.sum()) / len(unique) * 100 if len(unique) else None
+
+    def balance_value(values):
+        try:
+            total = math.fsum(values)
+        except (OverflowError, ValueError):
+            warnings.append("El total de cartera excede el rango numerico; no se publica como cero ni infinito.")
+            return None
+        if not math.isfinite(total):
+            return None
+        # UF fractions are amounts, not pesos/cents. Keep the measured precision.
+        return total if currency.upper() == "UF" else round(total, 2)
+
+    declared = balance_value(rows.loc[finite_balances, "_balance"]) if finite_balances.any() and not blocked else None
+    validated = balance_value(unique.loc[eligible, "_balance"]) if available_balance else None
+    past_due = balance_value(unique.loc[open_rows & overdue, "_balance"]) if available_balance and overdue_known else None
     return {
         "fuentes": list(frames),
-        "saldo_declarado": round(declared, 2) if declared is not None and not blocked else None,
-        "saldo_validado": round(float(unique.loc[eligible, "_balance"].sum()), 2) if available_balance else None,
-        "saldo_vencido": round(float(unique.loc[open_rows & overdue, "_balance"].sum()), 2) if available_balance and overdue_known else None,
+        "saldo_declarado": declared,
+        "saldo_validado": validated,
+        "saldo_vencido": past_due,
         "documentos_pendientes": int(open_rows.sum()) if available_balance else None,
         "fecha_corte": cutoff_date.date().isoformat() if cutoff_date is not None else None,
         "base": "ultimo_corte" if cutoff_date is not None else "saldo_declarado_sin_corte",
-        "estado": "blocked" if blocked else "unavailable" if not available_balance else "partial" if issue_count or duplicates or invalid_cut or cutoff_date is None else "available",
-        "estado_vencimiento": "blocked" if blocked else "unavailable" if not available_balance or not overdue_known else "partial" if missing_due else "available",
+        "estado": "blocked" if blocked else "unavailable" if validated is None else "partial" if issue_count or duplicates or invalid_cut or cutoff_date is None else "available",
+        "estado_vencimiento": "blocked" if blocked else "unavailable" if past_due is None else "partial" if missing_due else "available",
         "cobertura_datos_pct": round(coverage, 1) if coverage is not None else None,
         "filas_fuente": source_rows,
         "filas_corte": len(rows),

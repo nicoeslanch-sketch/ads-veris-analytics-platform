@@ -7,6 +7,22 @@
  */
 
 const numberFormat = new Intl.NumberFormat('es-CL')
+const amountFormats = [0, 2].map((digits) => new Intl.NumberFormat('es-CL', {
+  minimumFractionDigits: digits,
+  maximumFractionDigits: digits === 2 ? 8 : 0,
+}))
+const compactFormats = [0, 1, 2].map((digits) => new Intl.NumberFormat('es-CL', {
+  maximumFractionDigits: digits,
+}))
+const ufCompactFormat = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 8 })
+const fractionalAmountFormat = new Intl.NumberFormat('es-CL', {
+  minimumFractionDigits: 2, maximumFractionDigits: 2,
+})
+
+function tinyUf(value: number): string | null {
+  if (value === 0 || Math.abs(value) >= 1e-8) return null
+  return value > 0 ? '<UF 0,00000001' : '>UF -0,00000001'
+}
 
 let activeCurrency = 'CLP'
 
@@ -31,27 +47,30 @@ export function getActiveCurrency(): string {
 }
 
 export function formatNumber(value: number): string {
+  if (!Number.isFinite(value)) return '\u2014'
   return numberFormat.format(value)
 }
 
 /** Monto en la moneda ACTIVA de la sesión (histórico: nació como CLP-only). */
 export function formatCLP(value: number): string {
-  const digits = activeCurrency === 'UF' && !Number.isInteger(value) ? 2 : 0
-  const formatted = new Intl.NumberFormat('es-CL', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(value)
+  if (!Number.isFinite(value)) return '\u2014'
+  if (activeCurrency === 'UF' && tinyUf(value)) return tinyUf(value)!
+  const formatter = activeCurrency === 'UF' && !Number.isInteger(value) ? amountFormats[1]
+    : activeCurrency !== 'CLP' && !Number.isInteger(value) ? fractionalAmountFormat : amountFormats[0]
+  const formatted = formatter.format(value)
   return `${CURRENCY_PREFIX[activeCurrency]}${formatted}`
 }
 
 export function formatCurrencyCompact(value: number, currency = activeCurrency): string {
   if (!Number.isFinite(value)) return '\u2014'
   const code = CURRENCY_PREFIX[currency] ? currency : 'CLP'
+  if (code === 'UF' && tinyUf(value)) return tinyUf(value)!
   const magnitude = Math.abs(value)
   const divisor = magnitude >= 1_000_000 ? 1_000_000 : magnitude >= 1_000 ? 1_000 : 1
   const suffix = divisor === 1_000_000 ? 'M' : divisor === 1_000 ? 'K' : ''
-  const digits = divisor > 1 ? 1 : code === 'UF' ? 2 : 0
-  return `${CURRENCY_PREFIX[code]}${(value / divisor).toLocaleString('es-CL', {maximumFractionDigits: digits})}${suffix}`
+  const digits = divisor > 1 ? 1 : code !== 'CLP' ? 2 : 0
+  const formatter = code === 'UF' && divisor === 1 ? ufCompactFormat : compactFormats[digits]
+  return `${CURRENCY_PREFIX[code]}${formatter.format(value / divisor)}${suffix}`
 }
 
 export function formatDateTime(date: Date): string {
