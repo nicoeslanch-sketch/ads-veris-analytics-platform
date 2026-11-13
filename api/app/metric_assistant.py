@@ -55,7 +55,12 @@ def _es_number(value: Any, *, decimals: int = 2) -> str:
 def format_amount(value: Any, currency: str) -> str:
     code = str(currency or "CLP").upper()
     prefix = _CURRENCY_PREFIX.get(code, f"{code} ")
-    decimals = 2 if code == "UF" else 0
+    parsed = _number(value)
+    if code == "UF" and parsed is not None and not parsed.is_integer():
+        if 0 < abs(parsed) < 1e-8:
+            return "<UF 0,00000001" if parsed > 0 else ">UF -0,00000001"
+        return f"{prefix}{_es_number(parsed, decimals=8).rstrip('0').rstrip(',')}"
+    decimals = 0 if code == "CLP" else 2
     return f"{prefix}{_es_number(value, decimals=decimals)}"
 
 
@@ -1555,10 +1560,16 @@ def _group_answer(
     answer = f"{article} {label.lower()} {position} es {name}"
     if value is not None:
         answer += f", con {format_amount(value, currency)}"
-    share = _number(row.get("participacion_bruta_pct"))
-    share_base = "de las ventas brutas positivas"
+    # The ranked amount is net revenue. Its share must use the same basis;
+    # otherwise a return makes the displayed amount and percentage disagree.
+    share = _number(row.get("participacion_neta_pct"))
+    share_base = "de las ventas netas"
     if share is None:
-        share = _number(row.get("porcentaje") if row.get("porcentaje") is not None else row.get("participacion_pct"))
+        gross_share = _number(row.get("participacion_bruta_pct"))
+        if gross_share is not None:
+            answer += f". Su participacion en ventas brutas positivas, antes de devoluciones, es {_percent(gross_share)}"
+    if share is None:
+        share = None if _number(row.get("participacion_bruta_pct")) is not None else _number(row.get("porcentaje") if row.get("porcentaje") is not None else row.get("participacion_pct"))
         share_base = "del total identificado"
     if share is not None:
         answer += f" ({_percent(share)} {share_base})"
@@ -2369,6 +2380,29 @@ def answer_metrics_question(
                 metric_suggestions(metrics),
             )
     if _contains(question, "unidades", "cantidad vendida"):
+        return_terms = re.search(r"\b(?:devol\w*|devuelt\w*|revers\w*|negativ\w*)\b", question)
+        quantity_request = re.search(r"\b(?:cuant[ao]s?|cantidad|total|numero)\b", question)
+        short_return_request = re.fullmatch(r"(?:y )?(?:las )?unidades (?:devueltas|negativas|devoluciones|reversas)", question.strip(" ?"))
+        explanation = _contains(question, "incluy", "inclu", "restan", "se rest", "signo", "que significa", "te refieres")
+        if return_terms and (quantity_request or short_return_request) and not explanation:
+            detail = (metrics.get("kpis") or {}).get("unidades_detalle") or {}
+            negative = _number(detail.get("negativas")) if isinstance(detail, dict) else None
+            if negative is None or negative > 0:
+                return _result(
+                    "No tengo publicada la cantidad de unidades negativas o devueltas en este alcance. "
+                    "El total de unidades vendidas no responde esa pregunta. Revisa las cantidades y el tipo de movimiento en la fuente.",
+                    "metric_return_units_unavailable", metric_suggestions(metrics), "medium",
+                )
+            answer = (f"Hay {_es_number(abs(negative))} unidades registradas con cantidad negativa "
+                      f"(suma firmada: {_es_number(negative)}). Ese signo no confirma que todas sean devoluciones: "
+                      "tambien puede haber ajustes o reversas; no es un conteo de documentos.")
+            inconsistent = _number(detail.get("filas_monto_negativo_cantidad_positiva"))
+            missing = _number(detail.get("filas_sin_cantidad"))
+            if inconsistent:
+                answer += f" Hay {_es_number(inconsistent)} filas con importe negativo y cantidad positiva que requieren revision."
+            if missing:
+                answer += f" Hay {_es_number(missing)} filas sin cantidad numerica, excluidas de esta suma."
+            return _result(answer, "metric_return_units", metric_suggestions(metrics), "medium")
         units = _number((metrics.get("kpis") or {}).get("unidades_totales"))
         if units is not None:
             answer = f"El total publicado es {_es_number(units)} unidades. No debe confundirse con el número de transacciones."

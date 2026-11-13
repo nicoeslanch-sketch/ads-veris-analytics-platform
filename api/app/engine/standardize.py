@@ -19,6 +19,7 @@ import math
 import random
 import re
 import warnings
+from numbers import Number
 
 import pandas as pd
 
@@ -549,6 +550,15 @@ def column_comma3_convention(series: pd.Series) -> tuple[str, int]:
 def parse_number(
     value: str, dot3_convention: str = "miles", comma3_convention: str = "decimal"
 ) -> float | None:
+    # Numeric cells already have a scale; locale conventions apply only to text.
+    if isinstance(value, Number):
+        if isinstance(value, (bool, complex)):
+            return None
+        try:
+            number = float(value)
+        except (ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) else None
     text, paren_negative = _strip_number_decorations(value)
     if not text or not _BARE_NUMBER_RE.match(text):
         return None
@@ -559,7 +569,7 @@ def parse_number(
             number = float(text)
         except ValueError:
             return None
-        return -number if negative else number
+        return (-number if negative else number) if math.isfinite(number) else None
     if "," in text and "." in text:
         # Fase 11 §10.2: con AMBOS separadores, el que aparece AL FINAL es el
         # decimal — regla universal que cubre el formato chileno/europeo
@@ -593,7 +603,7 @@ def parse_number(
         number = float(text)
     except ValueError:
         return None
-    return -number if negative else number
+    return (-number if negative else number) if math.isfinite(number) else None
 
 
 def format_number(number: float) -> str:

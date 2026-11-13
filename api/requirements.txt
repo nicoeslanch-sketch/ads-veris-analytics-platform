@@ -13,6 +13,7 @@ psutil==7.0.0
 # libro multihoja de estres reduce la primera exportacion auditada sin cambiar
 # el contenido ni omitir hojas, formulas o trazabilidad.
 lxml==6.1.1
+defusedxml==0.7.1
 python-multipart==0.0.32
 anthropic==0.116.0
 redis==8.0.1

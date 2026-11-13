@@ -19,6 +19,28 @@ def _ledger(rows=None, **kwargs):
     return analyze_receivables({"CxC": pd.DataFrame(rows or [_row()])}, {"v001", "v2"}, **kwargs)
 
 
+@pytest.mark.parametrize("value,expected", [(0.004, 0.004), (1.239, 1.239), ("0,004", 0.004), ("1,239", 1.239)])
+def test_uf_balance_preserves_fractional_units_in_numeric_and_text_sources(value, expected):
+    frame = pd.DataFrame([{
+        "IDCxC": "r1", "IDVenta": "v1", "MontoOriginal_UF": 10000,
+        "FechaCorte": "2026-01-31", "FechaVencimiento": "2026-01-15", "Saldo_UF": value,
+    }])
+    result = analyze_receivables({"CxC": frame}, {"v1"}, currency="UF")
+    assert result["saldo_declarado"] == result["saldo_validado"] == result["saldo_vencido"] == expected
+    assert result["documentos_pendientes"] == 1
+
+
+def test_balance_overflow_is_unavailable_without_crashing_or_infinite_output():
+    result = _ledger([
+        _row(IDCxC="r1", Saldo_CLP=1e308, MontoOriginal_CLP=1e308),
+        _row(IDCxC="r2", Saldo_CLP=1e308, MontoOriginal_CLP=1e308),
+    ])
+    assert result["saldo_declarado"] is None
+    assert result["saldo_validado"] is None
+    assert result["estado"] == "unavailable"
+    assert any("rango numerico" in message for message in result["advertencias"])
+
+
 def test_balance_is_not_original_document_value_or_cash_received():
     result = _ledger()
     assert result["saldo_declarado"] == result["saldo_validado"] == 60

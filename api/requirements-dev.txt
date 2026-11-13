@@ -1,2 +1,3 @@
 -r requirements.txt
 pytest>=8,<9
+hypothesis==6.170.15
