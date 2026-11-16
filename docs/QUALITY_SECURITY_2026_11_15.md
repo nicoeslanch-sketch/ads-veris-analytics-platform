@@ -78,6 +78,14 @@ pruebas de URL incluyen javascript/data, credenciales, controles, rutas relativa
 host parecido a Google y conservacion de query de descarga firmada. La prueba
 de navegador recibe enlaces sinteticos hostiles sin visitar destinos externos.
 
+Resultado final: 136/136 consultas completadas, 26289 lineas, cero errores de
+extraccion y control de calidad aprobado. Las dos alertas de URL desaparecen
+sin supresiones ni modelos sanitizadores personalizados; permanecen las ocho
+advertencias de propiedades dinamicas revisadas arriba (8 brutas, 8 retenidas,
+todas nivel warning). Esto no demuestra ausencia universal de XSS. Las tres
+pruebas nuevas de navegador y el build con Vite 6.4.6 pasan. Se repitieron tambien
+285 pruebas de conversaciones y 21 del oraculo/devoluciones del bot: 306 pasan.
+
 ## Revision de los hallazgos Python
 
 Tres resultados brutos, todos retenidos por el filtro important-only:
