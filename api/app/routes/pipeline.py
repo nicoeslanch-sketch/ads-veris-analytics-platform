@@ -951,8 +951,27 @@ def _processed_manifest_frames(
     # feed each immutable frame into the existing per-sheet pipeline; rules,
     # mappings, revision keys and user isolation remain unchanged.
     durable: dict[str, dict] = {}
-    if cache_dataset_id and cache_user_id:
-        for entry in entries:
+    for entry in entries:
+        # Check the exact revision/rules key before storage I/O or opening XLSX.
+        key = _cache_key(
+            content, entry["rules"], True, entry["mapping"] or None,
+            entry["scope"] or None, entry["nombre"], entry["eliminar_duplicados"],
+            cache_dataset_id, entry.get("revision") or None,
+        )
+        with _CACHE_LOCK:
+            cached = _CLEAN_CACHE.get(key)
+            if cached is not None:
+                _CLEAN_CACHE.move_to_end(key)
+                durable[entry["nombre"]] = cached
+        if entry["nombre"] in durable:
+            _store_metrics_clean_artifact(
+                filename, content, entry["rules"], entry["mapping"] or None,
+                entry["scope"] or None, entry["nombre"], entry["eliminar_duplicados"],
+                cache_dataset_id, entry.get("revision") or None, cache_user_id,
+                durable[entry["nombre"]],
+            )
+            continue
+        if cache_dataset_id and cache_user_id:
             restored = _load_metrics_clean_artifact(
                 filename,
                 content,
@@ -1270,6 +1289,7 @@ def _load_metrics_clean_artifact(
         return None
 
 
+@analysis_stage("persist_clean_sheet")
 def _store_metrics_clean_artifact(
     filename: str,
     content: bytes,
@@ -1303,6 +1323,8 @@ def _store_metrics_clean_artifact(
     )
     settings = get_settings()
     if not settings.supabase_service_role_key:
+        return
+    if _metrics_clean_cache_get(identity) is not None:
         return
     public_result = {key: value for key, value in result.items() if not key.startswith("_")}
     currency = result.get("_moneda")
@@ -1549,6 +1571,7 @@ def _cache_key(
     )
 
 
+@analysis_stage("clean_sheet")
 def _analyze_uncached(
     filename: str,
     content: bytes,
@@ -1868,6 +1891,7 @@ def _preload_standardization_sync(
     }
 
 
+@analysis_stage("open_workbook")
 def _load_batch_frames_cached(
     filename: str,
     content: bytes,

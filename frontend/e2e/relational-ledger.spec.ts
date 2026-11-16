@@ -27,18 +27,18 @@ with pd.ExcelWriter(sys.argv[1], engine='openpyxl') as writer:
   await page.getByRole('link', { name: 'Resumen', exact: true }).first().click()
   const panel = page.getByTestId('relational-ledger')
   await expect(panel).toBeVisible({ timeout: 90_000 })
-  await expect(panel.getByText('200 CLP', { exact: true })).toBeVisible()
-  await expect(panel.getByText('120 CLP', { exact: true })).toBeVisible()
+  await expect(panel.getByText('$200', { exact: true })).toBeVisible()
+  await expect(panel.getByText('$120', { exact: true })).toBeVisible()
   const period = panel.getByLabel('Período del negocio')
   await period.selectOption('2025')
-  await expect(panel.getByText('100 CLP', { exact: true })).toBeVisible({ timeout: 60_000 })
+  await expect(panel.getByText('$100', { exact: true })).toBeVisible({ timeout: 60_000 })
   await page.setViewportSize({ width: 390, height: 900 })
   await expect(page.getByRole('banner').getByRole('button', { name: '2025', exact: true })).toBeVisible()
   await page.setViewportSize({ width: 1280, height: 900 })
   await period.selectOption('2026-02')
-  await expect(panel.getByText('-100 CLP', { exact: true })).toBeVisible({ timeout: 60_000 })
+  await expect(panel.getByText('$-100', { exact: true })).toBeVisible({ timeout: 60_000 })
   await period.selectOption('all')
-  await expect(panel.getByText('200 CLP', { exact: true })).toBeVisible({ timeout: 60_000 })
+  await expect(panel.getByText('$200', { exact: true })).toBeVisible({ timeout: 60_000 })
   await panel.getByLabel('Medida de productos').selectOption('utilidad')
   await expect(panel.getByTestId('ledger-monthly').locator('.recharts-bar-rectangle').first()).toBeVisible()
   for (const width of [1280, 390, 320]) {
@@ -59,7 +59,7 @@ with pd.ExcelWriter(sys.argv[1], engine='openpyxl') as writer:
   await expect(panel.getByTestId('ledger-monthly')).toHaveCount(0)
   await expect(panel.getByLabel('Pregunta de análisis')).toBeVisible()
   await page.getByRole('link', { name: 'Resumen', exact: true }).first().click()
-  await expect(panel.getByText('200 CLP', { exact: true })).toBeVisible()
+  await expect(panel.getByText('$200', { exact: true })).toBeVisible()
   for (const [question, expected] of [['cuanto vendi', '$200'], ['y en 2025', '$100'],
       ['mi utilidad bruta', '$120'], ['producto mas rentable', '$120'],
       ['como contacto a un humano', 'Abre Ayuda']]) {

@@ -7,7 +7,6 @@ import {
   CircleDollarSign,
   ExternalLink,
   Link2,
-  Loader2,
   Package,
   Receipt,
   Settings2,
@@ -19,6 +18,7 @@ import { useAuth } from '../auth/AuthContext'
 import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import PageHeader from '../components/ui/PageHeader'
+import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 import Toggle from '../components/ui/Toggle'
 import { useDataset } from '../data/DatasetContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
@@ -132,10 +132,7 @@ export default function Alertas() {
     return (
       <>
         <PageHeader title="Alertas" subtitle="Evaluando señales sin duplicar el procesamiento…" />
-        <div className="flex h-64 items-center justify-center gap-3 text-sm text-navy/60">
-          <Loader2 className="h-6 w-6 animate-spin text-teal" />
-          Preparando evidencia
-        </div>
+        <LoadingSkeleton kind="table" label="Preparando evidencia" />
       </>
     )
   }

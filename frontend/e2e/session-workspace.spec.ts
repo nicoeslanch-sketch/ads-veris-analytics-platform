@@ -27,10 +27,11 @@ test('session renewal blocks access until verified and preserves unsaved file, c
   await expect(page.getByText('Limpieza conservada')).toBeVisible()
   await expect(page.getByText('2025', { exact: true })).toBeVisible()
   const contents = page.waitForEvent('dialog')
-  await page.getByRole('button', { name: 'Comprobar contenido original' }).click()
+  const click = page.getByRole('button', { name: 'Comprobar contenido original' }).click()
   const dialog = await contents
   expect(dialog.message()).toBe('private synthetic contents')
   await dialog.dismiss()
+  await click
 })
 
 test('failed renewal verification remains closed and retry recovers the same document', async ({ page }) => {

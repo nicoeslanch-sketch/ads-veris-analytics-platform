@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import LoadingSkeleton from './components/ui/LoadingSkeleton'
 import { startApiWarmup } from './lib/api'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { hasPasswordRecoveryHint, PASSWORD_RECOVERY_PATH } from './auth/recovery'
@@ -27,9 +27,7 @@ function lazyPage(Page: LazyExoticComponent<ComponentType>) {
   return (
     <Suspense
       fallback={(
-        <div className="flex min-h-56 items-center justify-center gap-2 text-sm text-navy/60">
-          <Loader2 className="h-5 w-5 animate-spin text-teal" /> Cargando módulo…
-        </div>
+        <LoadingSkeleton label="Cargando módulo" />
       )}
     >
       <Page />

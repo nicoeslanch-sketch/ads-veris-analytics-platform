@@ -13,7 +13,7 @@ SYNC_HEAVY_PATHS = frozenset({
     "/standardize", "/standardize/preload", "/standardize/batch",
     "/clean", "/clean/batch", "/clean/assisted", "/clean/download",
     "/metrics", "/sheets/relationships", "/sheets/relationship-catalog",
-    "/sheets/relationship-dashboard", "/consolidation/detect",
+    "/sheets/relationship-dashboard", "/consolidation/detect", "/consolidation/workbook",
 })
 _CONSOLIDATION_HEAVY = re.compile(
     r"^/consolidation/(?:datasets/[^/]+/inspect|projects/[^/]+/(?:validate|preview))$"

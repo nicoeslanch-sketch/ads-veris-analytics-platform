@@ -25,6 +25,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
+import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import EmptyState from '../components/ui/EmptyState'
@@ -320,9 +321,7 @@ export default function Historial() {
     return (
       <>
         <PageHeader title="Historial" subtitle="Cargando tu actividad…" />
-        <div className="flex h-64 items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-teal" />
-        </div>
+        <LoadingSkeleton kind="table" label="Cargando historial" />
       </>
     )
   }

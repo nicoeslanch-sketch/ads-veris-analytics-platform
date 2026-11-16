@@ -36,6 +36,9 @@ def article(
 
 
 ARTICLES: list[dict[str, Any]] = [
+    article("workbook_bundle", "importacion", "Consolidar archivos", ["consolidar archivos", "unir varios excel", "juntar excels", "combinar libros"], "En Estandarizacion, Consolidar archivos une entre 2 y 10 Excel .xlsx en un solo libro con todas sus hojas, hasta 15 MB en total. Copia datos y resultados guardados, no formulas, graficos ni disenos. No elimina duplicados, no cruza tablas por ID y no modifica los originales. Si dos hojas tienen el mismo nombre, agrega un sufijo. Si una formula no tiene resultado guardado, recalcula y guarda el original en Excel o LibreOffice antes de unir. La opcion aparece cuando esta habilitada para tu cuenta.", "¿Quieres unir libros completos o analizar periodos de ventas?", 95),
+    article("relationship_wait", "rendimiento", "Espera al buscar conexiones", ["buscando conexiones seguras", "relaciones lentas", "demora buscar conexiones"], "Buscar conexiones puede requerir abrir hojas, recuperar o preparar datos limpios, validar claves y calcular indicadores. El tiempo depende del archivo, la cache, la cola y los recursos; no se explica solo por el plan gratuito del servidor. El contador muestra tiempo transcurrido, no tiempo restante. No puedo medir tu trabajo desde el chat. Si la espera persiste, conserva el archivo y abre Ayuda indicando la etapa y el tiempo mostrado.", "¿Sigue avanzando el trabajo o aparece un error?", 95),
+    article("loading_skeleton", "navegacion", "Recuadros de carga", ["recuadros grises", "pantalla de carga", "skeleton"], "Los recuadros grises son marcadores temporales de los indicadores, tablas o graficos que se estan cargando; no representan tus valores ni significan que se hayan borrado datos. Cuando termina la carga se reemplazan por el resultado. Si aparece Cancelar puedes detener la espera de esa vista.", priority=94),
     article("platform_purpose", "primeros_pasos", "Que hace ADS Veris", ["que hace esta plataforma", "para que sirve ads veris", "que es ads veris", "que puedo hacer en la plataforma"], "ADS Veris permite importar Excel o CSV, revisar Estandarizacion y aplicar Limpieza con reglas trazables. Resumen muestra indicadores y graficos; Explorar datos ayuda a interpretar tendencias y detectar aspectos del negocio que conviene revisar. Puedes relacionar hojas por identificadores compatibles y consultar al bot sobre los datos visibles. La calidad del analisis depende de las fuentes, sus roles y su cobertura; el bot no inventa datos que faltan.", "¿Quieres empezar con un archivo o revisar uno que ya cargaste?", 95),
     article("payment_availability", "planes", "Pagar ADS Veris", ["pagar con tarjeta", "pagar el plan", "comprar un plan", "webpay", "transbank", "renovar suscripcion"], "En ADS Veris los cobros reales y las compras de planes o Coins estan desactivados. No se hacen cargos automaticos. Antes de habilitarlos se deben publicar precios y condiciones y probar la pasarela. No envies datos de tarjeta, CVV ni claves por este chat.", "¿Quieres comparar planes o consultar los usos de ADS Coins?", 94),
     article("coin_value", "ads_coins", "Valor de ADS Coins", ["cuanto vale una ads coin", "valor de las coins", "coins a pesos", "monedas a pesos"], "ADS Coins son creditos de servicio, no dinero retirable ni una moneda de inversion. No hay una equivalencia de venta en pesos aprobada para informarte; las compras estan desactivadas. El consumo depende de la funcion y de su costo publicado antes de usarla. No debo inventar un precio ni prometer conversion a efectivo.", "¿Quieres revisar tu saldo o los consumos disponibles?", 94),
@@ -266,6 +269,23 @@ def answer_for(
     # Account questions precede metric matching, without inheriting stale topics.
     previous_user = next((normalize_query(str(item.get('content') or ''))
                           for item in reversed(history or []) if item.get('role') == 'user'), '')
+    bundle_action = r'\b(?:unir|juntar|consolidar|combinar|fusionar)\b'
+    bundle_object = r'\b(?:excel|excels|archivos|libros)\b'
+    bundle_topic = bool(re.search(bundle_action, normalized) and re.search(bundle_object, normalized))
+    bundle_followup = bool(re.search(bundle_action, previous_user) and re.search(bundle_object, previous_user)
+                           and re.search(r'\b(?:y|eso|ahi)\b', normalized)
+                           and re.search(r'\b(?:formulas?|duplicados|originales|hojas|nombres)\b', normalized))
+    product_help = None
+    if bundle_topic or bundle_followup:
+        product_help = 'workbook_bundle'
+    elif re.search(r'\b(?:conexiones|relaciones)\b', normalized) and re.search(r'\b(?:tarda|tardan|demora|lenta|lentas|lento|lentos|segundos|buscando)\b', normalized):
+        product_help = 'relationship_wait'
+    elif re.search(r'\b(?:recuadros grises|pantalla de carga|skeleton)\b', normalized):
+        product_help = 'loading_skeleton'
+    if product_help:
+        item = next(row for row in ARTICLES if row['key'] == product_help)
+        return {'answer': item['response'], 'matched_key': product_help, 'confidence': 'high',
+                'suggestions': ['Consolidar archivos', 'Consolidar periodos de venta', 'Soporte humano']}
     retention_topic = re.search(r'\b(?:archivos|originales|cuenta inactiva)\b', normalized) and re.search(
         r'\b(?:caducan|caduca|retencion|conservan|guardan|borran|inactiva)\b', normalized)
     retention_followup = re.search(r'\b(?:caducan|retencion|conservan|cuenta inactiva)\b', previous_user) and re.search(

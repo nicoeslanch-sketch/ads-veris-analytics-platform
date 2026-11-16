@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import AnalysisLoadingPanel from '../AnalysisLoadingPanel'
 import { AlertTriangle, Layers, Loader2, Link2, RefreshCw } from 'lucide-react'
 import { useDataset } from '../../data/DatasetContext'
 import { ApiError, apiPost } from '../../lib/api'
@@ -317,10 +318,7 @@ export default function RelationshipWorkspace({ variant = 'summary' }: { variant
 
   if (catalogLoading && !catalog) {
     return (
-      <div className="rounded-xl border border-navy/10 bg-white p-8 text-center shadow-sm">
-        <Loader2 className="mx-auto h-6 w-6 animate-spin text-teal" aria-hidden />
-        <p className="mt-3 text-sm text-navy/60">Revisando las conexiones seguras entre tus hojas…</p>
-      </div>
+      <AnalysisLoadingPanel operation="Revisando las conexiones entre tus hojas" detail="Validando claves y cobertura." />
     )
   }
 
@@ -380,10 +378,7 @@ export default function RelationshipWorkspace({ variant = 'summary' }: { variant
         />
         <div className="min-w-0">
           {dashboardLoading && !dashboard ? (
-            <div className="rounded-xl border border-navy/10 bg-white p-8 text-center shadow-sm">
-              <Loader2 className="mx-auto h-6 w-6 animate-spin text-teal" aria-hidden />
-              <p className="mt-3 text-sm text-navy/60">Calculando el dashboard de la relación…</p>
-            </div>
+            <AnalysisLoadingPanel operation="Calculando la relación" detail="Preparando indicadores y gráficos." compact />
           ) : dashboardError ? (
             <WorkspaceState
               icon={AlertTriangle}

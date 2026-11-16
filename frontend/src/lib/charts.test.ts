@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { setActiveCurrency } from './format'
 import {
   chartColorForKey,
+  CHART,
+  rankingBarColor,
   distributionChartKind,
   buildRobustHeatScale,
   robustHeatIntensity,
@@ -28,6 +30,14 @@ describe('moneda de ejes', () => {
 })
 
 describe('visualizaciones honestas y estables', () => {
+  it('distingue series financieras y conserva colores de categorias sin ocultar negativos', () => {
+    expect(new Set([CHART.ingresos, CHART.gastos, CHART.utilidad]).size).toBe(3)
+    expect(rankingBarColor('Enero', 30, 'utilidad')).toBe(CHART.utilidad)
+    expect(rankingBarColor('Febrero', 70, 'utilidad')).toBe(CHART.utilidad)
+    expect(rankingBarColor('Producto A', 30, 'ventas', true)).toBe(chartColorForKey('Producto A'))
+    expect(rankingBarColor('Producto A', -30, 'ventas', true)).toBe(CHART.alerta)
+    expect(new Set(['Producto A', 'Producto B', 'Producto C'].map(name => rankingBarColor(name, 30, 'ventas', true))).size).toBeGreaterThan(1)
+  })
   it('conserva ajustes negativos sin concentraciones mayores al 100 ni Pareto falso', () => {
     for (const cumulative of [false, true]) {
       const chart = prepareCategoricalChart([

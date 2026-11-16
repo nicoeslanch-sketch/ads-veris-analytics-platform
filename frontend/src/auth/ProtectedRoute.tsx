@@ -1,6 +1,7 @@
 import { Navigate, Outlet } from 'react-router-dom'
 import { AlertTriangle } from 'lucide-react'
 import { useAuth } from './AuthContext'
+import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 
 /**
  * Protege las rutas de la app: sin sesión activa redirige a /login.
@@ -15,8 +16,9 @@ export default function ProtectedRoute() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-work">
-        <div className="h-10 w-10 animate-spin rounded-full border-4 border-teal border-t-transparent" />
+      <div className="min-h-screen bg-work p-4 sm:p-8">
+        <div aria-hidden="true" className="loading-skeleton mb-8 h-12 w-full" />
+        <div className="mx-auto max-w-6xl"><LoadingSkeleton label="Comprobando tu sesión" /></div>
       </div>
     )
   }

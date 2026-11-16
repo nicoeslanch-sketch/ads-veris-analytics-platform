@@ -13,6 +13,7 @@ import {
   UploadCloud,
 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
+import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 import Card from '../components/ui/Card'
 import { PlanRequiredModal } from '../components/ui/PlanGate'
 import Badge from '../components/ui/Badge'
@@ -32,8 +33,7 @@ import {
 } from '../lib/multiSheet'
 import type { StandardizeResult } from '../lib/types'
 import { useAccess } from '../lib/access'
-import ConsolidationWizard from '../consolidation/ConsolidationWizard'
-import { ConsolidationProvider } from '../consolidation/ConsolidationContext'
+import WorkbookBundle from '../consolidation/WorkbookBundle'
 import { consolidationModeVisible } from '../consolidation/state'
 
 const BENEFITS = [
@@ -514,13 +514,9 @@ function ClassicStandardization() {
               : 'border-navy/20 bg-gradient-to-b from-teal/[0.04] to-white'
           }`}
         >
-          <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-teal/10">
-            {processing ? (
-              <Loader2 className="h-9 w-9 animate-spin text-teal" />
-            ) : (
+          {!processing && <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-teal/10">
               <UploadCloud className="h-9 w-9 text-teal" />
-            )}
-          </div>
+          </div>}
           <div>
             <h2 className="text-lg font-semibold text-navy">
               {processing ? importStatus : 'Sube tu archivo para estandarizarlo'}
@@ -530,6 +526,7 @@ function ClassicStandardization() {
               limpieza y el análisis.
             </p>
           </div>
+          {processing && <div className="w-full text-left"><LoadingSkeleton kind="table" compact label={importStatus} /></div>}
           <input
             ref={inputRef}
             type="file"
@@ -948,11 +945,11 @@ export default function Estandarizacion() {
       {canConsolidate ? (
         <div className="mb-6 grid gap-2 rounded-xl border border-navy/10 bg-white p-2 sm:grid-cols-2" role="group" aria-label="Modo de estandarización">
           <button type="button" aria-pressed={mode === 'classic'} onClick={() => setMode('classic')} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold ${mode === 'classic' ? 'bg-navy text-white' : 'text-navy hover:bg-navy/5'}`}>Estandarizar archivos<span className="mt-0.5 block text-xs font-normal opacity-75">Flujo clásico de preparación y limpieza.</span></button>
-          <button type="button" aria-pressed={mode === 'consolidation'} onClick={() => setMode('consolidation')} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold ${mode === 'consolidation' ? 'bg-teal text-white' : 'text-navy hover:bg-teal/5'}`}>Consolidar y recodificar archivos<span className="mt-0.5 block text-xs font-normal opacity-75">Une Excel o CSV mediante las claves que tú elijas.</span></button>
+          <button type="button" aria-pressed={mode === 'consolidation'} onClick={() => setMode('consolidation')} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold ${mode === 'consolidation' ? 'bg-teal text-white' : 'text-navy hover:bg-teal/5'}`}>Consolidar archivos<span className="mt-0.5 block text-xs font-normal opacity-75">Varios Excel, un solo libro con todas sus hojas.</span></button>
         </div>
       ) : null}
       {mode === 'consolidation' && canConsolidate ? (
-        <ConsolidationProvider><ConsolidationWizard /></ConsolidationProvider>
+        <WorkbookBundle />
       ) : (
         <ClassicStandardization />
       )}

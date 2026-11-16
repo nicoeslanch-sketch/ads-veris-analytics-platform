@@ -17,3 +17,4 @@ defusedxml==0.7.1
 python-multipart==0.0.32
 anthropic==0.116.0
 redis==8.0.1
+rapidfuzz==3.14.6
