@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { cleanFilename, formatCLP, formatCurrencyCompact, formatNumber, formatRelativeTime, getActiveCurrency, setActiveCurrency } from './format'
 
 describe('formatCLP', () => {
+  it('permite una moneda explicita sin cambiar el contexto global', () => {
+    setActiveCurrency('USD')
+    expect(formatCLP(0.004, ' uf ')).toBe('UF 0,004')
+    expect(formatCLP(100, '__proto__')).toBe('$100')
+    expect(getActiveCurrency()).toBe('USD')
+    setActiveCurrency('CLP')
+  })
+
   it.each([NaN, Infinity, -Infinity])('no presenta %s como un KPI real', (value) => {
     expect(formatCLP(value)).toBe('\u2014')
     expect(formatNumber(value)).toBe('\u2014')
