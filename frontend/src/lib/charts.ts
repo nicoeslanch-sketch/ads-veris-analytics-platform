@@ -1,15 +1,11 @@
-/** Paleta de series para gráficos — pasos de las rampas de marca, validados
- * (banda de luminosidad, piso de croma, separación CVD y contraste ≥3:1
- * sobre fondo claro). El navy de marca queda para texto/UI, nunca para datos.
- * Orden categórico FIJO: nunca se recicla ni se reordena por ranking.
- */
+/** Semantic series stay consistent; categorical charts use restrained brand tones. */
 
 import { formatCurrencyCompact } from './format'
 
 export const CHART = {
   ingresos: '#00a3a3', // rampa teal
   gastos: '#a8811c',   // rampa gold (paso oscuro)
-  utilidad: '#1f9060', // rampa green
+  utilidad: '#1a3a52', // navy
   flujo: '#3d7ec4',    // rampa navy (paso claro)
   alerta: '#d4502b',   // rampa coral (paso oscuro)
 } as const
@@ -20,8 +16,14 @@ export const CATEGORICAL: string[] = [
   CHART.gastos,
   CHART.utilidad,
   CHART.flujo,
-  CHART.alerta,
+  '#667d91',
 ]
+
+export function rankingBarColor(name: string, value: number, measure: string, categorical = false): string {
+  if (value < 0) return CHART.alerta
+  if (categorical) return chartColorForKey(name)
+  return measure === 'utilidad' || measure === 'valor' ? CHART.utilidad : CHART.ingresos
+}
 
 /** Un color estable por dimensión. Cambiar de orden o filtrar los datos no
  * cambia la identidad visual del gráfico. */

@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { AlertTriangle, CalendarDays, GitMerge } from 'lucide-react'
 import { ALL_PERIOD, monthPeriod, useDataset } from '../data/DatasetContext'
-import { formatNumber } from '../lib/format'
+import { formatCLP, formatNumber } from '../lib/format'
 import { periodSelectValue } from '../lib/periodPresentation'
-import { AXIS_INK, CHART, GRID_STROKE, truncateLabel } from '../lib/charts'
+import { AXIS_INK, CHART, GRID_STROKE, rankingBarColor, truncateLabel } from '../lib/charts'
 import type { RelationalLedger } from '../lib/types'
 import KpiValue from './ui/KpiValue'
 import ExplorationChartBank from './ExplorationChartBank'
@@ -20,9 +20,7 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
   const [measure, setMeasure] = useState<Measure>('ventas')
   const { period, setPeriod } = useDataset()
   const k = ledger.kpis ?? {}
-  const money = (value: number | null | undefined) => value == null ? 'No disponible' : new Intl.NumberFormat('es-CL', {
-    maximumFractionDigits: ledger.moneda === 'CLP' ? 0 : 2,
-  }).format(value) + ' ' + ledger.moneda
+  const money = (value: number | null | undefined) => value == null ? 'No disponible' : formatCLP(value, ledger.moneda)
   const axis = (value: number) => new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
   const months = ledger.periodo?.meses ?? []
   const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse()
@@ -41,7 +39,7 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
     { nombre: 'Resultado antes de impuestos', valor: k.resultado_antes_impuestos },
   ]
   const ranking = [...(ledger.productos ?? [])].sort((a, b) => b[measure] - a[measure]).slice(0, 10)
-  const rank = (rows: object[], key: string, unit: 'money' | 'count' = 'money', height = Math.max(160, Math.min(420, rows.length * 30 + 60))) => (
+  const rank = (rows: object[], key: string, unit: 'money' | 'count' = 'money', categorical = false, height = Math.max(160, Math.min(420, rows.length * 30 + 60))) => (
     <div style={{ height }} className="min-w-0" data-testid="ledger-ranking">
       <ResponsiveContainer width="100%" height="100%" minWidth={0}>
         <BarChart data={rows} layout="vertical" margin={{ top: 10, right: 16, bottom: 4, left: 0 }} accessibilityLayer>
@@ -50,7 +48,12 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
           <YAxis type="category" dataKey="nombre" width={118} tick={{ fontSize: 11, fill: AXIS_INK }} interval={0} tickFormatter={(v: string) => truncateLabel(v, 18)} />
           <ReferenceLine x={0} stroke={AXIS_INK} />
           <Tooltip contentStyle={tipStyle} formatter={(value) => [unit === 'money' ? money(Number(value)) : formatNumber(Number(value)), key === 'valor' ? 'Importe' : labels[key as Measure] ?? 'Valor']} />
-          <Bar dataKey={key} fill={CHART.ingresos} maxBarSize={22} isAnimationActive={false} />
+          <Bar dataKey={key} fill={rankingBarColor('', 0, key)} maxBarSize={22} isAnimationActive={false}>
+            {rows.map((row, index) => {
+              const values = row as Record<string, unknown>
+              return <Cell key={index} fill={rankingBarColor(String(values.nombre ?? ''), Number(values[key]), key, categorical)} />
+            })}
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -95,16 +98,16 @@ export default function RelationalLedgerPanel({ ledger, variant = 'summary' }: {
             <YAxis tickFormatter={axis} width={55} tick={{ fontSize: 11 }} /><ReferenceLine y={0} stroke={AXIS_INK} />
             <Tooltip contentStyle={tipStyle} formatter={value => money(Number(value))} /><Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar dataKey="ventas" name="Ventas netas" fill={CHART.ingresos} maxBarSize={20} isAnimationActive={false} />
-            <Line dataKey="costo" name="Costo de ventas" stroke="#b45309" type="linear" dot={false} strokeWidth={2} isAnimationActive={false} />
-            <Line dataKey="utilidad" name="Utilidad bruta" stroke="#be185d" type="linear" dot={false} strokeWidth={2} isAnimationActive={false} />
+            <Line dataKey="costo" name="Costo de ventas" stroke={CHART.gastos} type="linear" dot={false} strokeWidth={2} isAnimationActive={false} />
+            <Line dataKey="utilidad" name="Utilidad bruta" stroke={CHART.utilidad} type="linear" dot={false} strokeWidth={2} isAnimationActive={false} />
           </ComposedChart></ResponsiveContainer></div>
       </section>
       <div className="grid min-w-0 gap-6 xl:grid-cols-2">
         <section className="min-w-0"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Productos · Top 10</h3>
           <select aria-label="Medida de productos" value={measure} onChange={e => setMeasure(e.target.value as Measure)} className="max-w-full rounded-md border border-navy/20 bg-white p-2 text-xs">{Object.entries(labels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
-          {rank(ranking, measure, measure === 'unidades' ? 'count' : 'money')}
+          {rank(ranking, measure, measure === 'unidades' ? 'count' : 'money', true)}
         </section>
-        <section className="min-w-0"><h3 className="text-sm font-semibold">Utilidad bruta por sucursal</h3>{rank(ledger.sucursales ?? [], 'utilidad')}
+        <section className="min-w-0"><h3 className="text-sm font-semibold">Utilidad bruta por sucursal</h3>{rank(ledger.sucursales ?? [], 'utilidad', 'money', true)}
           <p className="text-xs text-navy/60">Detalle de venta → lote → sucursal. Las devoluciones se descuentan por su fecha.</p></section>
       </div>
     </>}

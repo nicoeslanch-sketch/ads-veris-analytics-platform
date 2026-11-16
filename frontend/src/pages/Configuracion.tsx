@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BadgeCheck, Crown, Loader2, Save, ShieldCheck, Sparkles, Wand2 } from 'lucide-react'
 import PageHeader from '../components/ui/PageHeader'
+import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import StorageUsage from '../components/StorageUsage'
@@ -172,9 +173,7 @@ export default function Configuracion() {
           </div>
 
           {loading ? (
-            <div className="flex h-40 items-center justify-center">
-              <Loader2 className="h-6 w-6 animate-spin text-teal" />
-            </div>
+            <LoadingSkeleton kind="form" label="Cargando tu perfil" />
           ) : (
             <>
               <div className="grid gap-4 sm:grid-cols-2">

@@ -7,7 +7,8 @@
  */
 
 import { useEffect, useState } from 'react'
-import { FileSpreadsheet, FileText, Loader2, Lock, Printer } from 'lucide-react'
+import { FileSpreadsheet, FileText, Lock, Printer } from 'lucide-react'
+import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 import { Link } from 'react-router-dom'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
@@ -80,9 +81,7 @@ function ReportContent({ ready, metrics, loading, error, demo = false }: {
     return (
       <>
         <PageHeader title="Reportes" subtitle="Preparando los datos del reporte…" />
-        <div className="flex h-64 items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-teal" />
-        </div>
+        <LoadingSkeleton label="Preparando reportes" />
       </>
     )
   }

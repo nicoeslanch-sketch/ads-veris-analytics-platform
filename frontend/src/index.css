@@ -136,6 +136,20 @@ main :where(button, a) {
   .dashboard-card-actions { opacity: 1; transform: none; }
 }
 
+.loading-skeleton {
+  border-radius: 4px;
+  background: linear-gradient(100deg, #e6e9eb 20%, #f4f5f6 45%, #e6e9eb 70%);
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1.8s linear infinite;
+}
+@keyframes skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-skeleton { animation: none; background: #e6e9eb; }
+}
+
 @media (max-width: 640px) {
   .dashboard-card-expanded { inset: 1.5vh 2vw !important; }
   .dashboard-card-expanded .recharts-responsive-container { min-height: 340px !important; }

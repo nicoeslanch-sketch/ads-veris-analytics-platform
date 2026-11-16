@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from functools import lru_cache
+from rapidfuzz.distance import Levenshtein
 
 
 def normalize_basic(text: object) -> str:
@@ -24,6 +25,7 @@ def normalize_basic(text: object) -> str:
 # se almacenan sin tildes porque normalize_basic se ejecuta antes de consultarlas.
 _VOCABULARY = frozenset(
     """
+    varios varias conexiones relaciones formulas excels juntar combinar recuadros grises cargando
     estacional estacionales estacionalidad temporada temporadas recurrente recurrentes pico picos
     repite repiten repetirse calendario pareto dispersion histograma mapa calor
     ceros izquierda separador separadores decimales atipico atipicos outlier outliers imputar imputacion
@@ -335,25 +337,7 @@ _MAX_WORD_LENGTH = max(map(len, _SEGMENT_WORDS))
 
 
 def _edit_distance(left: str, right: str, limit: int) -> int:
-    if abs(len(left) - len(right)) > limit:
-        return limit + 1
-    previous = list(range(len(right) + 1))
-    for i, char_left in enumerate(left, 1):
-        current = [i]
-        row_min = i
-        for j, char_right in enumerate(right, 1):
-            current.append(
-                min(
-                    current[-1] + 1,
-                    previous[j] + 1,
-                    previous[j - 1] + (char_left != char_right),
-                )
-            )
-            row_min = min(row_min, current[-1])
-        if row_min > limit:
-            return limit + 1
-        previous = current
-    return previous[-1]
+    return Levenshtein.distance(left, right, score_cutoff=limit)
 
 
 @lru_cache(maxsize=4096)

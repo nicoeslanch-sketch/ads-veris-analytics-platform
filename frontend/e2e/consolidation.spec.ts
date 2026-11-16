@@ -1,31 +1,34 @@
 import { expect, test } from '@playwright/test'
 
-test('asistente unificado muestra cuatro pasos y admite varios archivos', async ({ page }) => {
+test('union simple admite varios Excel y descarga un unico archivo', async ({ page }) => {
+  await page.route('**/consolidation/workbook', async route => {
+    expect(route.request().postDataBuffer()?.toString()).toContain('ventas.xlsx')
+    expect(route.request().postDataBuffer()?.toString()).toContain('productos.xlsx')
+    await route.fulfill({ status: 200, headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': 'attachment; filename="Archivos_unidos.xlsx"' }, body: Buffer.from('test-download') })
+  })
   await page.goto('/estandarizacion')
-  await page.getByRole('button', { name: /Consolidar y recodificar archivos/i }).click()
-
-  const steps = page.getByRole('list', { name: 'Pasos de consolidación' }).getByRole('button')
-  await expect(steps).toHaveCount(4)
-  await expect(steps.nth(0)).toContainText('Cargar')
-  await expect(steps.nth(1)).toContainText('Revisar')
-  await expect(steps.nth(2)).toContainText('Comprobar')
-  await expect(steps.nth(3)).toContainText('Obtener resultado')
-
-  await page.locator('input[type="file"]').setInputFiles([
-    { name: 'ventas.csv', mimeType: 'text/csv', buffer: Buffer.from('ID,MONTO\n1,10') },
-    { name: 'productos.csv', mimeType: 'text/csv', buffer: Buffer.from('ID,NOMBRE\n1,Uno') },
+  await page.getByRole('button', { name: /Consolidar archivos/i }).click()
+  await expect(page.getByRole('button', { name: 'Unir y descargar' })).toBeDisabled()
+  await page.getByLabel('Archivos Excel para unir').setInputFiles([
+    { name: 'ventas.xlsx', mimeType: 'application/octet-stream', buffer: Buffer.from('one') },
+    { name: 'productos.xlsx', mimeType: 'application/octet-stream', buffer: Buffer.from('two') },
   ])
-  await expect(page.getByText('ventas.csv')).toBeVisible()
-  await expect(page.getByText('productos.csv')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Reintentar' })).toHaveCount(2)
+  await expect(page.getByText('ventas.xlsx', { exact: true })).toBeVisible()
+  const downloaded = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Unir y descargar' }).click()
+  expect((await downloaded).suggestedFilename()).toBe('Archivos_unidos.xlsx')
+  await expect(page.getByRole('status')).toContainText('Excel generado')
 })
 
 test('pantalla de carga no desborda en tablet ni móvil', async ({ page }) => {
   for (const viewport of [{ width: 768, height: 1024 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport)
     await page.goto('/estandarizacion')
-    await page.getByRole('button', { name: /Consolidar y recodificar archivos/i }).click()
-    await expect(page.getByRole('heading', { name: 'Consolidar y recodificar archivos' })).toBeVisible()
+    await page.getByRole('button', { name: /Consolidar archivos/i }).click()
+    await expect(page.getByRole('heading', { name: 'Consolidar archivos' })).toBeVisible()
+    await page.getByLabel('Archivos Excel para unir').setInputFiles({ name: 'no.csv', mimeType: 'text/csv', buffer: Buffer.from('a,b') })
+    await expect(page.getByRole('alert')).toContainText('.xlsx')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await page.screenshot({ path: `test-results/workbook-bundle-${viewport.width}.png`, fullPage: true })
   }
 })

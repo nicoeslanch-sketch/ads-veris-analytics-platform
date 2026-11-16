@@ -1,5 +1,6 @@
-import { Loader2, Square } from 'lucide-react'
+import { Square } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { SkeletonLayout } from './ui/LoadingSkeleton'
 
 export default function AnalysisLoadingPanel({
   operation,
@@ -24,13 +25,10 @@ export default function AnalysisLoadingPanel({
 
   return (
     <div className={[
-      'rounded-lg border border-teal/20 bg-white shadow-sm',
-      compact ? 'p-4' : 'mx-auto my-10 max-w-2xl p-6',
+      'min-w-0',
+      compact ? 'py-3' : 'my-6 space-y-5',
     ].join(' ')}>
       <div className="flex flex-wrap items-start gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-teal/10" aria-hidden="true">
-          <Loader2 className="h-5 w-5 animate-spin text-teal motion-reduce:animate-none" />
-        </span>
         <div className="min-w-0 flex-1">
           <div role="status" aria-live="polite" aria-atomic="true">
             <p className="break-words text-sm font-semibold text-navy">{operation}</p>
@@ -51,6 +49,7 @@ export default function AnalysisLoadingPanel({
           </button>
         )}
       </div>
+      <div className="mt-5"><SkeletonLayout compact={compact} /></div>
       <div
         role="progressbar"
         aria-label={operation}

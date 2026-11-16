@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Calendar, Check, ChevronDown, LogOut, Menu, Settings, User } from 'lucide-react'
+import { Calendar, Check, ChevronDown, LogOut, Menu, Settings } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { ALL_PERIOD, monthPeriod, useDataset, type Period } from '../../data/DatasetContext'
 import { formatMonthShort } from '../../lib/charts'
@@ -173,6 +173,8 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
       <div className="relative" ref={menuRef}>
         <button
           onClick={() => setMenuOpen((v) => !v)}
+          aria-label="Menú de cuenta"
+          aria-expanded={menuOpen}
           className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-white/10"
         >
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-teal text-sm font-bold">
@@ -184,15 +186,6 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void } = {
 
         {menuOpen && (
           <div className="absolute right-0 top-12 z-20 w-52 overflow-hidden rounded-xl border border-navy/10 bg-white text-navy shadow-lg">
-            <button
-              onClick={() => {
-                setMenuOpen(false)
-                navigate('/configuracion')
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2.5 text-sm hover:bg-navy/5"
-            >
-              <User className="h-4 w-4" /> Mi perfil
-            </button>
             <button
               onClick={() => {
                 setMenuOpen(false)

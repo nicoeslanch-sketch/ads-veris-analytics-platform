@@ -6,10 +6,15 @@ import hashlib
 import json
 from typing import Any, Literal
 from uuid import UUID
+from zipfile import BadZipFile
+from xml.etree.ElementTree import ParseError
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from defusedxml.common import DefusedXmlException
+from openpyxl.utils.exceptions import InvalidFileException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..auth import AuthenticatedUser, get_current_user
@@ -22,8 +27,41 @@ from .repository import repository_for
 from .service import idempotency_key, owned_dataset_metadata, require_consolidation_access
 from .source_detection import build_detection_proposal
 from .target_schema import TARGET_COLUMNS, resolve_target_columns
+from .workbook_bundle import MAX_BYTES, MAX_FILES, combine_workbooks
 
 router = APIRouter(prefix="/consolidation", tags=["consolidation"])
+
+
+@router.post('/workbook')
+async def combine_excel_files(
+    files: list[UploadFile] = File(...),
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    try:
+        await run_in_threadpool(require_consolidation_access, user, settings)
+        if not 2 <= len(files) <= MAX_FILES:
+            raise HTTPException(422, f'Selecciona entre 2 y {MAX_FILES} archivos Excel.')
+        sources = []
+        remaining = MAX_BYTES
+        for file in files:
+            content = await file.read(remaining + 1)
+            remaining -= len(content)
+            if remaining < 0:
+                raise HTTPException(413, 'Los archivos juntos no pueden superar 15 MB.')
+            sources.append((file.filename or '', content))
+        try:
+            result = await run_in_threadpool(combine_workbooks, sources)
+        except (BadZipFile, ParseError, DefusedXmlException, InvalidFileException, KeyError) as exc:
+            raise HTTPException(422, 'Uno de los archivos Excel no tiene una estructura valida. Guardalo nuevamente como .xlsx.') from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return Response(result, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': 'attachment; filename="Archivos_unidos.xlsx"',
+                                 'Cache-Control': 'private, no-store'})
+    finally:
+        for file in files:
+            await file.close()
 
 
 class CreateProjectRequest(BaseModel):
