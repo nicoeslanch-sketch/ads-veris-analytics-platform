@@ -22,7 +22,7 @@ de IA/pagos ni subida del codigo a un servicio de escaneo.
   reales no se monta en demo y no se consulta el perfil para identificarla.
   La comprobacion de capacidad del plan se conserva.
 
-Verificacion local: 278 tests de frontend, build TypeScript/Vite y prueba
+Verificacion local: 292 tests de frontend, build TypeScript/Vite y prueba
 Playwright de impresion con CSP pasan. Capturas de escritorio y movil revisadas.
 La prueba de navegador simula el dialogo de impresion, no genera un PDF binario
 ni sustituye la comprobacion del dialogo nativo en todos los navegadores.
@@ -51,8 +51,32 @@ Frontend: 121 archivos de proyecto en la extraccion inicial, cero errores;
 231 contando externs del extractor. Diagnosticos: 29 fuentes remotas y 33
 sumideros (7 HTML, 26 escrituras URL). Las pruebas no se incluyen en el alcance.
 La primera evaluacion de seguridad agoto el heap Java con presupuesto de 2048 MiB.
-Se repite con extraccion actualizada, un hilo y 4096 MiB; no se interpreta una
-ejecucion fallida como cero hallazgos. Estado final se registra al terminar.
+La repeticion con extraccion actualizada, un hilo y 4096 MiB completo las 136
+consultas: 26272 lineas, calidad aprobada y cero errores de extraccion. Se
+encontraron 10 resultados, todos retenidos por el filtro (2 error, 8 warning).
+No se interpreta una ejecucion fallida como cero hallazgos.
+
+## Revision de los hallazgos frontend
+
+- Dos `js/xss-more-sources` (precision alta, severidad 6.1): navegacion al enlace
+  devuelto por exportaciones de consolidacion y href de Google Sheets guardado.
+  Las fuentes del backend son URL firmada de Storage y URL canonica de Google,
+  respectivamente; no se demostro una via normal de usuario para guardar un
+  javascript: en ellas. Se refuerza de todas formas la frontera del navegador:
+  solo HTTPS absoluto, sin credenciales ni caracteres de control/backslash;
+  origen exacto docs.google.com para los enlaces de Sheets. No se debilita CSP.
+- Ocho `js/remote-property-injection-more-sources` (precision media, severidad
+  7.5): una ubicacion en changeRole y siete flujos en los campos de configuracion.
+  No se confirma prototype pollution: el codigo usa propiedades calculadas de
+  literales, spread y Object.fromEntries, no setters sobre Object.prototype,
+  asignacion dinamica a objetos compartidos ni merges recursivos. Los ids son
+  claves de decisiones del componente, no decisiones de autorizacion. Se
+  conservan las alertas en SARIF sin agregar supresiones ni sanitizadores falsos.
+
+Se repite la extraccion y el analisis despues del refuerzo de navegacion. Las
+pruebas de URL incluyen javascript/data, credenciales, controles, rutas relativas,
+host parecido a Google y conservacion de query de descarga firmada. La prueba
+de navegador recibe enlaces sinteticos hostiles sin visitar destinos externos.
 
 ## Revision de los hallazgos Python
 
@@ -79,7 +103,15 @@ normalizacion. No se elimina NFKD: romper tildes y equivalencias de encabezados
 para silenciar una alerta seria una regresion. Reevaluar si se reutiliza para
 identidad, rutas, permisos o consultas SQL.
 
-## Limites
+## Dependencia de desarrollo
+
+GitHub Dependabot aviso GHSA-8g5g-mxqh-grgj en Vite 6.4.4. Se actualiza a 6.4.6
+y se agrega una prueba HTTP con archivo sintetico .crt y variantes raw/import
+para comprobar que no se evade server.fs.deny. El aviso del mantenedor afecta
+al servidor de desarrollo expuesto a la red, no al bundle estatico de produccion.
+No se usan archivos .env reales ni certificados privados para comprobarlo.
+
+## Limites de la revision
 
 Estos escaneos no certifican aislamiento de toda la base, configuracion remota,
 capacidad comercial, recuperacion completa ni ausencia de vulnerabilidades.
