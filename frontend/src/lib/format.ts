@@ -39,7 +39,12 @@ const CURRENCY_PREFIX: Record<string, string> = {
 }
 
 export function setActiveCurrency(code: string | null | undefined): void {
-  activeCurrency = code && CURRENCY_PREFIX[code] ? code : 'CLP'
+  activeCurrency = normalizeCurrency(code)
+}
+
+export function normalizeCurrency(code: string | null | undefined): string {
+  const normalized = typeof code === 'string' ? code.trim().toUpperCase() : ''
+  return Object.prototype.hasOwnProperty.call(CURRENCY_PREFIX, normalized) ? normalized : 'CLP'
 }
 
 export function getActiveCurrency(): string {
@@ -52,18 +57,19 @@ export function formatNumber(value: number): string {
 }
 
 /** Monto en la moneda ACTIVA de la sesión (histórico: nació como CLP-only). */
-export function formatCLP(value: number): string {
+export function formatCLP(value: number, currency = activeCurrency): string {
   if (!Number.isFinite(value)) return '\u2014'
-  if (activeCurrency === 'UF' && tinyUf(value)) return tinyUf(value)!
-  const formatter = activeCurrency === 'UF' && !Number.isInteger(value) ? amountFormats[1]
-    : activeCurrency !== 'CLP' && !Number.isInteger(value) ? fractionalAmountFormat : amountFormats[0]
+  const code = normalizeCurrency(currency)
+  if (code === 'UF' && tinyUf(value)) return tinyUf(value)!
+  const formatter = code === 'UF' && !Number.isInteger(value) ? amountFormats[1]
+    : code !== 'CLP' && !Number.isInteger(value) ? fractionalAmountFormat : amountFormats[0]
   const formatted = formatter.format(value)
-  return `${CURRENCY_PREFIX[activeCurrency]}${formatted}`
+  return `${CURRENCY_PREFIX[code]}${formatted}`
 }
 
 export function formatCurrencyCompact(value: number, currency = activeCurrency): string {
   if (!Number.isFinite(value)) return '\u2014'
-  const code = CURRENCY_PREFIX[currency] ? currency : 'CLP'
+  const code = normalizeCurrency(currency)
   if (code === 'UF' && tinyUf(value)) return tinyUf(value)!
   const magnitude = Math.abs(value)
   const divisor = magnitude >= 1_000_000 ? 1_000_000 : magnitude >= 1_000 ? 1_000 : 1

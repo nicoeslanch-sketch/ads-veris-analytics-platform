@@ -5,13 +5,13 @@
 */
 
 import { fullRangePeriod } from '../data/DatasetContext'
-import { cleanFilename } from './format'
+import { cleanFilename, formatCLP, formatNumber, normalizeCurrency } from './format'
 import type { MetricsResult } from './types'
 
 function csvNumber(value: number | null | undefined): string {
-  if (value == null) return ''
+  if (value == null || !Number.isFinite(value)) return ''
   // es-CL: coma decimal, sin separador de miles (Excel lo interpreta como número)
-  return String(Math.round(value * 100) / 100).replace('.', ',')
+  return String(value).replace('.', ',')
 }
 
 export function csvCell(value: string): string {
@@ -22,6 +22,7 @@ export function csvCell(value: string): string {
 
 /** Arma el CSV completo del reporte (todas las secciones del dashboard). */
 export function buildReportCsv(m: MetricsResult): string {
+  const currency = normalizeCurrency(m.moneda)
   const lines: string[] = []
   const push = (...cells: Array<string | number | null | undefined>) => {
     lines.push(
@@ -37,7 +38,7 @@ export function buildReportCsv(m: MetricsResult): string {
   push('Calidad de datos (%)', m.calidad_datos)
   push()
 
-  push('INDICADORES (CLP)')
+  push(`INDICADORES (${currency})`)
   push('Indicador', 'Valor', 'Variación %')
   if (m.kpis.ingresos_totales) {
     push('Ingresos totales', m.kpis.ingresos_totales.valor, m.kpis.ingresos_totales.variacion_pct)
@@ -51,7 +52,7 @@ export function buildReportCsv(m: MetricsResult): string {
   push()
 
   if (m.evolucion_mensual.length > 0) {
-    push('EVOLUCIÓN MENSUAL (CLP)')
+    push(`EVOLUCIÓN MENSUAL (${currency})`)
     push('Mes', 'Ingresos', 'Gastos', 'Utilidad')
     for (const row of m.evolucion_mensual) push(row.mes, row.ingresos, row.gastos, row.utilidad)
     push()
@@ -65,13 +66,13 @@ export function buildReportCsv(m: MetricsResult): string {
   for (const [title, rows] of sections) {
     if (!rows?.length) continue
     push(title)
-    push('Nombre', 'Ingresos (CLP)', '% del total', 'Utilidad (CLP)', 'Margen %')
+    push('Nombre', `Ingresos (${currency})`, 'Neto / ventas brutas (%)', `Utilidad (${currency})`, 'Margen %')
     for (const row of rows) push(row.nombre, row.ingresos, row.porcentaje, row.utilidad, row.margen_pct)
     push()
   }
 
   if (m.proyeccion) {
-    push('PROYECCIÓN (PRÓXIMOS 3 MESES, CLP)')
+    push(`PROYECCIÓN (PRÓXIMOS 3 MESES, ${currency})`)
     push('Mes', 'Ingresos estimados')
     for (const row of m.proyeccion.meses) push(row.mes, row.ingresos)
   }
@@ -92,10 +93,8 @@ export function downloadReportCsv(m: MetricsResult): void {
 
 // ── Reporte imprimible (PDF vía diálogo del navegador) ───────────────────────
 
-const clp = (v: number | null | undefined) =>
-  v == null ? '—' : `$${new Intl.NumberFormat('es-CL').format(Math.round(v))}`
 const pct = (v: number | null | undefined) =>
-  v == null ? '—' : `${v.toLocaleString('es-CL', { maximumFractionDigits: 1 })}%`
+  v == null || !Number.isFinite(v) ? '—' : `${v.toLocaleString('es-CL', { maximumFractionDigits: 1 })}%`
 
 /** Todo valor que venga de los datos del usuario se escapa antes de entrar al HTML. */
 function escapeHtml(value: string): string {
@@ -118,6 +117,8 @@ function tableHtml(
 }
 
 export function openPrintableReport(m: MetricsResult, empresa: string | null): void {
+  const currency = normalizeCurrency(m.moneda)
+  const clp = (value: number | null | undefined) => value == null ? '—' : formatCLP(value, currency)
   const archivoLimpio = cleanFilename(m.archivo)
   const kpiRows: Array<[string, string]> = [
     ...(m.kpis.ingresos_totales
@@ -128,7 +129,7 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
     ...(m.kpis.margen_utilidad_pct
       ? [['Margen de utilidad', pct(m.kpis.margen_utilidad_pct.valor)] as [string, string]]
       : []),
-    ['Transacciones', new Intl.NumberFormat('es-CL').format(m.kpis.transacciones)],
+    ['Transacciones', formatNumber(m.kpis.transacciones)],
     ['Ticket promedio', clp(m.kpis.ticket_promedio)],
   ]
 
@@ -136,7 +137,7 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
     rows?.length
       ? `<h2>${title}</h2>` +
         tableHtml(
-          ['Nombre', 'Ingresos', '% del total', 'Utilidad', 'Margen'],
+          ['Nombre', 'Ingresos', 'Neto / ventas brutas (%)', 'Utilidad', 'Margen'],
           rows.map((r) => [r.nombre, clp(r.ingresos), pct(r.porcentaje), clp(r.utilidad), pct(r.margen_pct)]),
         )
       : ''
@@ -145,27 +146,30 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
 <html lang="es">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Reporte ADS Veris — ${escapeHtml(archivoLimpio)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font-family: 'Poppins', 'Segoe UI', sans-serif; color: #1a3a52; padding: 32px; font-size: 13px; }
   header { border-bottom: 3px solid #00a8a8; padding-bottom: 12px; margin-bottom: 20px;
-           display: flex; justify-content: space-between; align-items: baseline; }
+           display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: baseline; }
   .brand { font-size: 22px; font-weight: 700; }
   .brand span { color: #d4af37; }
   .meta { color: #5c7285; font-size: 12px; text-align: right; }
   h2 { font-size: 15px; margin: 22px 0 8px; color: #12283a; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 8px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0;
        color: #5c7285; border-bottom: 1px solid #d8e0e6; padding: 6px 8px; }
   td { padding: 6px 8px; border-bottom: 1px solid #eef2f5; }
-  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .kpi { border: 1px solid #d8e0e6; border-radius: 10px; padding: 10px 12px; }
-  .kpi .label { font-size: 11px; color: #5c7285; text-transform: uppercase; letter-spacing: .04em; }
+  th, td, .meta, .kpi { overflow-wrap: anywhere; min-width: 0; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; }
+  .kpi { border: 1px solid #d8e0e6; border-radius: 8px; padding: 10px 12px; }
+  .kpi .label { font-size: 11px; color: #5c7285; text-transform: uppercase; letter-spacing: 0; }
   .kpi .value { font-size: 17px; font-weight: 700; margin-top: 2px; }
   footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid #d8e0e6;
            color: #5c7285; font-size: 11px; }
   @media print { body { padding: 0; } }
+  @media (max-width: 480px) { body { padding: 12px; } th, td { padding: 6px 3px; font-size: 10px; } }
 </style>
 </head>
 <body>
@@ -174,6 +178,7 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
   <div class="meta">
     ${empresa ? `<div><strong>${escapeHtml(empresa)}</strong></div>` : ''}
     <div>Archivo: ${escapeHtml(archivoLimpio)}</div>
+    <div>Moneda: ${currency}</div>
     <div>Periodo: ${escapeHtml(fullRangePeriod(m.periodo.meses_disponibles).label)}</div>
     <div>Generado: ${new Date().toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' })}</div>
   </div>
@@ -181,7 +186,7 @@ export function openPrintableReport(m: MetricsResult, empresa: string | null): v
 
 <h2>Indicadores del periodo</h2>
 <div class="kpis">
-  ${kpiRows.map(([label, value]) => `<div class="kpi"><div class="label">${label}</div><div class="value">${value}</div></div>`).join('')}
+  ${kpiRows.map(([label, value]) => `<div class="kpi"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`).join('')}
 </div>
 
 ${
@@ -207,12 +212,15 @@ ${
   Generado por ADS Veris — plataforma de análisis de datos para PyMEs.
   Calidad de datos del archivo: ${pct(m.calidad_datos)}.
 </footer>
-<script>window.onload = () => setTimeout(() => window.print(), 300)</script>
 </body>
 </html>`
 
   const win = window.open('', '_blank')
   if (!win) return
+  win.opener = null
+  win.document.open()
+  // The application CSP disallows inline scripts in the inherited blank page.
+  win.addEventListener('load', () => win.setTimeout(() => { if (!win.closed) win.print() }, 300), { once: true })
   win.document.write(html)
   win.document.close()
 }

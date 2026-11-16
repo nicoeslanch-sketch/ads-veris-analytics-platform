@@ -8,6 +8,7 @@ import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import PageHeader from '../components/ui/PageHeader'
 import { ApiError } from '../lib/api'
+import { safeHttpsUrl } from '../lib/navigationUrl'
 import { uploadConsolidationDataset } from '../lib/datasets'
 import {
   activateRun, createProject, detectDatasets, enqueuePreview, enqueueRun,
@@ -232,7 +233,11 @@ export default function GeneralConsolidationWizard() {
 
   const download = (kind: string) => run && void perform(async () => {
     const result = await getExport(run.id, kind)
-    if (result.url) window.location.assign(result.url)
+    if (result.url) {
+      const url = safeHttpsUrl(result.url)
+      if (!url) throw new Error('El servidor devolvió un enlace de descarga no válido.')
+      window.location.assign(url)
+    }
     else if (result.local_path) setNotice(`Resultado local: ${result.local_path}`)
   })
 

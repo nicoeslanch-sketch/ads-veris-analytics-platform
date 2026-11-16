@@ -15,20 +15,40 @@ import EmptyState from '../components/ui/EmptyState'
 import { useAuth } from '../auth/AuthContext'
 import { fullRangePeriod } from '../data/DatasetContext'
 import { useSessionMetrics } from '../data/useSessionMetrics'
+import { DEMO_COMPANY, useDemo } from '../demo/DemoContext'
+import type { MetricsResult } from '../lib/types'
 import { downloadReportCsv, openPrintableReport } from '../lib/report'
-import { cleanFilename, formatCLP } from '../lib/format'
+import { cleanFilename, formatCLP, normalizeCurrency } from '../lib/format'
 import { fetchProfile } from '../lib/profile'
 import { useCapability } from '../lib/usePlan'
 
 export default function Reportes() {
+  const demo = useDemo()
+  return demo.active
+    ? <ReportContent ready metrics={demo.metrics} loading={false} error={null} demo />
+    : <SessionReport />
+}
+
+function SessionReport() {
+  const session = useSessionMetrics()
+  return <ReportContent {...session} />
+}
+
+function ReportContent({ ready, metrics, loading, error, demo = false }: {
+  ready: boolean
+  metrics: MetricsResult | null
+  loading: boolean
+  error: string | null
+  demo?: boolean
+}) {
   const { user } = useAuth()
-  const { ready, metrics, loading, error } = useSessionMetrics()
   // Fase 7: descarga de reportes gated por plan (con enforcement apagado, libre)
   const reportsCap = useCapability('download_reports')
   const reportsLocked = reportsCap.enforced && !reportsCap.hasByPlan
   const [profileCompany, setProfileCompany] = useState<string | null>(null)
 
   useEffect(() => {
+    if (demo) return
     let cancelled = false
     fetchProfile().then((profile) => {
       if (!cancelled) setProfileCompany(profile?.company ?? null)
@@ -36,7 +56,7 @@ export default function Reportes() {
     return () => {
       cancelled = true
     }
-  }, [user?.id])
+  }, [user?.id, demo])
 
   if (!ready) {
     return (
@@ -85,10 +105,10 @@ export default function Reportes() {
     )
   }
 
-  const empresa =
+  const empresa = demo ? DEMO_COMPANY : (
     profileCompany ??
     ((user?.user_metadata ?? {}) as Record<string, string | undefined>).company ??
-    null
+    null)
 
   return (
     <>
@@ -111,7 +131,7 @@ export default function Reportes() {
               Archivo <span className="font-medium text-navy [overflow-wrap:anywhere] sm:[overflow-wrap:normal]">{cleanFilename(metrics.archivo)}</span> · periodo{' '}
               {fullRangePeriod(metrics.periodo.meses_disponibles).label} · ingresos
               del periodo <span className="font-medium text-navy">{metrics.kpis.ingresos_totales
-                ? formatCLP(metrics.kpis.ingresos_totales.valor)
+                ? formatCLP(metrics.kpis.ingresos_totales.valor, normalizeCurrency(metrics.moneda))
                 : '—'}</span>.
               Incluye indicadores, evolución mensual, análisis por categoría, canales, top
               productos y proyección.

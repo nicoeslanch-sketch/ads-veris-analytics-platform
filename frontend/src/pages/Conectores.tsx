@@ -30,6 +30,7 @@ import Badge from '../components/ui/Badge'
 import { useDataset } from '../data/DatasetContext'
 import { useFileImport } from '../data/useFileImport'
 import { ApiError, apiDelete, apiGet, apiPostJson } from '../lib/api'
+import { safeHttpsUrl } from '../lib/navigationUrl'
 
 interface SheetsImportResponse {
   filename: string
@@ -325,7 +326,7 @@ export default function Conectores() {
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <button onClick={() => void checkSource(source, source.update_available)} disabled={checkingSource === source.id || importing} className="inline-flex items-center gap-1.5 rounded-lg bg-teal px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">{checkingSource === source.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{source.update_available ? 'Actualizar datos' : 'Comprobar cambios'}</button>
                       <button onClick={() => void changeMode(source)} className="rounded-lg border border-navy/15 px-3 py-1.5 text-[10px] font-semibold text-navy/55 hover:bg-navy/5">{source.sync_mode === 'automatic' ? 'Pasar a manual' : 'Activar automática'}</button>
-                      <a href={source.source_url} target="_blank" rel="noreferrer" className="ml-auto text-[10px] font-semibold text-teal hover:underline">Abrir en Google</a>
+                      <a href={safeHttpsUrl(source.source_url, 'https://docs.google.com')} target="_blank" rel="noreferrer" className="ml-auto text-[10px] font-semibold text-teal hover:underline">Abrir en Google</a>
                     </div>
                   </li>
                 ))}
