@@ -76,8 +76,15 @@ tests check 2,000 seeded comparisons with cutoffs.
   added endpoint access/download cases and latest persistence adjustments.
 - Six focused Playwright scenarios passed, including 320/768/1440px skeletons,
   reduced motion, download UI and relational workbook cleaning, charts, periods and bot.
-- Full browser suite and dependency audit: in progress at this checkpoint.
-- No production deployment of this branch yet at this checkpoint.
+- Full browser suite: 65 passed, 1 private-fixture skip, 1 test timeout. Trace showed
+  session-workspace's synthetic alert had the correct preserved contents, but the
+  test awaited the click before dismissing its blocking dialog. Fixed the test's
+  dialog synchronization; all eight targeted session/loading/menu scenarios passed.
+- Dependency audit: no known vulnerabilities in Python requirements.
+- PR 88 initial CI: backend, frontend, dependency checks, tracked-history secret scan,
+  isolated PostgreSQL ownership/concurrency/audit rollback and synthetic encrypted
+  database/Storage restore drill passed. These are not a production disaster backup.
+- No production deployment of this branch yet at this checkpoint; final CI and release pending.
 
 ## Still open
 
