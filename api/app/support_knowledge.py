@@ -309,8 +309,21 @@ def answer_for(
     confirmation_terms = r'\b(?:confirmar|confirmo|confirmacion|confirmado)\b'
     confirmation_topic = bool(re.search(confirmation_terms, normalized) and re.search(
         r'\b(?:correo|email|cuenta|registro|reenviar|enlace)\b', normalized))
-    confirmation_followup = bool(re.search(confirmation_terms, previous_user) and re.search(
-        r'\b(?:y si no llega|no me llega|vencio|spam|reenviar|otra vez)\b', normalized))
+    confirmation_article = next(row for row in ARTICLES if row['key'] == 'signup_confirmation')
+    previous_assistant = next((str(item.get('content') or '') for item in reversed(history or [])
+                               if item.get('role') == 'assistant'), '')
+    confirmation_context = bool(
+        (re.search(confirmation_terms, previous_user)
+         and re.search(r'\b(?:correo|email|cuenta|registro|reenviar|enlace)\b', previous_user))
+        or previous_assistant == confirmation_article['response'])
+    # Only short continuations inherit account context; "no llego a mi meta"
+    # and "mis ventas otra vez" must still reach their own intent handlers.
+    confirmation_followup = confirmation_context and bool(re.fullmatch(
+        r'(?:(?:y|pero|aun|todavia) )?(?:si )?(?:'
+        r'no (?:me )?(?:ha )?(?:llega|llego|llegado|recibi|recibido)(?: nada| el correo| el email| el mensaje)?'
+        r'|(?:el enlace )?vencio|(?:esta en |revise |ya revise )?spam'
+        r'|(?:como |donde |puedo |como lo |donde lo )?(?:reenviar|reenvio)(?: el correo| el enlace)?'
+        r'|(?:lo intente |intento )?otra vez)[?.!]*', normalized))
     account_key = None
     if re.search(r'\b(?:cerrar|cerre)\s+(?:todas las |la |mi )?sesiones?\b', normalized):
         account_key = 'session_logout'
