@@ -4062,10 +4062,11 @@ def _relationships_sync(
             )
         return inspected
 
-    candidates = [
-        guard_currency(candidate)
-        for candidate in detect_relationships(frames, mappings)
-    ]
+    with analysis_stage("discover_relationships"):
+        candidates = [
+            guard_currency(candidate)
+            for candidate in detect_relationships(frames, mappings)
+        ]
     candidates.sort(
         key=lambda item: (
             not item["safe"],
@@ -4114,11 +4115,12 @@ def _relationships_sync(
     }
     service_business = _BUSINESS_ANALYSIS_UNSET
     if manual is None:
-        service_business = analyze_business_workbook(
-            all_frames,
-            all_mappings,
-            all_results,
-        )
+        with analysis_stage("business_analysis"):
+            service_business = analyze_business_workbook(
+                all_frames,
+                all_mappings,
+                all_results,
+            )
         if (
             isinstance(service_business, dict)
             and service_business.get("perfil") == "servicios_tecnicos"

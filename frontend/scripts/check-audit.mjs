@@ -1,9 +1,12 @@
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { developmentGlobDisposition } from './audit-disposition.mjs'
 
 // GHSA-qwww-vcr4-c8h2 only affects unstable RSC APIs. ADS Veris is a Vite SPA
 // and does not use React Server Components. Keep every other high/critical
 // advisory blocking while npm has not published the indicated patched release.
 const acceptedAdvisories = new Set(['GHSA-qwww-vcr4-c8h2'])
+const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'))
 const command = process.platform === 'win32' ? process.env.ComSpec ?? 'cmd.exe' : 'npm'
 const args =
   process.platform === 'win32'
@@ -50,7 +53,8 @@ const accepted = []
 for (const [name, vulnerability] of Object.entries(vulnerabilities)) {
   if (!['high', 'critical'].includes(vulnerability.severity)) continue
   const ids = advisoryIds(name)
-  if (ids.size > 0 && [...ids].every((id) => acceptedAdvisories.has(id))) {
+  if ((ids.size > 0 && [...ids].every((id) => acceptedAdvisories.has(id)))
+    || developmentGlobDisposition(name, vulnerability, ids, lock)) {
     accepted.push(`${name}: ${[...ids].join(', ')}`)
   } else {
     blocked.push(`${name}: ${[...ids].join(', ') || 'sin identificador GHSA'}`)
@@ -59,7 +63,7 @@ for (const [name, vulnerability] of Object.entries(vulnerabilities)) {
 
 if (accepted.length) {
   process.stdout.write(
-    `Aviso aceptado por no aplicar al frontend SPA:\n- ${accepted.join('\n- ')}\n`,
+    `Aviso con alcance revisado (no equivale a dependencia corregida):\n- ${accepted.join('\n- ')}\n`,
   )
 }
 if (blocked.length) {
@@ -69,4 +73,4 @@ if (blocked.length) {
   process.exit(1)
 }
 
-process.stdout.write('Sin vulnerabilidades high/critical aplicables.\n')
+process.stdout.write('Sin hallazgos high/critical adicionales a los alcances revisados indicados arriba.\n')

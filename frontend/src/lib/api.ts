@@ -188,10 +188,30 @@ export function startApiWarmup(): void {
   lead()
 }
 
-async function getAccessToken(): Promise<string | null> {
+async function getAccessToken(signal?: AbortSignal): Promise<string | null> {
+  if (signal?.aborted) throw new ApiError(0, 'La solicitud fue cancelada.')
   if (!supabase) return null
-  const { data } = await supabase.auth.getSession()
-  return data.session?.access_token ?? null
+  // Session refresh happens before fetch; its wait must also be bounded.
+  const auth = supabase.auth
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (token: string | null, error?: ApiError) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+      if (error) reject(error)
+      else resolve(token)
+    }
+    const abort = () => finish(null, new ApiError(0, 'La solicitud fue cancelada.'))
+    const timer = setTimeout(() => finish(null, new ApiError(0,
+      'No pudimos verificar tu sesion a tiempo. Vuelve a intentar.')), 15_000)
+    signal?.addEventListener('abort', abort, { once: true })
+    Promise.resolve().then(() => auth.getSession()).then(({ data, error }) => {
+      if (error) finish(null, new ApiError(0, 'No pudimos verificar tu sesion. Vuelve a intentar.'))
+      else finish(data.session?.access_token ?? null)
+    }, () => finish(null, new ApiError(0, 'No pudimos verificar tu sesion. Vuelve a intentar.')))
+  })
 }
 
 export async function apiPost<T>(
@@ -200,7 +220,7 @@ export async function apiPost<T>(
   options?: number | ApiRequestOptions,
 ): Promise<T> {
   const { timeoutMs, signal } = normalizeOptions(options, PIPELINE_TIMEOUT_MS)
-  const token = await getAccessToken()
+  const token = await getAccessToken(signal)
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
 
@@ -266,7 +286,7 @@ export async function apiDownload(
   options?: number | ApiRequestOptions,
 ): Promise<void> {
   const { timeoutMs, signal } = normalizeOptions(options, DOWNLOAD_TIMEOUT_MS)
-  const token = await getAccessToken()
+  const token = await getAccessToken(signal)
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
 
@@ -311,7 +331,7 @@ export async function apiGet<T>(
   options?: number | ApiRequestOptions,
 ): Promise<T> {
   const { timeoutMs, signal } = normalizeOptions(options, GET_TIMEOUT_MS)
-  const token = await getAccessToken()
+  const token = await getAccessToken(signal)
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
 
@@ -471,7 +491,7 @@ export async function apiPostJson<T>(
   options?: number | ApiRequestOptions,
 ): Promise<T> {
   const { timeoutMs, signal } = normalizeOptions(options, JSON_TIMEOUT_MS)
-  const token = await getAccessToken()
+  const token = await getAccessToken(signal)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
 
@@ -510,7 +530,7 @@ export async function apiPutJson<T>(
   options?: number | ApiRequestOptions,
 ): Promise<T> {
   const { timeoutMs, signal } = normalizeOptions(options, JSON_TIMEOUT_MS)
-  const token = await getAccessToken()
+  const token = await getAccessToken(signal)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
   let response: Response
@@ -551,7 +571,7 @@ export async function apiStream(
   onChunk: (text: string) => void,
   options: ApiStreamOptions = {},
 ): Promise<void> {
-  const token = await getAccessToken()
+  const token = await getAccessToken(options.signal)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
 
