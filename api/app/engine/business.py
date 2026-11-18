@@ -59,6 +59,11 @@ def _text_key(value: object) -> str | None:
 
 
 def _keys(series: pd.Series) -> pd.Series:
+    # Local unique-value mapping avoids reparsing repeated textual IDs. Mixed
+    # types keep the scalar path: Python considers e.g. True and 1 equal.
+    if (pd.api.types.is_object_dtype(series.dtype) or isinstance(series.dtype, pd.StringDtype)):
+        if pd.api.types.infer_dtype(series, skipna=True) == "string":
+            return map_unique(series, _text_key)
     return series.map(_text_key)
 
 
