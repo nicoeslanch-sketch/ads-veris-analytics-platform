@@ -13,7 +13,7 @@ _OPERATIONS = frozenset({"metrics", "standardize", "standardize_batch", "clean_b
                          "clean_export", "relationships", "relationship_catalog", "relationship_dashboard"})
 _STAGES = frozenset({"authorization", "source_download", "analysis_cache", "prepare_sheets",
                      "restore_clean_sheet", "compute_metrics", "lease_rpc", "open_workbook",
-                     "clean_sheet", "persist_clean_sheet"})
+                     "clean_sheet", "persist_clean_sheet", "discover_relationships", "business_analysis"})
 
 
 @contextmanager

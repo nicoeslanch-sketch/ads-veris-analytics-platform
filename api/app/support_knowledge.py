@@ -36,6 +36,7 @@ def article(
 
 
 ARTICLES: list[dict[str, Any]] = [
+    article("signup_confirmation", "cuenta", "Confirmar correo de registro", ["confirmar mi correo", "correo de confirmacion", "reenviar confirmacion"], "Si el registro solicita confirmar el correo, revisa la bandeja y spam, y abre el enlace de ADS Veris. En la pantalla de acceso, Reenviar confirmacion permite pedir otro enlace cuando termina la espera; tambien aparece si intentas ingresar y tu correo no esta confirmado. Comprueba que escribiste bien tu direccion. Si no llega, contacta a servicios@adsveris.com. Confirmar el correo no es configurar una aplicacion de doble factor ni recuperar la contrasena. No compartas enlaces privados, codigos ni contrasenas con este chat; no puedo activar tu cuenta ni comprobar la entrega.", "¿No recibiste el mensaje o el enlace ya vencio?", 98),
     article("workbook_bundle", "importacion", "Consolidar archivos", ["consolidar archivos", "unir varios excel", "juntar excels", "combinar libros"], "En Estandarizacion, Consolidar archivos une entre 2 y 10 Excel .xlsx en un solo libro con todas sus hojas, hasta 15 MB en total. Copia datos y resultados guardados, no formulas, graficos ni disenos. No elimina duplicados, no cruza tablas por ID y no modifica los originales. Si dos hojas tienen el mismo nombre, agrega un sufijo. Si una formula no tiene resultado guardado, recalcula y guarda el original en Excel o LibreOffice antes de unir. La opcion aparece cuando esta habilitada para tu cuenta.", "¿Quieres unir libros completos o analizar periodos de ventas?", 95),
     article("relationship_wait", "rendimiento", "Espera al buscar conexiones", ["buscando conexiones seguras", "relaciones lentas", "demora buscar conexiones"], "Buscar conexiones puede requerir abrir hojas, recuperar o preparar datos limpios, validar claves y calcular indicadores. El tiempo depende del archivo, la cache, la cola y los recursos; no se explica solo por el plan gratuito del servidor. El contador muestra tiempo transcurrido, no tiempo restante. No puedo medir tu trabajo desde el chat. Si la espera persiste, conserva el archivo y abre Ayuda indicando la etapa y el tiempo mostrado.", "¿Sigue avanzando el trabajo o aparece un error?", 95),
     article("loading_skeleton", "navegacion", "Recuadros de carga", ["recuadros grises", "pantalla de carga", "skeleton"], "Los recuadros grises son marcadores temporales de los indicadores, tablas o graficos que se estan cargando; no representan tus valores ni significan que se hayan borrado datos. Cuando termina la carga se reemplazan por el resultado. Si aparece Cancelar puedes detener la espera de esa vista.", priority=94),
@@ -305,6 +306,11 @@ def answer_for(
         and bool(re.search(r'\b(?:no|llega|vencio|enlace)\b', normalized))))
     account_recovery = bool(re.search(r'\b(?:recuperar|recupero|restablecer)\b', normalized)) and bool(
         re.search(r'\b(?:mi cuenta|la cuenta|acceso)\b', normalized))
+    confirmation_terms = r'\b(?:confirmar|confirmo|confirmacion|confirmado)\b'
+    confirmation_topic = bool(re.search(confirmation_terms, normalized) and re.search(
+        r'\b(?:correo|email|cuenta|registro|reenviar|enlace)\b', normalized))
+    confirmation_followup = bool(re.search(confirmation_terms, previous_user) and re.search(
+        r'\b(?:y si no llega|no me llega|vencio|spam|reenviar|otra vez)\b', normalized))
     account_key = None
     if re.search(r'\b(?:cerrar|cerre)\s+(?:todas las |la |mi )?sesiones?\b', normalized):
         account_key = 'session_logout'
@@ -313,6 +319,8 @@ def answer_for(
         account_key = 'mfa_recovery' if lost else 'mfa_optional'
     elif (password_topic or recovery_email or account_recovery) and not re.search(r'\b(?:bancaria|bancario|cvv|tarjeta)\b', normalized):
         account_key = 'password_recovery'
+    elif confirmation_topic or confirmation_followup:
+        account_key = 'signup_confirmation'
     if account_key:
         item = next(row for row in ARTICLES if row['key'] == account_key)
         return {"answer": item['response'], "matched_key": account_key, "confidence": "high",
@@ -400,7 +408,8 @@ def answer_for(
         return metric_answer
     if not metrics and re.search(r"\b(cuanto|cuantos|cuanta|cuantas|mis|tengo|mejor|peor)\b", normalized) and re.search(r"\b(ingresos|ventas|gastos|clientes|stock|margen|mejor|peor)\b", normalized):
         return {"answer": "No tengo indicadores de un archivo activo para responder esa cifra. Abre un archivo limpio en Resumen o Explorar y dime que indicador quieres revisar.", "matched_key": "conversation_no_metrics", "confidence": "medium", "suggestions": ["Como cargar un archivo", "Descargar datos limpios"]}
-    catalog = articles or ARTICLES
+    # Registration help requires the explicit account context checked above.
+    catalog = [item for item in (articles or ARTICLES) if item.get('key') != 'signup_confirmation']
     normalized = normalize_query(message)
     contextual_markers = (
         "y eso",

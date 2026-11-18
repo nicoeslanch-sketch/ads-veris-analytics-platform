@@ -82,6 +82,17 @@ test('MFA gate permits a customer without enrollment', async ({ page }) => {
   await expect(page.getByText('Datos privados de prueba')).toBeVisible()
 })
 
+test('security lookup shows placeholders without rendering private content', async ({ page }) => {
+  await mocks(page)
+  await page.route('**/src/lib/api.ts', route => route.fulfill({ contentType: 'application/javascript', body: `
+    export function apiGet() { return new Promise(() => {}); }
+  ` }))
+  await page.goto('/e2e/fixtures/security.html?gate')
+  await expect(page.getByTestId('skeleton-form')).toBeVisible()
+  await expect(page.getByRole('status')).toContainText('Verificando acceso')
+  await expect(page.getByText('Datos privados de prueba')).toHaveCount(0)
+})
+
 test('Commercial preparation stays compact and does not offer payment activation', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 800 })
   await page.route('**/src/lib/api.ts', route => route.fulfill({ contentType: 'application/javascript', body: `

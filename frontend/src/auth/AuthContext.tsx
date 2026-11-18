@@ -29,7 +29,7 @@ interface AuthContextValue {
   recoveryMode: boolean
   configured: boolean
   login: (email: string, password: string) => Promise<{ error: string | null }>
-  register: (data: RegisterData) => Promise<{ error: string | null }>
+  register: (data: RegisterData) => Promise<{ error: string | null; confirmationRequired?: boolean }>
   logout: () => Promise<void>
   clearRecoveryMode: () => void
 }
@@ -95,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }) => {
     if (!legalConsent) return { error: 'Debes aceptar las condiciones y el tratamiento de datos.' }
     if (!supabase) return { error: 'Supabase no está configurado.' }
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -104,7 +104,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           legal_version: LEGAL_VERSION, service_data_consent: true },
       },
     })
-    return { error: error ? translateAuthError(error.message) : null }
+    return { error: error ? translateAuthError(error.message) : null,
+      confirmationRequired: !error && !data.session }
   }
 
   const logout = async () => {

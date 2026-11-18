@@ -31,7 +31,11 @@ from .dictionary import DictMatch
 
 
 def strip_accents_lower(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", str(value))
+    text = str(value)
+    # Most spreadsheet cells are ASCII; NFKD cannot change those code points.
+    if text.isascii():
+        return text.lower().strip()
+    normalized = unicodedata.normalize("NFKD", text)
     return "".join(c for c in normalized if not unicodedata.combining(c)).lower().strip()
 
 

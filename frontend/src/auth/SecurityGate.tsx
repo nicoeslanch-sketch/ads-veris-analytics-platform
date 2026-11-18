@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { Loader2, LogOut, RefreshCw } from 'lucide-react'
+import { LogOut, RefreshCw } from 'lucide-react'
+import LoadingSkeleton from '../components/ui/LoadingSkeleton'
 import { useAuth } from './AuthContext'
 import { apiGet } from '../lib/api'
 import MfaPanel from './MfaPanel'
@@ -40,7 +41,7 @@ export default function SecurityGate({ children }: { children: ReactNode }) {
     <div className="mx-auto max-w-md space-y-5 rounded-lg border border-navy/15 bg-white p-5 shadow-sm">
       <h1 className="text-xl font-bold text-navy">ADS Veris</h1>
       {error ? <><p role="alert" className="text-sm text-coral">{error}</p><button onClick={retry} className="flex items-center gap-2 text-sm font-semibold text-teal"><RefreshCw className="h-4 w-4" /> Reintentar</button></>
-        : !checked ? <p role="status" className="flex items-center gap-2 text-sm text-navy/70"><Loader2 className="h-4 w-4 animate-spin" /> Verificando acceso...</p>
+        : !checked ? <LoadingSkeleton kind="form" compact label="Verificando acceso" />
         : <MfaPanel required admin={state?.admin_required} onVerified={retry} />}
       <button onClick={() => void logout()} className="inline-flex items-center gap-2 text-sm text-navy/70"><LogOut className="h-4 w-4" /> Cerrar sesion</button>
     </div>

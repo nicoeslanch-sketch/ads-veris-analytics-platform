@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, Eye, EyeOff } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Eye, EyeOff, Mail } from 'lucide-react'
 import { translateAuthError, useAuth } from '../auth/AuthContext'
 import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
@@ -53,6 +53,15 @@ export default function Login() {
   })
   const [submitting, setSubmitting] = useState(false)
   const [recovering, setRecovering] = useState(false)
+  const [confirmationPending, setConfirmationPending] = useState(false)
+  const [resending, setResending] = useState(false)
+  const [resendWait, setResendWait] = useState(0)
+
+  useEffect(() => {
+    if (resendWait <= 0) return
+    const timer = window.setTimeout(() => setResendWait(value => Math.max(0, value - 1)), 1000)
+    return () => window.clearTimeout(timer)
+  }, [resendWait])
 
   // Limpia el state de la ruta para que el aviso no reaparezca al navegar
   // hacia atrás/adelante o refrescar (ej. tras restablecer la contraseña).
@@ -87,8 +96,24 @@ export default function Login() {
       // Fase 15: jamás el mensaje técnico crudo de Supabase en pantalla
       if (err) setError(translateAuthError(err.message))
       else setNotice('Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.')
+    } catch {
+      setError('No pudimos conectar con el servicio de correo. Vuelve a intentarlo.')
     } finally {
       setRecovering(false)
+    }
+  }
+
+  const handleResendConfirmation = async () => {
+    if (!supabase || !email.trim() || resending || resendWait > 0) return
+    setResending(true); setError(null); setNotice(null)
+    try {
+      const { error: err } = await supabase.auth.resend({ type: 'signup', email: email.trim() })
+      if (err) setError(translateAuthError(err.message))
+      else setNotice('Si hay una cuenta pendiente con ese correo, recibirá un enlace de confirmación. Revisa también spam.')
+    } catch {
+      setError('No pudimos conectar con el servicio de correo. Vuelve a intentarlo.')
+    } finally {
+      setResending(false); setResendWait(60)
     }
   }
 
@@ -115,10 +140,13 @@ export default function Login() {
     try {
       if (mode === 'login') {
         const { error: err } = await login(email, password)
-        if (err) setError(err)
+        if (err) {
+          setError(err)
+          setConfirmationPending(err === 'Debes confirmar tu correo antes de ingresar.')
+        }
         else navigate('/')
       } else {
-        const { error: err } = await register({
+        const { error: err, confirmationRequired } = await register({
           email,
           password,
           fullName,
@@ -130,12 +158,17 @@ export default function Login() {
         if (err) {
           setError(err)
         } else {
-          setNotice(
-            'Cuenta creada. Si tu proyecto exige confirmación por correo, revisa tu bandeja antes de ingresar.',
-          )
+          setConfirmationPending(Boolean(confirmationRequired))
+          setNotice(confirmationRequired
+            ? 'Revisa tu correo y abre el enlace de confirmación antes de ingresar. Revisa también spam.'
+            : 'Cuenta creada. Ya puedes ingresar.')
+          if (confirmationRequired) setResendWait(60)
+          setPassword(''); setConfirmPassword('')
           setMode('login')
         }
       }
+    } catch {
+      setError('No pudimos conectar con el servicio de acceso. Vuelve a intentarlo.')
     } finally {
       setSubmitting(false)
     }
@@ -195,10 +228,19 @@ export default function Login() {
           )}
 
           {notice && (
-            <div className="mt-6 flex items-start gap-3 rounded-lg border border-green/40 bg-green/10 p-4 text-sm text-navy">
+            <div role="status" className="mt-6 flex items-start gap-3 rounded-lg border border-green/40 bg-green/10 p-4 text-sm text-navy">
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green" />
               <p>{notice}</p>
             </div>
+          )}
+
+          {confirmationPending && mode === 'login' && (
+            <button type="button" onClick={() => void handleResendConfirmation()}
+              disabled={resending || resendWait > 0 || !email.trim()}
+              className="mt-4 inline-flex items-center gap-2 text-sm text-teal disabled:opacity-50">
+              <Mail className="h-4 w-4 shrink-0" />
+              {resending ? 'Enviando...' : resendWait > 0 ? `Reenviar confirmación (${resendWait} s)` : 'Reenviar confirmación'}
+            </button>
           )}
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">

@@ -26,6 +26,7 @@ def normalize_basic(text: object) -> str:
 _VOCABULARY = frozenset(
     """
     varios varias conexiones relaciones formulas excels juntar combinar recuadros grises cargando
+    confirmar confirmo confirmacion confirmado reenviar reenvio spam registrarme registrar
     estacional estacionales estacionalidad temporada temporadas recurrente recurrentes pico picos
     repite repiten repetirse calendario pareto dispersion histograma mapa calor
     ceros izquierda separador separadores decimales atipico atipicos outlier outliers imputar imputacion
