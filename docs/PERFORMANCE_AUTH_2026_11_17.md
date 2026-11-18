@@ -59,3 +59,23 @@ backup remains deferred by the owner; synthetic restore tests do not replace it.
 - Frontend: 303 unit tests passed; production build passed.
 - Browser: 15 focused signup, MFA and session-preservation scenarios passed.
 - Final CI and publication receipts are recorded on the pull request.
+
+## Newly reviewed dependency advisory
+
+CI on November 17 detected GHSA-fc5q-39xc-vjpf (CVE-2026-112366), updated that
+day: https://github.com/advisories/GHSA-fc5q-39xc-vjpf . The advisory reports
+picomatch <=4.0.7 affected and no patched release. npm registry latest is 4.0.7.
+Do not apply npm's suggested force downgrade of Vite/Vitest to bypass this.
+
+The installed picomatch 4.0.4 is used only by dev/build tools (Vite, Vitest,
+tinyglobby, fdir), all marked dev=true in package-lock. No matching library
+imports or user-supplied glob evaluation exist in frontend/src or scripts.
+Production is static Vite output, not a Vite dev server. npm audit --omit=dev
+reports zero vulnerabilities. These facts restrict reachability; they do not
+patch picomatch. Build/test infrastructure must not process untrusted globs.
+
+A narrow temporary disposition accepts only this advisory through these five
+reviewed packages, only when every reported node is dev-only, and expires at
+2026-11-25T00:00:00Z. New advisories, runtime nodes and expiry fail CI. Policy
+tests enforce those boundaries. Recheck upstream and update/remove the disposition
+when a patched release is available; no general severity threshold was lowered.
