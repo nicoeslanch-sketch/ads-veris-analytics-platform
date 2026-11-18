@@ -54,7 +54,7 @@ jobs:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: api/requirements.txt
-      - run: pip install -r api/requirements.txt
+      - run: pip install -r api/requirements.txt tomlkit==0.13.3
       - uses: supabase/setup-cli@v1
         with:
           version: 2.109.0
@@ -64,6 +64,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$LAB"
           supabase init --workdir "$LAB" --yes
+          python scripts/configure_capacity_lab.py "$LAB/supabase/config.toml"
           mkdir -p "$LAB/supabase/migrations"
           cp supabase/migrations/*.sql "$LAB/supabase/migrations/"
           supabase start --workdir "$LAB" -x studio,realtime,logflare,vector,imgproxy,edge-runtime 2>&1 | sed -E 's/eyJ[A-Za-z0-9_.-]+/[LOCAL-JWT-REDACTED]/g; s/sb_secret_[A-Za-z0-9_-]+/[LOCAL-KEY-REDACTED]/g'
