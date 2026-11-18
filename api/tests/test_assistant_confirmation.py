@@ -38,3 +38,24 @@ def test_confirmation_followups_release_context_on_financial_and_password_topics
 @pytest.mark.parametrize('question', ['confirmar ventas', 'correo del cliente', 'confirmar mis costos'])
 def test_other_confirmation_words_do_not_trigger_account_help(question):
     assert answer_for(question, metrics=sales_metrics())['matched_key'] != 'signup_confirmation'
+
+
+def test_confirmation_context_survives_short_delivery_followups_and_releases():
+    history = []
+    for question in ['como confirmo mi correo', 'no me ha llegado nada', 'no recibi nada',
+                     'no llego', 'donde lo reenvio', 'lo intente otra vez']:
+        result = answer_for(question, metrics=sales_metrics(), history=history)
+        assert result['matched_key'] == 'signup_confirmation', (question, result)
+        history.extend([{'role': 'user', 'content': question},
+                        {'role': 'assistant', 'content': result['answer']}])
+    for question in ['mis ventas otra vez', 'no llego a mi meta', 'cuanto vendi', 'necesito un humano']:
+        result = answer_for(question, metrics=sales_metrics(), history=history)
+        assert result['matched_key'] != 'signup_confirmation', (question, result)
+
+
+@pytest.mark.parametrize('previous', ['confirmar ventas', 'quiero recuperar mi contrasena'])
+def test_unrelated_context_does_not_become_signup_confirmation(previous):
+    history = [{'role': 'user', 'content': previous}]
+    for question in ['no me ha llegado nada', 'donde lo reenvio', 'otra vez']:
+        result = answer_for(question, metrics=sales_metrics(), history=history)
+        assert not result or result['matched_key'] != 'signup_confirmation'
