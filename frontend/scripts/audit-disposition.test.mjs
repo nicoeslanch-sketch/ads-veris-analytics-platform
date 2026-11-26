@@ -1,6 +1,21 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { developmentGlobDisposition as accepted } from './audit-disposition.mjs'
+import { isCompleteAudit } from './audit-report.mjs'
+
+test('registry and incomplete responses cannot satisfy the dependency check', () => {
+  const clean = {auditReportVersion: 2, vulnerabilities: {}, metadata: {vulnerabilities: {total: 0}}}
+  assert.equal(isCompleteAudit(clean, 0), true)
+  assert.equal(isCompleteAudit(clean, 1), false)
+  for (const response of [null, {}, {error: {code: 'E503'}}, {...clean, error: {}},
+    {...clean, vulnerabilities: []}, {...clean, metadata: {}}]) {
+    assert.equal(isCompleteAudit(response, 0), false)
+  }
+  const flagged = {...clean, vulnerabilities: {pkg: {severity: 'high', via: ['dep']}},
+    metadata: {vulnerabilities: {total: 1}}}
+  assert.equal(isCompleteAudit(flagged, 1), true)
+  assert.equal(isCompleteAudit(flagged, null), false)
+})
 
 const ids = new Set(['GHSA-fc5q-39xc-vjpf'])
 const vulnerability = { nodes: ['node_modules/picomatch'] }
