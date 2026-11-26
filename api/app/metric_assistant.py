@@ -1508,6 +1508,39 @@ def _group_answer(
         named.sort(key=lambda row: question.find(_normalize(row['nombre'])))
         values = [float(row.get('ingresos') if 'ingresos' in row else row['valor']) for row in named]
         details = '; '.join(f'{row["nombre"]}: {format_amount(value, currency)}' for row, value in zip(named, values))
+        intent = question
+        for row in sorted(named, key=lambda row: len(str(row['nombre'])), reverse=True):
+            intent = re.sub(r'\b' + re.escape(_normalize(row['nombre'])) + r'\b', 'grupo', intent)
+        if re.search(r'\b(?:porcentaje|participacion|proporcion)\b', intent):
+            if (not re.search(r'\b(?:del total|junt[oa]s|en conjunto|combinad[oa]s?)\b', intent)
+                    or re.search(r'\b(?:cada|diferencia|individual|respectivamente)\b', intent)):
+                return _result(details + '. ¿Quieres la participación conjunta en el total neto, '
+                               'el porcentaje de cada grupo o la diferencia entre ambos?',
+                               f'{key}_share_clarify', metric_suggestions(metrics), 'medium')
+            shares = [_number(row.get('participacion_neta_pct')) for row in named]
+            income = (metrics.get('kpis') or {}).get('ingresos_totales')
+            net_total = _number(income.get('valor')) if isinstance(income, dict) else None
+            if net_total is None or net_total <= 0 or any(value is None for value in shares):
+                return _result(details + '. No tengo una base neta positiva y participaciones '
+                               'compatibles publicadas para calcular su porcentaje conjunto. '
+                               'No uso la suma del top como si fuera el total del archivo.',
+                               f'{key}_share_unavailable', metric_suggestions(metrics), 'medium')
+            return _result(f'Los {len(named)} grupos solicitados representan '
+                           f'{_percent(sum(values) / net_total * 100)} de las ventas netas '
+                           f'({format_amount(sum(values), currency)} / {format_amount(net_total, currency)}). '
+                           + details + '. El denominador es el total neto del alcance visible, no solo el top.',
+                           f'{key}_share', metric_suggestions(metrics))
+        lowest = bool(re.search(r'\b(?:menos|menor|peor)\b', intent))
+        highest = bool(re.search(r'\b(?:mas|mayor|mejor)\b', intent))
+        if (lowest or highest) and not _contains(intent, 'diferencia', 'cuanto mas'):
+            selected_value = min(values) if lowest else max(values)
+            winners = [str(row['nombre']) for row, value in zip(named, values) if value == selected_value]
+            qualifier = 'menor' if lowest else 'mayor'
+            answer = (f'Entre los {len(named)} grupos solicitados, el {qualifier} ingreso es '
+                      f'{format_amount(selected_value, currency)}: ' + ', '.join(winners) + '.')
+            if len(winners) > 1:
+                answer += ' Hay empate.'
+            return _result(answer, f'{key}_selected_rank', metric_suggestions(metrics))
         if combine:
             if metrics.get('moneda_mixta'):
                 return _answer_currency(metrics)
@@ -2384,6 +2417,16 @@ def answer_metrics_question(
         quantity_request = re.search(r"\b(?:cuant[ao]s?|cantidad|total|numero)\b", question)
         short_return_request = re.fullmatch(r"(?:y )?(?:las )?unidades (?:devueltas|negativas|devoluciones|reversas)", question.strip(" ?"))
         explanation = _contains(question, "incluy", "inclu", "restan", "se rest", "signo", "que significa", "te refieres")
+        if re.search(r'\bpositiv[ao]s?\b', question) and quantity_request and not return_terms and not explanation:
+            detail = (metrics.get('kpis') or {}).get('unidades_detalle') or {}
+            positive = _number(detail.get('positivas')) if isinstance(detail, dict) else None
+            if positive is None or positive < 0:
+                return _result('No tengo publicada la suma de unidades positivas para este alcance. '
+                               'El total neto no la sustituye.', 'metric_positive_units_unavailable',
+                               metric_suggestions(metrics), 'medium')
+            return _result(f'Las cantidades positivas suman {_es_number(positive)} unidades. '
+                           'No se han restado aqui las cantidades negativas; no es el total neto '
+                           'ni un conteo de transacciones.', 'metric_positive_units', metric_suggestions(metrics))
         if return_terms and (quantity_request or short_return_request) and not explanation:
             detail = (metrics.get("kpis") or {}).get("unidades_detalle") or {}
             negative = _number(detail.get("negativas")) if isinstance(detail, dict) else None

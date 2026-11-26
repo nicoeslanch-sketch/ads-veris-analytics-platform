@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { developmentGlobDisposition } from './audit-disposition.mjs'
+import { isCompleteAudit } from './audit-report.mjs'
 
 // GHSA-qwww-vcr4-c8h2 only affects unstable RSC APIs. ADS Veris is a Vite SPA
 // and does not use React Server Components. Keep every other high/critical
@@ -30,7 +31,11 @@ try {
   process.exit(1)
 }
 
-const vulnerabilities = report.vulnerabilities ?? {}
+if (audit.error || !isCompleteAudit(report, audit.status)) {
+  process.stderr.write('npm audit no completo un informe valido. Revisa el registro y vuelve a intentar.\n')
+  process.exit(1)
+}
+const vulnerabilities = report.vulnerabilities
 
 function advisoryIds(name, visited = new Set()) {
   if (visited.has(name)) return new Set()

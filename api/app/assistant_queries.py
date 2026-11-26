@@ -19,7 +19,7 @@ _MEASURES = (
     (r"\b(?:ganancia|utilidad|gane)\b", "ganancia"),
     (r"\b(?:costos?|gastos?|gaste|egresos)\b", "gastos"),
     (r"\biva\b", "iva"),
-    (r"\b(?:ingresos|ventas|vendi|vendio|vendido|vendidos|vendida|vendidas|facturacion)\b", "ingresos"),
+    (r"\b(?:ingresos|ventas|vende|vendi|vendio|vendido|vendidos|vendida|vendidas|facturacion)\b", "ingresos"),
 )
 
 
@@ -103,7 +103,10 @@ def resolve_followup_scope(message, metrics, history):
                 question += " " + _measure(previous)
             previous = question
             continue
-        if question.startswith("y ") and previous:
+        pair_followup = bool(re.fullmatch(
+            r'cual (?:vende|vendio|aporta) (?:mas|menos) (?:de esos dos|de esas dos|de ambos|de ambas)[?.!]*',
+            question))
+        if (question.startswith("y ") or pair_followup) and previous:
             old_period, old_segment = _scope_parts(previous, metrics)
             period, segment = _scope_parts(question, metrics)
             if not period and old_period:
@@ -292,7 +295,7 @@ def answer_scoped_question(message, metrics, history):
                       "metric_month_value", "medium" if partial else "high")
     if chosen:
         label, rows, named, explicit = chosen
-        money_question = re.search(r"\b(vendi|vendio|ventas|ingresos|ingreso|aporta|aportan|compara|versus|vs|suma|suman|juntos|juntas)\b", question)
+        money_question = re.search(r"\b(vende|vendi|vendio|ventas|ingresos|ingreso|aporta|aportan|compara|versus|vs|suma|suman|juntos|juntas)\b", question)
         if (named or explicit) and re.search(r"\b(unidades|margen|utilidad|ganancia|neto|neta|iva|costos|gastos|ticket|transacciones)\b", question):
             return result("El desglose disponible de ese segmento es de ingresos, no de la medida que pides. No sustituire unidades, costos o margen por un importe de ventas. Selecciona la medida y el filtro en Explorar.", "metric_group_measure_unavailable", "medium")
         if named and (money_question or literal.startswith("y ")):
